@@ -13,8 +13,12 @@ First pass of the core loop exists but needs verification:
 - GGPoker Rush & Cash parser (10 unit tests, 13,402 real hands imported without errors)
 - Streaming file import (drag & drop files/folders/ZIPs, duplicate detection, progress bar)
 - Stats page with positional breakdowns (60+ stat flags)
-- Cumulative BB graph with rolling BB/100
+- Cumulative BB graph with rolling BB/100 + all-in EV line (yellow dashed)
+- All-in EV computation using treys library (heads-up, before river, known cards)
+- Rake tracking — parser sums all fees (Rake + Jackpot + Bingo + Fortune + Tax); graph shows total rake (BB) and rake/100
+- Rebuild stats endpoint — re-parses all hands from stored raw_text without needing original files
 - Hero settings (username/site config)
+- Performance: player cache, in-memory ID counters, batch transactions, executemany for bulk inserts (~138 hands/sec)
 
 ### Next Steps
 
@@ -22,7 +26,6 @@ First pass of the core loop exists but needs verification:
 2. **Verify insertion engine** — confirm data lands in DuckDB correctly (no dropped fields, correct types)
 3. **Verify stat calculations** — compare computed stats against known-correct values (e.g. manual count or H2N export)
 4. **Stats layout like H2N** — match Hand2Note's stat page layout/grouping more closely
-5. **Add EV line to graph** — parser doesn't extract EV yet, needs to be implemented end-to-end (parser → DB → API → chart)
 
 ### Architectural Decisions (diverged from original PRD)
 
@@ -441,6 +444,7 @@ CREATE INDEX idx_actions_hand_id ON actions(hand_id);
 POST   /api/import/folder          # Import from folder path
 POST   /api/import/files           # Import specific files
 GET    /api/import/status/{job_id} # Check import progress
+POST   /api/import/rebuild         # Re-parse all hands from stored raw_text
 POST   /api/import/watch           # Start watching folder
 
 # Hands
@@ -594,7 +598,7 @@ HandReplay (simple text version)
 - [~] Hand import — streaming/ZIP/folder works, insertion correctness needs verification
 - [~] Player stats — 60+ flags computed, calculations need verification against H2N
 - [~] Stats page — works, layout needs rework to match H2N
-- [~] Graph — cumulative BB + rolling BB/100 works, EV line missing
+- [x] Graph — cumulative BB + rolling BB/100 + all-in EV line + rake tracking
 - [x] Hero settings (username/site config)
 - [ ] PokerStars parser
 - [ ] Hand browser with filters
