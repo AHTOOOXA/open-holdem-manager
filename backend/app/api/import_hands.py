@@ -2,7 +2,7 @@ from fastapi import APIRouter, UploadFile, File
 from fastapi.responses import StreamingResponse
 from app.models import ImportResult
 from app.db import get_db
-from app.parsers.ggpoker import parse_hand_history
+from app.parsers.ggpoker import parse_hand_history, reset_parser_cache, finalize_import
 import traceback
 import zipfile
 import io
@@ -69,36 +69,54 @@ async def import_files_stream(files: list[UploadFile] = File(...)):
         errors = 0
         error_details: list[str] = []
 
+        # Pre-check duplicates in bulk
+        all_ids = []
+        for h in all_hands:
+            hid = extract_hand_id(h)
+            all_ids.append(hid)
+
+        existing_ids: set[str] = set()
+        valid_ids = [hid for hid in all_ids if hid is not None]
+        if valid_ids:
+            batch_size = 500
+            for j in range(0, len(valid_ids), batch_size):
+                batch = valid_ids[j:j + batch_size]
+                placeholders = ",".join(["?"] * len(batch))
+                rows = db.execute(
+                    f"SELECT id FROM hands WHERE id IN ({placeholders})", batch
+                ).fetchall()
+                existing_ids.update(r[0] for r in rows)
+
+        # Batch transactions
+        BATCH_SIZE = 200
+        db.execute("BEGIN TRANSACTION")
+        batch_count = 0
+
         for i, hand_text in enumerate(all_hands):
-            try:
-                hand_id = extract_hand_id(hand_text)
-                if hand_id is None:
-                    errors += 1
-                    error_details.append("Could not extract hand ID")
-                    continue
-
-                existing = db.execute(
-                    "SELECT 1 FROM hands WHERE id = ?", [hand_id]
-                ).fetchone()
-                if existing:
-                    duplicates += 1
-                    continue
-
-                db.execute("BEGIN TRANSACTION")
+            hid = all_ids[i]
+            if hid is None:
+                errors += 1
+                error_details.append("Could not extract hand ID")
+            elif hid in existing_ids:
+                duplicates += 1
+            else:
                 try:
                     parse_hand_history(hand_text, db)
-                    db.execute("COMMIT")
                     imported += 1
-                except Exception:
+                    batch_count += 1
+                    if batch_count >= BATCH_SIZE:
+                        db.execute("COMMIT")
+                        db.execute("BEGIN TRANSACTION")
+                        batch_count = 0
+                except Exception as e:
+                    # Rollback failed batch, retry remaining individually
                     db.execute("ROLLBACK")
-                    raise
-            except Exception as e:
-                errors += 1
-                error_details.append(f"Hand parse error: {str(e)}")
-                traceback.print_exc()
+                    db.execute("BEGIN TRANSACTION")
+                    batch_count = 0
+                    errors += 1
+                    error_details.append(f"Hand parse error: {str(e)}")
 
-            # Send progress every 50 hands or on last hand
-            if (i + 1) % 50 == 0 or i == total - 1:
+            if (i + 1) % 200 == 0 or i == total - 1:
                 yield json.dumps({
                     "type": "progress",
                     "processed": i + 1,
@@ -107,6 +125,9 @@ async def import_files_stream(files: list[UploadFile] = File(...)):
                     "duplicates": duplicates,
                     "errors": errors,
                 }) + "\n"
+
+        db.execute("COMMIT")
+        finalize_import(db)
 
         yield json.dumps({
             "type": "done",
@@ -126,6 +147,7 @@ def _process_hands(db, text_contents: list[str]) -> ImportResult:
     total_errors = 0
     error_details: list[str] = []
 
+    db.execute("BEGIN TRANSACTION")
     for content in text_contents:
         for hand_text in split_hands(content):
             hand_text = hand_text.strip()
@@ -145,18 +167,14 @@ def _process_hands(db, text_contents: list[str]) -> ImportResult:
                     total_duplicates += 1
                     continue
 
-                db.execute("BEGIN TRANSACTION")
-                try:
-                    parse_hand_history(hand_text, db)
-                    db.execute("COMMIT")
-                    total_imported += 1
-                except Exception:
-                    db.execute("ROLLBACK")
-                    raise
+                parse_hand_history(hand_text, db)
+                total_imported += 1
             except Exception as e:
                 total_errors += 1
                 error_details.append(f"Hand parse error: {str(e)}")
                 traceback.print_exc()
+    db.execute("COMMIT")
+    finalize_import(db)
 
     return ImportResult(
         imported=total_imported,
@@ -164,6 +182,83 @@ def _process_hands(db, text_contents: list[str]) -> ImportResult:
         errors=total_errors,
         error_details=error_details[:20],
     )
+
+
+@router.post("/import/rebuild")
+async def rebuild_hands():
+    """Re-parse all hands from stored raw_text. Useful after parser/schema changes."""
+
+    def generate():
+        db = get_db()
+
+        rows = db.execute(
+            "SELECT id, raw_text FROM hands ORDER BY played_at ASC, id ASC"
+        ).fetchall()
+        total = len(rows)
+
+        if total == 0:
+            yield json.dumps({"type": "done", "imported": 0, "duplicates": 0, "errors": 0, "error_details": []}) + "\n"
+            return
+
+        yield json.dumps({"type": "start", "total_hands": total, "files": 0}) + "\n"
+
+        hand_texts = [(hid, raw) for hid, raw in rows]
+
+        # Wipe everything and reset caches
+        db.execute("DELETE FROM actions")
+        db.execute("DELETE FROM board_cards")
+        db.execute("DELETE FROM hand_players")
+        db.execute("DELETE FROM hands")
+        db.execute("DELETE FROM players")
+        reset_parser_cache()
+
+        imported = 0
+        errors = 0
+        error_details: list[str] = []
+        BATCH_SIZE = 200
+
+        db.execute("BEGIN TRANSACTION")
+        batch_count = 0
+
+        for i, (hand_id, raw_text) in enumerate(hand_texts):
+            try:
+                parse_hand_history(raw_text, db)
+                imported += 1
+                batch_count += 1
+                if batch_count >= BATCH_SIZE:
+                    db.execute("COMMIT")
+                    db.execute("BEGIN TRANSACTION")
+                    batch_count = 0
+            except Exception as e:
+                db.execute("ROLLBACK")
+                db.execute("BEGIN TRANSACTION")
+                batch_count = 0
+                errors += 1
+                error_details.append(f"{hand_id}: {str(e)}")
+                traceback.print_exc()
+
+            if (i + 1) % 200 == 0 or i == total - 1:
+                yield json.dumps({
+                    "type": "progress",
+                    "processed": i + 1,
+                    "total": total,
+                    "imported": imported,
+                    "duplicates": 0,
+                    "errors": errors,
+                }) + "\n"
+
+        db.execute("COMMIT")
+        finalize_import(db)
+
+        yield json.dumps({
+            "type": "done",
+            "imported": imported,
+            "duplicates": 0,
+            "errors": errors,
+            "error_details": error_details[:20],
+        }) + "\n"
+
+    return StreamingResponse(generate(), media_type="application/x-ndjson")
 
 
 @router.post("/import/clear")
@@ -174,6 +269,7 @@ async def clear_hands():
     db.execute("DELETE FROM hand_players")
     db.execute("DELETE FROM hands")
     db.execute("DELETE FROM players")
+    reset_parser_cache()
     return {"status": "ok"}
 
 

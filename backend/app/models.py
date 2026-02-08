@@ -19,6 +19,9 @@ class GraphPoint(BaseModel):
     hand_number: int
     cumulative_bb: float
     bb_per_100_rolling: float | None = None
+    cumulative_ev_bb: float = 0.0
+    ev_bb_per_100_rolling: float | None = None
+    cumulative_rake_bb: float = 0.0
 
 
 class StatValue(BaseModel):

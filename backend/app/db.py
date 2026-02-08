@@ -117,6 +117,9 @@ def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
             donk_bet_turn BOOLEAN,
             donk_bet_river BOOLEAN,
 
+            -- All-in EV (equals won_bb for non-all-in hands)
+            all_in_ev_bb DECIMAL DEFAULT 0,
+
             -- Aggression counts per street
             flop_bets INTEGER DEFAULT 0,
             flop_raises INTEGER DEFAULT 0,
@@ -168,6 +171,12 @@ def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
     conn.execute("""
         INSERT OR IGNORE INTO settings VALUES ('hero_site', 'GG')
     """)
+
+    # Migrations for existing databases
+    try:
+        conn.execute("ALTER TABLE hand_players ADD COLUMN all_in_ev_bb DECIMAL DEFAULT 0")
+    except duckdb.CatalogException:
+        pass
 
     # Indexes
     conn.execute("CREATE INDEX IF NOT EXISTS idx_hands_played_at ON hands(played_at)")

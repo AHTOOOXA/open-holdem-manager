@@ -16,6 +16,9 @@ export interface GraphPoint {
   hand_number: number;
   cumulative_bb: number;
   bb_per_100_rolling: number | null;
+  cumulative_ev_bb: number;
+  ev_bb_per_100_rolling: number | null;
+  cumulative_rake_bb: number;
 }
 
 export interface StatValue {
@@ -197,4 +200,44 @@ export async function getHealth(): Promise<{ status: string; hands: number }> {
 export async function clearDatabase(): Promise<void> {
   const res = await fetch(`${BASE}/import/clear`, { method: 'POST' });
   if (!res.ok) throw new Error(`Clear failed: ${res.statusText}`);
+}
+
+export async function rebuildHands(
+  onProgress: (progress: ImportProgress) => void,
+): Promise<ImportResult> {
+  const res = await fetch(`${BASE}/import/rebuild`, { method: 'POST' });
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`Rebuild failed: ${res.status} ${res.statusText}${body ? ` — ${body}` : ''}`);
+  }
+
+  const reader = res.body!.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let finalResult: ImportResult | null = null;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      const msg: ImportProgress = JSON.parse(line);
+      onProgress(msg);
+      if (msg.type === 'done') {
+        finalResult = {
+          imported: msg.imported ?? 0,
+          duplicates: msg.duplicates ?? 0,
+          errors: msg.errors ?? 0,
+          error_details: msg.error_details ?? [],
+        };
+      }
+    }
+  }
+
+  return finalResult ?? { imported: 0, duplicates: 0, errors: 0, error_details: [] };
 }

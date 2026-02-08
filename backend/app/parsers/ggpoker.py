@@ -10,7 +10,53 @@ from decimal import Decimal
 from datetime import datetime
 import duckdb
 
+try:
+    from app.equity import calculate_headsup_equity as _calc_equity
+except ImportError:
+    _calc_equity = None
+
 SITE_ID = 1  # GGPoker
+
+# ── Import session caches (cleared between import runs) ──
+_player_cache: dict[str, int] = {}  # username -> player_id
+_next_player_id: int | None = None
+_next_hp_id: int | None = None
+_next_action_id: int | None = None
+
+
+def reset_parser_cache() -> None:
+    """Reset caches. Call before rebuild or when tables are wiped."""
+    global _player_cache, _next_player_id, _next_hp_id, _next_action_id
+    _player_cache.clear()
+    _next_player_id = None
+    _next_hp_id = None
+    _next_action_id = None
+
+
+def _init_counters(db: duckdb.DuckDBPyConnection) -> None:
+    """Initialize ID counters from current DB max values (once per session)."""
+    global _next_player_id, _next_hp_id, _next_action_id
+    if _next_player_id is None:
+        _next_player_id = db.execute("SELECT COALESCE(MAX(id), 0) + 1 FROM players").fetchone()[0]
+    if _next_hp_id is None:
+        _next_hp_id = db.execute("SELECT COALESCE(MAX(id), 0) + 1 FROM hand_players").fetchone()[0]
+    if _next_action_id is None:
+        _next_action_id = db.execute("SELECT COALESCE(MAX(id), 0) + 1 FROM actions").fetchone()[0]
+
+
+def finalize_import(db: duckdb.DuckDBPyConnection) -> None:
+    """Batch-update player first_seen/last_seen. Call once after import."""
+    db.execute("""
+        UPDATE players SET
+            first_seen = sub.min_t,
+            last_seen = sub.max_t
+        FROM (
+            SELECT hp.player_id, MIN(h.played_at) AS min_t, MAX(h.played_at) AS max_t
+            FROM hand_players hp JOIN hands h ON hp.hand_id = h.id
+            GROUP BY hp.player_id
+        ) sub
+        WHERE players.id = sub.player_id
+    """)
 
 # Position labels for 6-max (clockwise from BTN)
 POSITIONS_6MAX = ["BTN", "SB", "BB", "EP", "MP", "CO"]
@@ -99,7 +145,10 @@ RE_WON = re.compile(
 )
 RE_BOARD = re.compile(r"Board \[(.+?)\]")
 RE_SUMMARY_POT = re.compile(
-    r"Total pot \$([0-9.]+)(?: \| Rake \$([0-9.]+))?"
+    r"Total pot \$([0-9.]+)"
+)
+RE_SUMMARY_FEE = re.compile(
+    r"(?:Rake|Jackpot|Bingo|Fortune|Tax) \$([0-9.]+)"
 )
 RE_SUMMARY_SEAT = re.compile(
     r"Seat (\d+): (.+?)(?:\s+\(.*?\))* (?:collected|folded|showed|mucked|lost|won)"
@@ -128,26 +177,30 @@ def _should_skip(line: str) -> bool:
 
 
 def _get_or_create_player(
-    db: duckdb.DuckDBPyConnection, username: str, played_at: datetime
+    db: duckdb.DuckDBPyConnection, username: str
 ) -> int:
-    """Get existing player or create new one. Returns player_id."""
+    """Get existing player or create new one. Returns player_id.
+    Uses in-memory cache. first_seen/last_seen updated via finalize_import().
+    """
+    global _next_player_id
+    if username in _player_cache:
+        return _player_cache[username]
+
     row = db.execute(
         "SELECT id FROM players WHERE site_id = ? AND username = ?",
         [SITE_ID, username],
     ).fetchone()
     if row:
-        player_id = row[0]
-        db.execute(
-            "UPDATE players SET last_seen = ? WHERE id = ? AND (last_seen IS NULL OR last_seen < ?)",
-            [played_at, player_id, played_at],
-        )
-        return player_id
+        _player_cache[username] = row[0]
+        return row[0]
 
-    player_id = db.execute("SELECT nextval('seq_players')").fetchone()[0]
+    player_id = _next_player_id
+    _next_player_id += 1
     db.execute(
-        "INSERT INTO players (id, site_id, username, first_seen, last_seen) VALUES (?, ?, ?, ?, ?)",
-        [player_id, SITE_ID, username, played_at, played_at],
+        "INSERT INTO players (id, site_id, username) VALUES (?, ?, ?)",
+        [player_id, SITE_ID, username],
     )
+    _player_cache[username] = player_id
     return player_id
 
 
@@ -255,9 +308,10 @@ def parse_hand_history(hand_text: str, db: duckdb.DuckDBPyConnection) -> str:
     username_to_info = {s["username"]: s for s in seats}
 
     # ── Get or create players ──
+    _init_counters(db)
     player_ids = {}  # username -> player_id
     for s in seats:
-        player_ids[s["username"]] = _get_or_create_player(db, s["username"], played_at)
+        player_ids[s["username"]] = _get_or_create_player(db, s["username"])
 
     # ── Parse action lines ──
     # We need to track: hole cards, actions per street, board cards, collected amounts
@@ -317,8 +371,9 @@ def parse_hand_history(hand_text: str, db: duckdb.DuckDBPyConnection) -> str:
         if in_summary:
             m = RE_SUMMARY_POT.search(line)
             if m:
-                if m.group(2):
-                    total_rake = Decimal(m.group(2))
+                # Sum all fees: Rake + Jackpot + Bingo + Fortune + Tax
+                for fee_m in RE_SUMMARY_FEE.finditer(line):
+                    total_rake += Decimal(fee_m.group(1))
                 continue
 
             # Board line fallback — populate board_cards from summary if empty
@@ -894,9 +949,56 @@ def parse_hand_history(hand_text: str, db: duckdb.DuckDBPyConnection) -> str:
                     player_invested[uname] += increment
                 street_put_in[uname] = amt
 
+    # ── Detect all-in for EV calculation ──
+    all_in_street = None
+    street_order_map = {"preflop": 0, "flop": 1, "turn": 2, "river": 3}
+    for street in ["preflop", "flop", "turn", "river"]:
+        for a in actions_by_street[street]:
+            if a["is_all_in"]:
+                if all_in_street is None or street_order_map[street] > street_order_map[all_in_street]:
+                    all_in_street = street
+
     # ── Calculate won/rake amounts ──
     num_winners = len(collected)
     per_player_rake = total_rake / max(num_winners, 1) if total_rake else Decimal("0")
+
+    # ── Compute all-in EV ──
+    all_in_ev_bb_map = {}  # username -> ev_bb
+
+    if all_in_street is not None and real_showdown and len(remaining_players) == 2:
+        # Board at the all-in point
+        board_at_all_in = []
+        if street_order_map[all_in_street] >= 1:
+            board_at_all_in.extend(board_cards["flop"])
+        if street_order_map[all_in_street] >= 2:
+            board_at_all_in.extend(board_cards["turn"])
+        if street_order_map[all_in_street] >= 3:
+            board_at_all_in.extend(board_cards["river"])
+
+        cards_to_come = 5 - len(board_at_all_in)
+
+        if cards_to_come > 0:
+            # Check we know both players' cards
+            players_list = list(remaining_players)
+            if players_list[0] in hero_cards and players_list[1] in hero_cards and _calc_equity:
+                try:
+                    p1, p2 = players_list
+                    p1_eq = _calc_equity(
+                        hero_cards[p1], hero_cards[p2], board_at_all_in
+                    )
+                    p2_eq = 1.0 - p1_eq
+
+                    total_invested = sum(float(v) for v in player_invested.values())
+                    distributable = total_invested - float(total_rake)
+
+                    all_in_ev_bb_map[p1] = (
+                        p1_eq * distributable - float(player_invested[p1])
+                    ) / float(bb_amount)
+                    all_in_ev_bb_map[p2] = (
+                        p2_eq * distributable - float(player_invested[p2])
+                    ) / float(bb_amount)
+                except Exception:
+                    pass  # Fall back to won_bb
 
     # ── Insert into database ──
     # 1. Insert hand
@@ -911,13 +1013,16 @@ def parse_hand_history(hand_text: str, db: duckdb.DuckDBPyConnection) -> str:
         ],
     )
 
-    # 2. Insert board cards
+    # 2. Insert board cards (batched)
+    board_rows = []
     for street, cards in board_cards.items():
         for i, card in enumerate(cards):
-            db.execute(
-                "INSERT INTO board_cards (hand_id, street, card, card_order) VALUES (?, ?, ?, ?)",
-                [hand_id, street, card, i + 1],
-            )
+            board_rows.append([hand_id, street, card, i + 1])
+    if board_rows:
+        db.executemany(
+            "INSERT INTO board_cards (hand_id, street, card, card_order) VALUES (?, ?, ?, ?)",
+            board_rows,
+        )
 
     # 3. Insert hand_players
     for s in seats:
@@ -936,12 +1041,15 @@ def parse_hand_history(hand_text: str, db: duckdb.DuckDBPyConnection) -> str:
         rake_bb = rake / float(bb_amount) if bb_amount else 0.0
         stack_bb = float(s["stack"]) / float(bb_amount) if bb_amount else 0.0
         ps = player_stats[uname]
+        ev_bb = all_in_ev_bb_map.get(uname, won_bb)
 
-        hp_id = db.execute("SELECT nextval('seq_hand_players')").fetchone()[0]
+        global _next_hp_id
+        hp_id = _next_hp_id
+        _next_hp_id += 1
         db.execute(
             """INSERT INTO hand_players (
                 id, hand_id, player_id, seat, position, stack, stack_bb,
-                card1, card2, won, won_bb, rake, rake_bb,
+                card1, card2, won, won_bb, rake, rake_bb, all_in_ev_bb,
                 vpip, pfr, three_bet, three_bet_opp, four_bet, four_bet_opp,
                 fold_to_3bet, fold_to_4bet,
                 open_raise, call_open_raise, limp, squeeze, five_bet,
@@ -957,7 +1065,7 @@ def parse_hand_history(hand_text: str, db: duckdb.DuckDBPyConnection) -> str:
                 river_bets, river_raises, river_calls
             ) VALUES (
                 ?, ?, ?, ?, ?, ?, ?,
-                ?, ?, ?, ?, ?, ?,
+                ?, ?, ?, ?, ?, ?, ?,
                 ?, ?, ?, ?, ?, ?,
                 ?, ?,
                 ?, ?, ?, ?, ?,
@@ -975,7 +1083,7 @@ def parse_hand_history(hand_text: str, db: duckdb.DuckDBPyConnection) -> str:
             [
                 hp_id, hand_id, pid, s["seat"], s["position"],
                 float(s["stack"]), stack_bb,
-                card1, card2, won, won_bb, rake, rake_bb,
+                card1, card2, won, won_bb, rake, rake_bb, ev_bb,
                 ps["vpip"], ps["pfr"], ps["three_bet"], ps["three_bet_opp"],
                 ps["four_bet"], ps["four_bet_opp"],
                 ps["fold_to_3bet"], ps["fold_to_4bet"],
@@ -998,7 +1106,9 @@ def parse_hand_history(hand_text: str, db: duckdb.DuckDBPyConnection) -> str:
             ],
         )
 
-    # 4. Insert actions
+    # 4. Insert actions (batched)
+    global _next_action_id
+    action_rows = []
     for street, street_actions in actions_by_street.items():
         for a in street_actions:
             uname = a["username"]
@@ -1007,16 +1117,19 @@ def parse_hand_history(hand_text: str, db: duckdb.DuckDBPyConnection) -> str:
             pid = player_ids[uname]
             amt = float(a["amount"])
             amt_bb = amt / float(bb_amount) if bb_amount else 0.0
-            act_id = db.execute("SELECT nextval('seq_actions')").fetchone()[0]
-            db.execute(
-                """INSERT INTO actions (id, hand_id, player_id, street,
-                   action_order, action_type, amount, amount_bb, is_all_in)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                [
-                    act_id, hand_id, pid, street,
-                    a["order"], a["action"], amt, amt_bb, a["is_all_in"],
-                ],
-            )
+            act_id = _next_action_id
+            _next_action_id += 1
+            action_rows.append([
+                act_id, hand_id, pid, street,
+                a["order"], a["action"], amt, amt_bb, a["is_all_in"],
+            ])
+    if action_rows:
+        db.executemany(
+            """INSERT INTO actions (id, hand_id, player_id, street,
+               action_order, action_type, amount, amount_bb, is_all_in)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            action_rows,
+        )
 
     return hand_id
 

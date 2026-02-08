@@ -5,7 +5,7 @@ import duckdb
 from decimal import Decimal
 from pathlib import Path
 
-from app.parsers.ggpoker import parse_hand_history
+from app.parsers.ggpoker import parse_hand_history, reset_parser_cache
 from app.db import init_schema
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -14,6 +14,7 @@ FIXTURES = Path(__file__).parent / "fixtures"
 @pytest.fixture
 def db():
     """Create an in-memory DuckDB with schema for each test."""
+    reset_parser_cache()
     conn = duckdb.connect(":memory:")
     init_schema(conn)
     yield conn

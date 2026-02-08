@@ -8,6 +8,7 @@ import {
   Tooltip,
   ResponsiveContainer,
   ReferenceLine,
+  Legend,
 } from 'recharts';
 import { getGraphData } from '@/lib/api';
 import type { GraphPoint } from '@/lib/api';
@@ -16,6 +17,7 @@ export default function GraphPage() {
   const [data, setData] = useState<GraphPoint[]>([]);
   const [loading, setLoading] = useState(true);
   const [mode, setMode] = useState<'cumulative' | 'bb100'>('cumulative');
+  const [showEV, setShowEV] = useState(true);
 
   useEffect(() => {
     getGraphData()
@@ -33,11 +35,26 @@ export default function GraphPage() {
     );
   }
 
+  const last = data[data.length - 1];
+  const hasEVData = data.some(d => d.cumulative_ev_bb !== d.cumulative_bb);
+
   return (
     <div className="max-w-5xl mx-auto space-y-4">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">Results Graph</h1>
-        <div className="flex gap-2">
+        <div className="flex gap-2 items-center">
+          {hasEVData && (
+            <button
+              className={`px-3 py-1.5 text-sm rounded transition-colors ${
+                showEV
+                  ? 'bg-yellow-600 text-white'
+                  : 'bg-surface border border-border text-text-muted hover:text-text'
+              }`}
+              onClick={() => setShowEV(!showEV)}
+            >
+              EV Line
+            </button>
+          )}
           <button
             className={`px-3 py-1.5 text-sm rounded transition-colors ${
               mode === 'cumulative'
@@ -88,23 +105,43 @@ export default function GraphPage() {
                 borderRadius: '8px',
                 color: '#e4e4ef',
               }}
-              formatter={(value: number) => [value.toFixed(2), mode === 'cumulative' ? 'BB' : 'BB/100']}
+              formatter={(value: number, name: string) => [
+                value.toFixed(2),
+                name === 'cumulative_bb' ? 'BB' :
+                name === 'cumulative_ev_bb' ? 'EV BB' :
+                name === 'bb_per_100_rolling' ? 'BB/100' :
+                name === 'ev_bb_per_100_rolling' ? 'EV BB/100' : name,
+              ]}
               labelFormatter={(label) => `Hand #${label}`}
             />
             <ReferenceLine y={0} stroke="#8888a0" strokeDasharray="3 3" />
+            {hasEVData && <Legend />}
             <Line
               type="monotone"
               dataKey={mode === 'cumulative' ? 'cumulative_bb' : 'bb_per_100_rolling'}
+              name={mode === 'cumulative' ? 'Actual' : 'BB/100'}
               stroke="#6366f1"
               strokeWidth={2}
               dot={false}
               connectNulls
             />
+            {showEV && hasEVData && (
+              <Line
+                type="monotone"
+                dataKey={mode === 'cumulative' ? 'cumulative_ev_bb' : 'ev_bb_per_100_rolling'}
+                name={mode === 'cumulative' ? 'All-in EV' : 'EV BB/100'}
+                stroke="#eab308"
+                strokeWidth={2}
+                dot={false}
+                connectNulls
+                strokeDasharray="6 3"
+              />
+            )}
           </LineChart>
         </ResponsiveContainer>
       </div>
 
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-5 gap-4">
         <div className="bg-surface rounded-lg border border-border p-4 text-center">
           <div className="text-2xl font-bold font-mono">{data.length.toLocaleString()}</div>
           <div className="text-xs text-text-muted">Hands</div>
@@ -112,22 +149,47 @@ export default function GraphPage() {
         <div className="bg-surface rounded-lg border border-border p-4 text-center">
           <div
             className={`text-2xl font-bold font-mono ${
-              data[data.length - 1].cumulative_bb >= 0 ? 'text-green' : 'text-red'
+              last.cumulative_bb >= 0 ? 'text-green' : 'text-red'
             }`}
           >
-            {data[data.length - 1].cumulative_bb.toFixed(1)}
+            {last.cumulative_bb.toFixed(1)}
           </div>
           <div className="text-xs text-text-muted">Total BB</div>
         </div>
-        <div className="bg-surface rounded-lg border border-border p-4 text-center">
-          <div
-            className={`text-2xl font-bold font-mono ${
-              (data[data.length - 1].bb_per_100_rolling ?? 0) >= 0 ? 'text-green' : 'text-red'
-            }`}
-          >
-            {data[data.length - 1].bb_per_100_rolling?.toFixed(2) ?? '-'}
+        {hasEVData ? (
+          <div className="bg-surface rounded-lg border border-border p-4 text-center">
+            <div
+              className={`text-2xl font-bold font-mono ${
+                last.cumulative_ev_bb >= 0 ? 'text-green' : 'text-red'
+              }`}
+            >
+              {last.cumulative_ev_bb.toFixed(1)}
+            </div>
+            <div className="text-xs text-text-muted">EV BB</div>
           </div>
-          <div className="text-xs text-text-muted">Current BB/100</div>
+        ) : (
+          <div className="bg-surface rounded-lg border border-border p-4 text-center">
+            <div
+              className={`text-2xl font-bold font-mono ${
+                (last.bb_per_100_rolling ?? 0) >= 0 ? 'text-green' : 'text-red'
+              }`}
+            >
+              {last.bb_per_100_rolling?.toFixed(2) ?? '-'}
+            </div>
+            <div className="text-xs text-text-muted">BB/100</div>
+          </div>
+        )}
+        <div className="bg-surface rounded-lg border border-border p-4 text-center">
+          <div className="text-2xl font-bold font-mono text-red">
+            {last.cumulative_rake_bb.toFixed(1)}
+          </div>
+          <div className="text-xs text-text-muted">Rake (BB)</div>
+        </div>
+        <div className="bg-surface rounded-lg border border-border p-4 text-center">
+          <div className="text-2xl font-bold font-mono text-text-muted">
+            {data.length > 0 ? (last.cumulative_rake_bb / data.length * 100).toFixed(2) : '-'}
+          </div>
+          <div className="text-xs text-text-muted">Rake/100</div>
         </div>
       </div>
     </div>

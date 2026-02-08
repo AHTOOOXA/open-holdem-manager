@@ -26,7 +26,8 @@ def get_graph(
     player_id = player[0]
 
     query = """
-        SELECT hp.won_bb, h.played_at
+        SELECT hp.won_bb, COALESCE(hp.all_in_ev_bb, hp.won_bb),
+               COALESCE(hp.rake_bb, 0), h.played_at
         FROM hand_players hp
         JOIN hands h ON hp.hand_id = h.id
         WHERE hp.player_id = ?
@@ -49,20 +50,32 @@ def get_graph(
 
     points: list[GraphPoint] = []
     cumulative = 0.0
+    cumulative_ev = 0.0
+    cumulative_rake = 0.0
     window_size = 100
 
-    for i, (won_bb, _) in enumerate(rows):
-        cumulative += float(won_bb or 0)
+    for i, (won_bb, ev_bb, rake_bb, _) in enumerate(rows):
+        won_val = float(won_bb or 0)
+        ev_val = float(ev_bb or 0)
+        cumulative += won_val
+        cumulative_ev += ev_val
+        cumulative_rake += float(rake_bb or 0)
+
         # Rolling BB/100 over last `window_size` hands
         start = max(0, i - window_size + 1)
         window_sum = sum(float(rows[j][0] or 0) for j in range(start, i + 1))
+        window_ev_sum = sum(float(rows[j][1] or 0) for j in range(start, i + 1))
         window_len = i - start + 1
         rolling = (window_sum / window_len) * 100 if window_len > 0 else None
+        rolling_ev = (window_ev_sum / window_len) * 100 if window_len > 0 else None
 
         points.append(GraphPoint(
             hand_number=i + 1,
             cumulative_bb=round(cumulative, 2),
             bb_per_100_rolling=round(rolling, 2) if rolling is not None else None,
+            cumulative_ev_bb=round(cumulative_ev, 2),
+            ev_bb_per_100_rolling=round(rolling_ev, 2) if rolling_ev is not None else None,
+            cumulative_rake_bb=round(cumulative_rake, 2),
         ))
 
     return points

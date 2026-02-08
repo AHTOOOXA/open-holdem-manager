@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from 'react';
-import { uploadFilesStream, getSettings, updateSettings, getHealth, clearDatabase } from '@/lib/api';
+import { uploadFilesStream, rebuildHands, getSettings, updateSettings, getHealth, clearDatabase } from '@/lib/api';
 import type { ImportResult, ImportProgress, Settings } from '@/lib/api';
 
 export default function UploadPage() {
@@ -127,18 +127,44 @@ export default function UploadPage() {
         <div className="flex items-center gap-3">
           <span className="text-sm text-text-muted">{handCount.toLocaleString()} hands in database</span>
           {handCount > 0 && (
-            <button
-              className="text-xs text-red hover:text-red/80 transition-colors"
-              onClick={async () => {
-                if (!confirm('Clear all hands from the database? This cannot be undone.')) return;
-                await clearDatabase();
-                const h = await getHealth();
-                setHandCount(h.hands);
-                setResult(null);
-              }}
-            >
-              Clear DB
-            </button>
+            <>
+              <button
+                className="text-xs text-primary hover:text-primary-hover transition-colors disabled:opacity-50"
+                disabled={uploading}
+                onClick={async () => {
+                  if (!confirm('Rebuild all stats from stored hands? This re-parses everything with the latest parser.')) return;
+                  setUploading(true);
+                  setError(null);
+                  setResult(null);
+                  setProgress(null);
+                  try {
+                    const res = await rebuildHands((p) => setProgress(p));
+                    setResult(res);
+                    const h = await getHealth();
+                    setHandCount(h.hands);
+                  } catch (e) {
+                    setError(e instanceof Error ? e.message : 'Rebuild failed');
+                  } finally {
+                    setUploading(false);
+                    setProgress(null);
+                  }
+                }}
+              >
+                Rebuild Stats
+              </button>
+              <button
+                className="text-xs text-red hover:text-red/80 transition-colors"
+                onClick={async () => {
+                  if (!confirm('Clear all hands from the database? This cannot be undone.')) return;
+                  await clearDatabase();
+                  const h = await getHealth();
+                  setHandCount(h.hands);
+                  setResult(null);
+                }}
+              >
+                Clear DB
+              </button>
+            </>
           )}
         </div>
       </div>
