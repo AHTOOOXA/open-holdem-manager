@@ -113,71 +113,423 @@ A modern, open-source poker tracking tool that helps players analyze their game 
 - Error handling with skip/retry options
 - Import summary (hands imported, errors, duplicates)
 
-### 3.2 Player Database
+### 3.2 Stats & Analysis
 
-**Core Stats Tracked:**
+#### 3.2.0 Stats Page Layout (H2N Clone)
 
+Target: exact clone of Hand2Note's GENERAL stats tab. Reference screenshot: `CleanShot 2026-01-20 at 01.14.10@2x.png`
+
+**Filter Bar (top, sticky):**
 ```
-Basic:
-- VPIP (Voluntarily Put $ In Pot)
-- PFR (Pre-Flop Raise)
-- 3Bet %
-- Fold to 3Bet %
-- AF (Aggression Factor)
-- AFq (Aggression Frequency)
-- WTSD (Went to Showdown)
-- W$SD (Won $ at Showdown)
-
-Positional:
-- All above stats broken down by position (EP, MP, CO, BTN, SB, BB)
-
-Situational:
-- CBet Flop/Turn/River %
-- Fold to CBet %
-- Check-Raise %
-- Donk Bet %
-- Probe Bet %
-- Float %
-
+[Player selector: "Hero, GG Network"] [Date range picker] [Game type: "Texas Hold'em NL Cash"] [View: "default"] [Hand count: "49k hands"] [⚙ Settings]
 ```
+- Player selector: hero name + site (from settings)
+- Date range: calendar picker, pre-sets (today, week, month, all)
+- Game type: dropdown (NL Hold'em Cash only for now)
+- View: stat layout preset selector (only "default" for MVP)
+
+**Tabs:** `GENERAL` (active) | `Notes`
+
+---
+
+**PREFLOP Section** — Two-block horizontal layout
+
+*Left block — Positional table:*
+```
+PRE-FLOP          Total  EP   MP   CO   BTN  SB   BB
+Open Raise          28   16   19   30   51   53   27
+Fold to 3Bet        61   58   54   60   66   68    0₁
+Call Open Raise    8.9   --  0.4  0.5    1  2.1   29
+3-Bet              8.4    0₂  4.9  6.7   10   10  7.7
+3-Bet In Position  9.1    0₂  4.9  6.7   10        19
+3-Bet Out of Pos   7.6                        10  4.8
+```
+Columns: Stat | Total | EP | MP | CO | BTN | SB | BB
+- Empty cells where stat doesn't apply to that position
+- Subscript after value = sample size (shown when small, e.g. `0₂` = 0% from 2 opportunities)
+- `--` = zero opportunities
+
+*Right block — Key-value pairs (two-column grid):*
+```
+VPIP              23     PFR               19
+4-Bet             10     Limp             0.1
+4-Bet Range      2.8     Limp-Fold        78₉
+4-Bet-Fold        42     Squeeze          8.4
+Fold to 4-Bet     68     Win Rate (bb/100) 3.8
+Call 4-Bet        22     Hands            49k
+5-Bet             11
+```
+
+Metrics in this block (14 total):
+| Metric | Description | OHM Status |
+|--------|-------------|------------|
+| VPIP | Voluntarily put $ in pot % | Built |
+| PFR | Preflop raise % | Built |
+| 4-Bet | 4-bet % (when facing 3-bet) | Built |
+| Limp | Limp % (open limp) | Built |
+| 4-Bet Range | 4-bet range as % of all hands (not of opportunities) | **NEW** — `4bet_count / total_hands * 100` |
+| Limp-Fold | Limp then fold to raise % | **NEW** — needs `limp_fold BOOLEAN` in parser |
+| 4-Bet-Fold | 4-bet then fold to 5-bet % | **NEW** — needs `four_bet_fold BOOLEAN` in parser |
+| Squeeze | Squeeze % | Built |
+| Fold to 4-Bet | Fold to 4-bet % | Built |
+| Win Rate (bb/100) | Win rate in big blinds per 100 hands | Built |
+| Call 4-Bet | Call 4-bet % (when facing 4-bet) | **NEW** — needs `call_4bet BOOLEAN` in parser |
+| Hands | Total hand count | Built |
+| 5-Bet | 5-bet % | Built |
+
+---
+
+**STEAL Section** — Two sub-tables side by side
+
+*Left sub-table — Steal stats:*
+```
+Steal         Total  BTN   SB
+Steal           53    52   54
+Fold to 3Bet    67    66   68
+4-Bet          9.2   9.4  8.8
+4-Bet-Fold      25₈   29₇   0₁
+```
+Columns: Stat | Total | BTN | SB (only steal positions, no CO here — H2N groups CO under preflop Open Raise)
+
+| Metric | Description | OHM Status |
+|--------|-------------|------------|
+| Steal | Open raise from BTN/SB (steal attempt %) | Built |
+| Fold to 3Bet (steal) | Fold to 3-bet after steal attempt | Built |
+| 4-Bet (steal) | 4-bet after steal was 3-bet | Built |
+| 4-Bet-Fold (steal) | 4-bet steal then fold to 5-bet | **NEW** |
+
+*Right sub-table — vs. Steal defense:*
+```
+vs. Steal    SB   BB
+Fold         84   49
+Call        0.8   40
+3-Bet        15   12
+```
+Columns: Stat | SB | BB (only defending positions)
+
+| Metric | Description | OHM Status |
+|--------|-------------|------------|
+| vs Steal Fold | Fold to steal from SB/BB | Built |
+| vs Steal Call | Call steal from SB/BB | Built |
+| vs Steal 3-Bet | 3-bet vs steal from SB/BB | Built |
+
+---
+
+**POSTFLOP Section** — Two-block horizontal layout
+
+*Left block — Per-street table:*
+```
+POSTFLOP                     Flop  Turn  River
+Continuation Bet               45    59    53
+Fold to Continuation Bet       46    46    35
+Aggression                    2.8   3.5   5.1
+Aggression Frequency           35    36    40
+Donk Bet                        0     4    10
+```
+Columns: Stat | Flop | Turn | River
+
+| Metric | Description | OHM Status |
+|--------|-------------|------------|
+| Continuation Bet (F/T/R) | C-bet % per street | Built |
+| Fold to Continuation Bet (F/T/R) | Fold to c-bet % per street | Built |
+| Aggression (F/T/R) | AF = (bets+raises)/calls per street | Built |
+| Aggression Frequency (F/T/R) | AFq = (bets+raises)/(bets+raises+calls) % | Built |
+| Donk Bet (F/T/R) | Donk bet % per street | Flop built, **Turn/River: wire up** |
+
+*Right block — vs. Continuation Bet Flop breakdown:*
+```
+vs. ContinuationBet Flop    Fold  Call  Raise
+Raised Pot                     46    32    21
+3-Bet Pot                      45    45   9.9
+```
+Columns: Pot Type | Fold | Call | Raise
+
+| Metric | Description | OHM Status |
+|--------|-------------|------------|
+| vs CBet Flop Fold (raised pot) | Fold to flop c-bet in single-raised pots | **NEW** — needs pot type tracking |
+| vs CBet Flop Call (raised pot) | Call flop c-bet in single-raised pots | **NEW** |
+| vs CBet Flop Raise (raised pot) | Raise flop c-bet in single-raised pots | **NEW** — this is check-raise |
+| vs CBet Flop Fold (3-bet pot) | Fold to flop c-bet in 3-bet pots | **NEW** |
+| vs CBet Flop Call (3-bet pot) | Call flop c-bet in 3-bet pots | **NEW** |
+| vs CBet Flop Raise (3-bet pot) | Raise flop c-bet in 3-bet pots | **NEW** |
+
+---
+
+**MISSED C-BET Section** — Two-block horizontal layout
+
+*Left block — Hero missed c-bet:*
+```
+Missed Continuation Bet   55
+  In Position             44    → Fold   71
+  Out of Position         74    → Fold   52
+```
+
+| Metric | Description | OHM Status |
+|--------|-------------|------------|
+| Missed C-Bet | % of c-bet opportunities where hero checked instead | Built |
+| Missed C-Bet IP | Missed c-bet when in position | **NEW** — IP/OOP split |
+| Missed C-Bet OOP | Missed c-bet when out of position | **NEW** — IP/OOP split |
+| Missed C-Bet → Fold | After missing c-bet, fold to opponent bet | **NEW** — needs `missed_cbet_then_fold` |
+
+*Right block — vs. Opponent missed c-bet:*
+```
+vs. Missed Continuation Bet   45
+  Bet In Position              50    Check | Fold   76
+  Bet Out of Position Turn     41    Check-Fold     67
+```
+
+| Metric | Description | OHM Status |
+|--------|-------------|------------|
+| vs Missed C-Bet | When opponent misses c-bet, hero bet % | **NEW** — needs `bet_vs_missed_cbet` |
+| Bet vs Missed C-Bet IP | Probe bet when IP and opponent missed c-bet | **NEW** |
+| Bet vs Missed C-Bet OOP | Probe bet when OOP and opponent missed c-bet | **NEW** |
+| Check-Fold vs Missed C-Bet | Check then fold when opponent missed c-bet but bets later | **NEW** |
+
+---
+
+**SHOWDOWN Section** — Simple key-value list
+```
+Went to Showdown      24
+Won at Showdown       58
+Won When Saw Flop     48
+```
+
+| Metric | Description | OHM Status |
+|--------|-------------|------------|
+| WTSD% | Went to Showdown / Saw Flop | Built |
+| W$SD% | Won at Showdown / Went to Showdown | Built |
+| WWSF% | Won When Saw Flop / Saw Flop | Built |
+
+---
+
+**Color Coding Rules:**
+- Green: stat value indicates strong/aggressive play for that position
+- Red: stat value indicates weak/passive play (e.g. low open-raise from late position, high fold frequencies)
+- Yellow: neutral/middling values
+- Blue: used for certain BB-column values
+- Gray + subscript: low sample size — value shown with sample count as subscript (e.g. `0₂` means 0% with only 2 samples)
+- `--`: zero opportunities (stat not applicable)
+- Empty cell: stat doesn't apply to that position (e.g. 3-Bet IP has no SB value)
+
+Color thresholds are per-stat, per-position. Configurable in settings (Phase 3). For MVP, use hardcoded thresholds based on standard 6-max ranges.
+
+---
+
+**Complete Metric Inventory — New Stats Needed for H2N Layout:**
+
+| # | Metric | Section | Parser | DB Column | Engine |
+|---|--------|---------|--------|-----------|--------|
+| 1 | 4-Bet Range | Preflop right | No | No (derived) | `4bet_count / total * 100` |
+| 2 | Limp-Fold | Preflop right | Yes | `limp_fold BOOLEAN` | Yes |
+| 3 | 4-Bet-Fold | Preflop right + Steal | Yes | `four_bet_fold BOOLEAN` | Yes |
+| 4 | Call 4-Bet | Preflop right | Yes | `call_4bet BOOLEAN` | Yes |
+| 5 | 4-Bet-Fold (steal) | Steal | Yes | Reuse `four_bet_fold` + steal context | Yes |
+| 6 | Donk Bet Turn/River | Postflop left | No (in DB) | Already exists | Wire up |
+| 7 | vs C-Bet Fold/Call/Raise by pot type | Postflop right | Yes | `pot_type VARCHAR` + `vs_cbet_action VARCHAR` | Yes |
+| 8 | Missed C-Bet IP/OOP split | Missed C-Bet left | No | No (derive from position) | Yes |
+| 9 | Missed C-Bet → Fold | Missed C-Bet left | Yes | `missed_cbet_then_fold BOOLEAN` | Yes |
+| 10 | vs Missed C-Bet (probe bet) | Missed C-Bet right | Yes | `bet_vs_missed_cbet BOOLEAN` | Yes |
+| 11 | vs Missed C-Bet IP/OOP | Missed C-Bet right | No | Derive from position | Yes |
+| 12 | Check-Fold vs Missed C-Bet | Missed C-Bet right | Yes | `check_fold_vs_missed_cbet BOOLEAN` | Yes |
+| 13 | Steal positional (SB/BB defense) | Steal right | No | Already computed | Make positional |
+
+**Total: 13 new metrics** (7 need parser changes, 6 are derivable/wiring).
+
+#### 3.2.1 Current Stats (Built)
+
+All stats below are computed from `hand_players` flags via `stats_engine.py`.
+Positional = broken down by EP/MP/CO/BTN/SB/BB. Simple = total only.
+
+**Preflop (Positional):**
+- VPIP, PFR, Open Raise
+- 3-Bet (also IP/OOP split), 4-Bet
+- Fold to 3-Bet, Fold to 4-Bet
+- Call Open Raise, Limp
+
+**Preflop (Simple):**
+- 5-Bet, Squeeze
+
+**Steal (Positional for CO/BTN/SB):**
+- Steal Attempt
+- Fold to 3-Bet (after steal), 4-Bet (after steal)
+- vs Steal: Fold / Call / 3-Bet
+
+**Postflop (Positional):**
+- C-Bet Flop / Turn / River
+- Fold to C-Bet Flop / Turn / River
+
+**Postflop (Simple):**
+- Donk Bet Flop
+- Missed C-Bet Flop / Turn
+
+**Aggression (Simple, per street):**
+- AF Flop / Turn / River — (bets + raises) / calls
+- AFq Flop / Turn / River — (bets + raises) / (bets + raises + calls) %
+
+**Showdown (Simple):**
+- WTSD% — Went to Showdown (saw flop → showdown)
+- W$SD% — Won $ at Showdown
+- WWSF% — Won When Saw Flop
+
+**Results:**
+- Hands count, Win Rate (bb/100)
+
+**Filters (API supports):**
+- Position, Stakes, Date From/To
+
+#### 3.2.2 Missing Stats — Phase 1 (Core Gaps)
+
+Stats that all three competitors (H2N, HM3, PT4) have and OHM lacks.
+
+**New Preflop Stats:**
+| Stat | Description | DB Column Needed | Parser Change |
+|------|-------------|------------------|---------------|
+| Cold Call | Call a raise without having voluntarily put money in preflop (excludes BB calling) | `cold_call BOOLEAN` | Track calls of raises when player hasn't acted yet |
+| RFI (Raise First In) | Alias for open_raise, standard naming used by all 3 tools | Rename `open_raise` → `rfi` or alias | Display change only |
+| 3-Bet Call | Called a 3-bet (vs fold/4-bet when facing 3-bet) | `call_3bet BOOLEAN` | Track in preflop aggression state machine |
+| Fold to Squeeze | Folded when facing a squeeze | `fold_to_squeeze BOOLEAN`, `squeeze_opp BOOLEAN` | Track squeeze detection + response |
+
+**New Postflop Stats:**
+| Stat | Description | DB Column Needed | Parser Change |
+|------|-------------|------------------|---------------|
+| Check-Raise Flop/Turn/River | Check then raise on same street | `check_raise_flop/turn/river BOOLEAN`, `check_raise_flop/turn/river_opp BOOLEAN` | Track check→raise sequences per street |
+| Probe Bet Flop/Turn/River | Bet into preflop raiser when they checked | `probe_bet_flop/turn/river BOOLEAN` | Track when non-PFR bets after PFR checks |
+| Bet When Checked To | Bet when action checked to you | `bet_when_checked_to_flop/turn/river BOOLEAN` | Track check→bet by next actor |
+| Donk Bet Turn/River | Columns exist in DB but not in stats engine | Already in schema | Wire up in `stats_engine.py` |
+| Float Flop | Call flop bet in position, then bet/raise turn when checked to | `float_flop BOOLEAN` | Multi-street tracking |
+
+**New Showdown Stats:**
+| Stat | Description | Formula |
+|------|-------------|---------|
+| Saw Flop % | % of hands that saw the flop | `saw_flop / total_hands` |
+| Saw Turn % | % of hands that saw the turn | `saw_turn / total_hands` |
+| Saw River % | % of hands that saw the river | `saw_river / total_hands` |
+
+**IP/OOP Breakdowns:**
+All postflop stats (C-bet, fold to C-bet, check-raise, aggression) should have IP vs OOP splits, not just positional. Requires grouping CO/BTN/MP as IP and EP/SB/BB as OOP relative to opponent.
+
+**Stats Engine Changes:**
+- Add IP/OOP groupings to `_positional_pct`
+- Wire donk_bet_turn/river into stats
+- Add saw_flop/turn/river percentages
+- Add win rate by position (bb/100 per position)
+
+#### 3.2.3 Missing Stats — Phase 2 (Competitive Edge)
+
+Features that differentiate the best tools from basic trackers.
+
+**Bet Sizing Stats:**
+| Stat | Description | Notes |
+|------|-------------|-------|
+| Avg Bet Size (Flop/Turn/River) | Average bet as % of pot per street | Needs pot tracking in `actions` table |
+| Sizing Categories | Group bets into buckets: <33%, 33-50%, 50-66%, 66-80%, 80-100%, >100% pot | H2N has up to 256 board categories |
+| Open Raise Size | Average open raise sizing by position | From actions table |
+| 3-Bet Size | Average 3-bet sizing | From actions table |
+
+**Population Stats (H2N's Killer Feature):**
+| Feature | Description |
+|---------|-------------|
+| Player Type Classification | Auto-classify opponents: Fish (VPIP>40), Reg (VPIP 20-28, PFR 16-24), Nit (VPIP<15), LAG (PFR>25), TAG (PFR 18-24), Whale |
+| Pool Tendencies by Spot | "How does the average fish at NL50 play BTN vs 3-bet?" |
+| Multi-Player Aggregation | Select players by criteria, merge their stats into one report |
+| Reg vs Fish Segmentation | Filter all stats by opponent type |
+| Compare to Population | Show hero stats vs pool average |
+
+**Player Lookup:**
+| Feature | Description |
+|---------|-------------|
+| Search by name | Find any player in the DB |
+| Full stat profile | All stats computed for any player, not just hero |
+| Head-to-head stats | Your results specifically vs this player |
+| Player list with mini-stats | Table of all players with VPIP/PFR/3B/hands |
+| Color tags + notes UI | Manual labeling (schema exists, no UI yet) |
+
+**Advanced Filtering:**
+| Filter | Description | Implementation |
+|--------|-------------|----------------|
+| Board texture | Dry/Wet/Paired/Monotone/Broadway-heavy | Classify from `board_cards` table |
+| Stack depth | Short (<40bb) / Medium (40-100bb) / Deep (>100bb) | From `hand_players.stack_bb` |
+| Hand type | Pocket pairs, suited connectors, broadways, suited aces, etc. | From `hand_players.card1/card2` |
+| Action sequence | "Faced 3-bet", "C-bet and got raised", etc. | Query `actions` table |
+| Table size | 2-max, 6-max, 9-max | From `hands.table_size` |
+| Opponent count at flop | How many players saw the flop | Count from `hand_players.saw_flop` |
+| Pot type | Single-raised, 3-bet, 4-bet+ pot | From preflop action sequence |
+
+#### 3.2.4 Missing Stats — Phase 3 (Power User)
+
+**Custom Stat Creation:**
+- H2N approach: filter-based stat builder (most powerful, steep learning curve)
+- HM3 approach: HMQL type-ahead query language
+- OHM approach (proposed): SQL-based custom stats — users write DuckDB SQL against `hand_players`/`actions` tables, results displayed as new stat columns. Simpler to implement, leverages DuckDB's power, appeals to technical users.
+
+**Situational Views (HM3-style):**
+Purpose-built dashboards for common spots instead of raw stat tables:
+- C-Bet Situations: flop/turn/river C-bet %, success rate, sizing, by position, by board texture
+- 3-Bet Pots: 3-bet %, call 3-bet %, fold to 3-bet, by position, outcomes
+- Steal Situations: steal %, defense responses, by position
+- River Play: river bet %, check-raise river %, fold to river bet
+
+**Decision Analysis (H2N-style):**
+- Action Profit: EV of each action in a specific spot (e.g., "when you c-bet flop IP in 3-bet pots, you win X bb on average")
+- Spot Frequency: how often a situation occurs per 1000 hands
+- Next Villain Actions: what opponents do after your action
+
+**Range Diagrams (H2N-style):**
+- 13x13 hand grid showing open/call/raise ranges per position
+- Color-coded by action type
+- Requires known hole cards (showdown data or hero cards)
+
+#### 3.2.5 Stat Priorities Summary
+
+| Priority | What | Why | Effort |
+|----------|------|-----|--------|
+| P0 | Donk bet turn/river, saw flop/turn/river %, win rate by position | Data exists, just wire up | Small |
+| P0 | Check-raise (flop/turn/river) | Every competitor has it, players expect it | Medium (parser + DB + engine) |
+| P0 | Cold call, 3-bet call | Core preflop stats missing from all 3 competitors | Medium |
+| P1 | Probe bet, float, bet when checked to | Important postflop stats for study | Medium |
+| P1 | IP/OOP splits for all postflop stats | Standard in H2N/HM3, critical for analysis | Medium |
+| P1 | Player lookup (any player stats, not just hero) | Enables opponent research | Medium (new endpoint + UI) |
+| P1 | Advanced filters: stack depth, hand type, table size | Basic analysis requires these | Medium |
+| P2 | Bet sizing stats | Differentiating analysis feature | Large (pot tracking needed) |
+| P2 | Population stats / player classification | H2N's killer feature, big competitive edge | Large |
+| P2 | Board texture filtering | Deep postflop analysis | Large (board classification logic) |
+| P2 | Action sequence filtering | "Show me all hands where I faced a check-raise on flop" | Large |
+| P3 | Custom stat creation (SQL-based) | Power user feature | Large |
+| P3 | Situational views | HM3's best feature, complex UI | Large |
+| P3 | Decision analysis / EV per action | H2N Pro feature, hard to compute | Very Large |
+| P3 | Range diagrams | Requires sufficient showdown data | Large |
+
+### 3.3 Player Database
 
 **Player Identification:**
 - By screen name + site
 - Merge aliases (same player, different names)
 - Notes system (text + color tags)
 
-### 3.3 Reports & Analytics
+> Player lookup, population analysis, and advanced filtering are detailed in Section 3.2 (Phases 2-3).
 
-**My Results:**
-- Winrate by stake/position/date range
-- Graph: BB/100 over time
-- Graph: $ won over time
+### 3.4 Reports & Analytics
+
+> Graphs, leak finder, and situational views are detailed in Section 3.2 (Phases 2-3).
+
+**Graph Lines (Built):**
+- Cumulative BB won, Cumulative $ won
+- All-in EV line (BB and $)
+- Cumulative rake (BB and $)
+- Won at Showdown / Won without Showdown (BB and $)
+- BB/$ toggle, stat cards with dual units
+
+**Graph Lines (Planned):**
+- Rolling BB/100 (100-hand window) — removed during refactor, needs re-adding
+- Per-session vertical markers
+- Confidence interval band
+
+**Reports (Planned):**
+- Win rate by stake / position / date range
 - Best/worst hands breakdown
-- Leak finder: spots with negative EV
+- Session-by-session results
 
-**Opponent Lookup:**
-- Search by name
-- Full stat breakdown
-- Hand history with this player
-- Player type classification (Fish/Reg/Nit/LAG/TAG)
-
-**Population Analysis:**
-- Group players by criteria (VPIP ranges, stake, etc.)
-- Pool tendencies by spot
-- "How does the average fish play BTN vs 3bet?"
-- Compare your stats to population
-
-**Filters (apply to any report):**
-- Date range
-- Stakes
-- Position
-- Hand type (pocket pairs, suited connectors, etc.)
-- Action sequences (faced 3bet, saw flop, etc.)
-- Board texture (dry, wet, paired, etc.)
-- Stack depth (short/medium/deep)
-- Player count at table
-
-### 3.4 Hand Browser
+### 3.5 Hand Browser
 
 **List View:**
 - Sortable columns (date, stake, result, players)
@@ -195,7 +547,7 @@ Situational:
 - Find hands by criteria
 - "Show me all hands where I 3bet AK from SB and faced 4bet"
 
-### 3.5 Session Tracking
+### 3.6 Session Tracking
 
 **Session List:**
 - Date, duration, hands played
