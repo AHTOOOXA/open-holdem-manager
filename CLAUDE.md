@@ -6,7 +6,7 @@ A local poker hand history tracker (like Hand2Note / HoldemManager) for GGPoker 
 
 ## Tech Stack
 
-- **Backend**: Python 3.10+, FastAPI >=0.115, DuckDB >=1.1, Pydantic >=2.0, python-multipart
+- **Backend**: Python 3.12+, FastAPI >=0.115, DuckDB >=1.1, Pydantic >=2.0, python-multipart
 - **Frontend**: React 19, TypeScript 5.9, Vite 7, TailwindCSS v4 (@theme syntax), Recharts 3, React Router 7
 - **DB**: DuckDB file-based at `data/poker.duckdb` — schema auto-created on first startup
 - **No auth, no cloud** — fully local, single-user
