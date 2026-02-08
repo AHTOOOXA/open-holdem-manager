@@ -1,7 +1,7 @@
 from fastapi import APIRouter, UploadFile, File
 from fastapi.responses import StreamingResponse
 from app.models import ImportResult
-from app.db import get_db
+from app.db import get_db, db_lock
 from app.parsers.ggpoker import parse_hand_history, reset_parser_cache, finalize_import
 import traceback
 import zipfile
@@ -263,13 +263,14 @@ async def rebuild_hands():
 
 @router.post("/import/clear")
 async def clear_hands():
-    db = get_db()
-    db.execute("DELETE FROM actions")
-    db.execute("DELETE FROM board_cards")
-    db.execute("DELETE FROM hand_players")
-    db.execute("DELETE FROM hands")
-    db.execute("DELETE FROM players")
-    reset_parser_cache()
+    with db_lock():
+        db = get_db()
+        db.execute("DELETE FROM actions")
+        db.execute("DELETE FROM board_cards")
+        db.execute("DELETE FROM hand_players")
+        db.execute("DELETE FROM hands")
+        db.execute("DELETE FROM players")
+        reset_parser_cache()
     return {"status": "ok"}
 
 

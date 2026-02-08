@@ -1,19 +1,50 @@
+import atexit
 import duckdb
 import os
+import time
+import threading
 from pathlib import Path
 
 DB_PATH = Path(__file__).parent.parent.parent / "data" / "poker.duckdb"
 
 _conn: duckdb.DuckDBPyConnection | None = None
+_lock = threading.Lock()
 
 
 def get_db() -> duckdb.DuckDBPyConnection:
     global _conn
     if _conn is None:
-        DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-        _conn = duckdb.connect(str(DB_PATH))
-        init_schema(_conn)
+        with _lock:
+            if _conn is None:
+                DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+                for attempt in range(10):
+                    try:
+                        _conn = duckdb.connect(str(DB_PATH))
+                        break
+                    except duckdb.IOException:
+                        if attempt < 9:
+                            time.sleep(1)
+                        else:
+                            raise
+                init_schema(_conn)
+                atexit.register(close_db)
     return _conn
+
+
+def db_lock() -> threading.Lock:
+    """Return the lock that must be held during any DB operation."""
+    return _lock
+
+
+def close_db():
+    global _conn
+    with _lock:
+        if _conn is not None:
+            try:
+                _conn.close()
+            except Exception:
+                pass
+            _conn = None
 
 
 def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
@@ -83,6 +114,7 @@ def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
             fold_to_3bet BOOLEAN,
             fold_to_4bet BOOLEAN,
             open_raise BOOLEAN DEFAULT FALSE,
+            open_raise_opp BOOLEAN DEFAULT FALSE,
             call_open_raise BOOLEAN DEFAULT FALSE,
             limp BOOLEAN DEFAULT FALSE,
             squeeze BOOLEAN DEFAULT FALSE,
@@ -173,10 +205,14 @@ def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
     """)
 
     # Migrations for existing databases
-    try:
-        conn.execute("ALTER TABLE hand_players ADD COLUMN all_in_ev_bb DECIMAL DEFAULT 0")
-    except duckdb.CatalogException:
-        pass
+    for col, default in [
+        ("all_in_ev_bb", "DECIMAL DEFAULT 0"),
+        ("open_raise_opp", "BOOLEAN DEFAULT FALSE"),
+    ]:
+        try:
+            conn.execute(f"ALTER TABLE hand_players ADD COLUMN {col} {default}")
+        except duckdb.CatalogException:
+            pass
 
     # Indexes
     conn.execute("CREATE INDEX IF NOT EXISTS idx_hands_played_at ON hands(played_at)")

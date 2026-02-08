@@ -601,6 +601,7 @@ def parse_hand_history(hand_text: str, db: duckdb.DuckDBPyConnection) -> str:
             "fold_to_3bet": None,
             "fold_to_4bet": None,
             "open_raise": False,
+            "open_raise_opp": False,
             "call_open_raise": False,
             "limp": False,
             "squeeze": False,
@@ -665,6 +666,10 @@ def parse_hand_history(hand_text: str, db: duckdb.DuckDBPyConnection) -> str:
         uname = a["username"]
         action = a["action"]
         position = username_to_info[uname]["position"]
+
+        # Mark open raise opportunity: pot is unopened (no raise yet)
+        if raise_count == 0:
+            player_stats[uname]["open_raise_opp"] = True
 
         if action == "fold":
             folded_preflop.add(uname)

@@ -64,7 +64,7 @@ def compute_hero_stats(
     # Positional stats
     stats.vpip = _positional_pct(data, "vpip", None)
     stats.pfr = _positional_pct(data, "pfr", None)
-    stats.open_raise = _positional_pct(data, "open_raise", None)
+    stats.open_raise = _positional_pct(data, "open_raise", "open_raise_opp")
     stats.three_bet = _positional_pct(data, "three_bet", "three_bet_opp")
     stats.four_bet = _positional_pct(data, "four_bet", "four_bet_opp")
     stats.fold_to_3bet = _positional_pct(data, "fold_to_3bet", "three_bet_opp",

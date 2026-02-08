@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Query
-from app.db import get_db
+from app.db import get_db, db_lock
 from app.models import GraphPoint
 
 router = APIRouter()
@@ -11,46 +11,48 @@ def get_graph(
     date_from: str | None = Query(None),
     date_to: str | None = Query(None),
 ):
-    db = get_db()
-    hero_username = db.execute(
-        "SELECT value FROM settings WHERE key = 'hero_username'"
-    ).fetchone()[0]
+    with db_lock():
+        db = get_db()
+        row = db.execute(
+            "SELECT value FROM settings WHERE key = 'hero_username'"
+        ).fetchone()
+        hero_username = row[0] if row else "Hero"
 
-    player = db.execute(
-        "SELECT id FROM players WHERE username = ? AND site_id = 1",
-        [hero_username],
-    ).fetchone()
-    if not player:
-        return []
+        player = db.execute(
+            "SELECT id FROM players WHERE username = ? AND site_id = 1",
+            [hero_username],
+        ).fetchone()
+        if not player:
+            return []
 
-    player_id = player[0]
+        player_id = player[0]
 
-    query = """
-        SELECT hp.won_bb, COALESCE(hp.all_in_ev_bb, hp.won_bb),
-               COALESCE(hp.rake_bb, 0), h.played_at,
-               COALESCE(hp.won, 0),
-               COALESCE(hp.rake, 0),
-               COALESCE(hp.all_in_ev_bb, hp.won_bb) * h.bb_amount,
-               COALESCE(hp.went_to_showdown, FALSE)
-        FROM hand_players hp
-        JOIN hands h ON hp.hand_id = h.id
-        WHERE hp.player_id = ?
-    """
-    params: list = [player_id]
+        query = """
+            SELECT hp.won_bb, COALESCE(hp.all_in_ev_bb, hp.won_bb),
+                   COALESCE(hp.rake_bb, 0), h.played_at,
+                   COALESCE(hp.won, 0),
+                   COALESCE(hp.rake, 0),
+                   COALESCE(hp.all_in_ev_bb, hp.won_bb) * h.bb_amount,
+                   COALESCE(hp.went_to_showdown, FALSE)
+            FROM hand_players hp
+            JOIN hands h ON hp.hand_id = h.id
+            WHERE hp.player_id = ?
+        """
+        params: list = [player_id]
 
-    if stakes:
-        query += " AND h.stakes = ?"
-        params.append(stakes)
-    if date_from:
-        query += " AND h.played_at >= ?"
-        params.append(date_from)
-    if date_to:
-        query += " AND h.played_at <= ?"
-        params.append(date_to)
+        if stakes:
+            query += " AND h.stakes = ?"
+            params.append(stakes)
+        if date_from:
+            query += " AND h.played_at >= ?"
+            params.append(date_from)
+        if date_to:
+            query += " AND h.played_at <= ?"
+            params.append(date_to)
 
-    query += " ORDER BY h.played_at ASC, h.id ASC"
+        query += " ORDER BY h.played_at ASC, h.id ASC"
 
-    rows = db.execute(query, params).fetchall()
+        rows = db.execute(query, params).fetchall()
 
     points: list[GraphPoint] = []
     cum_bb = 0.0
