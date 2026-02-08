@@ -275,3 +275,37 @@ class TestRunItTwice:
             "SELECT id FROM hands WHERE id = ?", [hand_id]
         ).fetchone()
         assert row is not None
+
+
+class TestOpenRaiseOpp:
+    """Test open_raise_opp flag (RFI opportunity)."""
+
+    def test_open_raise_opp_basic(self, db):
+        """Players acting before first raise get open_raise_opp=True."""
+        text = (FIXTURES / "ggpoker_sample.txt").read_text()
+        first_hand = text.split("\n\n\n")[0]
+        hand_id = parse_hand_history(first_hand, db)
+
+        # Hand: 6-max, Hero is BTN (seat 1)
+        # Preflop action order: Player4 (EP) folds, Player5 (MP) raises,
+        # Player6 (CO) folds, Hero (BTN) raises, Player2 (SB) folds, Player3 (BB) folds
+        #
+        # Before first raise (raise_count=0): Player4 acts → opp=True
+        # Player5 raises (raise_count still 0 when they act) → opp=True, open_raise=True
+        # After first raise (raise_count=1): Player6, Hero, Player2, Player3 → opp=False
+
+        p4 = _get_player_stats(db, hand_id, "Player4")
+        assert p4["open_raise_opp"] is True
+        assert p4["open_raise"] is False
+
+        p5 = _get_player_stats(db, hand_id, "Player5")
+        assert p5["open_raise_opp"] is True
+        assert p5["open_raise"] is True
+
+        p6 = _get_player_stats(db, hand_id, "Player6")
+        assert p6["open_raise_opp"] is False
+
+        hero = _get_player_stats(db, hand_id, "Hero")
+        assert hero["open_raise_opp"] is False
+        # Hero 3-bet, not an open raise
+        assert hero["open_raise"] is False
