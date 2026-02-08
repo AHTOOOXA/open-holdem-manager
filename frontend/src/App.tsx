@@ -3,10 +3,12 @@ import UploadPage from './pages/UploadPage';
 import StatsPage from './pages/StatsPage';
 import GraphPage from './pages/GraphPage';
 import HandsPage from './pages/HandsPage';
+import RangePage from './pages/RangePage';
 
 const navItems = [
   { to: '/', label: 'Upload' },
   { to: '/stats', label: 'Stats' },
+  { to: '/range', label: 'Range' },
   { to: '/graph', label: 'Results' },
   { to: '/hands', label: 'Hands' },
 ];
@@ -37,6 +39,7 @@ export default function App() {
             <Route path="/" element={<UploadPage />} />
             <Route path="/stats" element={<StatsPage />} />
             <Route path="/graph" element={<GraphPage />} />
+            <Route path="/range" element={<RangePage />} />
             <Route path="/hands" element={<HandsPage />} />
           </Routes>
         </main>
