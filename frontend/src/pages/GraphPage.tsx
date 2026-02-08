@@ -17,6 +17,7 @@ import {
 } from '@/lib/api';
 import type {
   GraphPoint,
+  VarianceStats,
   FilterOptions,
   ResultsBreakdown,
   StakeBreakdown,
@@ -74,7 +75,7 @@ function StatCard({
   );
 }
 
-type LineToggle = 'ev' | 'showdown' | 'rake';
+type LineToggle = 'ev' | 'showdown' | 'rake' | 'ci' | 'sessions';
 type DatePreset = 'today' | 'week' | 'month' | 'all';
 
 const LINE_COLORS = {
@@ -83,6 +84,8 @@ const LINE_COLORS = {
   showdown: '#22c55e',
   nonshowdown: '#ef4444',
   rake: '#f97316',
+  ci: '#818cf8',
+  session: '#555570',
 } as const;
 
 function getPresetDates(preset: DatePreset): { date_from?: string; date_to?: string } {
@@ -112,6 +115,8 @@ function formatMonth(ym: string): string {
 export default function GraphPage() {
   // Data
   const [data, setData] = useState<GraphPoint[]>([]);
+  const [sessionStarts, setSessionStarts] = useState<number[]>([]);
+  const [variance, setVariance] = useState<VarianceStats | null>(null);
   const [filterOpts, setFilterOpts] = useState<FilterOptions | null>(null);
   const [breakdown, setBreakdown] = useState<ResultsBreakdown | null>(null);
   const [loading, setLoading] = useState(true);
@@ -125,7 +130,7 @@ export default function GraphPage() {
 
   // Display toggles
   const [unit, setUnit] = useState<'bb' | 'usd'>('bb');
-  const [lines, setLines] = useState<Set<LineToggle>>(new Set(['ev', 'showdown']));
+  const [lines, setLines] = useState<Set<LineToggle>>(new Set(['ev', 'showdown', 'sessions']));
 
   const toggle = (line: LineToggle) => {
     setLines(prev => {
@@ -163,8 +168,10 @@ export default function GraphPage() {
     Promise.all([
       getGraphData(filterParams),
       getResultsBreakdown(filterParams),
-    ]).then(([graphData, breakdownData]) => {
-      setData(graphData);
+    ]).then(([graphResp, breakdownData]) => {
+      setData(graphResp.points);
+      setSessionStarts(graphResp.session_starts);
+      setVariance(graphResp.variance);
       setBreakdown(breakdownData);
     }).finally(() => setLoading(false));
   }, [filterParams]);
@@ -204,14 +211,30 @@ export default function GraphPage() {
     return sampled;
   }, [data]);
 
-  const chartDataWithNegRake = useMemo(() => {
-    if (!lines.has('rake')) return chartData;
-    return chartData.map(d => ({
-      ...d,
-      neg_rake_bb: -d.cumulative_rake_bb,
-      neg_rake_usd: -d.cumulative_rake_usd,
-    }));
-  }, [chartData, lines]);
+  const chartDataEnriched = useMemo(() => {
+    const addRake = lines.has('rake');
+    const addCI = lines.has('ci') && variance;
+    if (!addRake && !addCI) return chartData;
+    const mean = variance ? variance.winrate_bb100 / 100 : 0;
+    const sd = variance ? variance.sd_bb : 0;
+    return chartData.map(d => {
+      const i = d.hand_number;
+      const sqrtI = Math.sqrt(i);
+      return {
+        ...d,
+        ...(addRake ? {
+          neg_rake_bb: -d.cumulative_rake_bb,
+          neg_rake_usd: -d.cumulative_rake_usd,
+        } : {}),
+        ...(addCI ? {
+          ci_range: [
+            Math.round((mean * i - 1.96 * sd * sqrtI) * 100) / 100,
+            Math.round((mean * i + 1.96 * sd * sqrtI) * 100) / 100,
+          ],
+        } : {}),
+      };
+    });
+  }, [chartData, lines, variance]);
 
   // Helpers
   const clr = (v: number) => v >= 0 ? 'text-green' : 'text-red';
@@ -301,6 +324,7 @@ export default function GraphPage() {
     [sdKey]: 'Showdown',
     [nsdKey]: 'Non-Showdown',
     [negRakeKey]: 'Rake',
+    ci_range: '95% CI',
   };
 
   const filterBarJSX = (
@@ -381,6 +405,8 @@ export default function GraphPage() {
         {toggleBtn('ev', 'EV', LINE_COLORS.ev, hasEVData)}
         {toggleBtn('showdown', 'SD', LINE_COLORS.showdown)}
         {toggleBtn('rake', 'Rake', LINE_COLORS.rake)}
+        {toggleBtn('ci', 'CI', LINE_COLORS.ci, !!variance)}
+        {toggleBtn('sessions', 'Sessions', LINE_COLORS.session, sessionStarts.length > 1)}
       </div>
     </div>
   );
@@ -426,9 +452,21 @@ export default function GraphPage() {
                     Rake
                   </span>
                 )}
+                {lines.has('ci') && variance && (
+                  <span className="flex items-center gap-1.5">
+                    <span className="inline-block w-4 h-2 rounded opacity-30" style={{ background: LINE_COLORS.ci }} />
+                    95% CI
+                  </span>
+                )}
+                {lines.has('sessions') && sessionStarts.length > 1 && (
+                  <span className="flex items-center gap-1.5">
+                    <span className="inline-block w-4 h-0.5 rounded" style={{ background: LINE_COLORS.session, borderTop: '1px dashed #555570' }} />
+                    Sessions
+                  </span>
+                )}
               </div>
               <ResponsiveContainer width="100%" height={400}>
-                <ComposedChart data={lines.has('rake') ? chartDataWithNegRake : chartData} margin={{ top: 4, right: 16, bottom: 4, left: 8 }}>
+                <ComposedChart data={chartDataEnriched} margin={{ top: 4, right: 16, bottom: 4, left: 8 }}>
                   <defs>
                     <linearGradient id="gradientMain" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="0%" stopColor={LINE_COLORS.main} stopOpacity={0.25} />
@@ -464,7 +502,12 @@ export default function GraphPage() {
                       padding: '8px 12px',
                       fontSize: '13px',
                     }}
-                    formatter={(value: number, name: string) => {
+                    formatter={(value: number | number[], name: string) => {
+                      if (Array.isArray(value)) {
+                        const prefix = unit === 'usd' ? '$' : '';
+                        const suffix = unit === 'bb' ? ' BB' : '';
+                        return [`${prefix}${value[0].toFixed(1)}${suffix} to ${prefix}${value[1].toFixed(1)}${suffix}`, tooltipNames[name] ?? name];
+                      }
                       const prefix = unit === 'usd' ? '$' : '';
                       const suffix = unit === 'bb' ? ' BB' : '';
                       const formatted = `${prefix}${value.toFixed(2)}${suffix}`;
@@ -473,6 +516,30 @@ export default function GraphPage() {
                     labelFormatter={(label) => `Hand #${Number(label).toLocaleString()}`}
                   />
                   <ReferenceLine y={0} stroke="#444460" strokeDasharray="4 4" />
+                  {lines.has('sessions') && sessionStarts.slice(1).map(handNum => (
+                    <ReferenceLine
+                      key={`session-${handNum}`}
+                      x={handNum}
+                      stroke={LINE_COLORS.session}
+                      strokeDasharray="4 4"
+                      strokeWidth={1}
+                    />
+                  ))}
+                  {lines.has('ci') && variance && (
+                    <Area
+                      type="monotone"
+                      dataKey="ci_range"
+                      name="ci_range"
+                      stroke={LINE_COLORS.ci}
+                      strokeWidth={0.5}
+                      strokeOpacity={0.3}
+                      fill={LINE_COLORS.ci}
+                      fillOpacity={0.08}
+                      dot={false}
+                      isAnimationActive={false}
+                      connectNulls
+                    />
+                  )}
                   <Area
                     type="monotone"
                     dataKey={mainKey}
@@ -627,6 +694,36 @@ export default function GraphPage() {
               border={brd(nsdBB)}
             />
           </div>
+
+          {/* Variance Stats */}
+          {variance && (
+            <div className="grid gap-3 grid-cols-4">
+              <StatCard
+                label="Std Dev bb/100"
+                bb={variance.sd_bb100.toFixed(1)}
+                usd=""
+                bbColor="text-text"
+              />
+              <StatCard
+                label="95% CI"
+                bb={`${variance.ci_lower_bb100.toFixed(2)} to ${variance.ci_upper_bb100.toFixed(2)} bb/100`}
+                usd=""
+                bbColor={variance.ci_lower_bb100 > 0 ? 'text-green' : variance.ci_upper_bb100 < 0 ? 'text-red' : 'text-text-muted'}
+              />
+              <StatCard
+                label="Sessions"
+                bb={String(sessionStarts.length)}
+                usd={sessionStarts.length > 0 ? `~${Math.round(n / sessionStarts.length)} hands/session` : ''}
+                bbColor="text-text"
+              />
+              <StatCard
+                label="Std Dev per hand"
+                bb={`${variance.sd_bb.toFixed(2)} BB`}
+                usd=""
+                bbColor="text-text"
+              />
+            </div>
+          )}
 
           {/* Breakdown by Stakes */}
           {breakdown && breakdown.by_stakes.length > 1 && !stakes && (

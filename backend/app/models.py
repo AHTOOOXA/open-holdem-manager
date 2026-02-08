@@ -32,6 +32,21 @@ class GraphPoint(BaseModel):
     cumulative_nonshowdown_usd: float = 0.0
 
 
+class VarianceStats(BaseModel):
+    sd_bb: float  # per-hand standard deviation
+    sd_bb100: float  # SD scaled to bb/100
+    winrate_bb100: float
+    ci_lower_bb100: float  # 95% CI lower bound
+    ci_upper_bb100: float  # 95% CI upper bound
+    n: int
+
+
+class GraphResponse(BaseModel):
+    points: list[GraphPoint]
+    session_starts: list[int]
+    variance: VarianceStats | None = None
+
+
 class StatValue(BaseModel):
     value: float | None = None
     sample: int = 0

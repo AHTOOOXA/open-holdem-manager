@@ -1,11 +1,16 @@
 from fastapi import APIRouter, Query
 from app.db import get_db, db_lock
-from app.models import GraphPoint, FilterOptions, StakeBreakdown, MonthBreakdown, PositionBreakdown, ResultsBreakdown
+from app.models import GraphPoint, GraphResponse, VarianceStats, FilterOptions, StakeBreakdown, MonthBreakdown, PositionBreakdown, ResultsBreakdown
+import math
+from datetime import datetime, timedelta
 
 router = APIRouter()
 
 
-@router.get("/reports/graph", response_model=list[GraphPoint])
+SESSION_GAP = timedelta(minutes=30)
+
+
+@router.get("/reports/graph", response_model=GraphResponse)
 def get_graph(
     stakes: str | None = Query(None),
     date_from: str | None = Query(None),
@@ -24,7 +29,7 @@ def get_graph(
             [hero_username],
         ).fetchone()
         if not player:
-            return []
+            return GraphResponse(points=[], session_starts=[], variance=None)
 
         player_id = player[0]
 
@@ -61,6 +66,10 @@ def get_graph(
             rows = rows[-last_n:]
 
     points: list[GraphPoint] = []
+    won_bb_values: list[float] = []
+    session_starts: list[int] = []
+    prev_played_at: datetime | None = None
+
     cum_bb = 0.0
     cum_ev_bb = 0.0
     cum_rake_bb = 0.0
@@ -74,9 +83,19 @@ def get_graph(
     cum_sd_usd = 0.0
     cum_nsd_usd = 0.0
 
-    for i, (won_bb, ev_bb, rake_bb, _, won_usd, rake_usd, ev_usd, went_sd, jp_bb, jp_usd) in enumerate(rows):
+    for i, (won_bb, ev_bb, rake_bb, played_at, won_usd, rake_usd, ev_usd, went_sd, jp_bb, jp_usd) in enumerate(rows):
         won_bb_val = float(won_bb or 0)
         won_usd_val = float(won_usd or 0)
+        won_bb_values.append(won_bb_val)
+
+        # Session detection
+        if isinstance(played_at, str):
+            played_at = datetime.fromisoformat(played_at)
+        if i == 0:
+            session_starts.append(1)
+        elif prev_played_at and (played_at - prev_played_at) > SESSION_GAP:
+            session_starts.append(i + 1)
+        prev_played_at = played_at
 
         cum_bb += won_bb_val
         cum_ev_bb += float(ev_bb or 0)
@@ -110,7 +129,26 @@ def get_graph(
             cumulative_nonshowdown_usd=round(cum_nsd_usd, 2),
         ))
 
-    return points
+    # Compute variance stats
+    variance: VarianceStats | None = None
+    n = len(won_bb_values)
+    if n >= 2:
+        mean = sum(won_bb_values) / n
+        sq_diffs = sum((x - mean) ** 2 for x in won_bb_values)
+        sd_per_hand = math.sqrt(sq_diffs / (n - 1))
+        sd_bb100 = round(sd_per_hand * 10, 2)
+        winrate_bb100 = round(mean * 100, 2)
+        se_bb100 = sd_per_hand * 100 / math.sqrt(n)
+        variance = VarianceStats(
+            sd_bb=round(sd_per_hand, 4),
+            sd_bb100=sd_bb100,
+            winrate_bb100=winrate_bb100,
+            ci_lower_bb100=round(winrate_bb100 - 1.96 * se_bb100, 2),
+            ci_upper_bb100=round(winrate_bb100 + 1.96 * se_bb100, 2),
+            n=n,
+        )
+
+    return GraphResponse(points=points, session_starts=session_starts, variance=variance)
 
 
 def _get_hero_player_id(db):

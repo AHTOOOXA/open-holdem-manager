@@ -1,12 +1,48 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { getHands, getTags } from '@/lib/api';
-import type { HandListResponse, TagCount } from '@/lib/api';
+import type { HandListResponse, TagCount, ActionItem } from '@/lib/api';
 import HandFilters from '@/components/hands/HandFilters';
 import type { FilterState } from '@/components/hands/HandFilters';
-import { CardPair, BoardDisplay } from '@/components/hands/CardDisplay';
+import { CardBoxPair, CardBoxRow, CardBox } from '@/components/hands/CardDisplay';
 import TagPill from '@/components/hands/TagPill';
 import Pagination from '@/components/hands/Pagination';
 import HandDrawer from '@/components/hands/HandDrawer';
+
+// ── Action display (H2N style) ──────────────────────────────────────
+
+const ACTION_COLORS: Record<string, string> = {
+  R: 'text-yellow',
+  B: 'text-blue',
+  C: 'text-text',
+  X: 'text-text-muted',
+  F: 'text-text-muted',
+};
+
+function Actions({ items, trimFolds }: { items: ActionItem[]; trimFolds?: boolean }) {
+  if (!items || items.length === 0) return null;
+  let display = items;
+  if (trimFolds) {
+    const firstNonFold = items.findIndex((a) => a.a !== 'F');
+    if (firstNonFold > 0) display = items.slice(firstNonFold);
+  }
+  if (display.length === 0) return null;
+  return (
+    <span className="font-mono text-[15px] whitespace-nowrap">
+      {display.map((a, i) => (
+        <span key={i}>
+          {i > 0 && ' '}
+          <span
+            className={`${ACTION_COLORS[a.a] || 'text-text'} ${a.h ? 'border-b-2 border-dashed border-current pb-[1px]' : ''}`}
+          >
+            {a.a}{a.v != null ? a.v : ''}
+          </span>
+        </span>
+      ))}
+    </span>
+  );
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────
 
 function formatStakes(bbAmount: number): string {
   const nl = Math.round(bbAmount * 100);
@@ -14,12 +50,20 @@ function formatStakes(bbAmount: number): string {
 }
 
 function formatDate(iso: string): string {
+  const now = new Date();
   const d = new Date(iso);
-  const month = d.toLocaleString('en', { month: 'short' });
-  const day = d.getDate();
-  const hours = String(d.getHours()).padStart(2, '0');
-  const mins = String(d.getMinutes()).padStart(2, '0');
-  return `${month} ${day} ${hours}:${mins}`;
+  const diffMs = now.getTime() - d.getTime();
+  const mins = Math.floor(diffMs / 60000);
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const sameYear = d.getFullYear() === now.getFullYear();
+  if (sameYear) {
+    return `${months[d.getMonth()]} ${d.getDate()}`;
+  }
+  return `${months[d.getMonth()]} ${d.getDate()} '${String(d.getFullYear()).slice(-2)}`;
 }
 
 function getDateRange(preset: string, dateFrom: string, dateTo: string): { from?: string; to?: string } {
@@ -42,14 +86,7 @@ function getDateRange(preset: string, dateFrom: string, dateTo: string): { from?
   }
 }
 
-const POS_COLORS: Record<string, string> = {
-  BTN: 'text-green',
-  CO: 'text-green',
-  MP: 'text-yellow',
-  EP: 'text-yellow',
-  SB: 'text-text-muted',
-  BB: 'text-text-muted',
-};
+// ── Main component ──────────────────────────────────────────────────
 
 export default function HandsPage() {
   const [data, setData] = useState<HandListResponse | null>(null);
@@ -71,6 +108,7 @@ export default function HandsPage() {
   const [distinctStakes, setDistinctStakes] = useState<string[]>([]);
   const [allTags, setAllTags] = useState<TagCount[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [showLegend, setShowLegend] = useState(false);
 
   const searchTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -85,10 +123,7 @@ export default function HandsPage() {
   }, [filters.search]);
 
   const loadTags = useCallback(async () => {
-    try {
-      const tags = await getTags();
-      setAllTags(tags);
-    } catch { /* ignore */ }
+    try { setAllTags(await getTags()); } catch { /* ignore */ }
   }, []);
 
   const loadData = useCallback(async () => {
@@ -109,7 +144,6 @@ export default function HandsPage() {
         search: debouncedSearch || undefined,
       });
       setData(resp);
-
     } catch (err) {
       console.error('Failed to load hands:', err);
     } finally {
@@ -117,16 +151,12 @@ export default function HandsPage() {
     }
   }, [page, perPage, sort, order, filters.position, filters.stakes, filters.result, filters.tags, filters.date, filters.dateFrom, filters.dateTo, debouncedSearch]);
 
-  useEffect(() => {
-    loadData();
-    loadTags();
-  }, [loadData, loadTags]);
+  useEffect(() => { loadData(); loadTags(); }, [loadData, loadTags]);
 
   // Load distinct stakes on mount
   useEffect(() => {
     getHands({ per_page: 200, sort: 'played_at', order: 'desc' }).then((resp) => {
-      const stakes = [...new Set(resp.hands.map((h) => h.stakes))].sort();
-      setDistinctStakes(stakes);
+      setDistinctStakes([...new Set(resp.hands.map((h) => h.stakes))].sort());
     }).catch(() => {});
   }, []);
 
@@ -140,14 +170,11 @@ export default function HandsPage() {
     setPage(1);
   };
 
-  const handleFilterChange = (f: FilterState) => {
-    setFilters(f);
-    setPage(1);
-  };
+  const handleFilterChange = (f: FilterState) => { setFilters(f); setPage(1); };
 
   const sortArrow = (col: string) => {
     if (sort !== col) return '';
-    return order === 'desc' ? ' \u25BC' : ' \u25B2';
+    return order === 'desc' ? ' \u2193' : ' \u2191';
   };
 
   const hands = data?.hands ?? [];
@@ -160,17 +187,42 @@ export default function HandsPage() {
     if (selectedIndex >= 0 && selectedIndex < hands.length - 1) setSelectedId(hands[selectedIndex + 1].id);
   };
 
+  const hasFilters = filters.position.length > 0 || filters.stakes.length > 0 ||
+    filters.result !== '' || filters.tags.length > 0 || filters.date !== '' || debouncedSearch !== '';
+
   return (
-    <div className="max-w-7xl mx-auto px-2">
+    <div className="max-w-[1600px] mx-auto px-2">
       {/* Header */}
-      <div className="flex items-center justify-between mb-3">
-        <h1 className="text-lg font-bold text-text">Hand Browser</h1>
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-3">
+          <h1 className="text-[20px] font-bold text-text">Hands</h1>
+          <button
+            onClick={() => setShowLegend(!showLegend)}
+            className="text-[12px] text-text-muted hover:text-text w-[18px] h-[18px] rounded-full border border-border flex items-center justify-center"
+            title="Action legend"
+          >
+            ?
+          </button>
+        </div>
         {data && (
-          <span className="text-[13px] text-text-muted">
+          <span className="text-[15px] text-text-muted">
             {data.total.toLocaleString()} hands
           </span>
         )}
       </div>
+
+      {/* Legend tooltip */}
+      {showLegend && (
+        <div className="mb-2 px-3 py-2 bg-surface rounded border border-border text-[14px] font-mono flex items-center gap-5">
+          <span><span className="text-yellow font-bold">R</span> Raise</span>
+          <span><span className="text-blue font-bold">B</span> Bet</span>
+          <span><span className="font-bold text-text">C</span> Call</span>
+          <span className="text-text-muted">X Check</span>
+          <span className="text-text-muted">F Fold</span>
+          <span className="text-text-muted/40">|</span>
+          <span className="text-text-muted"><span className="border-b-2 border-dashed border-text-muted pb-[1px]">dashed underline</span> = hero action</span>
+        </div>
+      )}
 
       {/* Filters */}
       <div className="mb-3">
@@ -187,12 +239,10 @@ export default function HandsPage() {
         <p className="text-text-muted text-sm py-8 text-center">Loading hands...</p>
       ) : !data || data.total === 0 ? (
         <div className="text-center py-12">
-          <p className="text-text-muted text-lg">
-            {data && data.total === 0 && (filters.position.length > 0 || filters.stakes.length > 0 || filters.result || filters.tags.length > 0 || filters.date || debouncedSearch)
-              ? 'No hands match your filters.'
-              : 'No hands yet. Import hand histories to get started.'}
+          <p className="text-text-muted">
+            {hasFilters ? 'No hands match your filters.' : 'No hands yet. Import hand histories to get started.'}
           </p>
-          {data && data.total === 0 && (filters.position.length > 0 || filters.stakes.length > 0 || filters.result || filters.tags.length > 0 || filters.date || debouncedSearch) && (
+          {hasFilters && (
             <button
               onClick={() => handleFilterChange({ position: [], stakes: [], result: '', tags: [], date: '', dateFrom: '', dateTo: '', search: '' })}
               className="mt-2 text-sm text-primary hover:text-primary-hover"
@@ -203,85 +253,134 @@ export default function HandsPage() {
         </div>
       ) : (
         <>
-          <div className="border border-border rounded overflow-hidden">
-            <table className="w-full">
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse">
               <thead>
-                <tr className="bg-surface border-b border-border text-[11px] text-text-muted uppercase">
-                  <th
-                    className="py-1.5 px-2 text-left cursor-pointer hover:text-text select-none"
-                    onClick={() => handleSort('played_at')}
-                  >
-                    Date/Time{sortArrow('played_at')}
-                  </th>
-                  <th
-                    className="py-1.5 px-2 text-left cursor-pointer hover:text-text select-none"
-                    onClick={() => handleSort('stakes')}
-                  >
+                <tr className="text-[13px] text-text-muted border-b border-border uppercase tracking-wide">
+                  <th className="py-2 px-2 text-left font-semibold">Preflop</th>
+                  <th className="py-2 px-2 text-left font-semibold">Actions</th>
+                  <th className="py-2 pl-4 pr-2 text-left font-semibold">Flop</th>
+                  <th className="py-2 px-1 text-center font-semibold">Pot</th>
+                  <th className="py-2 px-2 text-left font-semibold">Actions</th>
+                  <th className="py-2 pl-4 pr-2 text-left font-semibold">Turn</th>
+                  <th className="py-2 px-1 text-center font-semibold">Pot</th>
+                  <th className="py-2 px-2 text-left font-semibold">Actions</th>
+                  <th className="py-2 pl-4 pr-2 text-left font-semibold">River</th>
+                  <th className="py-2 px-1 text-center font-semibold">Pot</th>
+                  <th className="py-2 px-2 text-left font-semibold">Actions</th>
+                  <th className="py-2 pl-4 pr-2 text-left font-semibold cursor-pointer hover:text-text select-none" onClick={() => handleSort('stakes')}>
                     Stakes{sortArrow('stakes')}
                   </th>
-                  <th
-                    className="py-1.5 px-2 text-left cursor-pointer hover:text-text select-none"
-                    onClick={() => handleSort('position')}
-                  >
-                    Pos{sortArrow('position')}
+                  <th className="py-2 px-2 text-right font-semibold cursor-pointer hover:text-text select-none" onClick={() => handleSort('won_bb')}>
+                    Won{sortArrow('won_bb')}
                   </th>
-                  <th className="py-1.5 px-2 text-left">Cards</th>
-                  <th className="py-1.5 px-2 text-left">Board</th>
-                  <th
-                    className="py-1.5 px-2 text-right cursor-pointer hover:text-text select-none"
-                    onClick={() => handleSort('won_bb')}
-                  >
-                    BB Won{sortArrow('won_bb')}
+                  <th className="py-2 px-2 text-right font-semibold">EV Diff.</th>
+                  <th className="py-2 px-2 text-right font-semibold cursor-pointer hover:text-text select-none" onClick={() => handleSort('played_at')}>
+                    Date{sortArrow('played_at')}
                   </th>
-                  <th className="py-1.5 px-2 text-left">Tags</th>
+                  <th className="py-2 px-2 text-left font-semibold">Tags</th>
                 </tr>
               </thead>
               <tbody>
-                {hands.map((h) => (
-                  <tr
-                    key={h.id}
-                    onClick={() => setSelectedId(h.id)}
-                    className={`border-b border-border/30 cursor-pointer transition-colors text-[13px] ${
-                      selectedId === h.id ? 'bg-primary/10' : 'hover:bg-surface-hover'
-                    }`}
-                  >
-                    <td className="py-1 px-2 font-mono text-text-muted whitespace-nowrap">
-                      {formatDate(h.played_at)}
-                    </td>
-                    <td className="py-1 px-2 font-mono">
-                      {formatStakes(h.bb_amount)}
-                    </td>
-                    <td className={`py-1 px-2 font-mono ${POS_COLORS[h.position] || 'text-text'}`}>
-                      {h.position}
-                    </td>
-                    <td className="py-1 px-2">
-                      <CardPair card1={h.card1} card2={h.card2} />
-                    </td>
-                    <td className="py-1 px-2">
-                      <BoardDisplay cards={h.saw_flop ? h.board.slice(0, 3) : []} />
-                    </td>
-                    <td className={`py-1 px-2 text-right font-mono font-semibold ${
-                      h.won_bb > 0 ? 'text-green' : h.won_bb < 0 ? 'text-red' : 'text-text-muted'
-                    }`}>
-                      {h.won_bb > 0 ? '+' : ''}{h.won_bb.toFixed(1)}
-                    </td>
-                    <td className="py-1 px-2">
-                      <div className="flex items-center gap-1">
-                        {h.tags.slice(0, 2).map((t) => (
-                          <TagPill key={t} tag={t} />
-                        ))}
-                        {h.tags.length > 2 && (
-                          <span className="text-[10px] text-text-muted">+{h.tags.length - 2}</span>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                {hands.map((h) => {
+                  const wonUsd = h.won_bb * h.bb_amount;
+                  const evDiffBb = h.all_in_ev_bb - h.won_bb;
+                  const evDiffUsd = evDiffBb * h.bb_amount;
+                  return (
+                    <tr
+                      key={h.id}
+                      onClick={() => setSelectedId(h.id)}
+                      className={`border-b border-border/30 cursor-pointer transition-colors text-[15px] ${
+                        selectedId === h.id ? 'bg-primary/10' : 'hover:bg-surface-hover'
+                      }`}
+                    >
+                      {/* Preflop cards */}
+                      <td className="py-1.5 px-2">
+                        <CardBoxPair card1={h.card1} card2={h.card2} />
+                      </td>
+                      {/* Preflop actions — trim leading folds */}
+                      <td className="py-1.5 px-2">
+                        <Actions items={h.preflop_actions} trimFolds />
+                      </td>
+                      {/* Flop cards */}
+                      <td className="py-1.5 pl-4 pr-2">
+                        <CardBoxRow cards={h.flop_cards} />
+                      </td>
+                      {/* Flop pot */}
+                      <td className="py-1.5 px-1 text-center font-mono text-[14px] text-text-muted">
+                        {h.flop_cards.length > 0 ? h.flop_pot : ''}
+                      </td>
+                      {/* Flop actions */}
+                      <td className="py-1.5 px-2">
+                        <Actions items={h.flop_actions} />
+                      </td>
+                      {/* Turn card */}
+                      <td className="py-1.5 pl-4 pr-2">
+                        {h.turn_card && <CardBox card={h.turn_card} />}
+                      </td>
+                      {/* Turn pot */}
+                      <td className="py-1.5 px-1 text-center font-mono text-[14px] text-text-muted">
+                        {h.turn_card ? h.turn_pot : ''}
+                      </td>
+                      {/* Turn actions */}
+                      <td className="py-1.5 px-2">
+                        <Actions items={h.turn_actions} />
+                      </td>
+                      {/* River card */}
+                      <td className="py-1.5 pl-4 pr-2">
+                        {h.river_card && <CardBox card={h.river_card} />}
+                      </td>
+                      {/* River pot */}
+                      <td className="py-1.5 px-1 text-center font-mono text-[14px] text-text-muted">
+                        {h.river_card ? h.river_pot : ''}
+                      </td>
+                      {/* River actions */}
+                      <td className="py-1.5 px-2">
+                        <Actions items={h.river_actions} />
+                      </td>
+                      {/* Stakes */}
+                      <td className="py-1.5 pl-4 pr-2 font-mono text-[15px] text-text-muted">
+                        {formatStakes(h.bb_amount)}
+                      </td>
+                      {/* Won (USD) */}
+                      <td className={`py-1.5 px-2 text-right font-mono text-[15px] font-semibold ${
+                        wonUsd > 0.005 ? 'text-green' : wonUsd < -0.005 ? 'text-red' : 'text-text-muted'
+                      }`}>
+                        {Math.abs(wonUsd) < 0.005
+                          ? '\u2014'
+                          : `${wonUsd < 0 ? '-' : ''}${Math.abs(wonUsd).toFixed(2)}$`}
+                      </td>
+                      {/* EV Diff */}
+                      <td className={`py-1.5 px-2 text-right font-mono text-[15px] ${
+                        Math.abs(evDiffUsd) < 0.005 ? 'text-text-muted/40' :
+                        evDiffUsd > 0 ? 'text-green' : 'text-red'
+                      }`}>
+                        {Math.abs(evDiffUsd) < 0.005
+                          ? '\u2014'
+                          : `${evDiffUsd < 0 ? '-' : ''}${Math.abs(evDiffUsd).toFixed(2)}$`}
+                      </td>
+                      {/* Date */}
+                      <td className="py-1.5 px-2 text-right text-[14px] text-text-muted whitespace-nowrap">
+                        {formatDate(h.played_at)}
+                      </td>
+                      {/* Tags */}
+                      <td className="py-1.5 px-2">
+                        <div className="flex items-center gap-0.5">
+                          {h.tags.slice(0, 2).map((t) => (
+                            <TagPill key={t} tag={t} />
+                          ))}
+                          {h.tags.length > 2 && (
+                            <span className="text-[11px] text-text-muted">+{h.tags.length - 2}</span>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
 
-          {/* Pagination */}
           <Pagination
             page={data.page}
             totalPages={data.total_pages}

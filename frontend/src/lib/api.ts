@@ -33,6 +33,21 @@ export interface GraphPoint {
   cumulative_nonshowdown_usd: number;
 }
 
+export interface VarianceStats {
+  sd_bb: number;
+  sd_bb100: number;
+  winrate_bb100: number;
+  ci_lower_bb100: number;
+  ci_upper_bb100: number;
+  n: number;
+}
+
+export interface GraphResponse {
+  points: GraphPoint[];
+  session_starts: number[];
+  variance: VarianceStats | null;
+}
+
 export interface StatValue {
   value: number | null;
   sample: number;
@@ -194,7 +209,7 @@ export async function getGraphData(params?: {
   date_from?: string;
   date_to?: string;
   last_n?: number;
-}): Promise<GraphPoint[]> {
+}): Promise<GraphResponse> {
   const sp = new URLSearchParams();
   if (params?.stakes) sp.set('stakes', params.stakes);
   if (params?.date_from) sp.set('date_from', params.date_from);

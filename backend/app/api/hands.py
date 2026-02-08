@@ -2,6 +2,7 @@ from fastapi import APIRouter, Query, HTTPException
 from pydantic import BaseModel
 from typing import Optional
 import math
+import re
 
 from app.db import get_db, db_lock
 from app.models import (
@@ -11,9 +12,127 @@ from app.models import (
 
 router = APIRouter()
 
+# ── Raw-text action parser ───────────────────────────────────────────
+
+_RE_FOLD = re.compile(r"^(.+?): folds")
+_RE_CHECK = re.compile(r"^(.+?): checks")
+_RE_CALL = re.compile(r"^(.+?): calls \$([0-9.]+)")
+_RE_BET = re.compile(r"^(.+?): bets \$([0-9.]+)")
+_RE_RAISE = re.compile(r"^(.+?): raises \$[0-9.]+ to \$([0-9.]+)")
+_RE_BLIND = re.compile(r"^(.+?): posts (?:small blind|big blind|ante) \$([0-9.]+)")
+_RE_STREET = re.compile(r"^\*\*\* (HOLE CARDS|FLOP|TURN|RIVER|FIRST FLOP|SHOWDOWN|SUMMARY) \*\*\*")
+
+_STREET_MAP = {
+    "HOLE CARDS": "preflop",
+    "FLOP": "flop",
+    "FIRST FLOP": "flop",
+    "TURN": "turn",
+    "RIVER": "river",
+}
+
+
+def _parse_actions_from_raw(raw_text: str, hero_username: str, bb_amount: float):
+    """Parse raw hand history text and return per-street action summaries + pot sizes."""
+    streets = {
+        "preflop": {"actions": [], "pot": 0},
+        "flop": {"actions": [], "pot": 0},
+        "turn": {"actions": [], "pot": 0},
+        "river": {"actions": [], "pot": 0},
+    }
+
+    current_street = None
+    running_pot = 0.0
+    street_investments: dict[str, float] = {}  # player -> total invested this street
+
+    for line in raw_text.split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+
+        # Street markers
+        sm = _RE_STREET.match(line)
+        if sm:
+            street_name = _STREET_MAP.get(sm.group(1))
+            if street_name:
+                current_street = street_name
+                street_investments = {}
+                streets[current_street]["pot"] = round(running_pot / bb_amount) if bb_amount > 0 else 0
+            elif sm.group(1) in ("SHOWDOWN", "SUMMARY"):
+                current_street = None
+            continue
+
+        if current_street is None:
+            # Check for blinds before HOLE CARDS
+            m = _RE_BLIND.match(line)
+            if m:
+                amt = float(m.group(2))
+                running_pot += amt
+            continue
+
+        if current_street not in streets:
+            continue
+
+        is_hero = False
+        action_item = None
+
+        m = _RE_RAISE.match(line)
+        if m:
+            player, to_amt_str = m.group(1), m.group(2)
+            is_hero = player == hero_username
+            to_amt = float(to_amt_str)
+            prev = street_investments.get(player, 0)
+            running_pot += to_amt - prev
+            street_investments[player] = to_amt
+            v = round(to_amt / bb_amount) if bb_amount > 0 else 0
+            action_item = ActionItem(a="R", v=v, h=is_hero)
+        else:
+            m = _RE_BET.match(line)
+            if m:
+                player, amt_str = m.group(1), m.group(2)
+                is_hero = player == hero_username
+                amt = float(amt_str)
+                running_pot += amt
+                street_investments[player] = amt
+                v = round(amt / bb_amount) if bb_amount > 0 else 0
+                action_item = ActionItem(a="B", v=v, h=is_hero)
+            else:
+                m = _RE_CALL.match(line)
+                if m:
+                    player, amt_str = m.group(1), m.group(2)
+                    is_hero = player == hero_username
+                    amt = float(amt_str)
+                    running_pot += amt
+                    street_investments[player] = street_investments.get(player, 0) + amt
+                    v = round(amt / bb_amount) if bb_amount > 0 else 0
+                    action_item = ActionItem(a="C", v=v, h=is_hero)
+                else:
+                    m = _RE_CHECK.match(line)
+                    if m:
+                        is_hero = m.group(1) == hero_username
+                        action_item = ActionItem(a="X", h=is_hero)
+                    else:
+                        m = _RE_FOLD.match(line)
+                        if m:
+                            is_hero = m.group(1) == hero_username
+                            action_item = ActionItem(a="F", h=is_hero)
+                        else:
+                            m = _RE_BLIND.match(line)
+                            if m:
+                                amt = float(m.group(2))
+                                player = m.group(1)
+                                running_pot += amt
+                                street_investments[player] = street_investments.get(player, 0) + amt
+                                continue
+
+        if action_item:
+            streets[current_street]["actions"].append(action_item)
+
+    return streets
+
+
+# ── Hero username helper ─────────────────────────────────────────────
 
 def _get_hero_player_id(db) -> Optional[int]:
-    """Get the hero's player_id from settings."""
     row = db.execute(
         "SELECT value FROM settings WHERE key = 'hero_username'"
     ).fetchone()
@@ -34,72 +153,14 @@ def _get_hero_player_id(db) -> Optional[int]:
     return row[0] if row else None
 
 
-def _compute_hand_summaries(
-    action_rows: list, hero_id: int
-) -> dict[str, dict]:
-    """Compute per-street action summaries and pot sizes from raw action rows.
+def _get_hero_username(db) -> str:
+    row = db.execute(
+        "SELECT value FROM settings WHERE key = 'hero_username'"
+    ).fetchone()
+    return row[0] if row else "Hero"
 
-    action_rows: [(hand_id, street, player_id, action_type, amount_bb, is_all_in), ...]
-    Returns: {hand_id: {street: {actions: [ActionItem], pot: int}}}
-    """
-    from collections import defaultdict
 
-    by_hand: dict[str, list] = defaultdict(list)
-    for row in action_rows:
-        by_hand[row[0]].append(row[1:])
-
-    result: dict[str, dict] = {}
-    street_order = ["preflop", "flop", "turn", "river"]
-
-    for hand_id, actions in by_hand.items():
-        streets = {s: {"actions": [], "pot": 0} for s in street_order}
-        running_pot = 0.0
-        current_street = None
-        street_investments: dict[int, float] = {}
-
-        for street, player_id, action_type, amount_bb, is_all_in in actions:
-            if street != current_street:
-                current_street = street
-                street_investments = {}
-                if street in streets:
-                    streets[street]["pot"] = round(running_pot)
-
-            amt = float(amount_bb) if amount_bb is not None else 0.0
-            is_hero = player_id == hero_id
-
-            if action_type in ("post_sb", "post_bb", "post_ante"):
-                street_investments[player_id] = street_investments.get(player_id, 0) + amt
-                running_pot += amt
-                continue
-
-            if action_type == "raise":
-                prev = street_investments.get(player_id, 0)
-                running_pot += amt - prev
-                street_investments[player_id] = amt
-                streets[street]["actions"].append(
-                    ActionItem(a="R", v=round(amt), h=is_hero)
-                )
-            elif action_type == "bet":
-                running_pot += amt
-                street_investments[player_id] = amt
-                streets[street]["actions"].append(
-                    ActionItem(a="B", v=round(amt), h=is_hero)
-                )
-            elif action_type == "call":
-                running_pot += amt
-                street_investments[player_id] = street_investments.get(player_id, 0) + amt
-                streets[street]["actions"].append(
-                    ActionItem(a="C", v=round(amt), h=is_hero)
-                )
-            elif action_type == "check":
-                streets[street]["actions"].append(
-                    ActionItem(a="X", h=is_hero)
-                )
-            # Skip folds in condensed view
-
-        result[hand_id] = streets
-    return result
-
+# ── List hands ───────────────────────────────────────────────────────
 
 @router.get("/hands", response_model=HandListResponse)
 def list_hands(
@@ -121,6 +182,7 @@ def list_hands(
         if hero_id is None:
             return HandListResponse(hands=[], total=0, page=1, per_page=per_page, total_pages=0)
 
+        hero_username = _get_hero_username(db)
         params: list = [hero_id]
         where_clauses: list[str] = []
 
@@ -196,7 +258,7 @@ def list_hands(
         main_sql = f"""
             SELECT h.id, h.played_at, h.stakes, h.bb_amount,
                    hp.position, hp.card1, hp.card2, hp.won_bb,
-                   hp.all_in_ev_bb
+                   hp.all_in_ev_bb, h.raw_text
             FROM hands h
             JOIN hand_players hp ON hp.hand_id = h.id AND hp.player_id = ?
             WHERE 1=1 {where_sql}
@@ -231,30 +293,26 @@ def list_hands(
             board_map.setdefault(hid, {"flop": [], "turn": [], "river": []})
             board_map[hid][street].append(card)
 
-        # Batch fetch actions for summaries
-        action_rows = db.execute(
-            f"""SELECT hand_id, street, player_id, action_type, amount_bb, is_all_in
-                FROM actions WHERE hand_id IN ({ph})
-                ORDER BY hand_id, action_order""",
-            hand_ids,
-        ).fetchall()
-        summaries = _compute_hand_summaries(action_rows, hero_id)
-
         hands = []
         for r in rows:
             hid = r[0]
+            bb_amount = float(r[3])
+            raw_text = r[9] or ""
+
             board = board_map.get(hid, {"flop": [], "turn": [], "river": []})
-            ss = summaries.get(hid, {})
-            pf = ss.get("preflop", {"actions": [], "pot": 0})
-            fl = ss.get("flop", {"actions": [], "pot": 0})
-            tu = ss.get("turn", {"actions": [], "pot": 0})
-            ri = ss.get("river", {"actions": [], "pot": 0})
+
+            # Parse actions from raw text
+            ss = _parse_actions_from_raw(raw_text, hero_username, bb_amount)
+            pf = ss["preflop"]
+            fl = ss["flop"]
+            tu = ss["turn"]
+            ri = ss["river"]
 
             hands.append(HandSummary(
                 id=hid,
                 played_at=r[1],
                 stakes=r[2],
-                bb_amount=float(r[3]),
+                bb_amount=bb_amount,
                 position=r[4],
                 card1=r[5],
                 card2=r[6],
@@ -282,13 +340,15 @@ def list_hands(
         )
 
 
+# ── Hand detail ──────────────────────────────────────────────────────
+
 @router.get("/hands/{hand_id}", response_model=HandDetail)
 def get_hand(hand_id: str):
     with db_lock():
         db = get_db()
         hero_id = _get_hero_player_id(db)
+        hero_username = _get_hero_username(db)
 
-        # Hand metadata
         hand_row = db.execute(
             "SELECT id, played_at, stakes, bb_amount, table_name, table_size, raw_text "
             "FROM hands WHERE id = ?",
@@ -298,6 +358,7 @@ def get_hand(hand_id: str):
             raise HTTPException(status_code=404, detail="Hand not found")
 
         bb_amount = float(hand_row[3])
+        raw_text = hand_row[6] or ""
 
         # Players
         player_rows = db.execute(
@@ -311,7 +372,7 @@ def get_hand(hand_id: str):
         ).fetchall()
 
         players = []
-        player_name_map: dict[int, tuple[str, str]] = {}  # player_id -> (username, position)
+        player_name_map: dict[int, tuple[str, str]] = {}
         for pr in player_rows:
             player_name_map[pr[7]] = (pr[2], pr[1])
             players.append(HandPlayerDetail(
@@ -339,27 +400,23 @@ def get_hand(hand_id: str):
             elif street == "river":
                 board.river.append(card)
 
-        # Actions
-        action_rows = db.execute(
-            "SELECT a.street, a.player_id, a.action_type, a.amount_bb, a.is_all_in "
-            "FROM actions a "
-            "WHERE a.hand_id = ? "
-            "ORDER BY a.action_order",
-            [hand_id],
-        ).fetchall()
-
-        actions = []
-        for ar in action_rows:
-            pname, ppos = player_name_map.get(ar[1], ("Unknown", "?"))
-            actions.append(HandAction(
-                street=ar[0],
-                player=pname,
-                position=ppos,
-                action=ar[2],
-                amount_bb=float(ar[3]) if ar[3] is not None else None,
-                is_all_in=bool(ar[4]),
-                is_hero=(ar[1] == hero_id),
-            ))
+        # Parse actions from raw text for the detail view
+        ss = _parse_actions_from_raw(raw_text, hero_username, bb_amount)
+        actions: list[HandAction] = []
+        for street_name in ["preflop", "flop", "turn", "river"]:
+            for ai in ss[street_name]["actions"]:
+                abbr_to_action = {"R": "raise", "B": "bet", "C": "call", "X": "check", "F": "fold"}
+                act_name = abbr_to_action.get(ai.a, ai.a)
+                amt_bb = float(ai.v) if ai.v is not None else None
+                actions.append(HandAction(
+                    street=street_name,
+                    player="Hero" if ai.h else "",
+                    position="",
+                    action=act_name,
+                    amount_bb=amt_bb,
+                    is_all_in=False,
+                    is_hero=ai.h,
+                ))
 
         # Tags
         tag_rows = db.execute(
@@ -382,7 +439,7 @@ def get_hand(hand_id: str):
             bb_amount=bb_amount,
             table_name=hand_row[4],
             table_size=hand_row[5],
-            raw_text=hand_row[6],
+            raw_text=raw_text,
             players=players,
             board=board,
             actions=actions,
@@ -401,7 +458,6 @@ class TagBody(BaseModel):
 def add_tag(hand_id: str, body: TagBody):
     with db_lock():
         db = get_db()
-        # Verify hand exists
         if not db.execute("SELECT 1 FROM hands WHERE id = ?", [hand_id]).fetchone():
             raise HTTPException(status_code=404, detail="Hand not found")
         db.execute(
@@ -444,7 +500,6 @@ def update_note(hand_id: str, body: NoteBody):
         db = get_db()
         if not db.execute("SELECT 1 FROM hands WHERE id = ?", [hand_id]).fetchone():
             raise HTTPException(status_code=404, detail="Hand not found")
-        # Upsert
         existing = db.execute(
             "SELECT 1 FROM hand_notes WHERE hand_id = ?", [hand_id]
         ).fetchone()
