@@ -83,12 +83,24 @@ def compute_stat_flags(parsed: ParsedHand) -> dict[str, dict]:
             "flop_bets": 0,
             "flop_raises": 0,
             "flop_calls": 0,
+            "flop_checks": 0,
+            "flop_folds": 0,
             "turn_bets": 0,
             "turn_raises": 0,
             "turn_calls": 0,
+            "turn_checks": 0,
+            "turn_folds": 0,
             "river_bets": 0,
             "river_raises": 0,
             "river_calls": 0,
+            "river_checks": 0,
+            "river_folds": 0,
+            "steal_opp": False,
+            "donk_bet_flop_opp": False,
+            "donk_bet_turn_opp": False,
+            "donk_bet_river_opp": False,
+            "squeeze_opp": False,
+            "five_bet_opp": False,
         }
 
     # ── Preflop stat computation ──
@@ -111,6 +123,7 @@ def compute_stat_flags(parsed: ParsedHand) -> dict[str, dict]:
     # Track who has acted voluntarily and who has folded
     folded_preflop = set()
     players_who_called = set()
+    has_limper = False
 
     for a in voluntary_preflop:
         uname = a["username"]
@@ -120,6 +133,14 @@ def compute_stat_flags(parsed: ParsedHand) -> dict[str, dict]:
         # Mark open raise opportunity: pot is unopened (no raise yet)
         if raise_count == 0:
             player_stats[uname]["open_raise_opp"] = True
+
+        # Steal opportunity: CO/BTN/SB with no raise and no limper before them
+        if raise_count == 0 and not has_limper and position in ("CO", "BTN", "SB"):
+            player_stats[uname]["steal_opp"] = True
+
+        # Squeeze opportunity: facing open raise with at least one caller already
+        if raise_count == 1 and players_who_called:
+            player_stats[uname]["squeeze_opp"] = True
 
         if action == "fold":
             folded_preflop.add(uname)
@@ -144,10 +165,15 @@ def compute_stat_flags(parsed: ParsedHand) -> dict[str, dict]:
                 # Calling the big blind = limp
                 player_stats[uname]["limp"] = True
                 has_caller_or_limper_before_raise = True
+                has_limper = True
             elif raise_count == 1:
                 # Calling an open raise
                 player_stats[uname]["call_open_raise"] = True
                 players_who_called.add(uname)
+
+                # After at least one caller of the open, subsequent players have squeeze_opp
+                # (set below after this action processes — callers themselves don't have squeeze_opp
+                #  since squeeze = raising after a raise + call, which happens on later actions)
 
                 # Check if facing steal
                 if player_stats[uname]["faced_steal"]:
@@ -171,8 +197,8 @@ def compute_stat_flags(parsed: ParsedHand) -> dict[str, dict]:
                 player_stats[uname]["open_raise"] = True
                 first_raiser = uname
 
-                # Check if steal attempt (open raise from CO, BTN, or SB)
-                if position in ("CO", "BTN", "SB"):
+                # Check if steal attempt (open raise from CO, BTN, or SB with no limpers)
+                if player_stats[uname]["steal_opp"]:
                     player_stats[uname]["steal_attempted"] = True
                     is_steal = True
 
@@ -194,10 +220,6 @@ def compute_stat_flags(parsed: ParsedHand) -> dict[str, dict]:
                 player_stats[uname]["three_bet"] = True
                 second_raiser = uname
 
-                # The first raiser had a 3bet opportunity
-                if first_raiser:
-                    player_stats[first_raiser]["three_bet_opp"] = True
-
                 # Check if this is a squeeze (3bet when there are callers of the open)
                 if players_who_called:
                     player_stats[uname]["squeeze"] = True
@@ -216,6 +238,10 @@ def compute_stat_flags(parsed: ParsedHand) -> dict[str, dict]:
                 if second_raiser:
                     player_stats[second_raiser]["four_bet_opp"] = True
 
+                # The 3-bettor now faces a 4-bet → 5-bet opportunity
+                if second_raiser:
+                    player_stats[second_raiser]["five_bet_opp"] = True
+
                 # The original raiser also sees this — not a fold_to_3bet
                 if first_raiser and first_raiser != uname:
                     player_stats[first_raiser]["fold_to_3bet"] = False
@@ -224,23 +250,24 @@ def compute_stat_flags(parsed: ParsedHand) -> dict[str, dict]:
                 # 5-bet
                 player_stats[uname]["five_bet"] = True
 
-                # The 4-bettor had opportunity
-                if third_raiser:
-                    player_stats[third_raiser]["four_bet_opp"] = True
-
         elif action in ("bet", "check"):
             # A bet preflop would be unusual, but handle it
             if action == "bet":
                 player_stats[uname]["vpip"] = True
 
-    # ── Mark 3-bet opp for players who haven't been tagged yet ──
-    # Everyone who acted after the open raise had a 3-bet opportunity
+    # ── Mark 3-bet opp for players between open raise and 3-bet ──
     if first_raiser:
         first_raise_order = _find_action_order(voluntary_preflop, first_raiser, "raise")
+        three_bet_order = None
+        if second_raiser:
+            three_bet_order = _find_action_order(voluntary_preflop, second_raiser, "raise")
+
         if first_raise_order is not None:
             for a in voluntary_preflop:
                 if a["order"] > first_raise_order and a["username"] != first_raiser:
-                    player_stats[a["username"]]["three_bet_opp"] = True
+                    # Only mark if they acted BEFORE the 3-bet (or no 3-bet happened)
+                    if three_bet_order is None or a["order"] < three_bet_order:
+                        player_stats[a["username"]]["three_bet_opp"] = True
 
     # ── Mark faced_steal fold defaults ──
     for s in seats:
@@ -320,22 +347,26 @@ def compute_stat_flags(parsed: ParsedHand) -> dict[str, dict]:
             uname = a["username"]
             action = a["action"]
 
-            # Aggression counts
+            # Aggression counts (including checks and folds for AFq)
             if action == "bet":
                 player_stats[uname][f"{street}_bets"] += 1
             elif action == "raise":
                 player_stats[uname][f"{street}_raises"] += 1
             elif action == "call":
                 player_stats[uname][f"{street}_calls"] += 1
+            elif action == "check":
+                player_stats[uname][f"{street}_checks"] += 1
+            elif action == "fold":
+                player_stats[uname][f"{street}_folds"] += 1
 
             # Track who bet/raised first for cbet and donk
             if action in ("bet", "raise") and first_bet_or_raise is None:
                 first_bet_or_raise = a
 
-            # Cbet opportunity: if prev aggressor is in this street's actors
+            # Cbet: only a "bet" (first aggression) counts, NOT a raise (Bug #3)
             if prev_aggressor and uname == prev_aggressor:
                 aggressor_acted = True
-                if action in ("bet", "raise"):
+                if action == "bet":
                     aggressor_bet = True
 
         # Set cbet stats
@@ -357,7 +388,16 @@ def compute_stat_flags(parsed: ParsedHand) -> dict[str, dict]:
                 street_aggressor[street] = a["username"]
                 break
 
-        # Donk bet: first bet into the preflop aggressor
+        # Donk bet opportunity: first actor before the prev aggressor
+        if prev_aggressor:
+            for a in street_actions:
+                if a["username"] == prev_aggressor:
+                    break  # Aggressor acts, no more donk opp
+                if a["action"] in ("bet", "check", "fold") and a["username"] != prev_aggressor:
+                    player_stats[a["username"]][f"donk_bet_{street}_opp"] = True
+                    break  # Only the FIRST actor before aggressor has the opp
+
+        # Donk bet: first bet into the previous street's aggressor
         if first_bet_or_raise and first_bet_or_raise["action"] == "bet":
             bettor = first_bet_or_raise["username"]
             if prev_aggressor and bettor != prev_aggressor:

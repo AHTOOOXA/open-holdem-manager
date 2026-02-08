@@ -156,12 +156,26 @@ def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
             flop_bets INTEGER DEFAULT 0,
             flop_raises INTEGER DEFAULT 0,
             flop_calls INTEGER DEFAULT 0,
+            flop_checks INTEGER DEFAULT 0,
+            flop_folds INTEGER DEFAULT 0,
             turn_bets INTEGER DEFAULT 0,
             turn_raises INTEGER DEFAULT 0,
             turn_calls INTEGER DEFAULT 0,
+            turn_checks INTEGER DEFAULT 0,
+            turn_folds INTEGER DEFAULT 0,
             river_bets INTEGER DEFAULT 0,
             river_raises INTEGER DEFAULT 0,
-            river_calls INTEGER DEFAULT 0
+            river_calls INTEGER DEFAULT 0,
+            river_checks INTEGER DEFAULT 0,
+            river_folds INTEGER DEFAULT 0,
+
+            -- Opportunity flags
+            steal_opp BOOLEAN DEFAULT FALSE,
+            donk_bet_flop_opp BOOLEAN DEFAULT FALSE,
+            donk_bet_turn_opp BOOLEAN DEFAULT FALSE,
+            donk_bet_river_opp BOOLEAN DEFAULT FALSE,
+            squeeze_opp BOOLEAN DEFAULT FALSE,
+            five_bet_opp BOOLEAN DEFAULT FALSE
         )
     """)
     conn.execute("""
@@ -208,6 +222,18 @@ def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
     for col, default in [
         ("all_in_ev_bb", "DECIMAL DEFAULT 0"),
         ("open_raise_opp", "BOOLEAN DEFAULT FALSE"),
+        ("flop_checks", "INTEGER DEFAULT 0"),
+        ("flop_folds", "INTEGER DEFAULT 0"),
+        ("turn_checks", "INTEGER DEFAULT 0"),
+        ("turn_folds", "INTEGER DEFAULT 0"),
+        ("river_checks", "INTEGER DEFAULT 0"),
+        ("river_folds", "INTEGER DEFAULT 0"),
+        ("steal_opp", "BOOLEAN DEFAULT FALSE"),
+        ("donk_bet_flop_opp", "BOOLEAN DEFAULT FALSE"),
+        ("donk_bet_turn_opp", "BOOLEAN DEFAULT FALSE"),
+        ("donk_bet_river_opp", "BOOLEAN DEFAULT FALSE"),
+        ("squeeze_opp", "BOOLEAN DEFAULT FALSE"),
+        ("five_bet_opp", "BOOLEAN DEFAULT FALSE"),
     ]:
         try:
             conn.execute(f"ALTER TABLE hand_players ADD COLUMN {col} {default}")

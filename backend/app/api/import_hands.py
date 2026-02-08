@@ -258,9 +258,11 @@ def insert_parsed_hand(db: duckdb.DuckDBPyConnection, parsed: ParsedHand) -> str
                 fold_to_cbet_flop, fold_to_cbet_turn, fold_to_cbet_river,
                 missed_cbet_flop, missed_cbet_turn,
                 donk_bet_flop, donk_bet_turn, donk_bet_river,
-                flop_bets, flop_raises, flop_calls,
-                turn_bets, turn_raises, turn_calls,
-                river_bets, river_raises, river_calls
+                flop_bets, flop_raises, flop_calls, flop_checks, flop_folds,
+                turn_bets, turn_raises, turn_calls, turn_checks, turn_folds,
+                river_bets, river_raises, river_calls, river_checks, river_folds,
+                steal_opp, donk_bet_flop_opp, donk_bet_turn_opp, donk_bet_river_opp,
+                squeeze_opp, five_bet_opp
             ) VALUES (
                 ?, ?, ?, ?, ?, ?, ?,
                 ?, ?, ?, ?, ?, ?, ?,
@@ -274,9 +276,11 @@ def insert_parsed_hand(db: duckdb.DuckDBPyConnection, parsed: ParsedHand) -> str
                 ?, ?, ?,
                 ?, ?,
                 ?, ?, ?,
-                ?, ?, ?,
-                ?, ?, ?,
-                ?, ?, ?
+                ?, ?, ?, ?, ?,
+                ?, ?, ?, ?, ?,
+                ?, ?, ?, ?, ?,
+                ?, ?, ?, ?,
+                ?, ?
             )""",
             [
                 hp_id, parsed.hand_id, pid, s["seat"], s["position"],
@@ -299,8 +303,14 @@ def insert_parsed_hand(db: duckdb.DuckDBPyConnection, parsed: ParsedHand) -> str
                 ps["missed_cbet_flop"], ps["missed_cbet_turn"],
                 ps["donk_bet_flop"], ps["donk_bet_turn"], ps["donk_bet_river"],
                 ps["flop_bets"], ps["flop_raises"], ps["flop_calls"],
+                ps["flop_checks"], ps["flop_folds"],
                 ps["turn_bets"], ps["turn_raises"], ps["turn_calls"],
+                ps["turn_checks"], ps["turn_folds"],
                 ps["river_bets"], ps["river_raises"], ps["river_calls"],
+                ps["river_checks"], ps["river_folds"],
+                ps["steal_opp"], ps["donk_bet_flop_opp"],
+                ps["donk_bet_turn_opp"], ps["donk_bet_river_opp"],
+                ps["squeeze_opp"], ps["five_bet_opp"],
             ],
         )
 

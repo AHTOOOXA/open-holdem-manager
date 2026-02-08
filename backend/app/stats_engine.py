@@ -80,8 +80,8 @@ def compute_hero_stats(
     oop_3b = [r for r in data if r["three_bet_opp"] and r["position"] in OOP_POSITIONS]
     stats.three_bet_oop = _simple_pct(oop_3b, "three_bet")
 
-    stats.five_bet = _simple_pct(data, "five_bet")
-    stats.squeeze = _simple_pct(data, "squeeze")
+    stats.five_bet = _simple_pct([r for r in data if r.get("five_bet_opp")], "five_bet")
+    stats.squeeze = _simple_pct([r for r in data if r.get("squeeze_opp")], "squeeze")
 
     # 4-Bet Range: 4bet hands / total hands
     four_bet_count = sum(1 for r in data if r.get("four_bet"))
@@ -91,7 +91,7 @@ def compute_hero_stats(
     )
 
     # Steal
-    stats.steal = _positional_pct(data, "steal_attempted", None,
+    stats.steal = _positional_pct(data, "steal_attempted", "steal_opp",
                                    positions=["CO", "BTN", "SB"])
 
     # Positional steal stats (BTN, SB)
@@ -118,13 +118,13 @@ def compute_hero_stats(
                                                 filter_fn=lambda r: r.get("fold_to_cbet_river") is not None)
 
     stats.donk_bet_flop = _simple_pct(
-        [r for r in data if r["saw_flop"]], "donk_bet_flop"
+        [r for r in data if r.get("donk_bet_flop_opp")], "donk_bet_flop"
     )
     stats.donk_bet_turn = _simple_pct(
-        [r for r in data if r["saw_turn"]], "donk_bet_turn"
+        [r for r in data if r.get("donk_bet_turn_opp")], "donk_bet_turn"
     )
     stats.donk_bet_river = _simple_pct(
-        [r for r in data if r["saw_river"]], "donk_bet_river"
+        [r for r in data if r.get("donk_bet_river_opp")], "donk_bet_river"
     )
 
     stats.missed_cbet_flop = _simple_pct(
@@ -269,7 +269,9 @@ def _aggression_freq(data: list[dict], street: str) -> StatValue:
     bets = sum(r.get(f"{street}_bets", 0) or 0 for r in data)
     raises = sum(r.get(f"{street}_raises", 0) or 0 for r in data)
     calls = sum(r.get(f"{street}_calls", 0) or 0 for r in data)
-    total = bets + raises + calls
+    checks = sum(r.get(f"{street}_checks", 0) or 0 for r in data)
+    folds = sum(r.get(f"{street}_folds", 0) or 0 for r in data)
+    total = bets + raises + calls + checks + folds
     if total == 0:
         return StatValue(value=None, sample=0)
     return StatValue(
