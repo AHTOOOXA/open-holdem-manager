@@ -1,0 +1,199 @@
+Poker Hand #HD1234567890: Tournament #-, Hold'em No Limit ($0.25/$0.50) - 2026/01/15 20:31:42
+Table 'NLHGold25050' 6-max Seat #1 is the button
+Seat 1: Hero ($52.75 in chips)
+Seat 2: Player2 ($50.00 in chips)
+Seat 3: Player3 ($58.30 in chips)
+Seat 4: Player4 ($50.00 in chips)
+Seat 5: Player5 ($87.25 in chips)
+Seat 6: Player6 ($50.00 in chips)
+Player2: posts small blind $0.25
+Player3: posts big blind $0.50
+*** HOLE CARDS ***
+Dealt to Hero [Ah Kd]
+Player4: folds
+Player5: raises $1.25 to $1.25
+Player6: folds
+Hero: raises $3.75 to $3.75
+Player2: folds
+Player3: folds
+Player5: calls $2.50
+*** FLOP *** [Ks 7d 2c]
+Player5: checks
+Hero: bets $2.50
+Player5: calls $2.50
+*** TURN *** [Ks 7d 2c] [Jh]
+Player5: checks
+Hero: bets $7.50
+Player5: folds
+Uncalled bet ($7.50) returned to Hero
+Hero: does not show hand
+*** SUMMARY ***
+Total pot $13.25 | Rake $0.62 | Jackpot $0.13 | Bingo $0 | Fortune $0 | Tax $0
+Board [Ks 7d 2c Jh]
+Seat 1: Hero (button) collected ($12.50)
+Seat 2: Player2 (small blind) folded before Flop
+Seat 3: Player3 (big blind) folded before Flop
+Seat 4: Player4 folded before Flop (didn't bet)
+Seat 5: Player5 folded on the Turn
+Seat 6: Player6 folded before Flop (didn't bet)
+
+
+Poker Hand #HD1234567891: Tournament #-, Hold'em No Limit ($0.25/$0.50) - 2026/01/15 20:35:18
+Table 'NLHGold25050' 6-max Seat #6 is the button
+Seat 1: Hero ($64.63 in chips)
+Seat 2: Player2 ($49.75 in chips)
+Seat 3: Player3 ($57.80 in chips)
+Seat 4: Player4 ($50.00 in chips)
+Seat 5: Player5 ($84.75 in chips)
+Seat 6: Player6 ($50.00 in chips)
+Hero: posts small blind $0.25
+Player2: posts big blind $0.50
+*** HOLE CARDS ***
+Dealt to Hero [Jc Tc]
+Player3: folds
+Player4: folds
+Player5: raises $1.25 to $1.25
+Player6: folds
+Hero: calls $1.00
+Player2: folds
+*** FLOP *** [Js 4d 2h]
+Hero: checks
+Player5: bets $1.50
+Hero: calls $1.50
+*** TURN *** [Js 4d 2h] [Th]
+Hero: checks
+Player5: bets $4.00
+Hero: raises $10.00 to $10.00
+Player5: folds
+Uncalled bet ($10.00) returned to Hero
+Hero: does not show hand
+*** SUMMARY ***
+Total pot $14.00 | Rake $0.65 | Jackpot $0.13 | Bingo $0 | Fortune $0 | Tax $0
+Board [Js 4d 2h Th]
+Seat 1: Hero (small blind) collected ($13.22)
+Seat 2: Player2 (big blind) folded before Flop
+Seat 3: Player3 folded before Flop (didn't bet)
+Seat 4: Player4 folded before Flop (didn't bet)
+Seat 5: Player5 folded on the Turn
+Seat 6: Player6 (button) folded before Flop (didn't bet)
+
+
+Poker Hand #HD1234567892: Tournament #-, Hold'em No Limit ($0.25/$0.50) - 2026/01/15 20:40:05
+Table 'NLHGold25050' 6-max Seat #5 is the button
+Seat 1: Hero ($76.85 in chips)
+Seat 2: Player2 ($49.25 in chips)
+Seat 3: Player3 ($57.80 in chips)
+Seat 4: Player4 ($50.00 in chips)
+Seat 5: Player5 ($80.75 in chips)
+Seat 6: Player6 ($50.00 in chips)
+Player6: posts small blind $0.25
+Hero: posts big blind $0.50
+*** HOLE CARDS ***
+Dealt to Hero [9s 9d]
+Player2: folds
+Player3: raises $1.25 to $1.25
+Player4: folds
+Player5: folds
+Player6: folds
+Hero: raises $4.00 to $4.00
+Player3: calls $2.75
+*** FLOP *** [8c 5h 3d]
+Hero: bets $3.00
+Player3: calls $3.00
+*** TURN *** [8c 5h 3d] [Qs]
+Hero: bets $7.50
+Player3: folds
+Uncalled bet ($7.50) returned to Hero
+Hero: does not show hand
+*** SUMMARY ***
+Total pot $14.75 | Rake $0.68 | Jackpot $0.13 | Bingo $0 | Fortune $0 | Tax $0
+Board [8c 5h 3d Qs]
+Seat 1: Hero (big blind) collected ($13.94)
+Seat 2: Player2 folded before Flop (didn't bet)
+Seat 3: Player3 folded on the Turn
+Seat 4: Player4 folded before Flop (didn't bet)
+Seat 5: Player5 (button) folded before Flop (didn't bet)
+Seat 6: Player6 (small blind) folded before Flop
+
+
+Poker Hand #HD1234567893: Tournament #-, Hold'em No Limit ($0.25/$0.50) - 2026/01/15 20:45:30
+Table 'NLHGold25050' 6-max Seat #4 is the button
+Seat 1: Hero ($87.79 in chips)
+Seat 2: Player2 ($49.25 in chips)
+Seat 3: Player3 ($51.05 in chips)
+Seat 4: Player4 ($50.00 in chips)
+Seat 5: Player5 ($80.75 in chips)
+Seat 6: Player6 ($49.75 in chips)
+Player5: posts small blind $0.25
+Player6: posts big blind $0.50
+*** HOLE CARDS ***
+Dealt to Hero [Qh Jh]
+Hero: raises $1.25 to $1.25
+Player2: folds
+Player3: calls $1.25
+Player4: folds
+Player5: folds
+Player6: folds
+*** FLOP *** [Qd 8c 4s]
+Hero: bets $1.50
+Player3: calls $1.50
+*** TURN *** [Qd 8c 4s] [2d]
+Hero: bets $3.50
+Player3: calls $3.50
+*** RIVER *** [Qd 8c 4s 2d] [7s]
+Hero: bets $7.00
+Player3: folds
+Uncalled bet ($7.00) returned to Hero
+Hero: does not show hand
+*** SUMMARY ***
+Total pot $13.25 | Rake $0.62 | Jackpot $0.13 | Bingo $0 | Fortune $0 | Tax $0
+Board [Qd 8c 4s 2d 7s]
+Seat 1: Hero collected ($12.50)
+Seat 2: Player2 folded before Flop (didn't bet)
+Seat 3: Player3 folded on the River
+Seat 4: Player4 (button) folded before Flop (didn't bet)
+Seat 5: Player5 (small blind) folded before Flop
+Seat 6: Player6 (big blind) folded before Flop
+
+
+Poker Hand #HD1234567894: Tournament #-, Hold'em No Limit ($0.25/$0.50) - 2026/01/15 20:50:12
+Table 'NLHGold25050' 6-max Seat #3 is the button
+Seat 1: Hero ($99.04 in chips)
+Seat 2: Player2 ($49.25 in chips)
+Seat 3: Player3 ($47.30 in chips)
+Seat 4: Player4 ($50.00 in chips)
+Seat 5: Player5 ($80.50 in chips)
+Seat 6: Player6 ($49.25 in chips)
+Player4: posts small blind $0.25
+Player5: posts big blind $0.50
+*** HOLE CARDS ***
+Dealt to Hero [7c 2d]
+Player6: folds
+Hero: folds
+Player2: folds
+Player3: raises $1.25 to $1.25
+Player4: folds
+Player5: calls $0.75
+*** FLOP *** [Ad 9c 3h]
+Player5: checks
+Player3: bets $1.50
+Player5: calls $1.50
+*** TURN *** [Ad 9c 3h] [6d]
+Player5: checks
+Player3: checks
+*** RIVER *** [Ad 9c 3h 6d] [Kh]
+Player5: bets $3.00
+Player3: calls $3.00
+*** SHOWDOWN ***
+Player5: shows [As 8h] (a pair of Aces)
+Player3: shows [9h 9s] (a pair of Nines)
+Player5: collected ($11.00)
+*** SUMMARY ***
+Total pot $11.75 | Rake $0.55 | Jackpot $0.10 | Bingo $0 | Fortune $0 | Tax $0
+Board [Ad 9c 3h 6d Kh]
+Seat 1: Hero folded before Flop (didn't bet)
+Seat 2: Player2 folded before Flop (didn't bet)
+Seat 3: Player3 (button) showed [9h 9s] and lost with a pair of Nines
+Seat 4: Player4 (small blind) folded before Flop
+Seat 5: Player5 (big blind) showed [As 8h] and won ($11.00) with a pair of Aces
+Seat 6: Player6 folded before Flop (didn't bet)

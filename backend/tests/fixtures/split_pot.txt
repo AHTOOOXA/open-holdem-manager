@@ -1,0 +1,40 @@
+Poker Hand #RC9900002222: Hold'em No Limit ($0.05/$0.10) - 2026/01/20 14:30:00
+Table 'RushAndCash9900002' 6-max Seat #1 is the button
+Seat 1: Player1 ($10.00 in chips)
+Seat 2: Hero ($10.00 in chips)
+Seat 3: Player3 ($10.00 in chips)
+Seat 4: Player4 ($10.00 in chips)
+Seat 5: Player5 ($10.00 in chips)
+Seat 6: Player6 ($10.00 in chips)
+Hero: posts small blind $0.05
+Player3: posts big blind $0.10
+*** HOLE CARDS ***
+Dealt to Hero [Ah Kd]
+Player4: folds
+Player5: folds
+Player6: folds
+Player1: raises $0.25 to $0.25
+Hero: raises $0.80 to $0.80
+Player3: folds
+Player1: calls $0.55
+*** FLOP *** [Ac Kc 9h]
+Hero: bets $0.80
+Player1: calls $0.80
+*** TURN *** [Ac Kc 9h] [2d]
+Hero: bets $1.60
+Player1: calls $1.60
+*** RIVER *** [Ac Kc 9h 2d] [5s]
+Hero: checks
+Player1: checks
+*** SHOWDOWN ***
+Hero: shows [Ah Kd] (two pair, Aces and Kings)
+Player1: shows [Ad Ks] (two pair, Aces and Kings)
+*** SUMMARY ***
+Total pot $6.50 | Rake $0.30 | Jackpot $0.05 | Bingo $0 | Fortune $0 | Tax $0
+Board [Ac Kc 9h 2d 5s]
+Seat 1: Player1 (button) showed [Ad Ks] and won ($3.08) with two pair, Aces and Kings
+Seat 2: Hero (small blind) showed [Ah Kd] and won ($3.07) with two pair, Aces and Kings
+Seat 3: Player3 (big blind) folded before Flop
+Seat 4: Player4 folded before Flop (didn't bet)
+Seat 5: Player5 folded before Flop (didn't bet)
+Seat 6: Player6 folded before Flop (didn't bet)
