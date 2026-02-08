@@ -19,6 +19,11 @@ export interface GraphPoint {
   cumulative_ev_bb: number;
   ev_bb_per_100_rolling: number | null;
   cumulative_rake_bb: number;
+  cumulative_usd: number;
+  cumulative_ev_usd: number;
+  cumulative_rake_usd: number;
+  usd_per_100_rolling: number | null;
+  ev_usd_per_100_rolling: number | null;
 }
 
 export interface StatValue {

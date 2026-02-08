@@ -22,6 +22,11 @@ class GraphPoint(BaseModel):
     cumulative_ev_bb: float = 0.0
     ev_bb_per_100_rolling: float | None = None
     cumulative_rake_bb: float = 0.0
+    cumulative_usd: float = 0.0
+    cumulative_ev_usd: float = 0.0
+    cumulative_rake_usd: float = 0.0
+    usd_per_100_rolling: float | None = None
+    ev_usd_per_100_rolling: float | None = None
 
 
 class StatValue(BaseModel):

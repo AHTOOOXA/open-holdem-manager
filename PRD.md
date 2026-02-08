@@ -13,9 +13,9 @@ First pass of the core loop exists but needs verification:
 - GGPoker Rush & Cash parser (10 unit tests, 13,402 real hands imported without errors)
 - Streaming file import (drag & drop files/folders/ZIPs, duplicate detection, progress bar)
 - Stats page with positional breakdowns (60+ stat flags)
-- Cumulative BB graph with rolling BB/100 + all-in EV line (yellow dashed)
+- Graph — cumulative line with gradient fill, BB/$ toggle, all-in EV line (yellow dashed), stat cards showing won/winrate/EV/rake in both BB and $, downsampled to 1k points for performance
 - All-in EV computation using treys library (heads-up, before river, known cards)
-- Rake tracking — parser sums all fees (Rake + Jackpot + Bingo + Fortune + Tax); graph shows total rake (BB) and rake/100
+- Rake tracking — parser sums all fees (Rake + Jackpot + Bingo + Fortune + Tax); stat cards show rake totals and rake/100
 - Rebuild stats endpoint — re-parses all hands from stored raw_text without needing original files
 - Hero settings (username/site config)
 - Performance: player cache, in-memory ID counters, batch transactions, executemany for bulk inserts (~138 hands/sec)
@@ -598,7 +598,7 @@ HandReplay (simple text version)
 - [~] Hand import — streaming/ZIP/folder works, insertion correctness needs verification
 - [~] Player stats — 60+ flags computed, calculations need verification against H2N
 - [~] Stats page — works, layout needs rework to match H2N
-- [x] Graph — cumulative BB + rolling BB/100 + all-in EV line + rake tracking
+- [x] Graph — cumulative BB/$, EV line, gradient fill, BB/$ toggle, dual-unit stat cards, rake tracking
 - [x] Hero settings (username/site config)
 - [ ] PokerStars parser
 - [ ] Hand browser with filters
