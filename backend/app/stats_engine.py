@@ -58,6 +58,9 @@ def compute_hero_stats(
     total_won_bb = sum(float(r["won_bb"] or 0) for r in data)
     stats.win_rate_bb100 = round((total_won_bb / len(data)) * 100, 2) if data else None
 
+    total_ev_bb = sum(float(r["all_in_ev_bb"] or 0) for r in data)
+    stats.win_rate_ev_bb100 = round((total_ev_bb / len(data)) * 100, 2) if data else None
+
     # Positional stats
     stats.vpip = _positional_pct(data, "vpip", None)
     stats.pfr = _positional_pct(data, "pfr", None)
@@ -80,21 +83,28 @@ def compute_hero_stats(
     stats.five_bet = _simple_pct(data, "five_bet")
     stats.squeeze = _simple_pct(data, "squeeze")
 
+    # 4-Bet Range: 4bet hands / total hands
+    four_bet_count = sum(1 for r in data if r.get("four_bet"))
+    stats.four_bet_range = StatValue(
+        value=round(four_bet_count / len(data) * 100, 1) if data else None,
+        sample=len(data),
+    )
+
     # Steal
     stats.steal = _positional_pct(data, "steal_attempted", None,
                                    positions=["CO", "BTN", "SB"])
-    steal_hands = [r for r in data if r["steal_attempted"]]
-    stats.fold_to_3bet_steal = _simple_pct(
-        [r for r in steal_hands if r.get("three_bet_opp")], "fold_to_3bet"
-    )
-    stats.four_bet_steal = _simple_pct(
-        [r for r in steal_hands if r.get("three_bet_opp")], "four_bet"
-    )
 
+    # Positional steal stats (BTN, SB)
+    steal_hands = [r for r in data if r["steal_attempted"]]
+    steal_faced_3bet = [r for r in steal_hands if r.get("three_bet_opp")]
+    stats.fold_to_3bet_steal = _positional_steal_stat(steal_faced_3bet, "fold_to_3bet", ["BTN", "SB"])
+    stats.four_bet_steal = _positional_steal_stat(steal_faced_3bet, "four_bet", ["BTN", "SB"])
+
+    # vs Steal positional (SB, BB)
     faced_steal = [r for r in data if r["faced_steal"]]
-    stats.vs_steal_fold = _simple_pct(faced_steal, "fold_to_steal")
-    stats.vs_steal_call = _simple_pct(faced_steal, "call_steal")
-    stats.vs_steal_3bet = _simple_pct(faced_steal, "three_bet_vs_steal")
+    stats.vs_steal_fold = _positional_steal_stat(faced_steal, "fold_to_steal", ["SB", "BB"])
+    stats.vs_steal_call = _positional_steal_stat(faced_steal, "call_steal", ["SB", "BB"])
+    stats.vs_steal_3bet = _positional_steal_stat(faced_steal, "three_bet_vs_steal", ["SB", "BB"])
 
     # Postflop
     stats.cbet_flop = _positional_pct(data, "cbet_flop", "cbet_flop_opp")
@@ -110,10 +120,22 @@ def compute_hero_stats(
     stats.donk_bet_flop = _simple_pct(
         [r for r in data if r["saw_flop"]], "donk_bet_flop"
     )
+    stats.donk_bet_turn = _simple_pct(
+        [r for r in data if r["saw_turn"]], "donk_bet_turn"
+    )
+    stats.donk_bet_river = _simple_pct(
+        [r for r in data if r["saw_river"]], "donk_bet_river"
+    )
 
     stats.missed_cbet_flop = _simple_pct(
         [r for r in data if r["cbet_flop_opp"]], "missed_cbet_flop"
     )
+    # Missed cbet flop by position (IP vs OOP)
+    ip_cbet_opp = [r for r in data if r["cbet_flop_opp"] and r["position"] in IP_POSITIONS]
+    stats.missed_cbet_flop_ip = _simple_pct(ip_cbet_opp, "missed_cbet_flop")
+    oop_cbet_opp = [r for r in data if r["cbet_flop_opp"] and r["position"] in OOP_POSITIONS]
+    stats.missed_cbet_flop_oop = _simple_pct(oop_cbet_opp, "missed_cbet_flop")
+
     stats.missed_cbet_turn = _simple_pct(
         [r for r in data if r["cbet_turn_opp"]], "missed_cbet_turn"
     )
@@ -202,6 +224,33 @@ def _simple_pct(data: list[dict], flag: str) -> StatValue:
         value=round(hits / total * 100, 1),
         sample=total,
     )
+
+
+def _positional_steal_stat(
+    data: list[dict], flag: str, positions: list[str]
+) -> PositionalStats:
+    """Compute a stat for steal/vs-steal with specific positional columns."""
+    ps = PositionalStats()
+
+    # Total across all data
+    total = len(data)
+    hits = sum(1 for r in data if r.get(flag))
+    ps.total = StatValue(
+        value=round(hits / total * 100, 1) if total > 0 else None,
+        sample=total,
+    )
+
+    # Per position
+    for pos in positions:
+        pos_data = [r for r in data if r["position"] == pos]
+        pos_total = len(pos_data)
+        pos_hits = sum(1 for r in pos_data if r.get(flag))
+        setattr(ps, pos.lower(), StatValue(
+            value=round(pos_hits / pos_total * 100, 1) if pos_total > 0 else None,
+            sample=pos_total,
+        ))
+
+    return ps
 
 
 def _aggression_factor(data: list[dict], street: str) -> StatValue:

@@ -47,6 +47,7 @@ class PositionalStats(BaseModel):
 class HeroStats(BaseModel):
     hands: int = 0
     win_rate_bb100: float | None = None
+    win_rate_ev_bb100: float | None = None
 
     # Preflop
     vpip: PositionalStats = PositionalStats()
@@ -62,14 +63,15 @@ class HeroStats(BaseModel):
     call_open_raise: PositionalStats = PositionalStats()
     limp: PositionalStats = PositionalStats()
     squeeze: StatValue = StatValue()
+    four_bet_range: StatValue = StatValue()
 
     # Steal
     steal: PositionalStats = PositionalStats()
-    fold_to_3bet_steal: StatValue = StatValue()
-    four_bet_steal: StatValue = StatValue()
-    vs_steal_fold: StatValue = StatValue()
-    vs_steal_call: StatValue = StatValue()
-    vs_steal_3bet: StatValue = StatValue()
+    fold_to_3bet_steal: PositionalStats = PositionalStats()
+    four_bet_steal: PositionalStats = PositionalStats()
+    vs_steal_fold: PositionalStats = PositionalStats()
+    vs_steal_call: PositionalStats = PositionalStats()
+    vs_steal_3bet: PositionalStats = PositionalStats()
 
     # Postflop
     cbet_flop: PositionalStats = PositionalStats()
@@ -79,6 +81,8 @@ class HeroStats(BaseModel):
     fold_to_cbet_turn: PositionalStats = PositionalStats()
     fold_to_cbet_river: PositionalStats = PositionalStats()
     donk_bet_flop: StatValue = StatValue()
+    donk_bet_turn: StatValue = StatValue()
+    donk_bet_river: StatValue = StatValue()
 
     # Aggression
     af_flop: StatValue = StatValue()
@@ -90,6 +94,8 @@ class HeroStats(BaseModel):
 
     # Missed cbet
     missed_cbet_flop: StatValue = StatValue()
+    missed_cbet_flop_ip: StatValue = StatValue()
+    missed_cbet_flop_oop: StatValue = StatValue()
     missed_cbet_turn: StatValue = StatValue()
 
     # Showdown

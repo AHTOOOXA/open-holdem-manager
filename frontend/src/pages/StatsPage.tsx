@@ -1,119 +1,230 @@
 import { useState, useEffect } from 'react';
-import { getHeroStats } from '@/lib/api';
-import type { HeroStats, PositionalStats, StatValue } from '@/lib/api';
+import { getHeroStats, getSettings } from '@/lib/api';
+import type { HeroStats, PositionalStats, StatValue, Settings } from '@/lib/api';
 
-const POSITIONS = ['total', 'ep', 'mp', 'co', 'btn', 'sb', 'bb'] as const;
-const POS_LABELS = ['Total', 'EP', 'MP', 'CO', 'BTN', 'SB', 'BB'];
+// ── Helpers ──────────────────────────────────────────────────────────
 
-function fmt(sv: StatValue | undefined): string {
-  if (!sv || sv.value === null || sv.value === undefined) return '-';
-  return sv.value.toFixed(1);
+type ColorClass = 'text-green' | 'text-red' | 'text-yellow' | 'text-blue' | 'text-text' | 'text-text-muted';
+
+/** Format a StatValue for display. Returns {text, color, subscript?} */
+function fmtStat(
+  sv: StatValue | undefined,
+  colorFn?: (v: number) => ColorClass,
+  decimals: number = 0,
+): { text: string; color: ColorClass; sub?: string } {
+  if (!sv) return { text: '-', color: 'text-text-muted' };
+  if (sv.sample === 0) return { text: '--', color: 'text-text-muted' };
+  if (sv.value === null || sv.value === undefined) return { text: '--', color: 'text-text-muted' };
+
+  const v = sv.value;
+  const formatted = decimals > 0 ? v.toFixed(decimals) : Math.round(v).toString();
+  const color = colorFn ? colorFn(v) : 'text-text';
+
+  if (sv.sample < 10) {
+    return { text: formatted, color: 'text-text-muted', sub: String(sv.sample) };
+  }
+
+  return { text: formatted, color };
 }
 
-function sampleStr(sv: StatValue | undefined): string {
-  if (!sv) return '';
-  return `(${sv.sample})`;
-}
-
-function StatRow({
-  label,
-  stats,
-  positional,
-}: {
-  label: string;
-  stats?: PositionalStats;
-  positional?: boolean;
-}) {
-  if (!stats) return null;
-  const cells = positional !== false
-    ? POSITIONS.map((pos) => stats[pos])
-    : [stats.total];
-
-  return (
-    <tr className="border-b border-border/50 hover:bg-surface-hover">
-      <td className="py-1.5 px-3 text-sm font-medium text-text-muted whitespace-nowrap">
-        {label}
-      </td>
-      {cells.map((sv, i) => (
-        <td
-          key={i}
-          className="py-1.5 px-3 text-sm text-center font-mono"
-          title={sampleStr(sv)}
-        >
-          <span className={getColor(label, sv?.value)}>
-            {fmt(sv)}
-          </span>
-        </td>
-      ))}
-      {/* Pad remaining cells if not positional */}
-      {positional === false &&
-        Array.from({ length: 6 }).map((_, i) => (
-          <td key={`pad-${i}`} className="py-1.5 px-3"></td>
-        ))}
-    </tr>
-  );
-}
-
-function SimpleStatRow({
-  label,
+/** Render a stat cell with optional subscript */
+function StatCell({
   sv,
+  colorFn,
+  decimals = 0,
 }: {
-  label: string;
-  sv?: StatValue;
+  sv: StatValue | undefined;
+  colorFn?: (v: number) => ColorClass;
+  decimals?: number;
+}) {
+  const { text, color, sub } = fmtStat(sv, colorFn, decimals);
+  return (
+    <td className="py-1 px-2 text-center font-mono text-[13px] leading-tight">
+      <span className={color}>
+        {text}
+        {sub && <sub className="text-[9px] ml-0.5 text-text-muted">{sub}</sub>}
+      </span>
+    </td>
+  );
+}
+
+// ── Color functions (thresholds inspired by H2N) ─────────────────────
+
+const colorVpip = (v: number): ColorClass =>
+  v >= 20 && v <= 28 ? 'text-green' : v > 35 ? 'text-red' : v < 15 ? 'text-blue' : 'text-yellow';
+
+const colorPfr = (v: number): ColorClass =>
+  v >= 16 && v <= 24 ? 'text-green' : v > 30 ? 'text-red' : v < 12 ? 'text-blue' : 'text-yellow';
+
+const colorOpenRaise = (v: number): ColorClass =>
+  v >= 15 && v <= 30 ? 'text-green' : v > 40 ? 'text-red' : v < 10 ? 'text-blue' : 'text-yellow';
+
+const colorThreeBet = (v: number): ColorClass =>
+  v >= 6 && v <= 10 ? 'text-green' : v > 14 ? 'text-red' : v < 4 ? 'text-blue' : 'text-yellow';
+
+const colorFoldTo3Bet = (v: number): ColorClass =>
+  v >= 55 && v <= 65 ? 'text-green' : v > 70 ? 'text-red' : v < 45 ? 'text-yellow' : 'text-text';
+
+const colorCallOpen = (v: number): ColorClass =>
+  v >= 5 && v <= 12 ? 'text-green' : v > 20 ? 'text-red' : 'text-text';
+
+const colorFourBet = (v: number): ColorClass =>
+  v >= 3 && v <= 7 ? 'text-green' : v > 10 ? 'text-red' : v < 2 ? 'text-blue' : 'text-text';
+
+const colorSteal = (v: number): ColorClass =>
+  v >= 25 && v <= 40 ? 'text-green' : v > 50 ? 'text-red' : v < 20 ? 'text-blue' : 'text-yellow';
+
+const colorVsStealFold = (v: number): ColorClass =>
+  v > 75 ? 'text-red' : v < 60 ? 'text-green' : 'text-yellow';
+
+const colorVsSteal3Bet = (v: number): ColorClass =>
+  v >= 8 && v <= 14 ? 'text-green' : v > 18 ? 'text-red' : v < 5 ? 'text-blue' : 'text-text';
+
+const colorCbet = (v: number): ColorClass =>
+  v >= 50 && v <= 70 ? 'text-green' : v > 80 ? 'text-red' : v < 40 ? 'text-blue' : 'text-yellow';
+
+const colorFoldToCbet = (v: number): ColorClass =>
+  v >= 40 && v <= 55 ? 'text-green' : v > 65 ? 'text-red' : v < 30 ? 'text-blue' : 'text-text';
+
+const colorAf = (v: number): ColorClass =>
+  v >= 2 && v <= 4 ? 'text-green' : v > 5 ? 'text-red' : v < 1.5 ? 'text-blue' : 'text-text';
+
+const colorAfq = (v: number): ColorClass =>
+  v >= 40 && v <= 60 ? 'text-green' : v > 70 ? 'text-red' : v < 30 ? 'text-blue' : 'text-text';
+
+const colorDonk = (v: number): ColorClass =>
+  v > 15 ? 'text-red' : v > 5 ? 'text-yellow' : 'text-green';
+
+const colorWtsd = (v: number): ColorClass =>
+  v >= 24 && v <= 30 ? 'text-green' : v > 35 ? 'text-red' : v < 20 ? 'text-blue' : 'text-text';
+
+const colorWsd = (v: number): ColorClass =>
+  v >= 50 && v <= 55 ? 'text-green' : v > 60 ? 'text-yellow' : v < 45 ? 'text-red' : 'text-text';
+
+const colorWwsf = (v: number): ColorClass =>
+  v >= 42 && v <= 50 ? 'text-green' : v > 55 ? 'text-yellow' : v < 38 ? 'text-red' : 'text-text';
+
+const colorLimp = (v: number): ColorClass =>
+  v > 10 ? 'text-red' : v > 3 ? 'text-yellow' : 'text-green';
+
+const colorSqueeze = (v: number): ColorClass =>
+  v >= 5 && v <= 10 ? 'text-green' : v > 14 ? 'text-red' : v < 3 ? 'text-blue' : 'text-text';
+
+const colorFoldTo4Bet = (v: number): ColorClass =>
+  v >= 55 && v <= 65 ? 'text-green' : v > 70 ? 'text-red' : v < 45 ? 'text-yellow' : 'text-text';
+
+const colorMissedCbet = (v: number): ColorClass =>
+  v > 50 ? 'text-red' : v > 30 ? 'text-yellow' : 'text-green';
+
+// ── Section Components ───────────────────────────────────────────────
+
+function SectionTitle({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="px-3 py-1.5 bg-surface text-[11px] font-bold uppercase tracking-wider text-primary border-b border-border">
+      {children}
+    </div>
+  );
+}
+
+/** Positional table: Stat | Total | pos columns */
+function PosTable({
+  headers,
+  rows,
+}: {
+  headers: string[];
+  rows: {
+    label: string;
+    cells: { sv: StatValue | undefined; colorFn?: (v: number) => ColorClass; decimals?: number }[];
+  }[];
 }) {
   return (
-    <tr className="border-b border-border/50 hover:bg-surface-hover">
-      <td className="py-1.5 px-3 text-sm font-medium text-text-muted whitespace-nowrap">
-        {label}
-      </td>
-      <td className="py-1.5 px-3 text-sm text-center font-mono" title={sampleStr(sv)}>
-        <span className={getColor(label, sv?.value)}>{fmt(sv)}</span>
-      </td>
-      {Array.from({ length: 6 }).map((_, i) => (
-        <td key={i} className="py-1.5 px-3"></td>
-      ))}
-    </tr>
+    <table className="w-full">
+      <thead>
+        <tr className="border-b border-border">
+          <th className="py-1 px-2 text-left text-[11px] font-medium text-text-muted uppercase w-32">
+            Stat
+          </th>
+          {headers.map((h) => (
+            <th key={h} className="py-1 px-2 text-center text-[11px] font-medium text-text-muted uppercase">
+              {h}
+            </th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((row) => (
+          <tr key={row.label} className="border-b border-border/30 hover:bg-surface-hover">
+            <td className="py-1 px-2 text-[13px] text-text-muted whitespace-nowrap">{row.label}</td>
+            {row.cells.map((cell, i) => (
+              <StatCell key={i} sv={cell.sv} colorFn={cell.colorFn} decimals={cell.decimals} />
+            ))}
+          </tr>
+        ))}
+      </tbody>
+    </table>
   );
 }
 
-function SectionHeader({ title }: { title: string }) {
+/** Key-value grid: two columns of label + value pairs */
+function KVGrid({
+  items,
+}: {
+  items: { label: string; sv: StatValue | undefined; colorFn?: (v: number) => ColorClass; decimals?: number }[];
+}) {
   return (
-    <tr>
-      <td
-        colSpan={8}
-        className="py-2 px-3 text-xs font-bold uppercase tracking-wider text-primary bg-surface"
-      >
-        {title}
-      </td>
-    </tr>
+    <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 p-2">
+      {items.map((item) => {
+        const { text, color, sub } = fmtStat(item.sv, item.colorFn, item.decimals);
+        return (
+          <div key={item.label} className="flex items-baseline justify-between py-0.5">
+            <span className="text-[12px] text-text-muted mr-2 whitespace-nowrap">{item.label}</span>
+            <span className={`font-mono text-[13px] ${color}`}>
+              {text}
+              {sub && <sub className="text-[9px] ml-0.5 text-text-muted">{sub}</sub>}
+            </span>
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
-function getColor(label: string, value: number | null | undefined): string {
-  if (value === null || value === undefined) return 'text-text-muted';
-
-  // Some heuristic coloring
-  const l = label.toLowerCase();
-  if (l.includes('fold') && value > 70) return 'text-red';
-  if (l.includes('fold') && value < 40) return 'text-green';
-  if (l === 'vpip' && value > 30) return 'text-yellow';
-  if (l === 'vpip' && value >= 20 && value <= 28) return 'text-green';
-  if (l === 'pfr' && value >= 16 && value <= 24) return 'text-green';
-
-  return 'text-text';
+/** Build positional row from PositionalStats */
+function posRow(
+  label: string,
+  ps: PositionalStats | undefined,
+  colorFn?: (v: number) => ColorClass,
+  positions: ('total' | 'ep' | 'mp' | 'co' | 'btn' | 'sb' | 'bb')[] = ['total', 'ep', 'mp', 'co', 'btn', 'sb', 'bb'],
+) {
+  if (!ps) {
+    return {
+      label,
+      cells: positions.map(() => ({ sv: undefined, colorFn })),
+    };
+  }
+  return {
+    label,
+    cells: positions.map((p) => ({ sv: ps[p], colorFn })),
+  };
 }
+
+// ── Main Component ───────────────────────────────────────────────────
 
 export default function StatsPage() {
   const [stats, setStats] = useState<HeroStats | null>(null);
+  const [settings, setSettingsData] = useState<Settings | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    getHeroStats()
-      .then(setStats)
+    Promise.all([getHeroStats(), getSettings()])
+      .then(([s, st]) => {
+        setStats(s);
+        setSettingsData(st);
+      })
       .finally(() => setLoading(false));
   }, []);
 
-  if (loading) return <p className="text-text-muted">Loading stats...</p>;
+  if (loading) return <p className="text-text-muted p-4">Loading stats...</p>;
   if (!stats || stats.hands === 0) {
     return (
       <div className="text-center py-12">
@@ -123,89 +234,357 @@ export default function StatsPage() {
     );
   }
 
+  const wr = stats.win_rate_bb100;
+  const wrEv = stats.win_rate_ev_bb100;
+  const wrColor = wr !== null ? (wr >= 0 ? 'text-green' : 'text-red') : 'text-text-muted';
+  const wrEvColor = wrEv !== null ? (wrEv >= 0 ? 'text-green' : 'text-red') : 'text-text-muted';
+
+  const fullPosHeaders = ['Total', 'EP', 'MP', 'CO', 'BTN', 'SB', 'BB'];
+  const fullPosKeys: ('total' | 'ep' | 'mp' | 'co' | 'btn' | 'sb' | 'bb')[] = ['total', 'ep', 'mp', 'co', 'btn', 'sb', 'bb'];
+
   return (
-    <div className="max-w-5xl mx-auto">
-      <div className="flex items-center justify-between mb-4">
-        <h1 className="text-2xl font-bold">Player Stats</h1>
-        <div className="text-sm text-text-muted">
-          {stats.hands.toLocaleString()} hands |{' '}
-          <span
-            className={
-              (stats.win_rate_bb100 ?? 0) >= 0 ? 'text-green font-bold' : 'text-red font-bold'
-            }
-          >
-            {stats.win_rate_bb100?.toFixed(2) ?? '-'} bb/100
+    <div className="max-w-6xl mx-auto px-2">
+      {/* ── Filter Bar ── */}
+      <div className="flex items-center gap-3 mb-3 flex-wrap">
+        <div className="flex items-center gap-2">
+          <span className="bg-primary/20 text-primary px-2.5 py-0.5 rounded text-sm font-semibold">
+            {settings?.hero_username || 'Hero'}
           </span>
+          <span className="text-[11px] text-text-muted uppercase">{settings?.hero_site || 'GGPoker'}</span>
+        </div>
+        <div className="text-sm text-text-muted">
+          {stats.hands.toLocaleString()} hands
+        </div>
+        <div className={`text-sm font-bold font-mono ${wrColor}`}>
+          {wr !== null ? `${wr >= 0 ? '+' : ''}${wr.toFixed(2)} bb/100` : '- bb/100'}
+        </div>
+        <div className={`text-sm font-bold font-mono ${wrEvColor}`}>
+          EV {wrEv !== null ? `${wrEv >= 0 ? '+' : ''}${wrEv.toFixed(2)} bb/100` : '-'}
         </div>
       </div>
 
-      <div className="bg-surface rounded-lg border border-border overflow-x-auto">
-        <table className="w-full">
-          <thead>
-            <tr className="border-b border-border">
-              <th className="py-2 px-3 text-left text-xs font-medium text-text-muted uppercase w-40">
-                Stat
-              </th>
-              {POS_LABELS.map((p) => (
-                <th
-                  key={p}
-                  className="py-2 px-3 text-center text-xs font-medium text-text-muted uppercase"
-                >
-                  {p}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            <SectionHeader title="Pre-Flop" />
-            <StatRow label="VPIP" stats={stats.vpip} />
-            <StatRow label="PFR" stats={stats.pfr} />
-            <StatRow label="Open Raise" stats={stats.open_raise} />
-            <StatRow label="3-Bet" stats={stats.three_bet} />
-            <SimpleStatRow label="3-Bet IP" sv={stats.three_bet_ip} />
-            <SimpleStatRow label="3-Bet OOP" sv={stats.three_bet_oop} />
-            <StatRow label="4-Bet" stats={stats.four_bet} />
-            <SimpleStatRow label="5-Bet" sv={stats.five_bet} />
-            <StatRow label="Fold to 3-Bet" stats={stats.fold_to_3bet} />
-            <StatRow label="Fold to 4-Bet" stats={stats.fold_to_4bet} />
-            <StatRow label="Call Open Raise" stats={stats.call_open_raise} />
-            <StatRow label="Limp" stats={stats.limp} />
-            <SimpleStatRow label="Squeeze" sv={stats.squeeze} />
+      {/* ── PRE-FLOP ── */}
+      <SectionTitle>Pre-Flop</SectionTitle>
+      <div className="flex gap-0 border-x border-b border-border">
+        {/* Left: Positional table */}
+        <div className="flex-1 min-w-0 overflow-x-auto border-r border-border">
+          <PosTable
+            headers={fullPosHeaders}
+            rows={[
+              posRow('Open Raise', stats.open_raise, colorOpenRaise, fullPosKeys),
+              posRow('Fold to 3Bet', stats.fold_to_3bet, colorFoldTo3Bet, fullPosKeys),
+              posRow('Call Open Raise', stats.call_open_raise, colorCallOpen, fullPosKeys),
+              posRow('3-Bet', stats.three_bet, colorThreeBet, fullPosKeys),
+              {
+                label: '3-Bet IP',
+                cells: [
+                  { sv: stats.three_bet_ip, colorFn: colorThreeBet },
+                  ...Array(6).fill({ sv: undefined }),
+                ],
+              },
+              {
+                label: '3-Bet OOP',
+                cells: [
+                  { sv: stats.three_bet_oop, colorFn: colorThreeBet },
+                  ...Array(6).fill({ sv: undefined }),
+                ],
+              },
+            ]}
+          />
+        </div>
 
-            <SectionHeader title="Steal" />
-            <StatRow label="Steal" stats={stats.steal} />
-            <SimpleStatRow label="Fold to 3Bet (steal)" sv={stats.fold_to_3bet_steal} />
-            <SimpleStatRow label="4-Bet (steal)" sv={stats.four_bet_steal} />
-            <SimpleStatRow label="vs Steal: Fold" sv={stats.vs_steal_fold} />
-            <SimpleStatRow label="vs Steal: Call" sv={stats.vs_steal_call} />
-            <SimpleStatRow label="vs Steal: 3-Bet" sv={stats.vs_steal_3bet} />
-
-            <SectionHeader title="Post-Flop" />
-            <StatRow label="CBet Flop" stats={stats.cbet_flop} />
-            <StatRow label="CBet Turn" stats={stats.cbet_turn} />
-            <StatRow label="CBet River" stats={stats.cbet_river} />
-            <StatRow label="Fold to CBet Flop" stats={stats.fold_to_cbet_flop} />
-            <StatRow label="Fold to CBet Turn" stats={stats.fold_to_cbet_turn} />
-            <StatRow label="Fold to CBet River" stats={stats.fold_to_cbet_river} />
-            <SimpleStatRow label="Donk Bet Flop" sv={stats.donk_bet_flop} />
-            <SimpleStatRow label="Missed CBet Flop" sv={stats.missed_cbet_flop} />
-            <SimpleStatRow label="Missed CBet Turn" sv={stats.missed_cbet_turn} />
-
-            <SectionHeader title="Aggression" />
-            <SimpleStatRow label="AF Flop" sv={stats.af_flop} />
-            <SimpleStatRow label="AF Turn" sv={stats.af_turn} />
-            <SimpleStatRow label="AF River" sv={stats.af_river} />
-            <SimpleStatRow label="AFq Flop" sv={stats.afq_flop} />
-            <SimpleStatRow label="AFq Turn" sv={stats.afq_turn} />
-            <SimpleStatRow label="AFq River" sv={stats.afq_river} />
-
-            <SectionHeader title="Showdown" />
-            <SimpleStatRow label="WTSD%" sv={stats.wtsd} />
-            <SimpleStatRow label="W$SD%" sv={stats.wsd} />
-            <SimpleStatRow label="WWSF%" sv={stats.wwsf} />
-          </tbody>
-        </table>
+        {/* Right: KV grid */}
+        <div className="w-72 shrink-0">
+          <KVGrid
+            items={[
+              { label: 'VPIP', sv: stats.vpip.total, colorFn: colorVpip },
+              { label: 'PFR', sv: stats.pfr.total, colorFn: colorPfr },
+              { label: '4-Bet', sv: stats.four_bet.total, colorFn: colorFourBet },
+              { label: 'Limp', sv: stats.limp.total, colorFn: colorLimp },
+              { label: '4-Bet Range', sv: stats.four_bet_range, colorFn: colorFourBet, decimals: 1 },
+              { label: 'Limp-Fold', sv: undefined },
+              { label: 'Squeeze', sv: stats.squeeze, colorFn: colorSqueeze },
+              { label: '4-Bet-Fold', sv: undefined },
+              { label: 'Fold to 4-Bet', sv: stats.fold_to_4bet.total, colorFn: colorFoldTo4Bet },
+              { label: 'Win Rate', sv: wr !== null ? { value: wr, sample: stats.hands } : undefined, colorFn: (v) => v >= 0 ? 'text-green' : 'text-red', decimals: 2 },
+              { label: 'Win Rate EV', sv: wrEv !== null ? { value: wrEv, sample: stats.hands } : undefined, colorFn: (v) => v >= 0 ? 'text-green' : 'text-red', decimals: 2 },
+              { label: 'Call 4-Bet', sv: undefined },
+              { label: 'Hands', sv: { value: stats.hands, sample: stats.hands } },
+              { label: '5-Bet', sv: stats.five_bet, colorFn: colorFourBet },
+            ]}
+          />
+        </div>
       </div>
+
+      {/* ── STEAL ── */}
+      <SectionTitle>Steal</SectionTitle>
+      <div className="flex gap-0 border-x border-b border-border">
+        {/* Left: Steal table (Total, BTN, SB) */}
+        <div className="flex-1 min-w-0 overflow-x-auto border-r border-border">
+          <PosTable
+            headers={['Total', 'BTN', 'SB']}
+            rows={[
+              {
+                label: 'Steal',
+                cells: [
+                  { sv: stats.steal.total, colorFn: colorSteal },
+                  { sv: stats.steal.btn, colorFn: colorSteal },
+                  { sv: stats.steal.sb, colorFn: colorSteal },
+                ],
+              },
+              {
+                label: 'Fold to 3Bet',
+                cells: [
+                  { sv: stats.fold_to_3bet_steal.total, colorFn: colorFoldTo3Bet },
+                  { sv: stats.fold_to_3bet_steal.btn, colorFn: colorFoldTo3Bet },
+                  { sv: stats.fold_to_3bet_steal.sb, colorFn: colorFoldTo3Bet },
+                ],
+              },
+              {
+                label: '4-Bet',
+                cells: [
+                  { sv: stats.four_bet_steal.total, colorFn: colorFourBet },
+                  { sv: stats.four_bet_steal.btn, colorFn: colorFourBet },
+                  { sv: stats.four_bet_steal.sb, colorFn: colorFourBet },
+                ],
+              },
+              {
+                label: '4-Bet-Fold',
+                cells: [
+                  { sv: undefined },
+                  { sv: undefined },
+                  { sv: undefined },
+                ],
+              },
+            ]}
+          />
+        </div>
+
+        {/* Right: vs Steal (SB, BB) */}
+        <div className="flex-1 min-w-0 overflow-x-auto">
+          <PosTable
+            headers={['SB', 'BB']}
+            rows={[
+              {
+                label: 'Fold',
+                cells: [
+                  { sv: stats.vs_steal_fold.sb, colorFn: colorVsStealFold },
+                  { sv: stats.vs_steal_fold.bb, colorFn: colorVsStealFold },
+                ],
+              },
+              {
+                label: 'Call',
+                cells: [
+                  { sv: stats.vs_steal_call.sb },
+                  { sv: stats.vs_steal_call.bb },
+                ],
+              },
+              {
+                label: '3-Bet',
+                cells: [
+                  { sv: stats.vs_steal_3bet.sb, colorFn: colorVsSteal3Bet },
+                  { sv: stats.vs_steal_3bet.bb, colorFn: colorVsSteal3Bet },
+                ],
+              },
+            ]}
+          />
+          <div className="px-2 py-0.5 text-[10px] text-text-muted uppercase tracking-wide border-t border-border/30">
+            vs. Steal
+          </div>
+        </div>
+      </div>
+
+      {/* ── POSTFLOP ── */}
+      <SectionTitle>Postflop</SectionTitle>
+      <div className="flex gap-0 border-x border-b border-border">
+        {/* Left: Postflop stats by street */}
+        <div className="flex-1 min-w-0 overflow-x-auto border-r border-border">
+          <PosTable
+            headers={['Flop', 'Turn', 'River']}
+            rows={[
+              {
+                label: 'Continuation Bet',
+                cells: [
+                  { sv: stats.cbet_flop.total, colorFn: colorCbet },
+                  { sv: stats.cbet_turn.total, colorFn: colorCbet },
+                  { sv: stats.cbet_river.total, colorFn: colorCbet },
+                ],
+              },
+              {
+                label: 'Fold to CBet',
+                cells: [
+                  { sv: stats.fold_to_cbet_flop.total, colorFn: colorFoldToCbet },
+                  { sv: stats.fold_to_cbet_turn.total, colorFn: colorFoldToCbet },
+                  { sv: stats.fold_to_cbet_river.total, colorFn: colorFoldToCbet },
+                ],
+              },
+              {
+                label: 'Aggression',
+                cells: [
+                  { sv: stats.af_flop, colorFn: colorAf, decimals: 1 },
+                  { sv: stats.af_turn, colorFn: colorAf, decimals: 1 },
+                  { sv: stats.af_river, colorFn: colorAf, decimals: 1 },
+                ],
+              },
+              {
+                label: 'Agg Frequency',
+                cells: [
+                  { sv: stats.afq_flop, colorFn: colorAfq },
+                  { sv: stats.afq_turn, colorFn: colorAfq },
+                  { sv: stats.afq_river, colorFn: colorAfq },
+                ],
+              },
+              {
+                label: 'Donk Bet',
+                cells: [
+                  { sv: stats.donk_bet_flop, colorFn: colorDonk },
+                  { sv: stats.donk_bet_turn, colorFn: colorDonk },
+                  { sv: stats.donk_bet_river, colorFn: colorDonk },
+                ],
+              },
+            ]}
+          />
+        </div>
+
+        {/* Right: vs CBet Flop (Fold/Call/Raise) */}
+        <div className="flex-1 min-w-0 overflow-x-auto">
+          <PosTable
+            headers={['Fold', 'Call', 'Raise']}
+            rows={[
+              {
+                label: 'Raised Pot',
+                cells: [
+                  { sv: undefined },
+                  { sv: undefined },
+                  { sv: undefined },
+                ],
+              },
+              {
+                label: '3-Bet Pot',
+                cells: [
+                  { sv: undefined },
+                  { sv: undefined },
+                  { sv: undefined },
+                ],
+              },
+            ]}
+          />
+          <div className="px-2 py-0.5 text-[10px] text-text-muted uppercase tracking-wide border-t border-border/30">
+            vs. Continuation Bet Flop
+          </div>
+        </div>
+      </div>
+
+      {/* ── MISSED C-BET ── */}
+      <SectionTitle>Missed C-Bet</SectionTitle>
+      <div className="flex gap-0 border-x border-b border-border">
+        {/* Left: Missed CBet breakdown */}
+        <div className="flex-1 min-w-0 p-2 border-r border-border">
+          <div className="space-y-2">
+            <div className="flex items-baseline justify-between">
+              <span className="text-[13px] text-text-muted">Missed Continuation Bet</span>
+              <span className={`font-mono text-[13px] ${fmtStat(stats.missed_cbet_flop, colorMissedCbet).color}`}>
+                {fmtStat(stats.missed_cbet_flop, colorMissedCbet).text}
+                {fmtStat(stats.missed_cbet_flop, colorMissedCbet).sub && (
+                  <sub className="text-[9px] ml-0.5 text-text-muted">{fmtStat(stats.missed_cbet_flop, colorMissedCbet).sub}</sub>
+                )}
+              </span>
+            </div>
+            <div className="pl-3 space-y-1">
+              <div className="flex items-baseline justify-between">
+                <span className="text-[12px] text-text-muted">In Position</span>
+                <span className={`font-mono text-[13px] ${fmtStat(stats.missed_cbet_flop_ip, colorMissedCbet).color}`}>
+                  {fmtStat(stats.missed_cbet_flop_ip, colorMissedCbet).text}
+                  {fmtStat(stats.missed_cbet_flop_ip, colorMissedCbet).sub && (
+                    <sub className="text-[9px] ml-0.5 text-text-muted">{fmtStat(stats.missed_cbet_flop_ip, colorMissedCbet).sub}</sub>
+                  )}
+                </span>
+              </div>
+              <div className="flex items-baseline justify-between text-text-muted">
+                <span className="text-[12px]">→ Fold</span>
+                <span className="font-mono text-[13px]">-</span>
+              </div>
+              <div className="flex items-baseline justify-between">
+                <span className="text-[12px] text-text-muted">Out of Position</span>
+                <span className={`font-mono text-[13px] ${fmtStat(stats.missed_cbet_flop_oop, colorMissedCbet).color}`}>
+                  {fmtStat(stats.missed_cbet_flop_oop, colorMissedCbet).text}
+                  {fmtStat(stats.missed_cbet_flop_oop, colorMissedCbet).sub && (
+                    <sub className="text-[9px] ml-0.5 text-text-muted">{fmtStat(stats.missed_cbet_flop_oop, colorMissedCbet).sub}</sub>
+                  )}
+                </span>
+              </div>
+              <div className="flex items-baseline justify-between text-text-muted">
+                <span className="text-[12px]">→ Fold</span>
+                <span className="font-mono text-[13px]">-</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Right: vs Missed CBet */}
+        <div className="flex-1 min-w-0 p-2">
+          <div className="space-y-2">
+            <div className="flex items-baseline justify-between text-text-muted">
+              <span className="text-[13px]">vs. Missed Continuation Bet</span>
+              <span className="font-mono text-[13px]">-</span>
+            </div>
+            <div className="pl-3 space-y-1">
+              <div className="flex items-baseline justify-between text-text-muted">
+                <span className="text-[12px]">Bet In Position</span>
+                <span className="font-mono text-[13px]">-</span>
+              </div>
+              <div className="flex items-baseline justify-between text-text-muted">
+                <span className="text-[12px]">Check | Fold</span>
+                <span className="font-mono text-[13px]">-</span>
+              </div>
+              <div className="flex items-baseline justify-between text-text-muted">
+                <span className="text-[12px]">Bet Out of Position</span>
+                <span className="font-mono text-[13px]">-</span>
+              </div>
+              <div className="flex items-baseline justify-between text-text-muted">
+                <span className="text-[12px]">Check-Fold</span>
+                <span className="font-mono text-[13px]">-</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ── SHOWDOWN ── */}
+      <SectionTitle>Showdown</SectionTitle>
+      <div className="border-x border-b border-border p-2">
+        <div className="flex gap-6">
+          <div className="flex items-baseline gap-2">
+            <span className="text-[12px] text-text-muted">Went to Showdown</span>
+            <span className={`font-mono text-[13px] ${fmtStat(stats.wtsd, colorWtsd).color}`}>
+              {fmtStat(stats.wtsd, colorWtsd).text}
+              {fmtStat(stats.wtsd, colorWtsd).sub && (
+                <sub className="text-[9px] ml-0.5 text-text-muted">{fmtStat(stats.wtsd, colorWtsd).sub}</sub>
+              )}
+            </span>
+          </div>
+          <div className="flex items-baseline gap-2">
+            <span className="text-[12px] text-text-muted">Won at Showdown</span>
+            <span className={`font-mono text-[13px] ${fmtStat(stats.wsd, colorWsd).color}`}>
+              {fmtStat(stats.wsd, colorWsd).text}
+              {fmtStat(stats.wsd, colorWsd).sub && (
+                <sub className="text-[9px] ml-0.5 text-text-muted">{fmtStat(stats.wsd, colorWsd).sub}</sub>
+              )}
+            </span>
+          </div>
+          <div className="flex items-baseline gap-2">
+            <span className="text-[12px] text-text-muted">Won When Saw Flop</span>
+            <span className={`font-mono text-[13px] ${fmtStat(stats.wwsf, colorWwsf).color}`}>
+              {fmtStat(stats.wwsf, colorWwsf).text}
+              {fmtStat(stats.wwsf, colorWwsf).sub && (
+                <sub className="text-[9px] ml-0.5 text-text-muted">{fmtStat(stats.wwsf, colorWwsf).sub}</sub>
+              )}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <div className="h-4" />
     </div>
   );
 }

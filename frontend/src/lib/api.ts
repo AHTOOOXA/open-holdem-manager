@@ -44,6 +44,7 @@ export interface PositionalStats {
 export interface HeroStats {
   hands: number;
   win_rate_bb100: number | null;
+  win_rate_ev_bb100: number | null;
   vpip: PositionalStats;
   pfr: PositionalStats;
   open_raise: PositionalStats;
@@ -57,12 +58,13 @@ export interface HeroStats {
   call_open_raise: PositionalStats;
   limp: PositionalStats;
   squeeze: StatValue;
+  four_bet_range: StatValue;
   steal: PositionalStats;
-  fold_to_3bet_steal: StatValue;
-  four_bet_steal: StatValue;
-  vs_steal_fold: StatValue;
-  vs_steal_call: StatValue;
-  vs_steal_3bet: StatValue;
+  fold_to_3bet_steal: PositionalStats;
+  four_bet_steal: PositionalStats;
+  vs_steal_fold: PositionalStats;
+  vs_steal_call: PositionalStats;
+  vs_steal_3bet: PositionalStats;
   cbet_flop: PositionalStats;
   cbet_turn: PositionalStats;
   cbet_river: PositionalStats;
@@ -70,6 +72,8 @@ export interface HeroStats {
   fold_to_cbet_turn: PositionalStats;
   fold_to_cbet_river: PositionalStats;
   donk_bet_flop: StatValue;
+  donk_bet_turn: StatValue;
+  donk_bet_river: StatValue;
   af_flop: StatValue;
   af_turn: StatValue;
   af_river: StatValue;
@@ -77,6 +81,8 @@ export interface HeroStats {
   afq_turn: StatValue;
   afq_river: StatValue;
   missed_cbet_flop: StatValue;
+  missed_cbet_flop_ip: StatValue;
+  missed_cbet_flop_oop: StatValue;
   missed_cbet_turn: StatValue;
   wtsd: StatValue;
   wsd: StatValue;

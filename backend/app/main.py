@@ -31,5 +31,9 @@ def startup():
 @app.get("/api/health")
 def health():
     db = get_db()
-    hand_count = db.execute("SELECT COUNT(*) FROM hands").fetchone()[0]
+    try:
+        row = db.execute("SELECT COUNT(*) FROM hands").fetchone()
+        hand_count = row[0] if row else 0
+    except Exception:
+        hand_count = 0
     return {"status": "ok", "hands": hand_count}
