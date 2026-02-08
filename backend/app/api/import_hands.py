@@ -10,6 +10,8 @@ import traceback
 import zipfile
 import io
 import json
+import re
+import pandas as pd
 
 try:
     from app.equity import calculate_headsup_equity as _calc_equity
@@ -18,59 +20,280 @@ except ImportError:
 
 router = APIRouter()
 
+# ── Pre-compiled regexes ──
+RE_HAND_BOUNDARY = re.compile(r'\n(?=Poker Hand #)')
+RE_HAND_ID = re.compile(r'Poker Hand #(\w+):')
+
 # ── Import session caches (cleared between import runs) ──
 _player_cache: dict[str, int] = {}  # username -> player_id
 _next_player_id: int | None = None
 _next_hp_id: int | None = None
-_next_action_id: int | None = None
+
+BATCH_SIZE = 500
 
 
 def reset_import_cache() -> None:
     """Reset caches. Call before rebuild or when tables are wiped."""
-    global _player_cache, _next_player_id, _next_hp_id, _next_action_id
+    global _player_cache, _next_player_id, _next_hp_id
     _player_cache.clear()
     _next_player_id = None
     _next_hp_id = None
-    _next_action_id = None
 
 
 def _init_counters(db: duckdb.DuckDBPyConnection) -> None:
     """Initialize ID counters from current DB max values (once per session)."""
-    global _next_player_id, _next_hp_id, _next_action_id
+    global _next_player_id, _next_hp_id
     if _next_player_id is None:
-        _next_player_id = db.execute("SELECT COALESCE(MAX(id), 0) + 1 FROM players").fetchone()[0]
+        _next_player_id = db.execute(
+            "SELECT COALESCE(MAX(id), 0) + 1 FROM players"
+        ).fetchone()[0]
     if _next_hp_id is None:
-        _next_hp_id = db.execute("SELECT COALESCE(MAX(id), 0) + 1 FROM hand_players").fetchone()[0]
-    if _next_action_id is None:
-        _next_action_id = db.execute("SELECT COALESCE(MAX(id), 0) + 1 FROM actions").fetchone()[0]
+        _next_hp_id = db.execute(
+            "SELECT COALESCE(MAX(id), 0) + 1 FROM hand_players"
+        ).fetchone()[0]
 
 
-def _get_or_create_player(
-    db: duckdb.DuckDBPyConnection, username: str, site_id: int
-) -> int:
-    """Get existing player or create new one. Returns player_id.
-    Uses in-memory cache. first_seen/last_seen updated via finalize_import().
-    """
+def _batch_resolve_players(
+    db: duckdb.DuckDBPyConnection,
+    prepared: list[tuple[ParsedHand, dict]],
+) -> None:
+    """Resolve player IDs for all hands in a batch. Creates new players as needed."""
     global _next_player_id
-    if username in _player_cache:
-        return _player_cache[username]
 
-    row = db.execute(
-        "SELECT id FROM players WHERE site_id = ? AND username = ?",
-        [site_id, username],
-    ).fetchone()
-    if row:
-        _player_cache[username] = row[0]
-        return row[0]
+    all_usernames = set()
+    for parsed, _ in prepared:
+        for s in parsed.seats:
+            all_usernames.add(s["username"])
 
-    player_id = _next_player_id
-    _next_player_id += 1
-    db.execute(
-        "INSERT INTO players (id, site_id, username) VALUES (?, ?, ?)",
-        [player_id, site_id, username],
-    )
-    _player_cache[username] = player_id
-    return player_id
+    uncached = [u for u in all_usernames if u not in _player_cache]
+    if not uncached:
+        return
+
+    # Batch lookup existing players
+    for i in range(0, len(uncached), 500):
+        batch = uncached[i:i + 500]
+        placeholders = ",".join(["?"] * len(batch))
+        rows = db.execute(
+            f"SELECT username, id FROM players WHERE site_id = 1 AND username IN ({placeholders})",
+            batch,
+        ).fetchall()
+        for username, pid in rows:
+            _player_cache[username] = pid
+
+    # Create missing players in bulk
+    new_rows = []
+    for u in uncached:
+        if u not in _player_cache:
+            pid = _next_player_id
+            _next_player_id += 1
+            _player_cache[u] = pid
+            new_rows.append({"id": pid, "site_id": 1, "username": u})
+
+    if new_rows:
+        df_new_players = pd.DataFrame(new_rows)
+        db.execute(
+            "INSERT INTO players (id, site_id, username) "
+            "SELECT id, site_id, username FROM df_new_players"
+        )
+
+
+def _compute_financials(parsed: ParsedHand):
+    """Compute per-player investment and all-in EV for a parsed hand.
+
+    Returns (player_invested, all_in_ev_bb_map).
+    """
+    player_invested = {s["username"]: Decimal("0") for s in parsed.seats}
+
+    for street in ("preflop", "flop", "turn", "river"):
+        street_put_in: dict[str, Decimal] = {}
+        for a in parsed.actions_by_street[street]:
+            uname = a["username"]
+            action = a["action"]
+            amt = a["amount"]
+
+            if action in ("sb", "bb", "ante", "straddle", "call", "bet"):
+                street_put_in[uname] = street_put_in.get(uname, Decimal("0")) + amt
+                player_invested[uname] += amt
+            elif action == "raise":
+                already_in = street_put_in.get(uname, Decimal("0"))
+                increment = amt - already_in
+                if increment > 0:
+                    player_invested[uname] += increment
+                street_put_in[uname] = amt
+
+    # All-in EV calculation
+    all_in_ev_bb_map: dict[str, float] = {}
+
+    all_in_street = None
+    street_order = {"preflop": 0, "flop": 1, "turn": 2, "river": 3}
+    for street in ("preflop", "flop", "turn", "river"):
+        for a in parsed.actions_by_street[street]:
+            if a["is_all_in"]:
+                all_in_street = street
+                break
+        if all_in_street is not None:
+            break
+
+    if all_in_street is not None and _calc_equity:
+        players_in = set(s["username"] for s in parsed.seats)
+        folded = set()
+        for st in ("preflop", "flop", "turn", "river"):
+            for a in parsed.actions_by_street[st]:
+                if a["action"] == "fold":
+                    folded.add(a["username"])
+        remaining = players_in - folded
+        real_showdown = len(remaining) >= 2 and (
+            parsed.in_showdown or parsed.went_to_showdown_players
+        )
+
+        if real_showdown and len(remaining) == 2:
+            board_at = []
+            if street_order[all_in_street] >= 1:
+                board_at.extend(parsed.board_cards["flop"])
+            if street_order[all_in_street] >= 2:
+                board_at.extend(parsed.board_cards["turn"])
+            if street_order[all_in_street] >= 3:
+                board_at.extend(parsed.board_cards["river"])
+
+            if 5 - len(board_at) > 0:
+                pl = list(remaining)
+                if pl[0] in parsed.hero_cards and pl[1] in parsed.hero_cards:
+                    try:
+                        p1, p2 = pl
+                        p1_eq = _calc_equity(
+                            parsed.hero_cards[p1], parsed.hero_cards[p2], board_at
+                        )
+                        p2_eq = 1.0 - p1_eq
+                        p1_net = float(player_invested[p1]) - float(
+                            parsed.uncalled_returns.get(p1, Decimal("0"))
+                        )
+                        p2_net = float(player_invested[p2]) - float(
+                            parsed.uncalled_returns.get(p2, Decimal("0"))
+                        )
+                        total_risk = (
+                            sum(float(v) for v in player_invested.values())
+                            - sum(float(v) for v in parsed.uncalled_returns.values())
+                        )
+                        dist = total_risk - float(parsed.total_rake)
+                        bb = float(parsed.bb_amount)
+                        all_in_ev_bb_map[p1] = (p1_eq * dist - p1_net) / bb
+                        all_in_ev_bb_map[p2] = (p2_eq * dist - p2_net) / bb
+                    except Exception:
+                        pass
+
+    return player_invested, all_in_ev_bb_map
+
+
+def _flush_batch(
+    db: duckdb.DuckDBPyConnection,
+    prepared: list[tuple[ParsedHand, dict]],
+) -> tuple[int, int, list[str]]:
+    """Bulk-insert a batch of (parsed, player_stats) tuples using DataFrame inserts.
+
+    Returns (imported_count, error_count, error_details).
+    """
+    global _next_hp_id
+
+    if not prepared:
+        return 0, 0, []
+
+    _init_counters(db)
+    _batch_resolve_players(db, prepared)
+
+    hands_rows = []
+    hp_rows = []
+    board_rows = []
+
+    for parsed, player_stats in prepared:
+        bb_amount = parsed.bb_amount
+        bb_f = float(bb_amount) if bb_amount else 0.0
+        num_winners = len(parsed.collected)
+        per_player_rake = (
+            parsed.total_rake / max(num_winners, 1)
+            if parsed.total_rake else Decimal("0")
+        )
+        player_invested, all_in_ev_bb_map = _compute_financials(parsed)
+
+        hands_rows.append({
+            "id": parsed.hand_id,
+            "site_id": parsed.site_id,
+            "played_at": parsed.played_at,
+            "game_type": parsed.game_type,
+            "stakes": parsed.stakes,
+            "sb_amount": float(parsed.sb_amount),
+            "bb_amount": bb_f,
+            "table_name": parsed.table_name,
+            "table_size": parsed.table_size,
+            "button_seat": parsed.button_seat,
+            "raw_text": parsed.raw_text,
+        })
+
+        for s in parsed.seats:
+            uname = s["username"]
+            pid = _player_cache[uname]
+            cards = parsed.hero_cards.get(uname)
+            card1 = cards[0] if cards else None
+            card2 = cards[1] if cards else None
+            gross = parsed.collected.get(uname, Decimal("0"))
+            uncalled = parsed.uncalled_returns.get(uname, Decimal("0"))
+            invested = player_invested.get(uname, Decimal("0"))
+            net_won = float(gross + uncalled - invested)
+            rake = float(per_player_rake) if uname in parsed.collected else 0.0
+            won_bb = net_won / bb_f if bb_f else 0.0
+            rake_bb = rake / bb_f if bb_f else 0.0
+            stack_bb = float(s["stack"]) / bb_f if bb_f else 0.0
+            ev_bb = all_in_ev_bb_map.get(uname, won_bb)
+            ps = player_stats[uname]
+
+            hp_id = _next_hp_id
+            _next_hp_id += 1
+
+            row = {
+                "id": hp_id,
+                "hand_id": parsed.hand_id,
+                "player_id": pid,
+                "seat": s["seat"],
+                "position": s["position"],
+                "stack": float(s["stack"]),
+                "stack_bb": stack_bb,
+                "card1": card1,
+                "card2": card2,
+                "won": net_won,
+                "won_bb": won_bb,
+                "rake": rake,
+                "rake_bb": rake_bb,
+                "all_in_ev_bb": ev_bb,
+            }
+            row.update(ps)  # All stat flags from compute_stat_flags
+            hp_rows.append(row)
+
+        for street, cards in parsed.board_cards.items():
+            for i, card in enumerate(cards):
+                board_rows.append({
+                    "hand_id": parsed.hand_id,
+                    "street": street,
+                    "card": card,
+                    "card_order": i + 1,
+                })
+
+    # Bulk insert using DataFrames (520x faster than executemany)
+    db.execute("BEGIN TRANSACTION")
+    try:
+        if hands_rows:
+            df_hands = pd.DataFrame(hands_rows)
+            db.execute("INSERT INTO hands BY NAME SELECT * FROM df_hands")
+        if hp_rows:
+            df_hp = pd.DataFrame(hp_rows)
+            db.execute("INSERT INTO hand_players BY NAME SELECT * FROM df_hp")
+        if board_rows:
+            df_board = pd.DataFrame(board_rows)
+            db.execute("INSERT INTO board_cards BY NAME SELECT * FROM df_board")
+        db.execute("COMMIT")
+        return len(prepared), 0, []
+    except Exception as e:
+        db.execute("ROLLBACK")
+        traceback.print_exc()
+        return 0, len(prepared), [f"Batch insert failed: {e}"]
 
 
 def finalize_import(db: duckdb.DuckDBPyConnection) -> None:
@@ -89,255 +312,14 @@ def finalize_import(db: duckdb.DuckDBPyConnection) -> None:
 
 
 def insert_parsed_hand(db: duckdb.DuckDBPyConnection, parsed: ParsedHand) -> str:
-    """Compute stats, financials, and insert a parsed hand into DuckDB. Returns hand_id."""
-    global _next_hp_id, _next_action_id
+    """Insert a single parsed hand. Computes stats internally.
 
-    _init_counters(db)
-
-    # Get or create players
-    player_ids = {}  # username -> player_id
-    for s in parsed.seats:
-        player_ids[s["username"]] = _get_or_create_player(db, s["username"], parsed.site_id)
-
-    # Compute stat flags
+    Kept for backward compatibility (used by tests).
+    """
     player_stats = compute_stat_flags(parsed)
-
-    # ── Calculate per-player investment ──
-    player_invested = {s["username"]: Decimal("0") for s in parsed.seats}
-
-    for street in ["preflop", "flop", "turn", "river"]:
-        street_put_in: dict[str, Decimal] = {}
-
-        for a in parsed.actions_by_street[street]:
-            uname = a["username"]
-            action = a["action"]
-            amt = a["amount"]
-
-            if action in ("sb", "bb", "ante", "straddle"):
-                street_put_in[uname] = street_put_in.get(uname, Decimal("0")) + amt
-                player_invested[uname] += amt
-            elif action in ("call", "bet"):
-                street_put_in[uname] = street_put_in.get(uname, Decimal("0")) + amt
-                player_invested[uname] += amt
-            elif action == "raise":
-                # amt is the "to" amount for this street
-                already_in = street_put_in.get(uname, Decimal("0"))
-                increment = amt - already_in
-                if increment > 0:
-                    player_invested[uname] += increment
-                street_put_in[uname] = amt
-
-    # ── Detect all-in for EV calculation ──
-    all_in_street = None
-    street_order_map = {"preflop": 0, "flop": 1, "turn": 2, "river": 3}
-    for street in ["preflop", "flop", "turn", "river"]:
-        for a in parsed.actions_by_street[street]:
-            if a["is_all_in"]:
-                if all_in_street is None:
-                    all_in_street = street
-                break
-        if all_in_street is not None:
-            break
-
-    # ── Determine remaining players for EV ──
-    players_in_hand = set(s["username"] for s in parsed.seats)
-    players_folded = set()
-    for street in ["preflop", "flop", "turn", "river"]:
-        for a in parsed.actions_by_street[street]:
-            if a["action"] == "fold":
-                players_folded.add(a["username"])
-    remaining_players = players_in_hand - players_folded
-    real_showdown = len(remaining_players) >= 2 and (
-        parsed.in_showdown or parsed.went_to_showdown_players
-    )
-
-    # ── Calculate won/rake amounts ──
-    num_winners = len(parsed.collected)
-    per_player_rake = parsed.total_rake / max(num_winners, 1) if parsed.total_rake else Decimal("0")
-
-    bb_amount = parsed.bb_amount
-
-    # ── Compute all-in EV ──
-    all_in_ev_bb_map = {}  # username -> ev_bb
-
-    if all_in_street is not None and real_showdown and len(remaining_players) == 2:
-        # Board at the all-in point
-        board_at_all_in = []
-        if street_order_map[all_in_street] >= 1:
-            board_at_all_in.extend(parsed.board_cards["flop"])
-        if street_order_map[all_in_street] >= 2:
-            board_at_all_in.extend(parsed.board_cards["turn"])
-        if street_order_map[all_in_street] >= 3:
-            board_at_all_in.extend(parsed.board_cards["river"])
-
-        cards_to_come = 5 - len(board_at_all_in)
-
-        if cards_to_come > 0:
-            # Check we know both players' cards
-            players_list = list(remaining_players)
-            if players_list[0] in parsed.hero_cards and players_list[1] in parsed.hero_cards and _calc_equity:
-                try:
-                    p1, p2 = players_list
-                    p1_eq = _calc_equity(
-                        parsed.hero_cards[p1], parsed.hero_cards[p2], board_at_all_in
-                    )
-                    p2_eq = 1.0 - p1_eq
-
-                    # Subtract uncalled bets — money returned was never at risk
-                    p1_net = float(player_invested[p1]) - float(parsed.uncalled_returns.get(p1, Decimal("0")))
-                    p2_net = float(player_invested[p2]) - float(parsed.uncalled_returns.get(p2, Decimal("0")))
-                    total_at_risk = sum(float(v) for v in player_invested.values()) \
-                                  - sum(float(v) for v in parsed.uncalled_returns.values())
-                    distributable = total_at_risk - float(parsed.total_rake)
-
-                    all_in_ev_bb_map[p1] = (
-                        p1_eq * distributable - p1_net
-                    ) / float(bb_amount)
-                    all_in_ev_bb_map[p2] = (
-                        p2_eq * distributable - p2_net
-                    ) / float(bb_amount)
-                except Exception:
-                    pass  # Fall back to won_bb
-
-    # ── Insert into database ──
-    # 1. Insert hand
-    db.execute(
-        """INSERT INTO hands (id, site_id, played_at, game_type, stakes,
-           sb_amount, bb_amount, table_name, table_size, button_seat, raw_text)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        [
-            parsed.hand_id, parsed.site_id, parsed.played_at, parsed.game_type,
-            parsed.stakes, float(parsed.sb_amount), float(bb_amount),
-            parsed.table_name, parsed.table_size, parsed.button_seat, parsed.raw_text,
-        ],
-    )
-
-    # 2. Insert board cards (batched)
-    board_rows = []
-    for street, cards in parsed.board_cards.items():
-        for i, card in enumerate(cards):
-            board_rows.append([parsed.hand_id, street, card, i + 1])
-    if board_rows:
-        db.executemany(
-            "INSERT INTO board_cards (hand_id, street, card, card_order) VALUES (?, ?, ?, ?)",
-            board_rows,
-        )
-
-    # 3. Insert hand_players
-    for s in parsed.seats:
-        uname = s["username"]
-        pid = player_ids[uname]
-        cards = parsed.hero_cards.get(uname)
-        card1 = cards[0] if cards else None
-        card2 = cards[1] if cards else None
-        gross_collected = parsed.collected.get(uname, Decimal("0"))
-        uncalled = parsed.uncalled_returns.get(uname, Decimal("0"))
-        invested = player_invested.get(uname, Decimal("0"))
-        net_won = float(gross_collected + uncalled - invested)
-        rake = float(per_player_rake) if uname in parsed.collected else 0.0
-        won = net_won
-        won_bb = won / float(bb_amount) if bb_amount else 0.0
-        rake_bb = rake / float(bb_amount) if bb_amount else 0.0
-        stack_bb = float(s["stack"]) / float(bb_amount) if bb_amount else 0.0
-        ps = player_stats[uname]
-        ev_bb = all_in_ev_bb_map.get(uname, won_bb)
-
-        hp_id = _next_hp_id
-        _next_hp_id += 1
-        db.execute(
-            """INSERT INTO hand_players (
-                id, hand_id, player_id, seat, position, stack, stack_bb,
-                card1, card2, won, won_bb, rake, rake_bb, all_in_ev_bb,
-                vpip, pfr, three_bet, three_bet_opp, four_bet, four_bet_opp,
-                fold_to_3bet, fold_to_4bet,
-                open_raise, open_raise_opp, call_open_raise, limp, squeeze, five_bet,
-                steal_attempted, faced_steal, fold_to_steal, call_steal, three_bet_vs_steal,
-                saw_flop, saw_turn, saw_river, went_to_showdown, won_at_showdown,
-                cbet_flop, cbet_flop_opp, cbet_turn, cbet_turn_opp,
-                cbet_river, cbet_river_opp,
-                fold_to_cbet_flop, fold_to_cbet_turn, fold_to_cbet_river,
-                missed_cbet_flop, missed_cbet_turn,
-                donk_bet_flop, donk_bet_turn, donk_bet_river,
-                flop_bets, flop_raises, flop_calls, flop_checks, flop_folds,
-                turn_bets, turn_raises, turn_calls, turn_checks, turn_folds,
-                river_bets, river_raises, river_calls, river_checks, river_folds,
-                steal_opp, donk_bet_flop_opp, donk_bet_turn_opp, donk_bet_river_opp,
-                squeeze_opp, five_bet_opp
-            ) VALUES (
-                ?, ?, ?, ?, ?, ?, ?,
-                ?, ?, ?, ?, ?, ?, ?,
-                ?, ?, ?, ?, ?, ?,
-                ?, ?,
-                ?, ?, ?, ?, ?, ?,
-                ?, ?, ?, ?, ?,
-                ?, ?, ?, ?, ?,
-                ?, ?, ?, ?,
-                ?, ?,
-                ?, ?, ?,
-                ?, ?,
-                ?, ?, ?,
-                ?, ?, ?, ?, ?,
-                ?, ?, ?, ?, ?,
-                ?, ?, ?, ?, ?,
-                ?, ?, ?, ?,
-                ?, ?
-            )""",
-            [
-                hp_id, parsed.hand_id, pid, s["seat"], s["position"],
-                float(s["stack"]), stack_bb,
-                card1, card2, won, won_bb, rake, rake_bb, ev_bb,
-                ps["vpip"], ps["pfr"], ps["three_bet"], ps["three_bet_opp"],
-                ps["four_bet"], ps["four_bet_opp"],
-                ps["fold_to_3bet"], ps["fold_to_4bet"],
-                ps["open_raise"], ps["open_raise_opp"], ps["call_open_raise"], ps["limp"],
-                ps["squeeze"], ps["five_bet"],
-                ps["steal_attempted"], ps["faced_steal"],
-                ps["fold_to_steal"], ps["call_steal"], ps["three_bet_vs_steal"],
-                ps["saw_flop"], ps["saw_turn"], ps["saw_river"],
-                ps["went_to_showdown"], ps["won_at_showdown"],
-                ps["cbet_flop"], ps["cbet_flop_opp"],
-                ps["cbet_turn"], ps["cbet_turn_opp"],
-                ps["cbet_river"], ps["cbet_river_opp"],
-                ps["fold_to_cbet_flop"], ps["fold_to_cbet_turn"],
-                ps["fold_to_cbet_river"],
-                ps["missed_cbet_flop"], ps["missed_cbet_turn"],
-                ps["donk_bet_flop"], ps["donk_bet_turn"], ps["donk_bet_river"],
-                ps["flop_bets"], ps["flop_raises"], ps["flop_calls"],
-                ps["flop_checks"], ps["flop_folds"],
-                ps["turn_bets"], ps["turn_raises"], ps["turn_calls"],
-                ps["turn_checks"], ps["turn_folds"],
-                ps["river_bets"], ps["river_raises"], ps["river_calls"],
-                ps["river_checks"], ps["river_folds"],
-                ps["steal_opp"], ps["donk_bet_flop_opp"],
-                ps["donk_bet_turn_opp"], ps["donk_bet_river_opp"],
-                ps["squeeze_opp"], ps["five_bet_opp"],
-            ],
-        )
-
-    # 4. Insert actions (batched)
-    action_rows = []
-    for street, street_actions in parsed.actions_by_street.items():
-        for a in street_actions:
-            uname = a["username"]
-            if uname not in player_ids:
-                continue
-            pid = player_ids[uname]
-            amt = float(a["amount"])
-            amt_bb = amt / float(bb_amount) if bb_amount else 0.0
-            act_id = _next_action_id
-            _next_action_id += 1
-            action_rows.append([
-                act_id, parsed.hand_id, pid, street,
-                a["order"], a["action"], amt, amt_bb, a["is_all_in"],
-            ])
-    if action_rows:
-        db.executemany(
-            """INSERT INTO actions (id, hand_id, player_id, street,
-               action_order, action_type, amount, amount_bb, is_all_in)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            action_rows,
-        )
-
+    imported, errors, details = _flush_batch(db, [(parsed, player_stats)])
+    if errors:
+        raise RuntimeError(details[0])
     return parsed.hand_id
 
 
@@ -399,28 +381,20 @@ async def import_files_stream(files: list[UploadFile] = File(...)):
         errors = 0
         error_details: list[str] = []
 
-        # Pre-check duplicates in bulk
-        all_ids = []
-        for h in all_hands:
-            hid = extract_hand_id(h)
-            all_ids.append(hid)
-
+        # Bulk duplicate check
+        all_ids = [extract_hand_id(h) for h in all_hands]
         existing_ids: set[str] = set()
         valid_ids = [hid for hid in all_ids if hid is not None]
         if valid_ids:
-            batch_size = 500
-            for j in range(0, len(valid_ids), batch_size):
-                batch = valid_ids[j:j + batch_size]
+            for j in range(0, len(valid_ids), 500):
+                batch = valid_ids[j:j + 500]
                 placeholders = ",".join(["?"] * len(batch))
                 rows = db.execute(
                     f"SELECT id FROM hands WHERE id IN ({placeholders})", batch
                 ).fetchall()
                 existing_ids.update(r[0] for r in rows)
 
-        # Batch transactions
-        BATCH_SIZE = 200
-        db.execute("BEGIN TRANSACTION")
-        batch_count = 0
+        pending: list[tuple[ParsedHand, dict]] = []
 
         for i, hand_text in enumerate(all_hands):
             hid = all_ids[i]
@@ -432,21 +406,21 @@ async def import_files_stream(files: list[UploadFile] = File(...)):
             else:
                 try:
                     parsed = parse_hand_history(hand_text)
-                    insert_parsed_hand(db, parsed)
-                    imported += 1
-                    batch_count += 1
-                    if batch_count >= BATCH_SIZE:
-                        db.execute("COMMIT")
-                        db.execute("BEGIN TRANSACTION")
-                        batch_count = 0
+                    stats = compute_stat_flags(parsed)
+                    pending.append((parsed, stats))
                 except Exception as e:
-                    # Rollback failed batch, retry remaining individually
-                    db.execute("ROLLBACK")
-                    db.execute("BEGIN TRANSACTION")
-                    batch_count = 0
                     errors += 1
                     error_details.append(f"Hand parse error: {str(e)}")
 
+            # Flush batch to DB
+            if len(pending) >= BATCH_SIZE:
+                imp, errs, details = _flush_batch(db, pending)
+                imported += imp
+                errors += errs
+                error_details.extend(details)
+                pending = []
+
+            # Progress update
             if (i + 1) % 200 == 0 or i == total - 1:
                 yield json.dumps({
                     "type": "progress",
@@ -457,7 +431,13 @@ async def import_files_stream(files: list[UploadFile] = File(...)):
                     "errors": errors,
                 }) + "\n"
 
-        db.execute("COMMIT")
+        # Flush remaining
+        if pending:
+            imp, errs, details = _flush_batch(db, pending)
+            imported += imp
+            errors += errs
+            error_details.extend(details)
+
         finalize_import(db)
 
         yield json.dumps({
@@ -478,34 +458,59 @@ def _process_hands(db, text_contents: list[str]) -> ImportResult:
     total_errors = 0
     error_details: list[str] = []
 
-    db.execute("BEGIN TRANSACTION")
+    # Split all hands and check duplicates in bulk
+    all_hands: list[str] = []
+    all_ids: list[str | None] = []
     for content in text_contents:
         for hand_text in split_hands(content):
             hand_text = hand_text.strip()
-            if not hand_text:
-                continue
-            try:
-                hand_id = extract_hand_id(hand_text)
-                if hand_id is None:
-                    total_errors += 1
-                    error_details.append("Could not extract hand ID from hand")
-                    continue
+            if hand_text:
+                all_hands.append(hand_text)
+                all_ids.append(extract_hand_id(hand_text))
 
-                existing = db.execute(
-                    "SELECT 1 FROM hands WHERE id = ?", [hand_id]
-                ).fetchone()
-                if existing:
-                    total_duplicates += 1
-                    continue
+    existing_ids: set[str] = set()
+    valid_ids = [hid for hid in all_ids if hid is not None]
+    if valid_ids:
+        for j in range(0, len(valid_ids), 500):
+            batch = valid_ids[j:j + 500]
+            placeholders = ",".join(["?"] * len(batch))
+            rows = db.execute(
+                f"SELECT id FROM hands WHERE id IN ({placeholders})", batch
+            ).fetchall()
+            existing_ids.update(r[0] for r in rows)
 
-                parsed = parse_hand_history(hand_text)
-                insert_parsed_hand(db, parsed)
-                total_imported += 1
-            except Exception as e:
-                total_errors += 1
-                error_details.append(f"Hand parse error: {str(e)}")
-                traceback.print_exc()
-    db.execute("COMMIT")
+    pending: list[tuple[ParsedHand, dict]] = []
+
+    for i, hand_text in enumerate(all_hands):
+        hid = all_ids[i]
+        if hid is None:
+            total_errors += 1
+            error_details.append("Could not extract hand ID from hand")
+            continue
+        if hid in existing_ids:
+            total_duplicates += 1
+            continue
+        try:
+            parsed = parse_hand_history(hand_text)
+            stats = compute_stat_flags(parsed)
+            pending.append((parsed, stats))
+        except Exception as e:
+            total_errors += 1
+            error_details.append(f"Hand parse error: {str(e)}")
+
+        if len(pending) >= BATCH_SIZE:
+            imp, errs, details = _flush_batch(db, pending)
+            total_imported += imp
+            total_errors += errs
+            error_details.extend(details)
+            pending = []
+
+    if pending:
+        imp, errs, details = _flush_batch(db, pending)
+        total_imported += imp
+        total_errors += errs
+        error_details.extend(details)
+
     finalize_import(db)
 
     return ImportResult(
@@ -529,7 +534,10 @@ async def rebuild_hands():
         total = len(rows)
 
         if total == 0:
-            yield json.dumps({"type": "done", "imported": 0, "duplicates": 0, "errors": 0, "error_details": []}) + "\n"
+            yield json.dumps({
+                "type": "done", "imported": 0, "duplicates": 0,
+                "errors": 0, "error_details": [],
+            }) + "\n"
             return
 
         yield json.dumps({"type": "start", "total_hands": total, "files": 0}) + "\n"
@@ -547,28 +555,24 @@ async def rebuild_hands():
         imported = 0
         errors = 0
         error_details: list[str] = []
-        BATCH_SIZE = 200
-
-        db.execute("BEGIN TRANSACTION")
-        batch_count = 0
+        pending: list[tuple[ParsedHand, dict]] = []
 
         for i, (hand_id, raw_text) in enumerate(hand_texts):
             try:
                 parsed = parse_hand_history(raw_text)
-                insert_parsed_hand(db, parsed)
-                imported += 1
-                batch_count += 1
-                if batch_count >= BATCH_SIZE:
-                    db.execute("COMMIT")
-                    db.execute("BEGIN TRANSACTION")
-                    batch_count = 0
+                stats = compute_stat_flags(parsed)
+                pending.append((parsed, stats))
             except Exception as e:
-                db.execute("ROLLBACK")
-                db.execute("BEGIN TRANSACTION")
-                batch_count = 0
                 errors += 1
                 error_details.append(f"{hand_id}: {str(e)}")
                 traceback.print_exc()
+
+            if len(pending) >= BATCH_SIZE:
+                imp, errs, details = _flush_batch(db, pending)
+                imported += imp
+                errors += errs
+                error_details.extend(details)
+                pending = []
 
             if (i + 1) % 200 == 0 or i == total - 1:
                 yield json.dumps({
@@ -580,7 +584,12 @@ async def rebuild_hands():
                     "errors": errors,
                 }) + "\n"
 
-        db.execute("COMMIT")
+        if pending:
+            imp, errs, details = _flush_batch(db, pending)
+            imported += imp
+            errors += errs
+            error_details.extend(details)
+
         finalize_import(db)
 
         yield json.dumps({
@@ -609,24 +618,10 @@ async def clear_hands():
 
 def split_hands(content: str) -> list[str]:
     """Split a file with multiple hand histories into individual hands."""
-    hands = []
-    current: list[str] = []
-
-    for line in content.split("\n"):
-        if line.startswith("Poker Hand #") and current:
-            hands.append("\n".join(current))
-            current = [line]
-        else:
-            current.append(line)
-
-    if current:
-        hands.append("\n".join(current))
-
-    return hands
+    return RE_HAND_BOUNDARY.split(content)
 
 
 def extract_hand_id(hand_text: str) -> str | None:
     """Extract hand ID from the first line."""
-    import re
-    m = re.search(r"Poker Hand #(\w+):", hand_text)
+    m = RE_HAND_ID.search(hand_text)
     return m.group(1) if m else None

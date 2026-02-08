@@ -54,25 +54,16 @@ POSITIONS_BY_COUNT = {
     9: ["BTN", "SB", "BB", "UTG", "UTG1", "EP", "MP", "HJ", "CO"],
 }
 
-# Lines to skip entirely
-SKIP_PATTERNS = [
-    re.compile(r"is disconnected"),
-    re.compile(r"has timed out"),
-    re.compile(r"is sitting out"),
-    re.compile(r"is connected"),
-    re.compile(r"has returned"),
-    re.compile(r"Cashout:"),
-    re.compile(r"was removed from the table"),
-    re.compile(r"said,"),
-    re.compile(r"leaves the table"),
-    re.compile(r"joins the table"),
-    re.compile(r"\*\*\* FIRST BOARD \*\*\*"),
-    re.compile(r"\*\*\* SECOND BOARD \*\*\*"),
-    # Run It Twice: skip SECOND/THIRD board variants (we use FIRST as canonical)
-    re.compile(r"\*\*\* (?:SECOND|THIRD) (?:FLOP|TURN|RIVER) \*\*\*"),
-    re.compile(r"\*\*\* (?:SECOND|THIRD) SHOWDOWN \*\*\*"),
-    re.compile(r"^Hand was run"),
-]
+# Single combined skip regex (12 patterns → 1 search per line)
+RE_SKIP = re.compile(
+    r"is disconnected|has timed out|is sitting out|is connected|"
+    r"has returned|Cashout:|was removed from the table|said,|"
+    r"leaves the table|joins the table|"
+    r"\*\*\* (?:FIRST|SECOND) BOARD \*\*\*|"
+    r"\*\*\* (?:SECOND|THIRD) (?:FLOP|TURN|RIVER) \*\*\*|"
+    r"\*\*\* (?:SECOND|THIRD) SHOWDOWN \*\*\*|"
+    r"^Hand was run"
+)
 
 # Regex patterns for parsing
 RE_HEADER = re.compile(
@@ -149,13 +140,11 @@ RE_SHOWDOWN = re.compile(r"\*\*\* (?:FIRST )?SHOW\s?DOWN \*\*\*")
 RE_SUMMARY = re.compile(r"\*\*\* SUMMARY \*\*\*")
 RE_DOES_NOT_SHOW = re.compile(r"^(.+?): does not show hand")
 RE_SHOWS = re.compile(r"^(.+?): shows \[(\w{2}) (\w{2})\]")
+RE_COLLECTED_WON_AMOUNT = re.compile(r"(?:collected|won) \(\$([0-9.]+)\)")
 
 
 def _should_skip(line: str) -> bool:
-    for pat in SKIP_PATTERNS:
-        if pat.search(line):
-            return True
-    return False
+    return bool(RE_SKIP.search(line))
 
 
 def _assign_positions(seats: list[dict], button_seat: int, table_size: int) -> None:
@@ -348,7 +337,7 @@ def parse_hand_history(hand_text: str) -> ParsedHand:
 
             # Find ALL won/collected amounts on this line
             found_any = False
-            for m_coll in re.finditer(r"(?:collected|won) \(\$([0-9.]+)\)", line):
+            for m_coll in RE_COLLECTED_WON_AMOUNT.finditer(line):
                 amt = Decimal(m_coll.group(1))
                 uname = uname_from_seat or "unknown"
                 collected[uname] = collected.get(uname, Decimal("0")) + amt
