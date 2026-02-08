@@ -11,6 +11,7 @@ import zipfile
 import io
 import json
 import re
+import time
 import pandas as pd
 
 try:
@@ -381,6 +382,11 @@ async def import_files_stream(files: list[UploadFile] = File(...)):
         errors = 0
         error_details: list[str] = []
 
+        t_start = time.perf_counter()
+        t_parse = 0.0
+        t_stats = 0.0
+        t_db = 0.0
+
         # Bulk duplicate check
         all_ids = [extract_hand_id(h) for h in all_hands]
         existing_ids: set[str] = set()
@@ -405,8 +411,13 @@ async def import_files_stream(files: list[UploadFile] = File(...)):
                 duplicates += 1
             else:
                 try:
+                    t0 = time.perf_counter()
                     parsed = parse_hand_history(hand_text)
+                    t1 = time.perf_counter()
                     stats = compute_stat_flags(parsed)
+                    t2 = time.perf_counter()
+                    t_parse += t1 - t0
+                    t_stats += t2 - t1
                     pending.append((parsed, stats))
                 except Exception as e:
                     errors += 1
@@ -414,7 +425,9 @@ async def import_files_stream(files: list[UploadFile] = File(...)):
 
             # Flush batch to DB
             if len(pending) >= BATCH_SIZE:
+                t0 = time.perf_counter()
                 imp, errs, details = _flush_batch(db, pending)
+                t_db += time.perf_counter() - t0
                 imported += imp
                 errors += errs
                 error_details.extend(details)
@@ -422,6 +435,8 @@ async def import_files_stream(files: list[UploadFile] = File(...)):
 
             # Progress update
             if (i + 1) % 200 == 0 or i == total - 1:
+                elapsed = time.perf_counter() - t_start
+                hps = imported / elapsed if elapsed > 0 else 0
                 yield json.dumps({
                     "type": "progress",
                     "processed": i + 1,
@@ -429,23 +444,34 @@ async def import_files_stream(files: list[UploadFile] = File(...)):
                     "imported": imported,
                     "duplicates": duplicates,
                     "errors": errors,
+                    "elapsed_ms": round(elapsed * 1000),
+                    "hands_per_sec": round(hps),
                 }) + "\n"
 
         # Flush remaining
         if pending:
+            t0 = time.perf_counter()
             imp, errs, details = _flush_batch(db, pending)
+            t_db += time.perf_counter() - t0
             imported += imp
             errors += errs
             error_details.extend(details)
 
         finalize_import(db)
 
+        elapsed = time.perf_counter() - t_start
+        hps = imported / elapsed if elapsed > 0 else 0
         yield json.dumps({
             "type": "done",
             "imported": imported,
             "duplicates": duplicates,
             "errors": errors,
             "error_details": error_details[:20],
+            "elapsed_ms": round(elapsed * 1000),
+            "hands_per_sec": round(hps),
+            "parse_ms": round(t_parse * 1000),
+            "stats_ms": round(t_stats * 1000),
+            "db_ms": round(t_db * 1000),
         }) + "\n"
 
     return StreamingResponse(generate(), media_type="application/x-ndjson")
@@ -557,10 +583,20 @@ async def rebuild_hands():
         error_details: list[str] = []
         pending: list[tuple[ParsedHand, dict]] = []
 
+        t_start = time.perf_counter()
+        t_parse = 0.0
+        t_stats = 0.0
+        t_db = 0.0
+
         for i, (hand_id, raw_text) in enumerate(hand_texts):
             try:
+                t0 = time.perf_counter()
                 parsed = parse_hand_history(raw_text)
+                t1 = time.perf_counter()
                 stats = compute_stat_flags(parsed)
+                t2 = time.perf_counter()
+                t_parse += t1 - t0
+                t_stats += t2 - t1
                 pending.append((parsed, stats))
             except Exception as e:
                 errors += 1
@@ -568,13 +604,17 @@ async def rebuild_hands():
                 traceback.print_exc()
 
             if len(pending) >= BATCH_SIZE:
+                t0 = time.perf_counter()
                 imp, errs, details = _flush_batch(db, pending)
+                t_db += time.perf_counter() - t0
                 imported += imp
                 errors += errs
                 error_details.extend(details)
                 pending = []
 
             if (i + 1) % 200 == 0 or i == total - 1:
+                elapsed = time.perf_counter() - t_start
+                hps = imported / elapsed if elapsed > 0 else 0
                 yield json.dumps({
                     "type": "progress",
                     "processed": i + 1,
@@ -582,22 +622,33 @@ async def rebuild_hands():
                     "imported": imported,
                     "duplicates": 0,
                     "errors": errors,
+                    "elapsed_ms": round(elapsed * 1000),
+                    "hands_per_sec": round(hps),
                 }) + "\n"
 
         if pending:
+            t0 = time.perf_counter()
             imp, errs, details = _flush_batch(db, pending)
+            t_db += time.perf_counter() - t0
             imported += imp
             errors += errs
             error_details.extend(details)
 
         finalize_import(db)
 
+        elapsed = time.perf_counter() - t_start
+        hps = imported / elapsed if elapsed > 0 else 0
         yield json.dumps({
             "type": "done",
             "imported": imported,
             "duplicates": 0,
             "errors": errors,
             "error_details": error_details[:20],
+            "elapsed_ms": round(elapsed * 1000),
+            "hands_per_sec": round(hps),
+            "parse_ms": round(t_parse * 1000),
+            "stats_ms": round(t_stats * 1000),
+            "db_ms": round(t_db * 1000),
         }) + "\n"
 
     return StreamingResponse(generate(), media_type="application/x-ndjson")

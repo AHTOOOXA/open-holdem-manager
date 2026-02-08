@@ -5,6 +5,11 @@ export interface ImportResult {
   duplicates: number;
   errors: number;
   error_details: string[];
+  elapsed_ms?: number;
+  hands_per_sec?: number;
+  parse_ms?: number;
+  stats_ms?: number;
+  db_ms?: number;
 }
 
 export interface Settings {
@@ -99,6 +104,11 @@ export interface ImportProgress {
   duplicates?: number;
   errors?: number;
   error_details?: string[];
+  elapsed_ms?: number;
+  hands_per_sec?: number;
+  parse_ms?: number;
+  stats_ms?: number;
+  db_ms?: number;
 }
 
 export async function uploadFiles(files: File[]): Promise<ImportResult> {
@@ -148,6 +158,11 @@ export async function uploadFilesStream(
           duplicates: msg.duplicates ?? 0,
           errors: msg.errors ?? 0,
           error_details: msg.error_details ?? [],
+          elapsed_ms: msg.elapsed_ms,
+          hands_per_sec: msg.hands_per_sec,
+          parse_ms: msg.parse_ms,
+          stats_ms: msg.stats_ms,
+          db_ms: msg.db_ms,
         };
       }
     }
@@ -245,6 +260,11 @@ export async function rebuildHands(
           duplicates: msg.duplicates ?? 0,
           errors: msg.errors ?? 0,
           error_details: msg.error_details ?? [],
+          elapsed_ms: msg.elapsed_ms,
+          hands_per_sec: msg.hands_per_sec,
+          parse_ms: msg.parse_ms,
+          stats_ms: msg.stats_ms,
+          db_ms: msg.db_ms,
         };
       }
     }

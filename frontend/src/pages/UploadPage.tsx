@@ -272,6 +272,9 @@ export default function UploadPage() {
                       {(progress.errors ?? 0) > 0 && (
                         <span className="text-red">{(progress.errors ?? 0).toLocaleString()} errors</span>
                       )}
+                      {(progress.hands_per_sec ?? 0) > 0 && (
+                        <span className="text-text-muted">{progress.hands_per_sec?.toLocaleString()} h/s</span>
+                      )}
                     </div>
                   </>
                 )}
@@ -318,6 +321,11 @@ export default function UploadPage() {
       {result && (
         <div className="bg-surface rounded-lg border border-border p-4 space-y-2">
           <h3 className="font-medium">Import Complete</h3>
+          {result.elapsed_ms != null && result.imported > 0 && (
+            <p className="text-sm text-text-muted">
+              {result.imported.toLocaleString()} hands in {(result.elapsed_ms / 1000).toFixed(1)}s ({result.hands_per_sec?.toLocaleString()} h/s)
+            </p>
+          )}
           <div className="grid grid-cols-3 gap-4 text-center">
             <div>
               <div className="text-2xl font-bold text-green">{result.imported}</div>
@@ -332,6 +340,11 @@ export default function UploadPage() {
               <div className="text-xs text-text-muted">Errors</div>
             </div>
           </div>
+          {result.parse_ms != null && result.imported > 0 && (
+            <div className="text-xs text-text-muted text-center">
+              parse {result.parse_ms}ms / stats {result.stats_ms}ms / db {result.db_ms}ms
+            </div>
+          )}
           {result.error_details.length > 0 && (
             <div className="mt-3 text-xs text-red space-y-1">
               {result.error_details.map((e, i) => (
