@@ -220,6 +220,10 @@ def compute_stat_flags(parsed: ParsedHand) -> dict[str, dict]:
                 player_stats[uname]["three_bet"] = True
                 second_raiser = uname
 
+                # The opener now faces a 3-bet → 4-bet opportunity
+                if first_raiser and first_raiser != uname:
+                    player_stats[first_raiser]["four_bet_opp"] = True
+
                 # Check if this is a squeeze (3bet when there are callers of the open)
                 if players_who_called:
                     player_stats[uname]["squeeze"] = True
@@ -234,28 +238,30 @@ def compute_stat_flags(parsed: ParsedHand) -> dict[str, dict]:
                 player_stats[uname]["four_bet"] = True
                 third_raiser = uname
 
-                # The 3-bettor had a 4bet opportunity
-                if second_raiser:
-                    player_stats[second_raiser]["four_bet_opp"] = True
-
                 # The 3-bettor now faces a 4-bet → 5-bet opportunity
                 if second_raiser:
                     player_stats[second_raiser]["five_bet_opp"] = True
 
-                # The original raiser also sees this — not a fold_to_3bet
-                if first_raiser and first_raiser != uname:
+                # Opener didn't fold to 3-bet (they 4-bet or action was superseded)
+                if uname == first_raiser:
+                    player_stats[uname]["fold_to_3bet"] = False
+                elif first_raiser:
                     player_stats[first_raiser]["fold_to_3bet"] = False
 
             elif raise_count == 4:
                 # 5-bet
                 player_stats[uname]["five_bet"] = True
 
+                # 3-bettor didn't fold to 4-bet (they 5-bet)
+                if uname == second_raiser:
+                    player_stats[uname]["fold_to_4bet"] = False
+
         elif action in ("bet", "check"):
             # A bet preflop would be unusual, but handle it
             if action == "bet":
                 player_stats[uname]["vpip"] = True
 
-    # ── Mark 3-bet opp for players between open raise and 3-bet ──
+    # ── Mark 3-bet opp for players between open raise and 3-bet (inclusive) ──
     if first_raiser:
         first_raise_order = _find_action_order(voluntary_preflop, first_raiser, "raise")
         three_bet_order = None
@@ -265,8 +271,8 @@ def compute_stat_flags(parsed: ParsedHand) -> dict[str, dict]:
         if first_raise_order is not None:
             for a in voluntary_preflop:
                 if a["order"] > first_raise_order and a["username"] != first_raiser:
-                    # Only mark if they acted BEFORE the 3-bet (or no 3-bet happened)
-                    if three_bet_order is None or a["order"] < three_bet_order:
+                    # Include the 3-bettor themselves (<=), exclude players after
+                    if three_bet_order is None or a["order"] <= three_bet_order:
                         player_stats[a["username"]]["three_bet_opp"] = True
 
     # ── Mark faced_steal fold defaults ──
@@ -369,18 +375,17 @@ def compute_stat_flags(parsed: ParsedHand) -> dict[str, dict]:
                 if action == "bet":
                     aggressor_bet = True
 
-        # Set cbet stats
-        if prev_aggressor and prev_aggressor in (players_in_hand - players_folded):
-            # Only if the previous aggressor saw this street
-            if player_stats[prev_aggressor][f"saw_{street}"]:
-                player_stats[prev_aggressor][f"cbet_{street}_opp"] = True
-                if aggressor_bet:
-                    player_stats[prev_aggressor][f"cbet_{street}"] = True
-                    street_aggressor[street] = prev_aggressor
-                else:
-                    player_stats[prev_aggressor][f"cbet_{street}"] = False
-                    if street in ("flop", "turn"):
-                        player_stats[prev_aggressor][f"missed_cbet_{street}"] = True
+        # Set cbet stats — use saw_{street} which correctly reflects
+        # who was present at the start of each street (not stale global fold set)
+        if prev_aggressor and player_stats[prev_aggressor][f"saw_{street}"]:
+            player_stats[prev_aggressor][f"cbet_{street}_opp"] = True
+            if aggressor_bet:
+                player_stats[prev_aggressor][f"cbet_{street}"] = True
+                street_aggressor[street] = prev_aggressor
+            else:
+                player_stats[prev_aggressor][f"cbet_{street}"] = False
+                if street in ("flop", "turn"):
+                    player_stats[prev_aggressor][f"missed_cbet_{street}"] = True
 
         # Track who the last aggressor was on this street
         for a in reversed(street_actions):

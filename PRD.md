@@ -1022,6 +1022,39 @@ Features that differentiate OHM from basic trackers.
 - [ ] **Decision analysis (H2N-style)** — Action Profit: EV of each action in a specific spot. Spot Frequency: how often a situation occurs per 1000 hands. Next Villain Actions: what opponents do after your action.
 - [ ] **Winrate by stake level** — separate BB/100 and total profit/loss per stake. Determines when you're ready to move up.
 - [ ] **Rake & rakeback tracking** — total rake paid per stake, rake as % of winnings, projected rakeback. Critical at microstakes where rake eats winrate.
+- [ ] **Strategy Drift Detection (unique to OHM)** — no major tracker has this as a first-class feature. Monitors rolling windows of key stats and alerts when your game deviates from your baseline. Detects tilt, fatigue, scared money, and slow strategic drift before they cost significant money.
+
+  **How it works:**
+  1. Compute lifetime baseline stats (your "A-game" profile)
+  2. Continuously compute stats over rolling windows (last 500, 1k, 2k, 5k, 10k hands)
+  3. Compare rolling stats to baseline using z-scores: `z = (rolling_mean - lifetime_mean) / lifetime_stddev`
+  4. Flag when |z| > 2.0 (statistically significant deviation)
+
+  **Stats to monitor (and what drift means):**
+  | Stat | Drift Up | Drift Down |
+  |------|----------|------------|
+  | VPIP | Playing too loose (tilt/boredom) | Playing too tight (scared money) |
+  | PFR | Over-aggression (tilt) | Passivity (fear/fatigue) |
+  | AF postflop | Spewing (maniac mode) | Calling station mode |
+  | WTSD | Can't let go, calling too much | Over-folding postflop |
+  | Fold to 3-Bet | — | Calling too many 3-bets (ego/tilt) |
+  | W$SD | — (running good?) | Bad calls getting to showdown |
+  | Non-SD winnings trend | — | Red line plummeting = folding too much postflop |
+  | Win rate (bb/100) | — | Losing more than expected |
+  | C-Bet Flop | Autopilot c-betting | Missing value / checking too much |
+
+  **UI:**
+  - Dashboard widget: stat health indicators (green/yellow/red dots per stat)
+  - Specific alert text: "Your VPIP increased from 23% to 31% over the last 2000 hands (+3.2σ)"
+  - Trend arrows next to stats on the stats page (↑↓ with color)
+  - Configurable windows and thresholds in settings
+  - Optional: "A-game score" — single composite number (0-100) based on how close current play matches your baseline
+
+  **Implementation:**
+  - Backend: `GET /api/reports/drift?window=2000` — returns per-stat z-scores comparing last N hands to lifetime
+  - Pure SQL: two queries against `hand_players` (lifetime WHERE player_id=hero vs last N hands ORDER BY played_at DESC LIMIT N), compute means, compare
+  - No new schema needed — derived from existing stat flags
+  - Low effort, high impact, completely unique feature
 
 ### Phase 6: Platform & Ecosystem
 

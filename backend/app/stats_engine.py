@@ -96,7 +96,7 @@ def compute_hero_stats(
 
     # Positional steal stats (BTN, SB)
     steal_hands = [r for r in data if r["steal_attempted"]]
-    steal_faced_3bet = [r for r in steal_hands if r.get("three_bet_opp")]
+    steal_faced_3bet = [r for r in steal_hands if r.get("fold_to_3bet") is not None]
     stats.fold_to_3bet_steal = _positional_steal_stat(steal_faced_3bet, "fold_to_3bet", ["BTN", "SB"])
     stats.four_bet_steal = _positional_steal_stat(steal_faced_3bet, "four_bet", ["BTN", "SB"])
 
