@@ -40,7 +40,7 @@ _HANDS_COLS = (
 _HP_BASE_COLS = (
     "id", "hand_id", "player_id", "seat", "position",
     "stack", "stack_bb", "card1", "card2",
-    "won", "won_bb", "rake", "rake_bb", "all_in_ev_bb",
+    "won", "won_bb", "rake", "rake_bb", "jackpot", "jackpot_bb", "all_in_ev_bb",
 )
 _STAT_FLAG_KEYS = (
     "vpip", "pfr", "three_bet", "three_bet_opp", "four_bet", "four_bet_opp",
@@ -249,6 +249,10 @@ def _flush_batch(
             parsed.total_rake / max(num_winners, 1)
             if parsed.total_rake else Decimal("0")
         )
+        per_player_jackpot = (
+            parsed.total_jackpot / max(num_winners, 1)
+            if parsed.total_jackpot else Decimal("0")
+        )
         player_invested, all_in_ev_bb_map = _compute_financials(parsed)
 
         # Append to hands columns
@@ -275,8 +279,10 @@ def _flush_batch(
             invested = player_invested.get(uname, Decimal("0"))
             net_won = float(gross + uncalled - invested)
             rake = float(per_player_rake) if uname in parsed.collected else 0.0
+            jackpot = float(per_player_jackpot) if uname in parsed.collected else 0.0
             won_bb = net_won / bb_f if bb_f else 0.0
             rake_bb = rake / bb_f if bb_f else 0.0
+            jackpot_bb = jackpot / bb_f if bb_f else 0.0
             stack_bb = float(s["stack"]) / bb_f if bb_f else 0.0
             ev_bb = all_in_ev_bb_map.get(uname, won_bb)
             ps = player_stats[uname]
@@ -298,6 +304,8 @@ def _flush_batch(
             hp_cols["won_bb"].append(won_bb)
             hp_cols["rake"].append(rake)
             hp_cols["rake_bb"].append(rake_bb)
+            hp_cols["jackpot"].append(jackpot)
+            hp_cols["jackpot_bb"].append(jackpot_bb)
             hp_cols["all_in_ev_bb"].append(ev_bb)
 
             # Append stat flags
@@ -444,6 +452,7 @@ async def import_files_stream(files: list[UploadFile] = File(...)):
             elif hid in existing_ids:
                 duplicates += 1
             else:
+                existing_ids.add(hid)
                 try:
                     t0 = time.perf_counter()
                     parsed = parse_hand_history(hand_text)
@@ -550,6 +559,7 @@ def _process_hands(db, text_contents: list[str]) -> ImportResult:
         if hid in existing_ids:
             total_duplicates += 1
             continue
+        existing_ids.add(hid)
         try:
             parsed = parse_hand_history(hand_text)
             stats = compute_stat_flags(parsed)

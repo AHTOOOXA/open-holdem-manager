@@ -22,11 +22,13 @@ export interface GraphPoint {
   cumulative_bb: number;
   cumulative_ev_bb: number;
   cumulative_rake_bb: number;
+  cumulative_jackpot_bb: number;
   cumulative_showdown_bb: number;
   cumulative_nonshowdown_bb: number;
   cumulative_usd: number;
   cumulative_ev_usd: number;
   cumulative_rake_usd: number;
+  cumulative_jackpot_usd: number;
   cumulative_showdown_usd: number;
   cumulative_nonshowdown_usd: number;
 }
@@ -191,11 +193,13 @@ export async function getGraphData(params?: {
   stakes?: string;
   date_from?: string;
   date_to?: string;
+  last_n?: number;
 }): Promise<GraphPoint[]> {
   const sp = new URLSearchParams();
   if (params?.stakes) sp.set('stakes', params.stakes);
   if (params?.date_from) sp.set('date_from', params.date_from);
   if (params?.date_to) sp.set('date_to', params.date_to);
+  if (params?.last_n) sp.set('last_n', String(params.last_n));
   const res = await fetch(`${BASE}/reports/graph?${sp}`);
   if (!res.ok) throw new Error(`Graph failed: ${res.statusText}`);
   return res.json();
@@ -220,6 +224,246 @@ export async function updateSettings(settings: Settings): Promise<Settings> {
 export async function getHealth(): Promise<{ status: string; hands: number }> {
   const res = await fetch(`${BASE}/health`);
   if (!res.ok) throw new Error(`Health check failed: ${res.statusText}`);
+  return res.json();
+}
+
+// ── Hand Browser Types ──────────────────────────────────────────────
+
+export interface ActionItem {
+  a: string;       // R, B, C, X
+  v?: number;      // amount in BB
+  h: boolean;      // is hero
+}
+
+export interface HandSummary {
+  id: string;
+  played_at: string;
+  stakes: string;
+  bb_amount: number;
+  position: string;
+  card1: string | null;
+  card2: string | null;
+  won_bb: number;
+  all_in_ev_bb: number;
+  tags: string[];
+  preflop_actions: ActionItem[];
+  flop_cards: string[];
+  flop_pot: number;
+  flop_actions: ActionItem[];
+  turn_card: string | null;
+  turn_pot: number;
+  turn_actions: ActionItem[];
+  river_card: string | null;
+  river_pot: number;
+  river_actions: ActionItem[];
+}
+
+export interface HandListResponse {
+  hands: HandSummary[];
+  total: number;
+  page: number;
+  per_page: number;
+  total_pages: number;
+}
+
+export interface HandPlayerDetail {
+  seat: number;
+  position: string;
+  username: string;
+  stack_bb: number;
+  card1: string | null;
+  card2: string | null;
+  won_bb: number;
+  is_hero: boolean;
+}
+
+export interface HandAction {
+  street: string;
+  player: string;
+  position: string;
+  action: string;
+  amount_bb: number | null;
+  is_all_in: boolean;
+  is_hero: boolean;
+}
+
+export interface BoardCards {
+  flop: string[];
+  turn: string[];
+  river: string[];
+}
+
+export interface HandDetail {
+  id: string;
+  played_at: string;
+  stakes: string;
+  bb_amount: number;
+  table_name: string | null;
+  table_size: number;
+  raw_text: string | null;
+  players: HandPlayerDetail[];
+  board: BoardCards;
+  actions: HandAction[];
+  tags: string[];
+  note: string | null;
+}
+
+export interface TagCount {
+  tag: string;
+  count: number;
+}
+
+export interface HandListParams {
+  page?: number;
+  per_page?: number;
+  sort?: string;
+  order?: string;
+  position?: string;
+  stakes?: string;
+  result?: string;
+  tags?: string;
+  date_from?: string;
+  date_to?: string;
+  search?: string;
+}
+
+export async function getHands(params?: HandListParams): Promise<HandListResponse> {
+  const sp = new URLSearchParams();
+  if (params?.page) sp.set('page', String(params.page));
+  if (params?.per_page) sp.set('per_page', String(params.per_page));
+  if (params?.sort) sp.set('sort', params.sort);
+  if (params?.order) sp.set('order', params.order);
+  if (params?.position) sp.set('position', params.position);
+  if (params?.stakes) sp.set('stakes', params.stakes);
+  if (params?.result) sp.set('result', params.result);
+  if (params?.tags) sp.set('tags', params.tags);
+  if (params?.date_from) sp.set('date_from', params.date_from);
+  if (params?.date_to) sp.set('date_to', params.date_to);
+  if (params?.search) sp.set('search', params.search);
+  const res = await fetch(`${BASE}/hands?${sp}`);
+  if (!res.ok) throw new Error(`Hands failed: ${res.statusText}`);
+  return res.json();
+}
+
+export async function getHandDetail(handId: string): Promise<HandDetail> {
+  const res = await fetch(`${BASE}/hands/${encodeURIComponent(handId)}`);
+  if (!res.ok) throw new Error(`Hand detail failed: ${res.statusText}`);
+  return res.json();
+}
+
+export async function addTag(handId: string, tag: string): Promise<void> {
+  const res = await fetch(`${BASE}/hands/${encodeURIComponent(handId)}/tags`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tag }),
+  });
+  if (!res.ok) throw new Error(`Add tag failed: ${res.statusText}`);
+}
+
+export async function removeTag(handId: string, tag: string): Promise<void> {
+  const res = await fetch(`${BASE}/hands/${encodeURIComponent(handId)}/tags/${encodeURIComponent(tag)}`, {
+    method: 'DELETE',
+  });
+  if (!res.ok) throw new Error(`Remove tag failed: ${res.statusText}`);
+}
+
+export async function getTags(): Promise<TagCount[]> {
+  const res = await fetch(`${BASE}/tags`);
+  if (!res.ok) throw new Error(`Tags failed: ${res.statusText}`);
+  return res.json();
+}
+
+export async function updateNote(handId: string, note: string): Promise<void> {
+  const res = await fetch(`${BASE}/hands/${encodeURIComponent(handId)}/note`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ note }),
+  });
+  if (!res.ok) throw new Error(`Update note failed: ${res.statusText}`);
+}
+
+export async function deleteNote(handId: string): Promise<void> {
+  const res = await fetch(`${BASE}/hands/${encodeURIComponent(handId)}/note`, {
+    method: 'DELETE',
+  });
+  if (!res.ok) throw new Error(`Delete note failed: ${res.statusText}`);
+}
+
+// ── Results Dashboard Types ──────────────────────────────────────────
+
+export interface FilterOptions {
+  stakes: string[];
+  date_range: { min?: string; max?: string };
+}
+
+export interface StakeBreakdown {
+  stakes: string;
+  bb_amount: number;
+  hands: number;
+  won_bb: number;
+  won_usd: number;
+  ev_bb: number;
+  rake_bb: number;
+  rake_usd: number;
+  jackpot_bb: number;
+  jackpot_usd: number;
+  bb_per_100: number;
+  ev_bb_per_100: number;
+}
+
+export interface MonthBreakdown {
+  month: string;
+  hands: number;
+  won_bb: number;
+  won_usd: number;
+  ev_bb: number;
+  rake_bb: number;
+  rake_usd: number;
+  jackpot_bb: number;
+  jackpot_usd: number;
+  bb_per_100: number;
+  ev_bb_per_100: number;
+}
+
+export interface PositionBreakdown {
+  position: string;
+  hands: number;
+  won_bb: number;
+  won_usd: number;
+  ev_bb: number;
+  rake_bb: number;
+  rake_usd: number;
+  jackpot_bb: number;
+  jackpot_usd: number;
+  bb_per_100: number;
+  ev_bb_per_100: number;
+}
+
+export interface ResultsBreakdown {
+  by_stakes: StakeBreakdown[];
+  by_month: MonthBreakdown[];
+  by_position: PositionBreakdown[];
+}
+
+export async function getFilterOptions(): Promise<FilterOptions> {
+  const res = await fetch(`${BASE}/reports/filter-options`);
+  if (!res.ok) throw new Error(`Filter options failed: ${res.statusText}`);
+  return res.json();
+}
+
+export async function getResultsBreakdown(params?: {
+  stakes?: string;
+  date_from?: string;
+  date_to?: string;
+  last_n?: number;
+}): Promise<ResultsBreakdown> {
+  const sp = new URLSearchParams();
+  if (params?.stakes) sp.set('stakes', params.stakes);
+  if (params?.date_from) sp.set('date_from', params.date_from);
+  if (params?.date_to) sp.set('date_to', params.date_to);
+  if (params?.last_n) sp.set('last_n', String(params.last_n));
+  const res = await fetch(`${BASE}/reports/breakdown?${sp}`);
+  if (!res.ok) throw new Error(`Breakdown failed: ${res.statusText}`);
   return res.json();
 }
 

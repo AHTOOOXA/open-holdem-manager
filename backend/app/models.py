@@ -1,6 +1,7 @@
 from pydantic import BaseModel
 from decimal import Decimal
 from datetime import datetime
+from typing import Optional
 
 
 class ImportResult(BaseModel):
@@ -20,11 +21,13 @@ class GraphPoint(BaseModel):
     cumulative_bb: float
     cumulative_ev_bb: float = 0.0
     cumulative_rake_bb: float = 0.0
+    cumulative_jackpot_bb: float = 0.0
     cumulative_showdown_bb: float = 0.0
     cumulative_nonshowdown_bb: float = 0.0
     cumulative_usd: float = 0.0
     cumulative_ev_usd: float = 0.0
     cumulative_rake_usd: float = 0.0
+    cumulative_jackpot_usd: float = 0.0
     cumulative_showdown_usd: float = 0.0
     cumulative_nonshowdown_usd: float = 0.0
 
@@ -102,3 +105,145 @@ class HeroStats(BaseModel):
     wtsd: StatValue = StatValue()
     wsd: StatValue = StatValue()
     wwsf: StatValue = StatValue()
+
+
+# ── Hand Browser Models ──────────────────────────────────────────────
+
+class ActionItem(BaseModel):
+    a: str            # R(aise), B(et), C(all), X(check)
+    v: Optional[int] = None  # amount in BB (rounded), None for X
+    h: bool = False   # is hero action
+
+
+class HandSummary(BaseModel):
+    id: str
+    played_at: datetime
+    stakes: str
+    bb_amount: float
+    position: str
+    card1: Optional[str] = None
+    card2: Optional[str] = None
+    won_bb: float
+    all_in_ev_bb: float = 0
+    tags: list[str] = []
+    preflop_actions: list[ActionItem] = []
+    flop_cards: list[str] = []
+    flop_pot: int = 0
+    flop_actions: list[ActionItem] = []
+    turn_card: Optional[str] = None
+    turn_pot: int = 0
+    turn_actions: list[ActionItem] = []
+    river_card: Optional[str] = None
+    river_pot: int = 0
+    river_actions: list[ActionItem] = []
+
+
+class HandListResponse(BaseModel):
+    hands: list[HandSummary]
+    total: int
+    page: int
+    per_page: int
+    total_pages: int
+
+
+class HandPlayerDetail(BaseModel):
+    seat: int
+    position: str
+    username: str
+    stack_bb: float
+    card1: Optional[str] = None
+    card2: Optional[str] = None
+    won_bb: float
+    is_hero: bool = False
+
+
+class HandAction(BaseModel):
+    street: str
+    player: str
+    position: str
+    action: str
+    amount_bb: Optional[float] = None
+    is_all_in: bool = False
+    is_hero: bool = False
+
+
+class BoardCards(BaseModel):
+    flop: list[str] = []
+    turn: list[str] = []
+    river: list[str] = []
+
+
+class HandDetail(BaseModel):
+    id: str
+    played_at: datetime
+    stakes: str
+    bb_amount: float
+    table_name: Optional[str] = None
+    table_size: int
+    raw_text: Optional[str] = None
+    players: list[HandPlayerDetail] = []
+    board: BoardCards = BoardCards()
+    actions: list[HandAction] = []
+    tags: list[str] = []
+    note: Optional[str] = None
+
+
+class TagCount(BaseModel):
+    tag: str
+    count: int
+
+
+# ── Results Dashboard Models ─────────────────────────────────────────
+
+class FilterOptions(BaseModel):
+    stakes: list[str] = []
+    date_range: dict[str, str | None] = {}
+
+
+class StakeBreakdown(BaseModel):
+    stakes: str
+    bb_amount: float
+    hands: int
+    won_bb: float
+    won_usd: float
+    ev_bb: float
+    rake_bb: float
+    rake_usd: float
+    jackpot_bb: float = 0.0
+    jackpot_usd: float = 0.0
+    bb_per_100: float
+    ev_bb_per_100: float
+
+
+class MonthBreakdown(BaseModel):
+    month: str
+    hands: int
+    won_bb: float
+    won_usd: float
+    ev_bb: float
+    rake_bb: float
+    rake_usd: float
+    jackpot_bb: float = 0.0
+    jackpot_usd: float = 0.0
+    bb_per_100: float
+    ev_bb_per_100: float
+
+
+class PositionBreakdown(BaseModel):
+    position: str
+    hands: int
+    won_bb: float
+    won_usd: float
+    ev_bb: float
+    rake_bb: float
+    rake_usd: float
+    jackpot_bb: float = 0.0
+    jackpot_usd: float = 0.0
+    bb_per_100: float
+    ev_bb_per_100: float
+
+
+class ResultsBreakdown(BaseModel):
+    by_stakes: list[StakeBreakdown] = []
+    by_month: list[MonthBreakdown] = []
+    by_position: list[PositionBreakdown] = []

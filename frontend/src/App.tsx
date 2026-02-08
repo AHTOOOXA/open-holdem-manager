@@ -2,11 +2,13 @@ import { BrowserRouter, Routes, Route, NavLink } from 'react-router-dom';
 import UploadPage from './pages/UploadPage';
 import StatsPage from './pages/StatsPage';
 import GraphPage from './pages/GraphPage';
+import HandsPage from './pages/HandsPage';
 
 const navItems = [
   { to: '/', label: 'Upload' },
   { to: '/stats', label: 'Stats' },
-  { to: '/graph', label: 'Graph' },
+  { to: '/graph', label: 'Results' },
+  { to: '/hands', label: 'Hands' },
 ];
 
 export default function App() {
@@ -35,6 +37,7 @@ export default function App() {
             <Route path="/" element={<UploadPage />} />
             <Route path="/stats" element={<StatsPage />} />
             <Route path="/graph" element={<GraphPage />} />
+            <Route path="/hands" element={<HandsPage />} />
           </Routes>
         </main>
       </div>

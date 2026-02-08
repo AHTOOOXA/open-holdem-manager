@@ -33,6 +33,7 @@ class ParsedHand:
     uncalled_returns: dict[str, Decimal]
     collected: dict[str, Decimal]
     total_rake: Decimal
+    total_jackpot: Decimal
     went_to_showdown_players: set[str]
     in_showdown: bool
     sb_player: str | None
@@ -58,7 +59,7 @@ POSITIONS_BY_COUNT = {
 RE_SKIP = re.compile(
     r"is disconnected|has timed out|is sitting out|is connected|"
     r"has returned|Cashout:|was removed from the table|said,|"
-    r"leaves the table|joins the table|"
+    r"leaves the table|joins the table|Cash Drop to Pot|"
     r"\*\*\* (?:FIRST|SECOND) BOARD \*\*\*|"
     r"\*\*\* (?:SECOND|THIRD) (?:FLOP|TURN|RIVER) \*\*\*|"
     r"\*\*\* (?:SECOND|THIRD) SHOWDOWN \*\*\*|"
@@ -122,6 +123,9 @@ RE_SUMMARY_POT = re.compile(
 )
 RE_SUMMARY_FEE = re.compile(
     r"(?:Rake|Jackpot|Bingo|Fortune|Tax) \$([0-9.]+)"
+)
+RE_SUMMARY_JACKPOT = re.compile(
+    r"Jackpot \$([0-9.]+)"
 )
 RE_SUMMARY_SEAT = re.compile(
     r"Seat (\d+): (.+?)(?:\s+\(.*?\))* (?:collected|folded|showed|mucked|lost|won)"
@@ -210,10 +214,80 @@ def parse_hand_history(hand_text: str) -> ParsedHand:
         raise ValueError(f"Cannot parse header line: {lines[0]}")
 
     hand_id = m.group(1)
-    sb_amount = Decimal(m.group(2))
-    bb_amount = Decimal(m.group(3))
+    header_sb = Decimal(m.group(2))
+    header_bb = Decimal(m.group(3))
     played_at = datetime.strptime(m.group(4), "%Y/%m/%d %H:%M:%S")
-    stakes = f"${m.group(2)}/${m.group(3)}"
+
+    # GGPoker has random byte corruption in hand history files that can hit
+    # any dollar amount — header stakes, blind postings, bet sizes.
+    # The header SB/BB values are unreliable (e.g. $0.74/$0.1 instead of
+    # $0.05/$0.10, or $0.05/$0.2 where BB is corrupted too).
+    # Strategy: scan for the "posts big blind" line and cross-reference with
+    # the header BB. Use the value that matches a standard stake. If both are
+    # non-standard, prefer the one closest to a known stake.
+    STANDARD_BB = [
+        Decimal("0.02"), Decimal("0.05"), Decimal("0.10"), Decimal("0.20"),
+        Decimal("0.25"), Decimal("0.50"), Decimal("1"), Decimal("2"),
+        Decimal("5"), Decimal("10"), Decimal("25"), Decimal("50"),
+        Decimal("100"), Decimal("200"), Decimal("500"),
+    ]
+
+    # Quick scan for the actual blind posting amounts
+    posted_bb = None
+    posted_sb = None
+    for line in lines:
+        stripped = line.strip()
+        if not posted_bb:
+            bm = RE_BIG_BLIND.match(stripped)
+            if bm:
+                posted_bb = Decimal(bm.group(2))
+        if not posted_sb:
+            sm = RE_SMALL_BLIND.match(stripped)
+            if sm:
+                posted_sb = Decimal(sm.group(2))
+        if posted_bb and posted_sb:
+            break
+
+    # Pick the correct BB by cross-referencing header, posted BB, and posted SB.
+    # When header and posted BB disagree but both are standard stakes, use the
+    # posted SB as a tiebreaker: the correct BB should be 2x the SB.
+    header_ok = header_bb in STANDARD_BB
+    posted_ok = posted_bb is not None and posted_bb in STANDARD_BB
+    if posted_bb and posted_bb == header_bb:
+        bb_amount = header_bb
+    elif header_ok and not posted_ok:
+        bb_amount = header_bb
+    elif posted_ok and not header_ok:
+        bb_amount = posted_bb
+    elif header_ok and posted_ok:
+        # Both standard but disagree — use SB values as tiebreaker
+        if posted_sb and posted_sb in STANDARD_BB:
+            if posted_sb == posted_bb / 2:
+                bb_amount = posted_bb
+            elif posted_sb == header_bb / 2:
+                bb_amount = header_bb
+            else:
+                bb_amount = header_bb
+        elif header_sb and header_sb in STANDARD_BB:
+            # posted SB is corrupted, use header SB as tiebreaker
+            if header_sb == posted_bb / 2:
+                bb_amount = posted_bb
+            elif header_sb == header_bb / 2:
+                bb_amount = header_bb
+            else:
+                bb_amount = header_bb
+        else:
+            bb_amount = header_bb
+    else:
+        bb_amount = header_bb
+
+    sb_amount = bb_amount / 2
+
+    def _fmt_stake(d: Decimal) -> str:
+        if d == d.to_integral_value():
+            return f"${int(d)}"
+        return f"${d:.2f}"
+    stakes = f"{_fmt_stake(sb_amount)}/{_fmt_stake(bb_amount)}"
     game_type = "NLH"
 
     # ── Parse table info ──
@@ -258,6 +332,7 @@ def parse_hand_history(hand_text: str) -> ParsedHand:
     uncalled_returns = {}  # username -> amount
     collected = {}  # username -> total amount collected
     total_rake = Decimal("0")
+    total_jackpot = Decimal("0")
     went_to_showdown_players = set()
     in_showdown = False
     in_summary = False
@@ -310,6 +385,9 @@ def parse_hand_history(hand_text: str) -> ParsedHand:
                 # Sum all fees: Rake + Jackpot + Bingo + Fortune + Tax
                 for fee_m in RE_SUMMARY_FEE.finditer(line):
                     total_rake += Decimal(fee_m.group(1))
+                jm = RE_SUMMARY_JACKPOT.search(line)
+                if jm:
+                    total_jackpot = Decimal(jm.group(1))
                 continue
 
             # Board line fallback — populate board_cards from summary if empty
@@ -540,6 +618,7 @@ def parse_hand_history(hand_text: str) -> ParsedHand:
         uncalled_returns=uncalled_returns,
         collected=collected,
         total_rake=total_rake,
+        total_jackpot=total_jackpot,
         went_to_showdown_players=went_to_showdown_players,
         in_showdown=in_showdown,
         sb_player=sb_player,

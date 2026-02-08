@@ -104,6 +104,8 @@ def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
             won_bb DECIMAL DEFAULT 0,
             rake DECIMAL DEFAULT 0,
             rake_bb DECIMAL DEFAULT 0,
+            jackpot DECIMAL DEFAULT 0,
+            jackpot_bb DECIMAL DEFAULT 0,
 
             vpip BOOLEAN DEFAULT FALSE,
             pfr BOOLEAN DEFAULT FALSE,
@@ -212,6 +214,21 @@ def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
         )
     """)
     conn.execute("""
+        CREATE TABLE IF NOT EXISTS hand_tags (
+            hand_id VARCHAR REFERENCES hands(id),
+            tag VARCHAR NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (hand_id, tag)
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS hand_notes (
+            hand_id VARCHAR PRIMARY KEY REFERENCES hands(id),
+            note TEXT NOT NULL,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    conn.execute("""
         INSERT OR IGNORE INTO settings VALUES ('hero_username', 'Hero')
     """)
     conn.execute("""
@@ -234,6 +251,8 @@ def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
         ("donk_bet_river_opp", "BOOLEAN DEFAULT FALSE"),
         ("squeeze_opp", "BOOLEAN DEFAULT FALSE"),
         ("five_bet_opp", "BOOLEAN DEFAULT FALSE"),
+        ("jackpot", "DECIMAL DEFAULT 0"),
+        ("jackpot_bb", "DECIMAL DEFAULT 0"),
     ]:
         try:
             conn.execute(f"ALTER TABLE hand_players ADD COLUMN {col} {default}")
@@ -247,6 +266,9 @@ def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_hp_player_id ON hand_players(player_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_hp_position ON hand_players(position)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_actions_hand_id ON actions(hand_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_hand_tags_hand_id ON hand_tags(hand_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_hand_tags_tag ON hand_tags(tag)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_board_cards_hand_id ON board_cards(hand_id)")
 
     # Sync sequences to max existing IDs (prevents collisions after restart)
     for table, seq in [
