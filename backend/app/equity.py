@@ -1,6 +1,6 @@
 """Poker equity calculator for all-in EV computation.
 
-Uses treys library for hand evaluation.
+Uses eval7 library (C-backed) for fast hand evaluation.
 Handles heads-up all-in equity with enumeration (≤2 cards to come)
 or Monte Carlo sampling (preflop all-ins).
 """
@@ -8,12 +8,10 @@ or Monte Carlo sampling (preflop all-ins).
 import random
 from itertools import combinations
 
-from treys import Card, Evaluator
+import eval7
 
-_evaluator = Evaluator()
-
-# Full deck as treys Card integers
-_FULL_DECK = [Card.new(r + s) for r in "23456789TJQKA" for s in "shdc"]
+# Full deck as eval7 Card objects
+_FULL_DECK = [eval7.Card(r + s) for r in "23456789TJQKA" for s in "shdc"]
 
 
 def calculate_headsup_equity(
@@ -33,22 +31,22 @@ def calculate_headsup_equity(
     Returns:
         Hero equity as float 0.0-1.0
     """
-    hero = [Card.new(c) for c in hero_cards]
-    villain = [Card.new(c) for c in villain_cards]
-    board_int = [Card.new(c) for c in board]
+    hero = [eval7.Card(c) for c in hero_cards]
+    villain = [eval7.Card(c) for c in villain_cards]
+    board_cards = [eval7.Card(c) for c in board]
 
-    dead = set(hero + villain + board_int)
+    dead = set(hero + villain + board_cards)
     remaining = [c for c in _FULL_DECK if c not in dead]
 
-    cards_to_come = 5 - len(board_int)
+    cards_to_come = 5 - len(board_cards)
 
     if cards_to_come == 0:
-        # River — direct comparison
-        hero_rank = _evaluator.evaluate(board_int, hero)
-        villain_rank = _evaluator.evaluate(board_int, villain)
-        if hero_rank < villain_rank:
+        # River — direct comparison (eval7: higher score = better hand)
+        hero_rank = eval7.evaluate(hero + board_cards)
+        villain_rank = eval7.evaluate(villain + board_cards)
+        if hero_rank > villain_rank:
             return 1.0
-        elif hero_rank > villain_rank:
+        elif hero_rank < villain_rank:
             return 0.0
         return 0.5
 
@@ -59,10 +57,10 @@ def calculate_headsup_equity(
     if cards_to_come <= 2:
         # Enumerate (flop all-in: ~990 combos, turn all-in: ~44 cards)
         for combo in combinations(remaining, cards_to_come):
-            full_board = board_int + list(combo)
-            hero_rank = _evaluator.evaluate(full_board, hero)
-            villain_rank = _evaluator.evaluate(full_board, villain)
-            if hero_rank < villain_rank:
+            full_board = board_cards + list(combo)
+            hero_rank = eval7.evaluate(hero + full_board)
+            villain_rank = eval7.evaluate(villain + full_board)
+            if hero_rank > villain_rank:
                 wins += 1
             elif hero_rank == villain_rank:
                 ties += 1
@@ -71,10 +69,10 @@ def calculate_headsup_equity(
         # Monte Carlo for preflop all-ins (C(48,5) = 1.7M combos)
         for _ in range(num_samples):
             sample = random.sample(remaining, cards_to_come)
-            full_board = board_int + sample
-            hero_rank = _evaluator.evaluate(full_board, hero)
-            villain_rank = _evaluator.evaluate(full_board, villain)
-            if hero_rank < villain_rank:
+            full_board = board_cards + sample
+            hero_rank = eval7.evaluate(hero + full_board)
+            villain_rank = eval7.evaluate(villain + full_board)
+            if hero_rank > villain_rank:
                 wins += 1
             elif hero_rank == villain_rank:
                 ties += 1

@@ -12,7 +12,7 @@ import io
 import json
 import re
 import time
-import pandas as pd
+import pyarrow as pa
 
 try:
     from app.equity import calculate_headsup_equity as _calc_equity
@@ -31,6 +31,35 @@ _next_player_id: int | None = None
 _next_hp_id: int | None = None
 
 BATCH_SIZE = 500
+
+# ── Column keys for column-oriented PyArrow inserts ──
+_HANDS_COLS = (
+    "id", "site_id", "played_at", "game_type", "stakes",
+    "sb_amount", "bb_amount", "table_name", "table_size", "button_seat", "raw_text",
+)
+_HP_BASE_COLS = (
+    "id", "hand_id", "player_id", "seat", "position",
+    "stack", "stack_bb", "card1", "card2",
+    "won", "won_bb", "rake", "rake_bb", "all_in_ev_bb",
+)
+_STAT_FLAG_KEYS = (
+    "vpip", "pfr", "three_bet", "three_bet_opp", "four_bet", "four_bet_opp",
+    "fold_to_3bet", "fold_to_4bet",
+    "open_raise", "open_raise_opp", "call_open_raise", "limp", "squeeze", "five_bet",
+    "steal_attempted", "faced_steal", "fold_to_steal", "call_steal", "three_bet_vs_steal",
+    "saw_flop", "saw_turn", "saw_river", "went_to_showdown", "won_at_showdown",
+    "cbet_flop", "cbet_flop_opp", "cbet_turn", "cbet_turn_opp", "cbet_river", "cbet_river_opp",
+    "fold_to_cbet_flop", "fold_to_cbet_turn", "fold_to_cbet_river",
+    "missed_cbet_flop", "missed_cbet_turn",
+    "donk_bet_flop", "donk_bet_turn", "donk_bet_river",
+    "flop_bets", "flop_raises", "flop_calls", "flop_checks", "flop_folds",
+    "turn_bets", "turn_raises", "turn_calls", "turn_checks", "turn_folds",
+    "river_bets", "river_raises", "river_calls", "river_checks", "river_folds",
+    "steal_opp", "donk_bet_flop_opp", "donk_bet_turn_opp", "donk_bet_river_opp",
+    "squeeze_opp", "five_bet_opp",
+)
+_HP_ALL_COLS = _HP_BASE_COLS + _STAT_FLAG_KEYS
+_BOARD_COLS = ("hand_id", "street", "card", "card_order")
 
 
 def reset_import_cache() -> None:
@@ -82,19 +111,25 @@ def _batch_resolve_players(
             _player_cache[username] = pid
 
     # Create missing players in bulk
-    new_rows = []
+    new_ids = []
+    new_site_ids = []
+    new_usernames = []
     for u in uncached:
         if u not in _player_cache:
             pid = _next_player_id
             _next_player_id += 1
             _player_cache[u] = pid
-            new_rows.append({"id": pid, "site_id": 1, "username": u})
+            new_ids.append(pid)
+            new_site_ids.append(1)
+            new_usernames.append(u)
 
-    if new_rows:
-        df_new_players = pd.DataFrame(new_rows)
+    if new_ids:
+        pa_new_players = pa.table({
+            "id": new_ids, "site_id": new_site_ids, "username": new_usernames,
+        })
         db.execute(
             "INSERT INTO players (id, site_id, username) "
-            "SELECT id, site_id, username FROM df_new_players"
+            "SELECT id, site_id, username FROM pa_new_players"
         )
 
 
@@ -189,7 +224,7 @@ def _flush_batch(
     db: duckdb.DuckDBPyConnection,
     prepared: list[tuple[ParsedHand, dict]],
 ) -> tuple[int, int, list[str]]:
-    """Bulk-insert a batch of (parsed, player_stats) tuples using DataFrame inserts.
+    """Bulk-insert a batch of (parsed, player_stats) tuples using PyArrow column-oriented inserts.
 
     Returns (imported_count, error_count, error_details).
     """
@@ -201,9 +236,10 @@ def _flush_batch(
     _init_counters(db)
     _batch_resolve_players(db, prepared)
 
-    hands_rows = []
-    hp_rows = []
-    board_rows = []
+    # Column-oriented building: one list per column
+    hands_cols: dict[str, list] = {k: [] for k in _HANDS_COLS}
+    hp_cols: dict[str, list] = {k: [] for k in _HP_ALL_COLS}
+    board_cols: dict[str, list] = {k: [] for k in _BOARD_COLS}
 
     for parsed, player_stats in prepared:
         bb_amount = parsed.bb_amount
@@ -215,19 +251,18 @@ def _flush_batch(
         )
         player_invested, all_in_ev_bb_map = _compute_financials(parsed)
 
-        hands_rows.append({
-            "id": parsed.hand_id,
-            "site_id": parsed.site_id,
-            "played_at": parsed.played_at,
-            "game_type": parsed.game_type,
-            "stakes": parsed.stakes,
-            "sb_amount": float(parsed.sb_amount),
-            "bb_amount": bb_f,
-            "table_name": parsed.table_name,
-            "table_size": parsed.table_size,
-            "button_seat": parsed.button_seat,
-            "raw_text": parsed.raw_text,
-        })
+        # Append to hands columns
+        hands_cols["id"].append(parsed.hand_id)
+        hands_cols["site_id"].append(parsed.site_id)
+        hands_cols["played_at"].append(parsed.played_at)
+        hands_cols["game_type"].append(parsed.game_type)
+        hands_cols["stakes"].append(parsed.stakes)
+        hands_cols["sb_amount"].append(float(parsed.sb_amount))
+        hands_cols["bb_amount"].append(bb_f)
+        hands_cols["table_name"].append(parsed.table_name)
+        hands_cols["table_size"].append(parsed.table_size)
+        hands_cols["button_seat"].append(parsed.button_seat)
+        hands_cols["raw_text"].append(parsed.raw_text)
 
         for s in parsed.seats:
             uname = s["username"]
@@ -249,46 +284,45 @@ def _flush_batch(
             hp_id = _next_hp_id
             _next_hp_id += 1
 
-            row = {
-                "id": hp_id,
-                "hand_id": parsed.hand_id,
-                "player_id": pid,
-                "seat": s["seat"],
-                "position": s["position"],
-                "stack": float(s["stack"]),
-                "stack_bb": stack_bb,
-                "card1": card1,
-                "card2": card2,
-                "won": net_won,
-                "won_bb": won_bb,
-                "rake": rake,
-                "rake_bb": rake_bb,
-                "all_in_ev_bb": ev_bb,
-            }
-            row.update(ps)  # All stat flags from compute_stat_flags
-            hp_rows.append(row)
+            # Append base columns
+            hp_cols["id"].append(hp_id)
+            hp_cols["hand_id"].append(parsed.hand_id)
+            hp_cols["player_id"].append(pid)
+            hp_cols["seat"].append(s["seat"])
+            hp_cols["position"].append(s["position"])
+            hp_cols["stack"].append(float(s["stack"]))
+            hp_cols["stack_bb"].append(stack_bb)
+            hp_cols["card1"].append(card1)
+            hp_cols["card2"].append(card2)
+            hp_cols["won"].append(net_won)
+            hp_cols["won_bb"].append(won_bb)
+            hp_cols["rake"].append(rake)
+            hp_cols["rake_bb"].append(rake_bb)
+            hp_cols["all_in_ev_bb"].append(ev_bb)
+
+            # Append stat flags
+            for k in _STAT_FLAG_KEYS:
+                hp_cols[k].append(ps[k])
 
         for street, cards in parsed.board_cards.items():
             for i, card in enumerate(cards):
-                board_rows.append({
-                    "hand_id": parsed.hand_id,
-                    "street": street,
-                    "card": card,
-                    "card_order": i + 1,
-                })
+                board_cols["hand_id"].append(parsed.hand_id)
+                board_cols["street"].append(street)
+                board_cols["card"].append(card)
+                board_cols["card_order"].append(i + 1)
 
-    # Bulk insert using DataFrames (520x faster than executemany)
+    # Bulk insert using PyArrow tables
     db.execute("BEGIN TRANSACTION")
     try:
-        if hands_rows:
-            df_hands = pd.DataFrame(hands_rows)
-            db.execute("INSERT INTO hands BY NAME SELECT * FROM df_hands")
-        if hp_rows:
-            df_hp = pd.DataFrame(hp_rows)
-            db.execute("INSERT INTO hand_players BY NAME SELECT * FROM df_hp")
-        if board_rows:
-            df_board = pd.DataFrame(board_rows)
-            db.execute("INSERT INTO board_cards BY NAME SELECT * FROM df_board")
+        if hands_cols["id"]:
+            pa_hands = pa.table(hands_cols)
+            db.execute("INSERT INTO hands BY NAME SELECT * FROM pa_hands")
+        if hp_cols["id"]:
+            pa_hp = pa.table(hp_cols)
+            db.execute("INSERT INTO hand_players BY NAME SELECT * FROM pa_hp")
+        if board_cols["hand_id"]:
+            pa_board = pa.table(board_cols)
+            db.execute("INSERT INTO board_cards BY NAME SELECT * FROM pa_board")
         db.execute("COMMIT")
         return len(prepared), 0, []
     except Exception as e:
