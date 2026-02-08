@@ -943,39 +943,103 @@ HandReplay (simple text version)
 
 ---
 
-## 7. MVP Scope
+## 7. Roadmap
 
-### Phase 1: Foundation (MVP)
-- [~] GGPoker parser — first pass done, needs verification against real hands
-- [~] Hand import — streaming/ZIP/folder works, insertion correctness needs verification
-- [~] Player stats — 60+ flags computed, calculations need verification against H2N
-- [~] Stats page — works, layout needs rework to match H2N
-- [x] Graph — cumulative BB/$, EV line, gradient fill, BB/$ toggle, dual-unit stat cards, rake tracking
+### Phase 1: Foundation (current)
+
+What's built:
+- [x] GGPoker Rush & Cash parser (60+ stat flags, all-in EV, rake tracking)
+- [x] Streaming file import (drag & drop files/folders/ZIPs, duplicate detection, progress bar)
+- [x] Stats page — H2N-style layout with positional breakdowns
+- [x] Graph — cumulative BB/$, EV line, showdown/non-showdown lines, rake, BB/$ toggle
 - [x] Hero settings (username/site config)
-- [ ] PokerStars parser
-- [ ] Hand browser with filters
-- [ ] Player lookup
-- [ ] Electron packaging for Win/Mac/Linux
+- [x] Rebuild endpoint (re-parse all hands from stored raw_text)
 
-### Phase 2: Analytics
-- [ ] Population analysis
-- [ ] Leak finder
-- [ ] Advanced filters (board texture, stack depth)
-- [ ] Hand tagging & notes
-- [ ] Session tracking
+What's next (complete the foundation):
+- [ ] **Fix stat calculation bugs** — see `STATS_BUGS.md` (aggression freq, steal %, c-bet, donk bet, 3-bet opp)
+- [ ] **Positional winrate report** — BB/100 by EP/MP/CO/BTN/SB/BB (data exists, just needs computation + display)
+- [ ] **Verify parser** — spot-check parsed hands vs raw text, confirm edge cases
+- [ ] **Verify stats** — compare OHM output against H2N for same hand sample
 
-### Phase 3: Polish
-- [ ] Auto-import (watch folders)
-- [ ] More site parsers (Winamax, 888, Party)
-- [ ] Hand replayer (visual)
-- [ ] Player type auto-classification
-- [ ] Export features (CSV, share hands)
+### Phase 2: Hand Review & Study Tools
 
-### Phase 4: Advanced (Future)
-- [ ] HUD overlay (separate app/process)
-- [ ] Tournament support
-- [ ] Web version (upload HH, analyze online)
-- [ ] Mobile companion (view stats)
+The features every poker coach recommends. Enables the core study workflow.
+
+- [ ] **Hand browser** — paginated list with columns (date, stakes, position, cards, result), sortable, filterable
+- [ ] **Hand detail view** — street-by-street actions, pot size at each decision, board cards, player stacks
+- [ ] **Hand tagging** — tag hands: bluff, mistake, cooler, study, great play (schema exists: `hand_tags`)
+- [ ] **Hand notes** — per-hand text notes (schema exists: `hand_notes`)
+- [ ] **Mark-and-review workflow** — filter by tag, step through tagged hands with keyboard nav (←/→)
+- [ ] **"Biggest losers" filter** — auto-surface medium-loss hands (10-30 BB lost, not coolers) for study
+- [ ] **Results by starting hand (13x13 heat map)** — aggregate won_bb by hand combo on a color-coded grid. Data exists in `hand_players.card1/card2`. Killer study tool — instantly shows which hands are bleeding money by position
+- [ ] **Hand export** — copy hand as formatted text (for sharing in Discord/forums/coaches), export to solver-compatible format (PioSolver/GTO Wizard input)
+
+### Phase 3: Opponent Research & Player Database
+
+Turn your hand history into an opponent intelligence system.
+
+- [ ] **Player search & lookup** — find any player in DB, show full stat profile (reuse stats engine with player_id instead of hero)
+- [ ] **Player list** — table of all opponents with mini-stats (hands, VPIP, PFR, 3-Bet, AF), sortable
+- [ ] **Head-to-head stats** — your results specifically vs a given player, positional breakdown
+- [ ] **Player notes + color tags UI** — manual labeling (schema fields exist on `players` table, no UI yet)
+- [ ] **Auto player classification** — auto-tag opponents based on stat thresholds:
+  - Fish: VPIP > 40
+  - Calling Station: VPIP > 35, AF < 1.5
+  - Nit: VPIP < 15
+  - TAG: VPIP 20-28, PFR 16-24
+  - LAG: VPIP > 28, PFR > 25
+  - Whale: VPIP > 50
+  Color-code in all player lists and hand browser.
+- [ ] **Range research (H2N's crown jewel)** — aggregate all showdown hands for a player in a given spot (e.g., "3-bet from BTN") and display on a 13x13 hand matrix. H2N charges $49/mo for this. With DuckDB: `SELECT card1, card2, COUNT(*) FROM hand_players WHERE player_id=? AND card1 IS NOT NULL AND three_bet=TRUE GROUP BY card1, card2`. Render as a color-coded grid.
+- [ ] **Automatic note-taking** — when opponents show down, auto-record: "Villain open-limped 77 from EP", "Villain called 3-bet with T9s OOP". Accumulate over time, show on player profile.
+
+### Phase 4: Advanced Analysis & Reports
+
+Features that differentiate OHM from basic trackers.
+
+- [ ] **Session tracking** — auto-detect sessions (30+ min gap = new session). Session list: date, duration, hands, stakes, result. Per-session graph.
+- [ ] **Calendar view** — month grid, each day color-coded green/red by profit. Click day → sessions. Click session → hands. (PT4's most loved feature)
+- [ ] **Population analysis** — aggregate all opponent stats by player type, stake, position. "How does the average fish at NL50 play BTN vs 3-bet?" Compare hero stats to pool average.
+- [ ] **Leak finder** — compare hero stats against winning player benchmarks. Flag statistical outliers. PT4's LeakTracker approach: check 50+ potential weak areas, score each by impact, suggest what to study.
+- [ ] **Bet sizing analysis** — track bet sizes as % of pot. Buckets: <33%, 33-50%, 50-66%, 66-100%, >100%. Average sizing by street, position, pot type. At modern stakes, sizing tells are the most exploitable pattern.
+- [ ] **Board texture stats** — classify boards from `board_cards`:
+  - Dry: rainbow, unconnected
+  - Wet: flush/straight draws present
+  - Paired: pair on board
+  - Monotone: three suited
+  - Broadway-heavy: 2+ cards T+
+  Cross-reference all postflop stats (c-bet, fold-to-cbet, aggression) by board texture.
+- [ ] **Advanced filters** — filter any report by: board texture, stack depth (<40bb/40-100bb/>100bb), hand type (pairs, suited connectors, broadways), action sequence ("faced c-bet on flop and raised"), pot type (single-raised/3-bet/4-bet+), table size, opponent count at flop
+- [ ] **GTO deviation index** — single "exploitability score" per player. Weighted deviation from solver-derived baseline frequencies across key stats. Quick read: "how far from optimal is this opponent?"
+
+### Phase 5: Power User Features
+
+- [ ] **Variance calculator** — Monte Carlo simulation: input winrate + standard deviation, simulate 10k sample paths. Show: probability of downswing depths, expected duration, bankroll requirements. Pure frontend math, no DB needed. Players use this to separate tilt from reality.
+- [ ] **Visual hand replayer** — poker-table-style animated replay: chip stacks, pot size, community cards, player actions in sequence. Play/pause, step forward/back, speed slider, BB/$ display mode.
+- [ ] **Shareable hand replays** — generate a shareable URL or image of a hand replay for posting in study groups, Discord, social media
+- [ ] **Custom stat creation (SQL-based)** — users write DuckDB SQL against `hand_players`/`actions` tables, results displayed as new stat columns. Simpler than H2N's filter builder, leverages DuckDB's power, appeals to technical open-source audience.
+- [ ] **Situational views (HM3-style)** — purpose-built dashboards: C-Bet Situations (by position, board texture, pot type), 3-Bet Pots, Steal Situations, River Play
+- [ ] **Decision analysis (H2N-style)** — Action Profit: EV of each action in a specific spot. Spot Frequency: how often a situation occurs per 1000 hands. Next Villain Actions: what opponents do after your action.
+- [ ] **Winrate by stake level** — separate BB/100 and total profit/loss per stake. Determines when you're ready to move up.
+- [ ] **Rake & rakeback tracking** — total rake paid per stake, rake as % of winnings, projected rakeback. Critical at microstakes where rake eats winrate.
+
+### Phase 6: Platform & Ecosystem
+
+- [ ] **Auto-import (watch folders)** — monitor hand history directories, auto-import new files
+- [ ] **PokerStars parser**
+- [ ] **More site parsers** (Winamax, 888, PartyPoker)
+- [ ] **Electron packaging** for Win/Mac/Linux
+- [ ] **Database backup/restore** — export/import full DB as compressed file
+- [ ] **Solver integration** — one-click export hand to PioSolver/GTO Wizard format
+
+### Not Planned
+
+- HUD overlay — GGPoker bans them, primary user can't use it
+- Tournament / SNG support — cash game focus
+- ICM calculator — cash only
+- Cloud sync — local-first philosophy
+- Plugin marketplace — premature at current stage
+- Mobile companion — web app works on mobile already
 
 ---
 
