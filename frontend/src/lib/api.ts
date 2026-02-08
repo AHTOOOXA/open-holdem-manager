@@ -79,8 +79,8 @@ export interface HeroStats {
   pfr: PositionalStats;
   open_raise: PositionalStats;
   three_bet: PositionalStats;
-  three_bet_ip: StatValue;
-  three_bet_oop: StatValue;
+  three_bet_ip: PositionalStats;
+  three_bet_oop: PositionalStats;
   four_bet: PositionalStats;
   five_bet: StatValue;
   fold_to_3bet: PositionalStats;

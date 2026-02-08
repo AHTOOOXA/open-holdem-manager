@@ -74,11 +74,18 @@ def compute_hero_stats(
     stats.call_open_raise = _positional_pct(data, "call_open_raise", None)
     stats.limp = _positional_pct(data, "limp", None)
 
-    # 3-bet IP/OOP
+    # 3-bet IP/OOP with positional breakdown
     ip_3b = [r for r in data if r["three_bet_opp"] and r["position"] in IP_POSITIONS]
-    stats.three_bet_ip = _simple_pct(ip_3b, "three_bet")
+    stats.three_bet_ip = PositionalStats(total=_simple_pct(ip_3b, "three_bet"))
+    for pos in IP_POSITIONS:
+        pos_data = [r for r in ip_3b if r["position"] == pos]
+        setattr(stats.three_bet_ip, pos.lower(), _simple_pct(pos_data, "three_bet"))
+
     oop_3b = [r for r in data if r["three_bet_opp"] and r["position"] in OOP_POSITIONS]
-    stats.three_bet_oop = _simple_pct(oop_3b, "three_bet")
+    stats.three_bet_oop = PositionalStats(total=_simple_pct(oop_3b, "three_bet"))
+    for pos in OOP_POSITIONS:
+        pos_data = [r for r in oop_3b if r["position"] == pos]
+        setattr(stats.three_bet_oop, pos.lower(), _simple_pct(pos_data, "three_bet"))
 
     stats.five_bet = _simple_pct([r for r in data if r.get("five_bet_opp")], "five_bet")
     stats.squeeze = _simple_pct([r for r in data if r.get("squeeze_opp")], "squeeze")

@@ -278,15 +278,25 @@ export default function StatsPage() {
               {
                 label: '3-Bet IP',
                 cells: [
-                  { sv: stats.three_bet_ip, colorFn: colorThreeBet },
-                  ...Array(6).fill({ sv: undefined }),
+                  { sv: stats.three_bet_ip.total, colorFn: colorThreeBet },
+                  { sv: undefined },  // EP — not IP
+                  { sv: stats.three_bet_ip.mp, colorFn: colorThreeBet },
+                  { sv: stats.three_bet_ip.co, colorFn: colorThreeBet },
+                  { sv: stats.three_bet_ip.btn, colorFn: colorThreeBet },
+                  { sv: undefined },  // SB — not IP
+                  { sv: undefined },  // BB — not IP
                 ],
               },
               {
                 label: '3-Bet OOP',
                 cells: [
-                  { sv: stats.three_bet_oop, colorFn: colorThreeBet },
-                  ...Array(6).fill({ sv: undefined }),
+                  { sv: stats.three_bet_oop.total, colorFn: colorThreeBet },
+                  { sv: stats.three_bet_oop.ep, colorFn: colorThreeBet },
+                  { sv: undefined },  // MP — not OOP
+                  { sv: undefined },  // CO — not OOP
+                  { sv: undefined },  // BTN — not OOP
+                  { sv: stats.three_bet_oop.sb, colorFn: colorThreeBet },
+                  { sv: stats.three_bet_oop.bb, colorFn: colorThreeBet },
                 ],
               },
             ]}
