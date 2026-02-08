@@ -45,11 +45,30 @@ function StatCard({
   );
 }
 
+type LineToggle = 'ev' | 'showdown' | 'rake';
+
+const LINE_COLORS = {
+  main: '#818cf8',
+  ev: '#eab308',
+  showdown: '#22c55e',
+  nonshowdown: '#ef4444',
+  rake: '#f97316',
+} as const;
+
 export default function GraphPage() {
   const [data, setData] = useState<GraphPoint[]>([]);
   const [loading, setLoading] = useState(true);
   const [unit, setUnit] = useState<'bb' | 'usd'>('bb');
-  const [showEV, setShowEV] = useState(true);
+  const [lines, setLines] = useState<Set<LineToggle>>(new Set(['ev']));
+
+  const toggle = (line: LineToggle) => {
+    setLines(prev => {
+      const next = new Set(prev);
+      if (next.has(line)) next.delete(line);
+      else next.add(line);
+      return next;
+    });
+  };
 
   useEffect(() => {
     getGraphData()
@@ -59,7 +78,6 @@ export default function GraphPage() {
 
   const hasEVData = useMemo(() => data.some(d => d.cumulative_ev_bb !== d.cumulative_bb), [data]);
 
-  // Downsample to ~1000 points max for chart performance
   const chartData = useMemo(() => {
     const max = 1000;
     if (data.length <= max) return data;
@@ -71,6 +89,16 @@ export default function GraphPage() {
     sampled.push(data[data.length - 1]);
     return sampled;
   }, [data]);
+
+  // Negate rake for chart display (rake goes down)
+  const chartDataWithNegRake = useMemo(() => {
+    if (!lines.has('rake')) return chartData;
+    return chartData.map(d => ({
+      ...d,
+      neg_rake_bb: -d.cumulative_rake_bb,
+      neg_rake_usd: -d.cumulative_rake_usd,
+    }));
+  }, [chartData, lines]);
 
   if (loading) return <p className="text-text-muted">Loading graph...</p>;
   if (data.length === 0) {
@@ -84,10 +112,15 @@ export default function GraphPage() {
 
   const last = data[data.length - 1];
 
-  const mainKey = unit === 'bb' ? 'cumulative_bb' : 'cumulative_usd';
-  const evKey = unit === 'bb' ? 'cumulative_ev_bb' : 'cumulative_ev_usd';
+  const k = (base: string) => unit === 'bb' ? `${base}_bb` : `${base}_usd`;
+  const mainKey = k('cumulative');
+  const evKey = k('cumulative_ev');
+  const sdKey = k('cumulative_showdown');
+  const nsdKey = k('cumulative_nonshowdown');
 
-  // Stat values — always both units
+  const negRakeKey = unit === 'bb' ? 'neg_rake_bb' : 'neg_rake_usd';
+
+  // Stat values
   const n = data.length;
   const wonBB = last.cumulative_bb;
   const wonUSD = last.cumulative_usd;
@@ -106,6 +139,31 @@ export default function GraphPage() {
   const fmtUSD = (v: number) => `${v >= 0 ? '' : '-'}$${Math.abs(v).toFixed(2)}`;
   const fmtRateBB = (v: number) => `${v.toFixed(2)} bb/100`;
   const fmtRateUSD = (v: number) => `${v >= 0 ? '' : '-'}$${Math.abs(v).toFixed(2)}/100`;
+
+  const tooltipNames: Record<string, string> = {
+    [mainKey]: 'Actual',
+    [evKey]: 'All-in EV',
+    [sdKey]: 'Showdown',
+    [nsdKey]: 'Non-Showdown',
+    [negRakeKey]: 'Rake',
+  };
+
+  // Toggle button helper
+  const toggleBtn = (key: LineToggle, label: string, color: string, show = true) =>
+    show && (
+      <button
+        key={key}
+        className={`px-3 py-1.5 text-sm rounded transition-colors ${
+          lines.has(key)
+            ? 'text-white'
+            : 'bg-surface border border-border text-text-muted hover:text-text'
+        }`}
+        style={lines.has(key) ? { backgroundColor: color } : undefined}
+        onClick={() => toggle(key)}
+      >
+        {label}
+      </button>
+    );
 
   return (
     <div className="max-w-5xl mx-auto space-y-4">
@@ -139,18 +197,9 @@ export default function GraphPage() {
               $
             </button>
           </div>
-          {hasEVData && (
-            <button
-              className={`px-3 py-1.5 text-sm rounded transition-colors ${
-                showEV
-                  ? 'bg-yellow-600 text-white'
-                  : 'bg-surface border border-border text-text-muted hover:text-text'
-              }`}
-              onClick={() => setShowEV(!showEV)}
-            >
-              EV Line
-            </button>
-          )}
+          {toggleBtn('ev', 'EV', LINE_COLORS.ev, hasEVData)}
+          {toggleBtn('showdown', 'SD / NSD', LINE_COLORS.showdown)}
+          {toggleBtn('rake', 'Rake', LINE_COLORS.rake)}
         </div>
       </div>
 
@@ -158,22 +207,40 @@ export default function GraphPage() {
         {/* In-chart legend */}
         <div className="flex gap-4 mb-2 ml-12 text-xs text-text-muted">
           <span className="flex items-center gap-1.5">
-            <span className="inline-block w-4 h-0.5 bg-[#818cf8] rounded" />
+            <span className="inline-block w-4 h-0.5 rounded" style={{ background: LINE_COLORS.main }} />
             Actual
           </span>
-          {showEV && hasEVData && (
+          {lines.has('ev') && hasEVData && (
             <span className="flex items-center gap-1.5">
-              <span className="inline-block w-4 h-0.5 rounded" style={{ background: '#eab308', opacity: 0.8 }} />
+              <span className="inline-block w-4 h-0.5 rounded" style={{ background: LINE_COLORS.ev, opacity: 0.8 }} />
               All-in EV
+            </span>
+          )}
+          {lines.has('showdown') && (
+            <>
+              <span className="flex items-center gap-1.5">
+                <span className="inline-block w-4 h-0.5 rounded" style={{ background: LINE_COLORS.showdown }} />
+                Showdown
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="inline-block w-4 h-0.5 rounded" style={{ background: LINE_COLORS.nonshowdown }} />
+                Non-Showdown
+              </span>
+            </>
+          )}
+          {lines.has('rake') && (
+            <span className="flex items-center gap-1.5">
+              <span className="inline-block w-4 h-0.5 rounded" style={{ background: LINE_COLORS.rake }} />
+              Rake
             </span>
           )}
         </div>
         <ResponsiveContainer width="100%" height={480}>
-          <ComposedChart data={chartData} margin={{ top: 4, right: 16, bottom: 4, left: 8 }}>
+          <ComposedChart data={lines.has('rake') ? chartDataWithNegRake : chartData} margin={{ top: 4, right: 16, bottom: 4, left: 8 }}>
             <defs>
               <linearGradient id="gradientMain" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="#818cf8" stopOpacity={0.25} />
-                <stop offset="100%" stopColor="#818cf8" stopOpacity={0} />
+                <stop offset="0%" stopColor={LINE_COLORS.main} stopOpacity={0.25} />
+                <stop offset="100%" stopColor={LINE_COLORS.main} stopOpacity={0} />
               </linearGradient>
             </defs>
             <CartesianGrid vertical={false} stroke="#1e1e2e" strokeDasharray="none" />
@@ -207,8 +274,7 @@ export default function GraphPage() {
                 const prefix = unit === 'usd' ? '$' : '';
                 const suffix = unit === 'bb' ? ' BB' : '';
                 const formatted = `${prefix}${value.toFixed(2)}${suffix}`;
-                const label = name.includes('EV') ? 'All-in EV' : 'Actual';
-                return [formatted, label];
+                return [formatted, tooltipNames[name] ?? name];
               }}
               labelFormatter={(label) => `Hand #${Number(label).toLocaleString()}`}
             />
@@ -216,26 +282,63 @@ export default function GraphPage() {
             <Area
               type="monotone"
               dataKey={mainKey}
-              name="Actual"
+              name={mainKey}
               fill="url(#gradientMain)"
-              stroke="#818cf8"
+              stroke={LINE_COLORS.main}
               strokeWidth={2}
               dot={false}
               connectNulls
               isAnimationActive={false}
               baseValue={0}
             />
-            {showEV && hasEVData && (
+            {lines.has('ev') && hasEVData && (
               <Line
                 type="monotone"
                 dataKey={evKey}
-                name="All-in EV"
-                stroke="#eab308"
+                name={evKey}
+                stroke={LINE_COLORS.ev}
                 strokeWidth={1.5}
                 dot={false}
                 connectNulls
                 strokeDasharray="6 3"
                 opacity={0.8}
+                isAnimationActive={false}
+              />
+            )}
+            {lines.has('showdown') && (
+              <Line
+                type="monotone"
+                dataKey={sdKey}
+                name={sdKey}
+                stroke={LINE_COLORS.showdown}
+                strokeWidth={1.5}
+                dot={false}
+                connectNulls
+                isAnimationActive={false}
+              />
+            )}
+            {lines.has('showdown') && (
+              <Line
+                type="monotone"
+                dataKey={nsdKey}
+                name={nsdKey}
+                stroke={LINE_COLORS.nonshowdown}
+                strokeWidth={1.5}
+                dot={false}
+                connectNulls
+                isAnimationActive={false}
+              />
+            )}
+            {lines.has('rake') && (
+              <Line
+                type="monotone"
+                dataKey={negRakeKey}
+                name={negRakeKey}
+                stroke={LINE_COLORS.rake}
+                strokeWidth={1.5}
+                dot={false}
+                connectNulls
+                strokeDasharray="4 2"
                 isAnimationActive={false}
               />
             )}

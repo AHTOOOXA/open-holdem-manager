@@ -15,15 +15,15 @@ export interface Settings {
 export interface GraphPoint {
   hand_number: number;
   cumulative_bb: number;
-  bb_per_100_rolling: number | null;
   cumulative_ev_bb: number;
-  ev_bb_per_100_rolling: number | null;
   cumulative_rake_bb: number;
+  cumulative_showdown_bb: number;
+  cumulative_nonshowdown_bb: number;
   cumulative_usd: number;
   cumulative_ev_usd: number;
   cumulative_rake_usd: number;
-  usd_per_100_rolling: number | null;
-  ev_usd_per_100_rolling: number | null;
+  cumulative_showdown_usd: number;
+  cumulative_nonshowdown_usd: number;
 }
 
 export interface StatValue {

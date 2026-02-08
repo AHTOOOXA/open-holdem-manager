@@ -18,15 +18,15 @@ class Settings(BaseModel):
 class GraphPoint(BaseModel):
     hand_number: int
     cumulative_bb: float
-    bb_per_100_rolling: float | None = None
     cumulative_ev_bb: float = 0.0
-    ev_bb_per_100_rolling: float | None = None
     cumulative_rake_bb: float = 0.0
+    cumulative_showdown_bb: float = 0.0
+    cumulative_nonshowdown_bb: float = 0.0
     cumulative_usd: float = 0.0
     cumulative_ev_usd: float = 0.0
     cumulative_rake_usd: float = 0.0
-    usd_per_100_rolling: float | None = None
-    ev_usd_per_100_rolling: float | None = None
+    cumulative_showdown_usd: float = 0.0
+    cumulative_nonshowdown_usd: float = 0.0
 
 
 class StatValue(BaseModel):
