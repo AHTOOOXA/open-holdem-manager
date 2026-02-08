@@ -41,15 +41,16 @@ backend/
     db.py                   # DuckDB connection, schema init, sequence sync
     models.py               # Pydantic response models
     stats_engine.py         # Computes H2N-style stats from hand_players table
+    stat_flags.py           # Site-independent stat flag computation (VPIP, PFR, 3-bet, cbet, etc.)
     parsers/
-      ggpoker.py            # GGPoker hand history parser (~1000 lines, the core)
+      ggpoker.py            # GGPoker hand history parser — text → ParsedHand dataclass
     api/
-      import_hands.py       # POST /api/import/files, /import/files/stream, /import/clear
+      import_hands.py       # Import endpoints + insert_parsed_hand() DB insertion + player cache
       stats.py              # GET /api/stats/hero?position=&stakes=&date_from=&date_to=
       reports.py            # GET /api/reports/graph
       settings.py           # GET/PATCH /api/settings
   tests/
-    test_parser.py          # 10 tests across 4 classes
+    test_parser.py          # 11 tests across 5 classes
     fixtures/
       ggpoker_sample.txt          # 5 baseline hands
       time_bank_card.txt           # Time bank edge case
@@ -105,7 +106,24 @@ Key tables in `backend/app/db.py`:
 | GET | `/api/settings` | Get settings (hero_username, hero_site) |
 | PATCH | `/api/settings` | Update settings |
 
+## Architecture: Parse → Compute → Insert Pipeline
+
+The backend uses a three-step pipeline for hand import:
+
+1. **Parse** (`parsers/ggpoker.py`): `parse_hand_history(text) → ParsedHand` — pure text parsing, no DB access
+2. **Compute** (`stat_flags.py`): `compute_stat_flags(parsed) → dict[str, dict]` — site-independent stat flag derivation
+3. **Insert** (`api/import_hands.py`): `insert_parsed_hand(db, parsed) → hand_id` — calls compute, calculates financials, writes to DB
+
+This separation means:
+- New site parsers only need to produce a `ParsedHand` dataclass — stat logic is reused
+- Parser is testable without a DB (assert on the returned dataclass)
+- Stat flag bugs can be fixed and re-derived via `/import/rebuild` without re-parsing
+
 ## GGPoker Parser (`backend/app/parsers/ggpoker.py`)
+
+### Output: `ParsedHand` dataclass
+
+The parser returns a `ParsedHand` containing all extracted data: hand metadata, seats with positions, actions per street, board cards, hole cards, collected amounts, rake, showdown info. Does NOT compute stat flags or touch the DB.
 
 ### How It Works
 
@@ -116,14 +134,18 @@ Key tables in `backend/app/db.py`:
 5. Assigns positions via `POSITIONS_BY_COUNT` lookup — supports 2-9 max tables, clockwise from button
 6. Line-by-line state machine: `preflop` → `flop` → `turn` → `river`, with `in_showdown` and `in_summary` flags
 7. `_should_skip()` filters noise lines: disconnected, timed out, joins table, sits out, etc. (12+ patterns)
-8. Tracks all voluntary actions, blinds, antes; per-street investment for raise calculations
-9. Preflop aggression: tracks raise levels (open/3-bet/4-bet/5-bet), squeeze detection (3bet with callers)
-10. Postflop: cbet opportunities/attempts, donk bets, fold-to-cbet, missed cbet — all per street
-11. Steal detection: raise from CO/BTN/SB, tracks vs-steal responses (fold/call/3bet)
-12. In summary: extracts `won`/`collected` amounts via `re.finditer` (handles multiple amounts on one line for RIT)
-13. Computes all stat flags (VPIP, PFR, 3-bet, steal, cbet, aggression, etc.)
-14. Calculates net won: `gross_collected + uncalled_returned - total_invested`
-15. Inserts everything into DuckDB (hand, players, hand_players, actions, board_cards)
+8. Tracks all voluntary actions, blinds, antes per street
+9. In summary: extracts `won`/`collected` amounts via `re.finditer` (handles multiple amounts on one line for RIT)
+10. Returns `ParsedHand` dataclass with all extracted data
+
+## Stat Flag Computation (`backend/app/stat_flags.py`)
+
+`compute_stat_flags(parsed: ParsedHand) → dict[str, dict]` — takes parsed hand data, returns per-player stat flags.
+
+Site-independent logic that derives 40+ boolean flags from action sequences:
+- **Preflop**: VPIP, PFR, open raise (+ opportunity), 3-bet/4-bet/5-bet, fold-to-3bet/4bet, squeeze, limp, steal detection
+- **Postflop**: cbet (opportunity + attempt per street), fold-to-cbet, donk bet, missed cbet, aggression counts
+- **Showdown**: saw_flop/turn/river, went_to_showdown, won_at_showdown
 
 ### GGPoker Hand History Format
 
@@ -168,24 +190,30 @@ Returns array of `{hand_number, cumulative_bb, bb_per_100_rolling}`. Rolling BB/
 
 **Note**: There is no EV data yet. The parser does not extract or compute expected value. This needs to be added.
 
-## Import Flow
+## Import Flow (`backend/app/api/import_hands.py`)
 
 1. Frontend sends files to `POST /api/import/files/stream`
 2. Backend extracts .txt from .zip files if needed
 3. Splits file content into individual hands at `Poker Hand #` boundaries
 4. Checks for duplicate hand IDs before parsing
-5. Each hand is wrapped in `BEGIN/COMMIT/ROLLBACK` transaction
-6. Streams NDJSON progress updates every 50 hands (message types: `start`, `progress`, `done`)
-7. Frontend shows progress bar with live counts
+5. For each hand: `parse_hand_history(text)` → `insert_parsed_hand(db, parsed)`
+6. `insert_parsed_hand` calls `compute_stat_flags`, calculates investment/won/rake/all-in EV, writes all rows
+7. Batched in transactions of 200 hands with NDJSON streaming progress
+8. `finalize_import(db)` batch-updates player first_seen/last_seen timestamps
+
+Player cache (`_player_cache`, `_next_*_id` counters) lives in `import_hands.py`. Call `reset_import_cache()` when wiping tables.
 
 ## Tests
 
-10 tests across 4 classes in `backend/tests/test_parser.py`:
+11 tests across 5 classes in `backend/tests/test_parser.py`:
 
 - **TestRegularHand** (2): basic hand parsing, showdown with multiple players
 - **TestTimeBankCard** (2): time bank reward handling, username extraction with "received" keyword
 - **TestSplitPot** (1): split pot with two winners
 - **TestRunItTwice** (5): different winners, board card extraction from first board, same winner both boards, board cards same winner, second board lines skipped
+- **TestOpenRaiseOpp** (1): open raise opportunity flag (RFI tracking)
+
+Tests use the two-step API: `parse_hand_history(text)` → `insert_parsed_hand(db, parsed)`, then query DB for assertions.
 
 Run: `cd backend && python -m pytest tests/test_parser.py -v`
 

@@ -5,7 +5,8 @@ import duckdb
 from decimal import Decimal
 from pathlib import Path
 
-from app.parsers.ggpoker import parse_hand_history, reset_parser_cache
+from app.parsers.ggpoker import parse_hand_history
+from app.api.import_hands import insert_parsed_hand, reset_import_cache
 from app.db import init_schema
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -14,7 +15,7 @@ FIXTURES = Path(__file__).parent / "fixtures"
 @pytest.fixture
 def db():
     """Create an in-memory DuckDB with schema for each test."""
-    reset_parser_cache()
+    reset_import_cache()
     conn = duckdb.connect(":memory:")
     init_schema(conn)
     yield conn
@@ -76,7 +77,8 @@ class TestRegularHand:
         text = (FIXTURES / "ggpoker_sample.txt").read_text()
         # Parse just the first hand
         first_hand = text.split("\n\n\n")[0]
-        hand_id = parse_hand_history(first_hand, db)
+        parsed = parse_hand_history(first_hand)
+        hand_id = insert_parsed_hand(db, parsed)
 
         assert hand_id == "HD1234567890"
         hero_won = _get_hero_won(db, hand_id)
@@ -95,7 +97,8 @@ class TestRegularHand:
         text = (FIXTURES / "ggpoker_sample.txt").read_text()
         # Fifth hand has a showdown
         hands = [h.strip() for h in text.split("\n\n\n") if h.strip()]
-        hand_id = parse_hand_history(hands[4], db)
+        parsed = parse_hand_history(hands[4])
+        hand_id = insert_parsed_hand(db, parsed)
 
         assert hand_id == "HD1234567894"
         # Hero folded preflop, net = 0
@@ -112,7 +115,8 @@ class TestTimeBankCard:
 
     def test_time_bank_card_hero_wins(self, db):
         text = (FIXTURES / "time_bank_card.txt").read_text()
-        hand_id = parse_hand_history(text, db)
+        parsed = parse_hand_history(text)
+        hand_id = insert_parsed_hand(db, parsed)
 
         assert hand_id == "RC9900001111"
 
@@ -130,7 +134,8 @@ class TestTimeBankCard:
     def test_time_bank_card_username_extraction(self, db):
         """Ensure the username is extracted correctly despite 'received' text."""
         text = (FIXTURES / "time_bank_card.txt").read_text()
-        hand_id = parse_hand_history(text, db)
+        parsed = parse_hand_history(text)
+        hand_id = insert_parsed_hand(db, parsed)
 
         # Verify Hero is found as a player (not "Hero (button) received...")
         row = db.execute(
@@ -144,7 +149,8 @@ class TestSplitPot:
 
     def test_split_pot_two_winners(self, db):
         text = (FIXTURES / "split_pot.txt").read_text()
-        hand_id = parse_hand_history(text, db)
+        parsed = parse_hand_history(text)
+        hand_id = insert_parsed_hand(db, parsed)
 
         assert hand_id == "RC9900002222"
 
@@ -190,7 +196,8 @@ class TestRunItTwice:
     def test_rit_different_winners(self, db):
         """Each player wins one board."""
         text = (FIXTURES / "run_it_twice.txt").read_text()
-        hand_id = parse_hand_history(text, db)
+        parsed = parse_hand_history(text)
+        hand_id = insert_parsed_hand(db, parsed)
 
         assert hand_id == "RC9900003333"
 
@@ -219,7 +226,8 @@ class TestRunItTwice:
     def test_rit_board_cards_from_first_board(self, db):
         """Board cards should come from the first board."""
         text = (FIXTURES / "run_it_twice.txt").read_text()
-        hand_id = parse_hand_history(text, db)
+        parsed = parse_hand_history(text)
+        hand_id = insert_parsed_hand(db, parsed)
 
         board = _get_board_cards(db, hand_id)
         assert board["flop"] == ["Qh", "9d", "3c"]
@@ -229,7 +237,8 @@ class TestRunItTwice:
     def test_rit_same_winner_both_boards(self, db):
         """One player wins both boards — two won amounts on one summary line."""
         text = (FIXTURES / "run_it_twice_same_winner.txt").read_text()
-        hand_id = parse_hand_history(text, db)
+        parsed = parse_hand_history(text)
+        hand_id = insert_parsed_hand(db, parsed)
 
         assert hand_id == "RC9900004444"
 
@@ -258,7 +267,8 @@ class TestRunItTwice:
     def test_rit_board_cards_same_winner(self, db):
         """Board cards from first board even when same winner."""
         text = (FIXTURES / "run_it_twice_same_winner.txt").read_text()
-        hand_id = parse_hand_history(text, db)
+        parsed = parse_hand_history(text)
+        hand_id = insert_parsed_hand(db, parsed)
 
         board = _get_board_cards(db, hand_id)
         assert board["flop"] == ["Kh", "9d", "3c"]
@@ -268,7 +278,8 @@ class TestRunItTwice:
     def test_rit_second_board_lines_skipped(self, db):
         """SECOND board lines should not interfere with parsing."""
         text = (FIXTURES / "run_it_twice.txt").read_text()
-        hand_id = parse_hand_history(text, db)
+        parsed = parse_hand_history(text)
+        hand_id = insert_parsed_hand(db, parsed)
 
         # Should not raise any errors and hand should be stored
         row = db.execute(
@@ -284,7 +295,8 @@ class TestOpenRaiseOpp:
         """Players acting before first raise get open_raise_opp=True."""
         text = (FIXTURES / "ggpoker_sample.txt").read_text()
         first_hand = text.split("\n\n\n")[0]
-        hand_id = parse_hand_history(first_hand, db)
+        parsed = parse_hand_history(first_hand)
+        hand_id = insert_parsed_hand(db, parsed)
 
         # Hand: 6-max, Hero is BTN (seat 1)
         # Preflop action order: Player4 (EP) folds, Player5 (MP) raises,
