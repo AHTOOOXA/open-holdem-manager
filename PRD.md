@@ -5,6 +5,46 @@
 
 ---
 
+## 0. Current Status
+
+### What's Built (MVP-0: Import → Stats + Graph)
+
+First pass of the core loop exists but needs verification:
+- GGPoker Rush & Cash parser (10 unit tests, 13,402 real hands imported without errors)
+- Streaming file import (drag & drop files/folders/ZIPs, duplicate detection, progress bar)
+- Stats page with positional breakdowns (60+ stat flags)
+- Cumulative BB graph with rolling BB/100
+- Hero settings (username/site config)
+
+### Next Steps
+
+1. **Verify parsing** — spot-check parsed hands against raw text, confirm edge cases are correct
+2. **Verify insertion engine** — confirm data lands in DuckDB correctly (no dropped fields, correct types)
+3. **Verify stat calculations** — compare computed stats against known-correct values (e.g. manual count or H2N export)
+4. **Stats layout like H2N** — match Hand2Note's stat page layout/grouping more closely
+5. **Add EV line to graph** — parser doesn't extract EV yet, needs to be implemented end-to-end (parser → DB → API → chart)
+
+### Architectural Decisions (diverged from original PRD)
+
+| PRD Planned | Actual | Reason |
+|-------------|--------|--------|
+| Electron shell | Plain local web app | Unnecessary for MVP, adds packaging complexity |
+| shadcn/ui | Raw TailwindCSS v4 | Lighter, fewer deps, sufficient for current UI |
+| Zustand / React Query | Plain React state | App is simple enough, no global state needed yet |
+| TanStack Table | Hand-built tables | Only one table (stats), not worth the dep |
+| PokerStars parser (P0) | GGPoker only | User plays GGPoker, built what was needed first |
+| `parsers/base.py` interface | Single `ggpoker.py` | Only one site, no abstraction needed yet |
+| `core/`, `services/`, `models/` dirs | Flat `app/` structure | Simpler for current scope |
+
+### What's NOT Built Yet
+
+From Phase 1: PokerStars parser, hand browser, player lookup, Electron packaging.
+From Phase 2+: Population analysis, leak finder, hand tagging, session tracking, all other site parsers.
+
+See **Section 7** for the full phase checklist.
+
+---
+
 ## 1. Vision & Goals
 
 ### Vision
@@ -173,11 +213,8 @@ Situational:
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│                 Electron Shell                       │
-│            (window, menus, system tray)              │
-├─────────────────────────────────────────────────────┤
 │                 React Frontend                       │
-│        (TypeScript, Vite, TailwindCSS)              │
+│    (React 19, TypeScript 5.9, Vite 7, Tailwind v4) │
 │              localhost:5173 (dev)                    │
 ├─────────────────────────────────────────────────────┤
 │                 Python Backend                       │
@@ -185,25 +222,20 @@ Situational:
 │              localhost:8000                          │
 ├─────────────────────────────────────────────────────┤
 │                   DuckDB                             │
-│           (single file: poker.duckdb)               │
+│           (single file: data/poker.duckdb)          │
 └─────────────────────────────────────────────────────┘
 ```
 
+> Electron was dropped for MVP — the app runs as a local web app via `make dev`.
+> It can be added later when native packaging is needed.
+
 ### 4.2 Component Breakdown
 
-**Electron Main Process:**
-- Window management
-- Python backend lifecycle (spawn/kill)
-- Native menus
-- Auto-updater
-- System tray (optional)
-
 **React Frontend:**
-- Pages: Dashboard, Hands, Players, Reports, Settings
-- State: Zustand or React Query
-- Charts: Recharts or Apache ECharts
-- Tables: TanStack Table
-- UI: shadcn/ui + Tailwind
+- Pages: Upload, Stats, Graph (currently), more planned (Dashboard, Hands, Players, Reports, Settings)
+- State: Plain React state (Zustand/React Query can be added when complexity warrants it)
+- Charts: Recharts 3
+- UI: TailwindCSS v4 with custom dark theme (@theme in CSS)
 
 **Python Backend:**
 - FastAPI for REST API
@@ -558,13 +590,15 @@ HandReplay (simple text version)
 ## 7. MVP Scope
 
 ### Phase 1: Foundation (MVP)
+- [~] GGPoker parser — first pass done, needs verification against real hands
+- [~] Hand import — streaming/ZIP/folder works, insertion correctness needs verification
+- [~] Player stats — 60+ flags computed, calculations need verification against H2N
+- [~] Stats page — works, layout needs rework to match H2N
+- [~] Graph — cumulative BB + rolling BB/100 works, EV line missing
+- [x] Hero settings (username/site config)
 - [ ] PokerStars parser
-- [ ] GGPoker parser
-- [ ] Basic hand import
-- [ ] Player database with core stats
 - [ ] Hand browser with filters
 - [ ] Player lookup
-- [ ] Basic "My Results" report
 - [ ] Electron packaging for Win/Mac/Linux
 
 ### Phase 2: Analytics
