@@ -955,8 +955,11 @@ def parse_hand_history(hand_text: str, db: duckdb.DuckDBPyConnection) -> str:
     for street in ["preflop", "flop", "turn", "river"]:
         for a in actions_by_street[street]:
             if a["is_all_in"]:
-                if all_in_street is None or street_order_map[street] > street_order_map[all_in_street]:
+                if all_in_street is None:
                     all_in_street = street
+                break
+        if all_in_street is not None:
+            break
 
     # ── Calculate won/rake amounts ──
     num_winners = len(collected)
@@ -988,14 +991,18 @@ def parse_hand_history(hand_text: str, db: duckdb.DuckDBPyConnection) -> str:
                     )
                     p2_eq = 1.0 - p1_eq
 
-                    total_invested = sum(float(v) for v in player_invested.values())
-                    distributable = total_invested - float(total_rake)
+                    # Subtract uncalled bets — money returned was never at risk
+                    p1_net = float(player_invested[p1]) - float(uncalled_returns.get(p1, Decimal("0")))
+                    p2_net = float(player_invested[p2]) - float(uncalled_returns.get(p2, Decimal("0")))
+                    total_at_risk = sum(float(v) for v in player_invested.values()) \
+                                  - sum(float(v) for v in uncalled_returns.values())
+                    distributable = total_at_risk - float(total_rake)
 
                     all_in_ev_bb_map[p1] = (
-                        p1_eq * distributable - float(player_invested[p1])
+                        p1_eq * distributable - p1_net
                     ) / float(bb_amount)
                     all_in_ev_bb_map[p2] = (
-                        p2_eq * distributable - float(player_invested[p2])
+                        p2_eq * distributable - p2_net
                     ) / float(bb_amount)
                 except Exception:
                     pass  # Fall back to won_bb
