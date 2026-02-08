@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
-import { getHeroStats, getSettings } from '@/lib/api';
-import type { HeroStats, PositionalStats, StatValue, Settings } from '@/lib/api';
+import { useState, useEffect, useMemo } from 'react';
+import { getHeroStats, getSettings, getFilterOptions } from '@/lib/api';
+import type { HeroStats, PositionalStats, StatValue, Settings, FilterOptions } from '@/lib/api';
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -210,34 +210,165 @@ function posRow(
 
 // ── Main Component ───────────────────────────────────────────────────
 
+type DatePreset = 'today' | 'week' | 'month' | 'all';
+
+function getPresetDates(preset: DatePreset): { date_from?: string; date_to?: string } {
+  if (preset === 'all') return {};
+  const now = new Date();
+  if (preset === 'today') return { date_from: now.toISOString().slice(0, 10) };
+  if (preset === 'week') {
+    const day = now.getDay();
+    const diff = day === 0 ? 6 : day - 1;
+    const monday = new Date(now);
+    monday.setDate(now.getDate() - diff);
+    return { date_from: monday.toISOString().slice(0, 10) };
+  }
+  const first = new Date(now.getFullYear(), now.getMonth(), 1);
+  return { date_from: first.toISOString().slice(0, 10) };
+}
+
 export default function StatsPage() {
   const [stats, setStats] = useState<HeroStats | null>(null);
   const [settings, setSettingsData] = useState<Settings | null>(null);
+  const [filterOpts, setFilterOpts] = useState<FilterOptions | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // Filters
+  const [stakes, setStakes] = useState<string>('');
+  const [dateFrom, setDateFrom] = useState<string>('');
+  const [dateTo, setDateTo] = useState<string>('');
+  const [activePreset, setActivePreset] = useState<DatePreset>('all');
+  const filterParams = useMemo(() => ({
+    stakes: stakes || undefined,
+    date_from: dateFrom || undefined,
+    date_to: dateTo || undefined,
+  }), [stakes, dateFrom, dateTo]);
+
+  // Load filter options + settings once
   useEffect(() => {
-    Promise.all([getHeroStats(), getSettings()])
-      .then(([s, st]) => {
-        setStats(s);
-        setSettingsData(st);
-      })
-      .finally(() => setLoading(false));
+    Promise.all([getFilterOptions(), getSettings()])
+      .then(([fo, st]) => { setFilterOpts(fo); setSettingsData(st); });
   }, []);
 
-  if (loading) return <p className="text-text-muted p-4">Loading stats...</p>;
+  // Load stats when filters change
+  useEffect(() => {
+    let cancelled = false;
+    getHeroStats(filterParams).then(s => {
+      if (!cancelled) setStats(s);
+    }).finally(() => {
+      if (!cancelled) setLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [filterParams]);
+
+  const handlePreset = (preset: DatePreset) => {
+    setActivePreset(preset);
+    const dates = getPresetDates(preset);
+    setDateFrom(dates.date_from ?? '');
+    setDateTo(dates.date_to ?? '');
+  };
+
+  const presetBtn = (preset: DatePreset, label: string) => (
+    <button
+      className={`px-3 py-1.5 text-xs rounded transition-colors ${
+        activePreset === preset
+          ? 'bg-primary text-white'
+          : 'bg-surface border border-border text-text-muted hover:text-text'
+      }`}
+      onClick={() => handlePreset(preset)}
+    >
+      {label}
+    </button>
+  );
+
+  const filterBarJSX = (
+    <div className="bg-surface rounded-lg border border-border px-4 py-3 mb-3 flex flex-wrap items-center gap-3">
+      {/* Hero badge */}
+      <div className="flex items-center gap-2">
+        <span className="bg-primary/20 text-primary px-2.5 py-0.5 rounded text-sm font-semibold">
+          {settings?.hero_username || 'Hero'}
+        </span>
+        <span className="text-[11px] text-text-muted uppercase">{settings?.hero_site || 'GGPoker'}</span>
+      </div>
+
+      {/* Stakes filter */}
+      <select
+        value={stakes}
+        onChange={(e) => setStakes(e.target.value)}
+        className="bg-background border border-border rounded px-3 py-1.5 text-sm text-text focus:outline-none focus:border-primary"
+      >
+        <option value="">All Stakes</option>
+        {filterOpts?.stakes.map(s => (
+          <option key={s} value={s}>{s}</option>
+        ))}
+      </select>
+
+      {/* Date inputs */}
+      <input
+        type="date"
+        value={dateFrom}
+        onChange={(e) => { setDateFrom(e.target.value); setActivePreset('all'); }}
+        className="bg-background border border-border rounded px-3 py-1.5 text-sm text-text focus:outline-none focus:border-primary"
+      />
+      <input
+        type="date"
+        value={dateTo}
+        onChange={(e) => { setDateTo(e.target.value); setActivePreset('all'); }}
+        className="bg-background border border-border rounded px-3 py-1.5 text-sm text-text focus:outline-none focus:border-primary"
+      />
+
+      {/* Date presets */}
+      <div className="flex gap-1.5">
+        {presetBtn('today', 'Today')}
+        {presetBtn('week', 'Week')}
+        {presetBtn('month', 'Month')}
+        {presetBtn('all', 'All')}
+      </div>
+
+      {/* Spacer */}
+      <div className="flex-1" />
+
+      {/* Summary stats */}
+      {stats && stats.hands > 0 && (() => {
+        const wr = stats.win_rate_bb100;
+        const wrEv = stats.win_rate_ev_bb100;
+        const wrColor = wr !== null ? (wr >= 0 ? 'text-green' : 'text-red') : 'text-text-muted';
+        const wrEvColor = wrEv !== null ? (wrEv >= 0 ? 'text-green' : 'text-red') : 'text-text-muted';
+        return (
+          <div className="flex items-center gap-3">
+            <span className="text-sm text-text-muted">{stats.hands.toLocaleString()} hands</span>
+            <span className={`text-sm font-bold font-mono ${wrColor}`}>
+              {wr !== null ? `${wr >= 0 ? '+' : ''}${wr.toFixed(2)} bb/100` : '—'}
+            </span>
+            <span className={`text-sm font-bold font-mono ${wrEvColor}`}>
+              EV {wrEv !== null ? `${wrEv >= 0 ? '+' : ''}${wrEv.toFixed(2)}` : '—'}
+            </span>
+          </div>
+        );
+      })()}
+    </div>
+  );
+
+  if (loading) return (
+    <div className="max-w-6xl mx-auto px-2">
+      {filterBarJSX}
+      <p className="text-text-muted p-4 text-center">Loading stats...</p>
+    </div>
+  );
   if (!stats || stats.hands === 0) {
     return (
-      <div className="text-center py-12">
-        <p className="text-text-muted text-lg">No hands imported yet.</p>
-        <p className="text-text-muted text-sm mt-2">Upload hand histories first.</p>
+      <div className="max-w-6xl mx-auto px-2">
+        {filterBarJSX}
+        <div className="text-center py-12">
+          <p className="text-text-muted text-lg">No hands match the selected filters.</p>
+          <p className="text-text-muted text-sm mt-2">Try adjusting your filters or import more hand histories.</p>
+        </div>
       </div>
     );
   }
 
   const wr = stats.win_rate_bb100;
   const wrEv = stats.win_rate_ev_bb100;
-  const wrColor = wr !== null ? (wr >= 0 ? 'text-green' : 'text-red') : 'text-text-muted';
-  const wrEvColor = wrEv !== null ? (wrEv >= 0 ? 'text-green' : 'text-red') : 'text-text-muted';
 
   const fullPosHeaders = ['Total', 'EP', 'MP', 'CO', 'BTN', 'SB', 'BB'];
   const fullPosKeys: ('total' | 'ep' | 'mp' | 'co' | 'btn' | 'sb' | 'bb')[] = ['total', 'ep', 'mp', 'co', 'btn', 'sb', 'bb'];
@@ -245,23 +376,7 @@ export default function StatsPage() {
   return (
     <div className="max-w-6xl mx-auto px-2">
       {/* ── Filter Bar ── */}
-      <div className="flex items-center gap-3 mb-3 flex-wrap">
-        <div className="flex items-center gap-2">
-          <span className="bg-primary/20 text-primary px-2.5 py-0.5 rounded text-sm font-semibold">
-            {settings?.hero_username || 'Hero'}
-          </span>
-          <span className="text-[11px] text-text-muted uppercase">{settings?.hero_site || 'GGPoker'}</span>
-        </div>
-        <div className="text-sm text-text-muted">
-          {stats.hands.toLocaleString()} hands
-        </div>
-        <div className={`text-sm font-bold font-mono ${wrColor}`}>
-          {wr !== null ? `${wr >= 0 ? '+' : ''}${wr.toFixed(2)} bb/100` : '- bb/100'}
-        </div>
-        <div className={`text-sm font-bold font-mono ${wrEvColor}`}>
-          EV {wrEv !== null ? `${wrEv >= 0 ? '+' : ''}${wrEv.toFixed(2)} bb/100` : '-'}
-        </div>
-      </div>
+      {filterBarJSX}
 
       {/* ── PRE-FLOP ── */}
       <SectionTitle>Pre-Flop</SectionTitle>
