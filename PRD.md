@@ -7,25 +7,29 @@
 
 ## 0. Current Status
 
-### What's Built (MVP-0: Import → Stats + Graph)
+### What's Built (MVP-1: Import → Stats + Graph + Hands + Results)
 
-First pass of the core loop exists but needs verification:
-- GGPoker Rush & Cash parser (10 unit tests, 13,402 real hands imported without errors)
+Core loop is functional with verified stats:
+- GGPoker Rush & Cash parser (11 unit tests, 13,402 real hands imported without errors)
 - Streaming file import (drag & drop files/folders/ZIPs, duplicate detection, progress bar)
-- Stats page with positional breakdowns (60+ stat flags)
-- Graph — cumulative line with gradient fill, BB/$ toggle, all-in EV line (yellow dashed), stat cards showing won/winrate/EV/rake in both BB and $, downsampled to 1k points for performance
-- All-in EV computation using treys library (heads-up, before river, known cards)
-- Rake tracking — parser sums all fees (Rake + Jackpot + Bingo + Fortune + Tax); stat cards show rake totals and rake/100
+- Stats page with H2N-style positional breakdowns (60+ stat flags, 40+ opportunity flags)
+- Results dashboard — cumulative BB/$ graph with toggleable lines (EV, showdown/non-showdown, rake), stat cards (hands/won/winrate/EV/rake/SD/NSD), breakdowns by stakes/month/position, date/stakes/last-N-hands filters
+- Hand browser — paginated list with filtering (position, stakes, result, tags, date), sortable columns, action abbreviations (R/B/C/X/F with hero underline), detail drawer with full hand history, hand tagging and notes
+- All-in EV computation using eval7 library (heads-up, before river, known cards)
+- Rake + Jackpot (BBJ) tracking — parser separates Jackpot fee from Rake; stat cards show rake/jackpot totals and rake/100
 - Rebuild stats endpoint — re-parses all hands from stored raw_text without needing original files
 - Hero settings (username/site config)
-- Performance: player cache, in-memory ID counters, batch transactions, executemany for bulk inserts (~138 hands/sec)
+- Stakes normalization — cross-references header/posted blind values against standard stakes, fixes GGPoker byte corruption
+- Stat flag computation extracted to separate site-independent module (`stat_flags.py`)
+- 7 stat calculation bugs fixed for H2N parity (AFq, Steal%, C-Bet, Donk Bet, 3-Bet Opp, Squeeze, 5-Bet)
+- Performance: PyArrow batch inserts, eval7 equity calc, Python 3.12 (~1,700 hands/sec)
 
 ### Next Steps
 
-1. **Verify parsing** — spot-check parsed hands against raw text, confirm edge cases are correct
-2. **Verify insertion engine** — confirm data lands in DuckDB correctly (no dropped fields, correct types)
-3. **Verify stat calculations** — compare computed stats against known-correct values (e.g. manual count or H2N export)
-4. **Stats layout like H2N** — match Hand2Note's stat page layout/grouping more closely
+1. **Verify stats end-to-end** — compare OHM output against H2N for same hand sample, confirm remaining edge cases
+2. **Missing H2N stats** — implement the 13 new metrics from Section 3.2.0 (limp-fold, 4-bet-fold, call-4bet, vs cbet by pot type, missed cbet IP/OOP splits, probe bets)
+3. **Phase 1 core gaps** — cold call, 3-bet call, check-raise, probe bet, IP/OOP splits (see Section 3.2.2)
+4. **Hand browser polish** — keyboard nav (←/→), biggest losers filter, hand export
 
 ### Architectural Decisions (diverged from original PRD)
 
@@ -38,11 +42,14 @@ First pass of the core loop exists but needs verification:
 | PokerStars parser (P0) | GGPoker only | User plays GGPoker, built what was needed first |
 | `parsers/base.py` interface | Single `ggpoker.py` | Only one site, no abstraction needed yet |
 | `core/`, `services/`, `models/` dirs | Flat `app/` structure | Simpler for current scope |
+| pandas for bulk inserts | PyArrow batch inserts | 12x faster, lower memory |
+| treys for equity calc | eval7 | Faster, cleaner API |
+| Python 3.10 | Python 3.12 | Faster CPython, modern features |
 
 ### What's NOT Built Yet
 
-From Phase 1: PokerStars parser, hand browser, player lookup, Electron packaging.
-From Phase 2+: Population analysis, leak finder, hand tagging, session tracking, all other site parsers.
+From Phase 1: PokerStars parser, player lookup, remaining H2N stats (13 new metrics), Phase 1 core gap stats.
+From Phase 2+: Population analysis, leak finder, session tracking, calendar view, all other site parsers, Electron packaging.
 
 See **Section 7** for the full phase checklist.
 
@@ -515,17 +522,21 @@ Purpose-built dashboards for common spots instead of raw stat tables:
 **Graph Lines (Built):**
 - Cumulative BB won, Cumulative $ won
 - All-in EV line (BB and $)
-- Cumulative rake (BB and $)
+- Cumulative rake (BB and $), Cumulative jackpot/BBJ (BB and $)
 - Won at Showdown / Won without Showdown (BB and $)
-- BB/$ toggle, stat cards with dual units
+- BB/$ toggle, toggleable line visibility, stat cards with dual units
+
+**Results Dashboard (Built):**
+- Filter bar: stakes selector, date range presets (today/week/month/all), last N hands
+- Stat cards: Hands, Won, Winrate, EV Won, EV Winrate, Rake, Rake/100, SD Won, NSD Won, BBJ breakdown
+- Breakdown tables: by stakes, by month, by position (with BB/100 and EV BB/100)
 
 **Graph Lines (Planned):**
-- Rolling BB/100 (100-hand window) — removed during refactor, needs re-adding
 - Per-session vertical markers
 - Confidence interval band
+- Dispersion/variance visualization with winrate estimate ranges
 
 **Reports (Planned):**
-- Win rate by stake / position / date range
 - Best/worst hands breakdown
 - Session-by-session results
 
@@ -572,8 +583,8 @@ Purpose-built dashboards for common spots instead of raw stat tables:
 │    (React 19, TypeScript 5.9, Vite 7, Tailwind v4) │
 │              localhost:5173 (dev)                    │
 ├─────────────────────────────────────────────────────┤
-│                 Python Backend                       │
-│     (FastAPI, DuckDB, Pydantic, uvicorn)            │
+│              Python 3.12+ Backend                    │
+│   (FastAPI, DuckDB, PyArrow, eval7, Pydantic)       │
 │              localhost:8000                          │
 ├─────────────────────────────────────────────────────┤
 │                   DuckDB                             │
@@ -587,7 +598,7 @@ Purpose-built dashboards for common spots instead of raw stat tables:
 ### 4.2 Component Breakdown
 
 **React Frontend:**
-- Pages: Upload, Stats, Graph (currently), more planned (Dashboard, Hands, Players, Reports, Settings)
+- Pages: Upload, Stats, Results, Hands (currently), more planned (Players, Reports, Settings)
 - State: Plain React state (Zustand/React Query can be added when complexity warrants it)
 - Charts: Recharts 3
 - UI: TailwindCSS v4 with custom dark theme (@theme in CSS)
@@ -598,66 +609,48 @@ Purpose-built dashboards for common spots instead of raw stat tables:
 - Parsers: one module per poker site
 - Stats engine: calculate all stats from raw hands
 
-**File Structure:**
+**File Structure (actual):**
 
 ```
-poker-tracker/
-├── electron/
-│   ├── main.ts                 # Electron main process
-│   ├── preload.ts              # Context bridge
-│   └── utils/
-│       └── backend.ts          # Python process management
+holdem-manager/
 ├── frontend/
 │   ├── src/
-│   │   ├── app/                # React app
+│   │   ├── main.tsx            # React entry (StrictMode)
+│   │   ├── App.tsx             # Router: Upload / Stats / Results / Hands tabs
+│   │   ├── index.css           # Tailwind v4 @theme with dark color palette
 │   │   ├── components/
-│   │   │   ├── ui/             # shadcn components
-│   │   │   ├── hands/          # Hand browser components
-│   │   │   ├── players/        # Player lookup components
-│   │   │   └── reports/        # Charts, tables
+│   │   │   └── hands/          # Hand browser components (CardDisplay, etc.)
 │   │   ├── lib/
-│   │   │   ├── api/            # Generated API client
-│   │   │   └── utils/
+│   │   │   └── api.ts          # Typed API client (fetch wrapper, NDJSON streaming)
 │   │   └── pages/
+│   │       ├── UploadPage.tsx   # Drag & drop import, progress bar, clear DB
+│   │       ├── StatsPage.tsx    # H2N-style stat tables with positional columns
+│   │       ├── GraphPage.tsx    # Results dashboard (graph, stat cards, breakdowns)
+│   │       └── HandsPage.tsx    # Hand browser with filtering, tagging, detail drawer
 │   ├── package.json
-│   └── vite.config.ts
+│   └── vite.config.ts          # React plugin, Tailwind v4 plugin, API proxy to :8000
 ├── backend/
 │   ├── app/
-│   │   ├── main.py             # FastAPI app
-│   │   ├── api/
-│   │   │   ├── hands.py
-│   │   │   ├── players.py
-│   │   │   ├── reports.py
-│   │   │   ├── import.py
-│   │   │   └── settings.py
-│   │   ├── core/
-│   │   │   ├── config.py
-│   │   │   ├── db.py           # DuckDB connection
-│   │   │   └── stats.py        # Stat calculations
+│   │   ├── main.py             # FastAPI app, CORS, startup, health
+│   │   ├── db.py               # DuckDB connection, schema init, migrations
+│   │   ├── models.py           # Pydantic response models
+│   │   ├── stats_engine.py     # H2N-style stat computation from hand_players
+│   │   ├── stat_flags.py       # Site-independent stat flag computation (40+ flags)
 │   │   ├── parsers/
-│   │   │   ├── base.py         # Parser interface
-│   │   │   ├── pokerstars.py
-│   │   │   ├── ggpoker.py
-│   │   │   └── detector.py     # Auto-detect site
-│   │   ├── models/
-│   │   │   ├── hand.py
-│   │   │   ├── player.py
-│   │   │   └── action.py
-│   │   └── services/
-│   │       ├── import_service.py
-│   │       ├── stats_service.py
-│   │       └── report_service.py
+│   │   │   └── ggpoker.py      # GGPoker hand history parser → ParsedHand
+│   │   └── api/
+│   │       ├── import_hands.py  # Import endpoints + insert_parsed_hand + player cache
+│   │       ├── stats.py         # GET /api/stats/hero
+│   │       ├── reports.py       # GET /api/reports/graph, filter-options, breakdown
+│   │       ├── hands.py         # Hand browser: list, detail, tags, notes
+│   │       └── settings.py      # GET/PATCH /api/settings
 │   ├── tests/
-│   ├── pyproject.toml
+│   │   ├── test_parser.py       # 11 tests across 5 classes
+│   │   └── fixtures/            # Sample hand histories
 │   └── requirements.txt
-├── shared/
-│   └── types/                  # Shared TypeScript types
-├── scripts/
-│   ├── build-backend.sh        # PyInstaller
-│   └── build-all.sh
-├── package.json                # Electron + workspace root
 ├── Makefile
-└── README.md
+├── CLAUDE.md
+└── PRD.md
 ```
 
 ### 4.3 Database Schema (DuckDB)
@@ -792,48 +785,48 @@ CREATE INDEX idx_actions_hand_id ON actions(hand_id);
 ### 4.4 API Endpoints
 
 ```yaml
-# Import
-POST   /api/import/folder          # Import from folder path
-POST   /api/import/files           # Import specific files
-GET    /api/import/status/{job_id} # Check import progress
+# Import (✅ built)
+POST   /api/import/files           # Synchronous multipart upload (50MB limit)
+POST   /api/import/files/stream    # Streaming upload, NDJSON progress (start/progress/done)
+POST   /api/import/clear           # Truncate all hand data
 POST   /api/import/rebuild         # Re-parse all hands from stored raw_text
-POST   /api/import/watch           # Start watching folder
 
-# Hands
-GET    /api/hands                  # List hands (paginated, filtered)
-GET    /api/hands/{id}             # Get hand detail
-PATCH  /api/hands/{id}/note        # Update hand note
+# Hands (✅ built)
+GET    /api/hands                  # List hands (paginated, sorted, filtered by position/stakes/result/tags/date)
+GET    /api/hands/{id}             # Get hand detail (all players, actions, board, raw text)
 POST   /api/hands/{id}/tags        # Add tag
 DELETE /api/hands/{id}/tags/{tag}  # Remove tag
+GET    /api/tags                   # List all tags with counts
+PUT    /api/hands/{id}/note        # Update hand note
+DELETE /api/hands/{id}/note        # Delete hand note
 
-# Players
+# Reports (✅ built)
+GET    /api/reports/graph          # Graph data: cumulative BB/$, EV, SD/NSD, rake, jackpot lines
+GET    /api/reports/filter-options  # Available stakes and date ranges
+GET    /api/reports/breakdown      # Results by stakes, month, position
+
+# Stats (✅ built)
+GET    /api/stats/hero             # Hero stats with filters (position, stakes, date_from, date_to)
+
+# Settings (✅ built)
+GET    /api/settings               # Get hero_username, hero_site
+PATCH  /api/settings               # Update settings
+
+# System (✅ built)
+GET    /api/health                 # Returns {status, hands}
+
+# Planned (not built)
 GET    /api/players                # List/search players
 GET    /api/players/{id}           # Get player detail + stats
 GET    /api/players/{id}/hands     # Get hands with player
 PATCH  /api/players/{id}/note      # Update player note
 PATCH  /api/players/{id}/color     # Update color tag
 POST   /api/players/merge          # Merge two player profiles
-
-# Reports
-GET    /api/reports/my-results     # My winrate, graphs
-GET    /api/reports/leaks          # Leak finder
-GET    /api/reports/population     # Population analysis
-GET    /api/reports/positional     # Stats by position
-
-# Stats (raw stat queries)
-GET    /api/stats/player/{id}      # Full stats for player
+GET    /api/stats/player/{id}      # Full stats for any player
 GET    /api/stats/population       # Pool stats with filters
-
-# Settings
-GET    /api/settings               # Get all settings
-PATCH  /api/settings               # Update settings
-GET    /api/settings/hh-paths      # Get HH folder paths
-POST   /api/settings/hh-paths      # Add HH folder path
-
-# System
-GET    /api/health                 # Health check
-GET    /api/db/stats               # DB size, hand count, etc.
-POST   /api/db/vacuum              # Optimize database
+GET    /api/reports/leaks          # Leak finder
+GET    /api/reports/drift          # Strategy drift detection (z-scores)
+POST   /api/import/watch           # Start watching folder
 ```
 
 ---
@@ -917,7 +910,7 @@ HandReplay (simple text version)
 ## 6. Non-Functional Requirements
 
 ### Performance
-- Import: 5,000+ hands/second
+- Import: ~1,700 hands/second (current, target 5,000+)
 - Query: <100ms for player stats lookup
 - UI: 60fps scrolling through hand list
 - Startup: <3 seconds to usable state
@@ -948,27 +941,31 @@ HandReplay (simple text version)
 ### Phase 1: Foundation (current)
 
 What's built:
-- [x] GGPoker Rush & Cash parser (60+ stat flags, all-in EV, rake tracking)
+- [x] GGPoker Rush & Cash parser (60+ stat flags, 40+ opportunity flags, all-in EV, rake + jackpot tracking)
 - [x] Streaming file import (drag & drop files/folders/ZIPs, duplicate detection, progress bar)
 - [x] Stats page — H2N-style layout with positional breakdowns
-- [x] Graph — cumulative BB/$, EV line, showdown/non-showdown lines, rake, BB/$ toggle
+- [x] Results dashboard — cumulative BB/$ graph with toggleable lines (EV, SD/NSD, rake), stat cards, breakdowns by stakes/month/position, date/stakes/last-N filters
 - [x] Hero settings (username/site config)
 - [x] Rebuild endpoint (re-parse all hands from stored raw_text)
+- [x] Fix stat calculation bugs — 7 fixed for H2N parity (AFq, Steal%, C-Bet, Donk Bet, 3-Bet Opp, Squeeze, 5-Bet)
+- [x] Positional winrate report — BB/100 by EP/MP/CO/BTN/SB/BB in results breakdown
+- [x] Stat flag extraction — site-independent `stat_flags.py` module (parse/compute/insert pipeline)
+- [x] Stakes normalization — cross-reference header/posted blinds, fix GGPoker byte corruption
+- [x] Performance — PyArrow batch inserts, eval7 equity, Python 3.12 (~1,700 hands/sec, up from ~138)
 
 What's next (complete the foundation):
-- [ ] **Fix stat calculation bugs** — see `STATS_BUGS.md` (aggression freq, steal %, c-bet, donk bet, 3-bet opp)
-- [ ] **Positional winrate report** — BB/100 by EP/MP/CO/BTN/SB/BB (data exists, just needs computation + display)
-- [ ] **Verify parser** — spot-check parsed hands vs raw text, confirm edge cases
-- [ ] **Verify stats** — compare OHM output against H2N for same hand sample
+- [ ] **Verify stats end-to-end** — compare OHM output against H2N for same hand sample
+- [ ] **Missing H2N stats** — 13 new metrics from Section 3.2.0 (limp-fold, 4-bet-fold, call-4bet, vs cbet by pot type, missed cbet IP/OOP, probe bets)
+- [ ] **Phase 1 core gaps** — cold call, 3-bet call, check-raise, IP/OOP splits (see Section 3.2.2)
 
 ### Phase 2: Hand Review & Study Tools
 
 The features every poker coach recommends. Enables the core study workflow.
 
-- [ ] **Hand browser** — paginated list with columns (date, stakes, position, cards, result), sortable, filterable
-- [ ] **Hand detail view** — street-by-street actions, pot size at each decision, board cards, player stacks
-- [ ] **Hand tagging** — tag hands: bluff, mistake, cooler, study, great play (schema exists: `hand_tags`)
-- [ ] **Hand notes** — per-hand text notes (schema exists: `hand_notes`)
+- [x] **Hand browser** — paginated list with columns (cards, actions, board, stakes, result, date, tags), sortable, filterable by position/stakes/result/tags/date
+- [x] **Hand detail view** — street-by-street actions with amounts in BB, board cards, player stacks, hero actions underlined
+- [x] **Hand tagging** — tag hands with custom labels, filter by tag, tag pills in list view
+- [x] **Hand notes** — per-hand text notes with create/update/delete
 - [ ] **Mark-and-review workflow** — filter by tag, step through tagged hands with keyboard nav (←/→)
 - [ ] **"Biggest losers" filter** — auto-surface medium-loss hands (10-30 BB lost, not coolers) for study
 - [ ] **Results by starting hand (13x13 heat map)** — aggregate won_bb by hand combo on a color-coded grid. Data exists in `hand_players.card1/card2`. Killer study tool — instantly shows which hands are bleeding money by position
@@ -1020,8 +1017,8 @@ Features that differentiate OHM from basic trackers.
 - [ ] **Custom stat creation (SQL-based)** — users write DuckDB SQL against `hand_players`/`actions` tables, results displayed as new stat columns. Simpler than H2N's filter builder, leverages DuckDB's power, appeals to technical open-source audience.
 - [ ] **Situational views (HM3-style)** — purpose-built dashboards: C-Bet Situations (by position, board texture, pot type), 3-Bet Pots, Steal Situations, River Play
 - [ ] **Decision analysis (H2N-style)** — Action Profit: EV of each action in a specific spot. Spot Frequency: how often a situation occurs per 1000 hands. Next Villain Actions: what opponents do after your action.
-- [ ] **Winrate by stake level** — separate BB/100 and total profit/loss per stake. Determines when you're ready to move up.
-- [ ] **Rake & rakeback tracking** — total rake paid per stake, rake as % of winnings, projected rakeback. Critical at microstakes where rake eats winrate.
+- [x] **Winrate by stake level** — BB/100 and total profit/loss per stake in results dashboard breakdowns.
+- [x] **Rake & rakeback tracking** — total rake + jackpot paid per stake, rake/100, BBJ breakdown. Projected rakeback not yet implemented.
 - [ ] **Strategy Drift Detection (unique to OHM)** — no major tracker has this as a first-class feature. Monitors rolling windows of key stats and alerts when your game deviates from your baseline. Detects tilt, fatigue, scared money, and slow strategic drift before they cost significant money.
 
   **How it works:**
@@ -1161,14 +1158,16 @@ CBet = (times_cbet / opportunities_to_cbet) * 100
 
 ## Appendix C: Competitor Feature Comparison
 
-| Feature | Hand2Note | HM3 | This Project (MVP) |
-|---------|-----------|-----|-------------------|
-| HUD | ✅ Advanced | ✅ Good | ❌ Not in MVP |
-| Hand Import | ✅ | ✅ | ✅ |
-| Player Stats | ✅ | ✅ | ✅ |
-| Reports | ✅ | ✅ | ✅ Basic |
-| Population Analysis | ✅ (paid) | ❌ | ✅ |
-| Leak Finder | ✅ | ✅ | ✅ |
-| Hand Replayer | ✅ | ✅ | ⚠️ Text only |
+| Feature | Hand2Note | HM3 | This Project (current) |
+|---------|-----------|-----|----------------------|
+| HUD | ✅ Advanced | ✅ Good | ❌ Not planned |
+| Hand Import | ✅ Multi-site | ✅ Multi-site | ✅ GGPoker only |
+| Player Stats | ✅ | ✅ | ✅ Hero only (opponent lookup planned) |
+| Hand Browser | ✅ | ✅ | ✅ With tags, notes, filters |
+| Results Dashboard | ✅ | ✅ | ✅ Graph + breakdowns by stakes/month/position |
+| Reports | ✅ | ✅ | ⚠️ Basic (no leak finder yet) |
+| Population Analysis | ✅ (paid) | ❌ | ❌ Planned |
+| Leak Finder | ✅ | ✅ | ❌ Planned |
+| Hand Replayer | ✅ | ✅ | ⚠️ Text only (detail drawer) |
 | Price | $15-39/mo | $100 once | Free |
 | Open Source | ❌ | ❌ | ✅ |

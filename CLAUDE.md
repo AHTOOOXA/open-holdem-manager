@@ -47,7 +47,8 @@ backend/
     api/
       import_hands.py       # Import endpoints + insert_parsed_hand() DB insertion + player cache
       stats.py              # GET /api/stats/hero?position=&stakes=&date_from=&date_to=
-      reports.py            # GET /api/reports/graph
+      reports.py            # GET /api/reports/graph, /filter-options, /breakdown
+      hands.py              # Hand browser: GET /api/hands, /hands/{id}, tags, notes
       settings.py           # GET/PATCH /api/settings
   tests/
     test_parser.py          # 11 tests across 5 classes
@@ -63,12 +64,13 @@ frontend/
   src/
     index.css               # Tailwind v4 @theme with custom dark color palette
     main.tsx                # React entry point (StrictMode)
-    App.tsx                 # Router: Upload / Stats / Graph tabs
+    App.tsx                 # Router: Upload / Stats / Results / Hands tabs
     lib/api.ts              # Typed API client (fetch wrapper, NDJSON streaming)
     pages/
       UploadPage.tsx        # Drag & drop files/folders/ZIPs, progress bar, clear DB
       StatsPage.tsx         # H2N-style stat table with positional columns
-      GraphPage.tsx         # Recharts line chart (cumulative BB, rolling BB/100)
+      GraphPage.tsx         # Results dashboard: graph (BB/$, EV, SD/NSD, rake lines), stat cards, breakdowns by stakes/month/position
+      HandsPage.tsx         # Hand browser: paginated list, filters (position/stakes/result/tags/date), detail drawer, tagging, notes
   vite.config.ts            # React plugin, Tailwind v4 plugin, API proxy to :8000
   tsconfig.app.json         # Strict mode, ES2022, path alias @/*
 ```
@@ -81,16 +83,19 @@ Key tables in `backend/app/db.py`:
 - **hands** — one row per hand (id=hand_id string like "RC1234567890", played_at, stakes, bb_amount, raw_text)
 - **players** — unique players (site_id, username, notes, color_tag, first_seen, last_seen)
 - **hand_players** — one row per player per hand. Contains ALL stat flags:
-  - `won`, `won_bb`, `rake`, `rake_bb` — net results
+  - `won`, `won_bb`, `rake`, `rake_bb`, `jackpot`, `jackpot_bb` — net results + BBJ
+  - `all_in_ev_bb` — all-in expected value
   - `vpip`, `pfr`, `three_bet`, `three_bet_opp`, `four_bet`, `four_bet_opp` — preflop
-  - `fold_to_3bet`, `fold_to_4bet`, `open_raise`, `call_open_raise`, `limp`, `squeeze`, `five_bet`
-  - `steal_attempted`, `faced_steal`, `fold_to_steal`, `call_steal`, `three_bet_vs_steal`
+  - `fold_to_3bet`, `fold_to_4bet`, `open_raise`, `open_raise_opp`, `call_open_raise`, `limp`, `squeeze`, `squeeze_opp`, `five_bet`, `five_bet_opp`
+  - `steal_attempted`, `steal_opp`, `faced_steal`, `fold_to_steal`, `call_steal`, `three_bet_vs_steal`
   - `saw_flop/turn/river`, `went_to_showdown`, `won_at_showdown`
   - `cbet_flop/turn/river`, `cbet_flop/turn/river_opp`, `fold_to_cbet_flop/turn/river`
-  - `missed_cbet_flop/turn`, `donk_bet_flop/turn/river`
-  - `flop/turn/river_bets/raises/calls` — aggression counts
+  - `missed_cbet_flop/turn`, `donk_bet_flop/turn/river`, `donk_bet_flop/turn/river_opp`
+  - `flop/turn/river_bets/raises/calls/checks/folds` — aggression counts
 - **actions** — every action (street, action_type, amount, amount_bb, is_all_in)
 - **board_cards** — community cards per street per hand
+- **hand_tags** — hand tagging (hand_id, tag, created_at)
+- **hand_notes** — per-hand notes (hand_id, note, updated_at)
 - **settings** — key/value (hero_username, hero_site)
 
 ## API Endpoints
@@ -101,8 +106,18 @@ Key tables in `backend/app/db.py`:
 | POST | `/api/import/files` | Synchronous multipart upload (50MB limit) |
 | POST | `/api/import/files/stream` | Streaming upload, returns NDJSON (`start`/`progress`/`done`) |
 | POST | `/api/import/clear` | Truncate all hand data |
+| POST | `/api/import/rebuild` | Re-parse all hands from stored raw_text |
 | GET | `/api/stats/hero` | Hero stats. Optional filters: `position`, `stakes`, `date_from`, `date_to` |
-| GET | `/api/reports/graph` | Array of `{hand_number, cumulative_bb, bb_per_100_rolling}` |
+| GET | `/api/reports/graph` | Graph data: cumulative BB/$, EV, SD/NSD, rake, jackpot lines |
+| GET | `/api/reports/filter-options` | Available stakes and date ranges for filters |
+| GET | `/api/reports/breakdown` | Results breakdown by stakes, month, position |
+| GET | `/api/hands` | List hands (paginated, filtered by position/stakes/result/tags/date) |
+| GET | `/api/hands/{id}` | Hand detail (all players, actions, board, raw text) |
+| POST | `/api/hands/{id}/tags` | Add tag to hand |
+| DELETE | `/api/hands/{id}/tags/{tag}` | Remove tag from hand |
+| GET | `/api/tags` | List all tags with counts |
+| PUT | `/api/hands/{id}/note` | Update hand note |
+| DELETE | `/api/hands/{id}/note` | Delete hand note |
 | GET | `/api/settings` | Get settings (hero_username, hero_site) |
 | PATCH | `/api/settings` | Update settings |
 
@@ -184,11 +199,13 @@ Key patterns:
 
 **Important**: DuckDB returns `Decimal` types. The stats engine converts to `float()` where needed to avoid Pydantic serialization issues.
 
-## Graph Endpoint (`backend/app/api/reports.py`)
+## Reports Endpoints (`backend/app/api/reports.py`)
 
-Returns array of `{hand_number, cumulative_bb, bb_per_100_rolling}`. Rolling BB/100 uses a 100-hand window.
+**`GET /api/reports/graph`** — Returns array of `GraphPoint` with cumulative lines: `cumulative_bb`, `cumulative_ev_bb`, `cumulative_rake_bb`, `cumulative_jackpot_bb`, `cumulative_showdown_bb`, `cumulative_nonshowdown_bb` (plus USD equivalents for each). Supports filters: `stakes`, `date_from`, `date_to`, `last_n_hands`.
 
-**Note**: There is no EV data yet. The parser does not extract or compute expected value. This needs to be added.
+**`GET /api/reports/filter-options`** — Returns available stakes and date range for the filter bar.
+
+**`GET /api/reports/breakdown`** — Returns results grouped by stakes, month, and position (hands, won, bb/100, EV bb/100, rake, jackpot).
 
 ## Import Flow (`backend/app/api/import_hands.py`)
 
