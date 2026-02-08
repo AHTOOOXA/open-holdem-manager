@@ -9,6 +9,7 @@ import {
   Tooltip,
   ResponsiveContainer,
   ReferenceLine,
+  ReferenceArea,
 } from 'recharts';
 import {
   getGraphData,
@@ -18,6 +19,7 @@ import {
 import type {
   GraphPoint,
   VarianceStats,
+  SessionMarker,
   FilterOptions,
   ResultsBreakdown,
   StakeBreakdown,
@@ -88,6 +90,96 @@ const LINE_COLORS = {
   session: '#555570',
 } as const;
 
+function formatDateTime(iso: string): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return d.toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  }) + ' ' + d.toLocaleTimeString('en-US', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+}
+
+function formatTime(iso: string): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+}
+
+function sessionDurationHours(s: SessionMarker): number {
+  if (!s.start_time || !s.end_time) return 0;
+  return (new Date(s.end_time).getTime() - new Date(s.start_time).getTime()) / 3600000;
+}
+
+function totalSessionHours(sessions: SessionMarker[]): number {
+  return sessions.reduce((sum, s) => sum + sessionDurationHours(s), 0);
+}
+
+interface CustomTooltipProps {
+  active?: boolean;
+  payload?: Array<{ name: string; value: number | number[]; color: string }>;
+  label?: number;
+  unit: 'bb' | 'usd';
+  tooltipNames: Record<string, string>;
+  activeSession?: SessionMarker | null;
+}
+
+function CustomTooltip({ active, payload, label, unit, tooltipNames, activeSession }: CustomTooltipProps) {
+  if (!active || !payload?.length) return null;
+  const point = payload[0]?.payload as GraphPoint | undefined;
+  const prefix = unit === 'usd' ? '$' : '';
+  const suffix = unit === 'bb' ? ' BB' : '';
+  return (
+    <div style={{
+      backgroundColor: '#1a1a2e',
+      border: '1px solid #2a2a3a',
+      borderRadius: '8px',
+      color: '#e4e4ef',
+      padding: '8px 12px',
+      fontSize: '13px',
+    }}>
+      <div style={{ marginBottom: 4, color: '#888' }}>
+        {point?.played_at ? formatDateTime(point.played_at) : ''}
+      </div>
+      <div style={{ marginBottom: 6, fontWeight: 600 }}>
+        Hand #{Number(label).toLocaleString()}
+      </div>
+      {payload.map((entry, i) => {
+        const name = tooltipNames[entry.name] ?? entry.name;
+        if (Array.isArray(entry.value)) {
+          return (
+            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+              <span style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: entry.color, display: 'inline-block', flexShrink: 0 }} />
+              <span>{name}: {prefix}{entry.value[0].toFixed(1)}{suffix} to {prefix}{entry.value[1].toFixed(1)}{suffix}</span>
+            </div>
+          );
+        }
+        return (
+          <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+            <span style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: entry.color, display: 'inline-block', flexShrink: 0 }} />
+            <span>{name}: {prefix}{entry.value.toFixed(2)}{suffix}</span>
+          </div>
+        );
+      })}
+      {activeSession && (() => {
+        const hands = activeSession.end_hand - activeSession.start_hand + 1;
+        const hrs = sessionDurationHours(activeSession);
+        const hph = hrs > 0 ? Math.round(hands / hrs) : 0;
+        return (
+          <div style={{ marginTop: 6, paddingTop: 6, borderTop: '1px solid #2a2a3a', color: '#777', fontSize: 11 }}>
+            Session: {formatTime(activeSession.start_time)} – {formatTime(activeSession.end_time)}
+            <span style={{ marginLeft: 8 }}>({hands} hands{hph > 0 ? ` · ${hph} hands/hr` : ''})</span>
+          </div>
+        );
+      })()}
+    </div>
+  );
+}
+
 function getPresetDates(preset: DatePreset): { date_from?: string; date_to?: string } {
   if (preset === 'all') return {};
   const now = new Date();
@@ -115,8 +207,9 @@ function formatMonth(ym: string): string {
 export default function GraphPage() {
   // Data
   const [data, setData] = useState<GraphPoint[]>([]);
-  const [sessionStarts, setSessionStarts] = useState<number[]>([]);
+  const [sessions, setSessions] = useState<SessionMarker[]>([]);
   const [variance, setVariance] = useState<VarianceStats | null>(null);
+  const [activeSession, setActiveSession] = useState<SessionMarker | null>(null);
   const [filterOpts, setFilterOpts] = useState<FilterOptions | null>(null);
   const [breakdown, setBreakdown] = useState<ResultsBreakdown | null>(null);
   const [loading, setLoading] = useState(true);
@@ -170,7 +263,7 @@ export default function GraphPage() {
       getResultsBreakdown(filterParams),
     ]).then(([graphResp, breakdownData]) => {
       setData(graphResp.points);
-      setSessionStarts(graphResp.session_starts);
+      setSessions(graphResp.sessions);
       setVariance(graphResp.variance);
       setBreakdown(breakdownData);
     }).finally(() => setLoading(false));
@@ -198,6 +291,15 @@ export default function GraphPage() {
   };
 
   const hasEVData = useMemo(() => data.some(d => d.cumulative_ev_bb !== d.cumulative_bb), [data]);
+
+  const handleChartMouseMove = useCallback((e: { activeLabel?: number }) => {
+    if (!e.activeLabel || !lines.has('sessions')) { setActiveSession(null); return; }
+    const hand = e.activeLabel;
+    const found = sessions.find(s => hand >= s.start_hand && hand <= s.end_hand) ?? null;
+    setActiveSession(found);
+  }, [sessions, lines]);
+
+  const handleChartMouseLeave = useCallback(() => setActiveSession(null), []);
 
   const chartData = useMemo(() => {
     const max = 1000;
@@ -311,6 +413,11 @@ export default function GraphPage() {
   const rakePerBB = n > 0 ? (rakeBB / n) * 100 : 0;
   const rakePerUSD = n > 0 ? (rakeUSD / n) * 100 : 0;
 
+  const totalHrs = totalSessionHours(sessions);
+  const handsPerHour = totalHrs > 0 ? Math.round(n / totalHrs) : 0;
+  const usdPerHour = totalHrs > 0 ? wonUSD / totalHrs : 0;
+  const bbPerHour = totalHrs > 0 ? wonBB / totalHrs : 0;
+
   const k = (base: string) => unit === 'bb' ? `${base}_bb` : `${base}_usd`;
   const mainKey = k('cumulative');
   const evKey = k('cumulative_ev');
@@ -406,7 +513,7 @@ export default function GraphPage() {
         {toggleBtn('showdown', 'SD', LINE_COLORS.showdown)}
         {toggleBtn('rake', 'Rake', LINE_COLORS.rake)}
         {toggleBtn('ci', 'CI', LINE_COLORS.ci, !!variance)}
-        {toggleBtn('sessions', 'Sessions', LINE_COLORS.session, sessionStarts.length > 1)}
+        {toggleBtn('sessions', 'Sessions', LINE_COLORS.session, sessions.length > 1)}
       </div>
     </div>
   );
@@ -458,7 +565,7 @@ export default function GraphPage() {
                     95% CI
                   </span>
                 )}
-                {lines.has('sessions') && sessionStarts.length > 1 && (
+                {lines.has('sessions') && sessions.length > 1 && (
                   <span className="flex items-center gap-1.5">
                     <span className="inline-block w-4 h-0.5 rounded" style={{ background: LINE_COLORS.session, borderTop: '1px dashed #555570' }} />
                     Sessions
@@ -466,7 +573,7 @@ export default function GraphPage() {
                 )}
               </div>
               <ResponsiveContainer width="100%" height={400}>
-                <ComposedChart data={chartDataEnriched} margin={{ top: 4, right: 16, bottom: 4, left: 8 }}>
+                <ComposedChart data={chartDataEnriched} margin={{ top: 4, right: 16, bottom: 4, left: 8 }} onMouseMove={handleChartMouseMove} onMouseLeave={handleChartMouseLeave}>
                   <defs>
                     <linearGradient id="gradientMain" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="0%" stopColor={LINE_COLORS.main} stopOpacity={0.25} />
@@ -494,35 +601,31 @@ export default function GraphPage() {
                     tickFormatter={(v: number) => unit === 'usd' ? `$${v}` : String(v)}
                   />
                   <Tooltip
-                    contentStyle={{
-                      backgroundColor: '#1a1a2e',
-                      border: '1px solid #2a2a3a',
-                      borderRadius: '8px',
-                      color: '#e4e4ef',
-                      padding: '8px 12px',
-                      fontSize: '13px',
-                    }}
-                    formatter={(value: number | number[], name: string) => {
-                      if (Array.isArray(value)) {
-                        const prefix = unit === 'usd' ? '$' : '';
-                        const suffix = unit === 'bb' ? ' BB' : '';
-                        return [`${prefix}${value[0].toFixed(1)}${suffix} to ${prefix}${value[1].toFixed(1)}${suffix}`, tooltipNames[name] ?? name];
-                      }
-                      const prefix = unit === 'usd' ? '$' : '';
-                      const suffix = unit === 'bb' ? ' BB' : '';
-                      const formatted = `${prefix}${value.toFixed(2)}${suffix}`;
-                      return [formatted, tooltipNames[name] ?? name];
-                    }}
-                    labelFormatter={(label) => `Hand #${Number(label).toLocaleString()}`}
+                    content={<CustomTooltip unit={unit} tooltipNames={tooltipNames} activeSession={activeSession} />}
                   />
                   <ReferenceLine y={0} stroke="#444460" strokeDasharray="4 4" />
-                  {lines.has('sessions') && sessionStarts.slice(1).map(handNum => (
+                  {lines.has('sessions') && activeSession && (
+                    <ReferenceArea
+                      x1={activeSession.start_hand}
+                      x2={activeSession.end_hand}
+                      fill="#818cf8"
+                      fillOpacity={0.06}
+                      strokeOpacity={0}
+                    />
+                  )}
+                  {lines.has('sessions') && sessions.slice(1).map(s => (
                     <ReferenceLine
-                      key={`session-${handNum}`}
-                      x={handNum}
+                      key={`session-${s.start_hand}`}
+                      x={s.start_hand}
                       stroke={LINE_COLORS.session}
                       strokeDasharray="4 4"
                       strokeWidth={1}
+                      label={{
+                        value: formatTime(s.start_time),
+                        position: 'top',
+                        fill: '#555570',
+                        fontSize: 9,
+                      }}
                     />
                   ))}
                   {lines.has('ci') && variance && (
@@ -609,12 +712,13 @@ export default function GraphPage() {
           )}
 
           {/* Stat Cards - Row 1 */}
-          <div className="grid gap-3 grid-cols-5">
+          <div className="grid gap-3 grid-cols-6">
             <StatCard
               label="Hands"
               bb={n.toLocaleString()}
               usd=""
               bbColor="text-text"
+              detail={handsPerHour > 0 ? `${handsPerHour} hands/hr` : undefined}
             />
             <StatCard
               label="Won"
@@ -631,6 +735,15 @@ export default function GraphPage() {
               bbColor={clr(rateBB)}
               usdColor={clr(rateUSD)}
               border={brd(rateBB)}
+            />
+            <StatCard
+              label="$/hr"
+              bb={totalHrs > 0 ? `${bbPerHour.toFixed(1)} BB/hr` : '—'}
+              usd={totalHrs > 0 ? `${usdPerHour >= 0 ? '' : '-'}$${Math.abs(usdPerHour).toFixed(2)}/hr` : ''}
+              bbColor={totalHrs > 0 ? clr(bbPerHour) : 'text-text-muted'}
+              usdColor={totalHrs > 0 ? clr(usdPerHour) : 'text-text-muted'}
+              border={totalHrs > 0 ? brd(usdPerHour) : undefined}
+              detail={totalHrs > 0 ? `${totalHrs.toFixed(1)} hrs played` : undefined}
             />
             {hasEVData ? (
               <StatCard
@@ -712,8 +825,8 @@ export default function GraphPage() {
               />
               <StatCard
                 label="Sessions"
-                bb={String(sessionStarts.length)}
-                usd={sessionStarts.length > 0 ? `~${Math.round(n / sessionStarts.length)} hands/session` : ''}
+                bb={String(sessions.length)}
+                usd={sessions.length > 0 ? `~${Math.round(n / sessions.length)} hands/session` : ''}
                 bbColor="text-text"
               />
               <StatCard

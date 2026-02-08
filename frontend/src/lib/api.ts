@@ -19,6 +19,7 @@ export interface Settings {
 
 export interface GraphPoint {
   hand_number: number;
+  played_at: string;
   cumulative_bb: number;
   cumulative_ev_bb: number;
   cumulative_rake_bb: number;
@@ -42,9 +43,16 @@ export interface VarianceStats {
   n: number;
 }
 
+export interface SessionMarker {
+  start_hand: number;
+  end_hand: number;
+  start_time: string;
+  end_time: string;
+}
+
 export interface GraphResponse {
   points: GraphPoint[];
-  session_starts: number[];
+  sessions: SessionMarker[];
   variance: VarianceStats | null;
 }
 
@@ -402,6 +410,45 @@ export async function deleteNote(handId: string): Promise<void> {
     method: 'DELETE',
   });
   if (!res.ok) throw new Error(`Delete note failed: ${res.statusText}`);
+}
+
+// ── Range Page Types ────────────────────────────────────────────────
+
+export interface ComboStats {
+  combo: string;
+  hands: number;
+  vpip: number;
+  pfr: number;
+  three_bet: number;
+  won_bb: number;
+  ev_bb: number;
+  bb_per_100: number;
+  ev_bb_per_100: number;
+  wtsd: number;
+  wtsd_opp: number;
+  wsd: number;
+  wsd_opp: number;
+}
+
+export interface RangeResponse {
+  combos: ComboStats[];
+  total_hands: number;
+}
+
+export async function getRangeStats(params?: {
+  position?: string;
+  stakes?: string;
+  date_from?: string;
+  date_to?: string;
+}): Promise<RangeResponse> {
+  const sp = new URLSearchParams();
+  if (params?.position) sp.set('position', params.position);
+  if (params?.stakes) sp.set('stakes', params.stakes);
+  if (params?.date_from) sp.set('date_from', params.date_from);
+  if (params?.date_to) sp.set('date_to', params.date_to);
+  const res = await fetch(`${BASE}/stats/range?${sp}`);
+  if (!res.ok) throw new Error(`Range stats failed: ${res.statusText}`);
+  return res.json();
 }
 
 // ── Results Dashboard Types ──────────────────────────────────────────

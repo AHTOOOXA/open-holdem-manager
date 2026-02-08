@@ -18,6 +18,7 @@ class Settings(BaseModel):
 
 class GraphPoint(BaseModel):
     hand_number: int
+    played_at: str = ""
     cumulative_bb: float
     cumulative_ev_bb: float = 0.0
     cumulative_rake_bb: float = 0.0
@@ -41,9 +42,16 @@ class VarianceStats(BaseModel):
     n: int
 
 
+class SessionMarker(BaseModel):
+    start_hand: int
+    end_hand: int
+    start_time: str
+    end_time: str
+
+
 class GraphResponse(BaseModel):
     points: list[GraphPoint]
-    session_starts: list[int]
+    sessions: list[SessionMarker] = []
     variance: VarianceStats | None = None
 
 
@@ -262,3 +270,26 @@ class ResultsBreakdown(BaseModel):
     by_stakes: list[StakeBreakdown] = []
     by_month: list[MonthBreakdown] = []
     by_position: list[PositionBreakdown] = []
+
+
+# ── Range Page Models ────────────────────────────────────────────────
+
+class ComboStats(BaseModel):
+    combo: str  # e.g. "AKs", "AKo", "AA"
+    hands: int
+    vpip: int = 0
+    pfr: int = 0
+    three_bet: int = 0
+    won_bb: float = 0.0
+    ev_bb: float = 0.0
+    bb_per_100: float = 0.0
+    ev_bb_per_100: float = 0.0
+    wtsd: int = 0
+    wtsd_opp: int = 0  # saw flop count
+    wsd: int = 0
+    wsd_opp: int = 0  # went to showdown count
+
+
+class RangeResponse(BaseModel):
+    combos: list[ComboStats] = []
+    total_hands: int = 0

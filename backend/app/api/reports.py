@@ -1,13 +1,13 @@
 from fastapi import APIRouter, Query
 from app.db import get_db, db_lock
-from app.models import GraphPoint, GraphResponse, VarianceStats, FilterOptions, StakeBreakdown, MonthBreakdown, PositionBreakdown, ResultsBreakdown
+from app.models import GraphPoint, GraphResponse, VarianceStats, SessionMarker, FilterOptions, StakeBreakdown, MonthBreakdown, PositionBreakdown, ResultsBreakdown
 import math
 from datetime import datetime, timedelta
 
 router = APIRouter()
 
 
-SESSION_GAP = timedelta(minutes=30)
+SESSION_GAP = timedelta(minutes=10)
 
 
 @router.get("/reports/graph", response_model=GraphResponse)
@@ -29,7 +29,7 @@ def get_graph(
             [hero_username],
         ).fetchone()
         if not player:
-            return GraphResponse(points=[], session_starts=[], variance=None)
+            return GraphResponse(points=[], sessions=[], variance=None)
 
         player_id = player[0]
 
@@ -68,6 +68,7 @@ def get_graph(
     points: list[GraphPoint] = []
     won_bb_values: list[float] = []
     session_starts: list[int] = []
+    timestamps: list[str] = []
     prev_played_at: datetime | None = None
 
     cum_bb = 0.0
@@ -95,6 +96,9 @@ def get_graph(
             session_starts.append(1)
         elif prev_played_at and (played_at - prev_played_at) > SESSION_GAP:
             session_starts.append(i + 1)
+
+        played_at_iso = played_at.isoformat() if isinstance(played_at, datetime) else str(played_at)
+        timestamps.append(played_at_iso)
         prev_played_at = played_at
 
         cum_bb += won_bb_val
@@ -115,6 +119,7 @@ def get_graph(
 
         points.append(GraphPoint(
             hand_number=i + 1,
+            played_at=played_at_iso,
             cumulative_bb=round(cum_bb, 2),
             cumulative_ev_bb=round(cum_ev_bb, 2),
             cumulative_rake_bb=round(cum_rake_bb, 2),
@@ -148,7 +153,18 @@ def get_graph(
             n=n,
         )
 
-    return GraphResponse(points=points, session_starts=session_starts, variance=variance)
+    # Build session markers from session_starts
+    sessions: list[SessionMarker] = []
+    for j, start in enumerate(session_starts):
+        end = session_starts[j + 1] - 1 if j + 1 < len(session_starts) else len(points)
+        sessions.append(SessionMarker(
+            start_hand=start,
+            end_hand=end,
+            start_time=timestamps[start - 1] if start - 1 < len(timestamps) else "",
+            end_time=timestamps[end - 1] if end - 1 < len(timestamps) else "",
+        ))
+
+    return GraphResponse(points=points, sessions=sessions, variance=variance)
 
 
 def _get_hero_player_id(db):
