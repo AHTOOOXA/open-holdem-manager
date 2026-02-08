@@ -302,13 +302,13 @@ export default function StatsPage() {
               { label: '4-Bet', sv: stats.four_bet.total, colorFn: colorFourBet },
               { label: 'Limp', sv: stats.limp.total, colorFn: colorLimp },
               { label: '4-Bet Range', sv: stats.four_bet_range, colorFn: colorFourBet, decimals: 1 },
-              { label: 'Limp-Fold', sv: undefined },
+              { label: 'Limp-Fold', sv: stats.limp_fold, colorFn: colorLimp },
               { label: 'Squeeze', sv: stats.squeeze, colorFn: colorSqueeze },
-              { label: '4-Bet-Fold', sv: undefined },
+              { label: '4-Bet-Fold', sv: stats.four_bet_fold, colorFn: colorFoldTo4Bet },
               { label: 'Fold to 4-Bet', sv: stats.fold_to_4bet.total, colorFn: colorFoldTo4Bet },
               { label: 'Win Rate', sv: wr !== null ? { value: wr, sample: stats.hands } : undefined, colorFn: (v) => v >= 0 ? 'text-green' : 'text-red', decimals: 2 },
               { label: 'Win Rate EV', sv: wrEv !== null ? { value: wrEv, sample: stats.hands } : undefined, colorFn: (v) => v >= 0 ? 'text-green' : 'text-red', decimals: 2 },
-              { label: 'Call 4-Bet', sv: undefined },
+              { label: 'Call 4-Bet', sv: stats.call_4bet },
               { label: 'Hands', sv: { value: stats.hands, sample: stats.hands } },
               { label: '5-Bet', sv: stats.five_bet, colorFn: colorFourBet },
             ]}
@@ -351,9 +351,9 @@ export default function StatsPage() {
               {
                 label: '4-Bet-Fold',
                 cells: [
-                  { sv: undefined },
-                  { sv: undefined },
-                  { sv: undefined },
+                  { sv: stats.four_bet_fold_steal.total, colorFn: colorFoldTo4Bet },
+                  { sv: stats.four_bet_fold_steal.btn, colorFn: colorFoldTo4Bet },
+                  { sv: stats.four_bet_fold_steal.sb, colorFn: colorFoldTo4Bet },
                 ],
               },
             ]}
@@ -454,17 +454,17 @@ export default function StatsPage() {
               {
                 label: 'Raised Pot',
                 cells: [
-                  { sv: undefined },
-                  { sv: undefined },
-                  { sv: undefined },
+                  { sv: stats.fold_cbet_flop_raised, colorFn: colorFoldToCbet },
+                  { sv: stats.call_cbet_flop_raised },
+                  { sv: stats.raise_cbet_flop_raised },
                 ],
               },
               {
                 label: '3-Bet Pot',
                 cells: [
-                  { sv: undefined },
-                  { sv: undefined },
-                  { sv: undefined },
+                  { sv: stats.fold_cbet_flop_3bet, colorFn: colorFoldToCbet },
+                  { sv: stats.call_cbet_flop_3bet },
+                  { sv: stats.raise_cbet_flop_3bet },
                 ],
               },
             ]}
@@ -500,9 +500,14 @@ export default function StatsPage() {
                   )}
                 </span>
               </div>
-              <div className="flex items-baseline justify-between text-text-muted">
-                <span className="text-[12px]">→ Fold</span>
-                <span className="font-mono text-[13px]">-</span>
+              <div className="flex items-baseline justify-between">
+                <span className="text-[12px] text-text-muted">→ Fold</span>
+                <span className={`font-mono text-[13px] ${fmtStat(stats.missed_cbet_fold_ip, colorMissedCbet).color}`}>
+                  {fmtStat(stats.missed_cbet_fold_ip, colorMissedCbet).text}
+                  {fmtStat(stats.missed_cbet_fold_ip, colorMissedCbet).sub && (
+                    <sub className="text-[9px] ml-0.5 text-text-muted">{fmtStat(stats.missed_cbet_fold_ip, colorMissedCbet).sub}</sub>
+                  )}
+                </span>
               </div>
               <div className="flex items-baseline justify-between">
                 <span className="text-[12px] text-text-muted">Out of Position</span>
@@ -513,9 +518,14 @@ export default function StatsPage() {
                   )}
                 </span>
               </div>
-              <div className="flex items-baseline justify-between text-text-muted">
-                <span className="text-[12px]">→ Fold</span>
-                <span className="font-mono text-[13px]">-</span>
+              <div className="flex items-baseline justify-between">
+                <span className="text-[12px] text-text-muted">→ Fold</span>
+                <span className={`font-mono text-[13px] ${fmtStat(stats.missed_cbet_fold_oop, colorMissedCbet).color}`}>
+                  {fmtStat(stats.missed_cbet_fold_oop, colorMissedCbet).text}
+                  {fmtStat(stats.missed_cbet_fold_oop, colorMissedCbet).sub && (
+                    <sub className="text-[9px] ml-0.5 text-text-muted">{fmtStat(stats.missed_cbet_fold_oop, colorMissedCbet).sub}</sub>
+                  )}
+                </span>
               </div>
             </div>
           </div>
@@ -524,26 +534,51 @@ export default function StatsPage() {
         {/* Right: vs Missed CBet */}
         <div className="flex-1 min-w-0 p-2">
           <div className="space-y-2">
-            <div className="flex items-baseline justify-between text-text-muted">
-              <span className="text-[13px]">vs. Missed Continuation Bet</span>
-              <span className="font-mono text-[13px]">-</span>
+            <div className="flex items-baseline justify-between">
+              <span className="text-[13px] text-text-muted">vs. Missed Continuation Bet</span>
+              <span className={`font-mono text-[13px] ${fmtStat(stats.vs_missed_cbet).color}`}>
+                {fmtStat(stats.vs_missed_cbet).text}
+                {fmtStat(stats.vs_missed_cbet).sub && (
+                  <sub className="text-[9px] ml-0.5 text-text-muted">{fmtStat(stats.vs_missed_cbet).sub}</sub>
+                )}
+              </span>
             </div>
             <div className="pl-3 space-y-1">
-              <div className="flex items-baseline justify-between text-text-muted">
-                <span className="text-[12px]">Bet In Position</span>
-                <span className="font-mono text-[13px]">-</span>
+              <div className="flex items-baseline justify-between">
+                <span className="text-[12px] text-text-muted">Bet In Position</span>
+                <span className={`font-mono text-[13px] ${fmtStat(stats.vs_missed_cbet_bet_ip).color}`}>
+                  {fmtStat(stats.vs_missed_cbet_bet_ip).text}
+                  {fmtStat(stats.vs_missed_cbet_bet_ip).sub && (
+                    <sub className="text-[9px] ml-0.5 text-text-muted">{fmtStat(stats.vs_missed_cbet_bet_ip).sub}</sub>
+                  )}
+                </span>
               </div>
-              <div className="flex items-baseline justify-between text-text-muted">
-                <span className="text-[12px]">Check | Fold</span>
-                <span className="font-mono text-[13px]">-</span>
+              <div className="flex items-baseline justify-between">
+                <span className="text-[12px] text-text-muted">Check | Fold</span>
+                <span className={`font-mono text-[13px] ${fmtStat(stats.vs_missed_cbet_check_fold_ip, colorMissedCbet).color}`}>
+                  {fmtStat(stats.vs_missed_cbet_check_fold_ip, colorMissedCbet).text}
+                  {fmtStat(stats.vs_missed_cbet_check_fold_ip, colorMissedCbet).sub && (
+                    <sub className="text-[9px] ml-0.5 text-text-muted">{fmtStat(stats.vs_missed_cbet_check_fold_ip, colorMissedCbet).sub}</sub>
+                  )}
+                </span>
               </div>
-              <div className="flex items-baseline justify-between text-text-muted">
-                <span className="text-[12px]">Bet Out of Position</span>
-                <span className="font-mono text-[13px]">-</span>
+              <div className="flex items-baseline justify-between">
+                <span className="text-[12px] text-text-muted">Bet Out of Position Turn</span>
+                <span className={`font-mono text-[13px] ${fmtStat(stats.vs_missed_cbet_bet_oop_turn).color}`}>
+                  {fmtStat(stats.vs_missed_cbet_bet_oop_turn).text}
+                  {fmtStat(stats.vs_missed_cbet_bet_oop_turn).sub && (
+                    <sub className="text-[9px] ml-0.5 text-text-muted">{fmtStat(stats.vs_missed_cbet_bet_oop_turn).sub}</sub>
+                  )}
+                </span>
               </div>
-              <div className="flex items-baseline justify-between text-text-muted">
-                <span className="text-[12px]">Check-Fold</span>
-                <span className="font-mono text-[13px]">-</span>
+              <div className="flex items-baseline justify-between">
+                <span className="text-[12px] text-text-muted">Check-Fold</span>
+                <span className={`font-mono text-[13px] ${fmtStat(stats.vs_missed_cbet_check_fold_oop, colorMissedCbet).color}`}>
+                  {fmtStat(stats.vs_missed_cbet_check_fold_oop, colorMissedCbet).text}
+                  {fmtStat(stats.vs_missed_cbet_check_fold_oop, colorMissedCbet).sub && (
+                    <sub className="text-[9px] ml-0.5 text-text-muted">{fmtStat(stats.vs_missed_cbet_check_fold_oop, colorMissedCbet).sub}</sub>
+                  )}
+                </span>
               </div>
             </div>
           </div>

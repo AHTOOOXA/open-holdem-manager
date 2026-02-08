@@ -177,7 +177,16 @@ def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
             donk_bet_turn_opp BOOLEAN DEFAULT FALSE,
             donk_bet_river_opp BOOLEAN DEFAULT FALSE,
             squeeze_opp BOOLEAN DEFAULT FALSE,
-            five_bet_opp BOOLEAN DEFAULT FALSE
+            five_bet_opp BOOLEAN DEFAULT FALSE,
+
+            -- Extended stats (limp-fold, 4bet-fold, call-4bet, pot type, cbet response, vs missed cbet)
+            limp_fold BOOLEAN DEFAULT FALSE,
+            four_bet_fold BOOLEAN,
+            call_4bet BOOLEAN DEFAULT FALSE,
+            is_3bet_pot BOOLEAN DEFAULT FALSE,
+            call_cbet_flop BOOLEAN,
+            raise_cbet_flop BOOLEAN,
+            vs_missed_cbet_flop_opp BOOLEAN DEFAULT FALSE
         )
     """)
     conn.execute("""
@@ -253,6 +262,13 @@ def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
         ("five_bet_opp", "BOOLEAN DEFAULT FALSE"),
         ("jackpot", "DECIMAL DEFAULT 0"),
         ("jackpot_bb", "DECIMAL DEFAULT 0"),
+        ("limp_fold", "BOOLEAN DEFAULT FALSE"),
+        ("four_bet_fold", "BOOLEAN"),
+        ("call_4bet", "BOOLEAN DEFAULT FALSE"),
+        ("is_3bet_pot", "BOOLEAN DEFAULT FALSE"),
+        ("call_cbet_flop", "BOOLEAN"),
+        ("raise_cbet_flop", "BOOLEAN"),
+        ("vs_missed_cbet_flop_opp", "BOOLEAN DEFAULT FALSE"),
     ]:
         try:
             conn.execute(f"ALTER TABLE hand_players ADD COLUMN {col} {default}")

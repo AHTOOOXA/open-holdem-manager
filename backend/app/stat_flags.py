@@ -101,6 +101,13 @@ def compute_stat_flags(parsed: ParsedHand) -> dict[str, dict]:
             "donk_bet_river_opp": False,
             "squeeze_opp": False,
             "five_bet_opp": False,
+            "limp_fold": False,
+            "four_bet_fold": None,
+            "call_4bet": False,
+            "is_3bet_pot": False,
+            "call_cbet_flop": None,
+            "raise_cbet_flop": None,
+            "vs_missed_cbet_flop_opp": False,
         }
 
     # ── Preflop stat computation ──
@@ -153,6 +160,10 @@ def compute_stat_flags(parsed: ParsedHand) -> dict[str, dict]:
             if raise_count == 3 and uname == second_raiser:
                 player_stats[uname]["fold_to_4bet"] = True
 
+            # Check fold to 5bet (4-bettor folds)
+            if raise_count >= 4 and uname == third_raiser:
+                player_stats[uname]["four_bet_fold"] = True
+
             # Check fold to steal
             if player_stats[uname]["faced_steal"]:
                 player_stats[uname]["fold_to_steal"] = True
@@ -186,6 +197,10 @@ def compute_stat_flags(parsed: ParsedHand) -> dict[str, dict]:
             elif raise_count == 3:
                 if uname == second_raiser:
                     player_stats[uname]["fold_to_4bet"] = False
+                    player_stats[uname]["call_4bet"] = True
+            elif raise_count >= 4:
+                if uname == third_raiser:
+                    player_stats[uname]["four_bet_fold"] = False
 
         elif action == "raise":
             player_stats[uname]["vpip"] = True
@@ -256,10 +271,25 @@ def compute_stat_flags(parsed: ParsedHand) -> dict[str, dict]:
                 if uname == second_raiser:
                     player_stats[uname]["fold_to_4bet"] = False
 
+                # 4-bettor didn't fold to 5-bet (they raised again)
+                if uname == third_raiser:
+                    player_stats[uname]["four_bet_fold"] = False
+
         elif action in ("bet", "check"):
             # A bet preflop would be unusual, but handle it
             if action == "bet":
                 player_stats[uname]["vpip"] = True
+
+    # ── Limp-fold: limped then folded preflop ──
+    for s in seats:
+        uname = s["username"]
+        if player_stats[uname]["limp"] and uname in folded_preflop:
+            player_stats[uname]["limp_fold"] = True
+
+    # ── Is 3-bet pot: raise_count >= 2 means a 3-bet occurred ──
+    if raise_count >= 2:
+        for s in seats:
+            player_stats[s["username"]]["is_3bet_pot"] = True
 
     # ── Mark 3-bet opp for players between open raise and 3-bet (inclusive) ──
     if first_raiser:
@@ -408,7 +438,7 @@ def compute_stat_flags(parsed: ParsedHand) -> dict[str, dict]:
             if prev_aggressor and bettor != prev_aggressor:
                 player_stats[bettor][f"donk_bet_{street}"] = True
 
-        # Fold to cbet: players who face a cbet and fold
+        # Fold to cbet: players who face a cbet and fold/call/raise
         if prev_aggressor and aggressor_bet:
             # The cbet happened — check who faced it and folded
             cbet_order = None
@@ -421,7 +451,21 @@ def compute_stat_flags(parsed: ParsedHand) -> dict[str, dict]:
                     if a["order"] > cbet_order and a["username"] != prev_aggressor:
                         if a["action"] == "fold":
                             player_stats[a["username"]][f"fold_to_cbet_{street}"] = True
-                        elif a["action"] in ("call", "raise"):
+                        elif a["action"] == "call":
                             player_stats[a["username"]][f"fold_to_cbet_{street}"] = False
+                            if street == "flop":
+                                player_stats[a["username"]]["call_cbet_flop"] = True
+                        elif a["action"] == "raise":
+                            player_stats[a["username"]][f"fold_to_cbet_{street}"] = False
+                            if street == "flop":
+                                player_stats[a["username"]]["raise_cbet_flop"] = True
+
+        # vs Missed cbet: when PFR missed cbet, mark other players
+        if street == "flop" and prev_aggressor and not aggressor_bet:
+            if player_stats[prev_aggressor]["cbet_flop_opp"]:
+                for s in seats:
+                    uname_other = s["username"]
+                    if uname_other != prev_aggressor and player_stats[uname_other]["saw_flop"]:
+                        player_stats[uname_other]["vs_missed_cbet_flop_opp"] = True
 
     return player_stats

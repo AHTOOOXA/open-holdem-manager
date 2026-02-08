@@ -88,13 +88,17 @@ class HeroStats(BaseModel):
     fold_to_4bet: PositionalStats = PositionalStats()
     call_open_raise: PositionalStats = PositionalStats()
     limp: PositionalStats = PositionalStats()
+    limp_fold: StatValue = StatValue()
     squeeze: StatValue = StatValue()
     four_bet_range: StatValue = StatValue()
+    four_bet_fold: StatValue = StatValue()
+    call_4bet: StatValue = StatValue()
 
     # Steal
     steal: PositionalStats = PositionalStats()
     fold_to_3bet_steal: PositionalStats = PositionalStats()
     four_bet_steal: PositionalStats = PositionalStats()
+    four_bet_fold_steal: PositionalStats = PositionalStats()
     vs_steal_fold: PositionalStats = PositionalStats()
     vs_steal_call: PositionalStats = PositionalStats()
     vs_steal_3bet: PositionalStats = PositionalStats()
@@ -110,6 +114,14 @@ class HeroStats(BaseModel):
     donk_bet_turn: StatValue = StatValue()
     donk_bet_river: StatValue = StatValue()
 
+    # vs CBet Flop by pot type
+    fold_cbet_flop_raised: StatValue = StatValue()
+    call_cbet_flop_raised: StatValue = StatValue()
+    raise_cbet_flop_raised: StatValue = StatValue()
+    fold_cbet_flop_3bet: StatValue = StatValue()
+    call_cbet_flop_3bet: StatValue = StatValue()
+    raise_cbet_flop_3bet: StatValue = StatValue()
+
     # Aggression
     af_flop: StatValue = StatValue()
     af_turn: StatValue = StatValue()
@@ -122,7 +134,16 @@ class HeroStats(BaseModel):
     missed_cbet_flop: StatValue = StatValue()
     missed_cbet_flop_ip: StatValue = StatValue()
     missed_cbet_flop_oop: StatValue = StatValue()
+    missed_cbet_fold_ip: StatValue = StatValue()
+    missed_cbet_fold_oop: StatValue = StatValue()
     missed_cbet_turn: StatValue = StatValue()
+
+    # vs Missed cbet
+    vs_missed_cbet: StatValue = StatValue()
+    vs_missed_cbet_bet_ip: StatValue = StatValue()
+    vs_missed_cbet_check_fold_ip: StatValue = StatValue()
+    vs_missed_cbet_bet_oop_turn: StatValue = StatValue()
+    vs_missed_cbet_check_fold_oop: StatValue = StatValue()
 
     # Showdown
     wtsd: StatValue = StatValue()

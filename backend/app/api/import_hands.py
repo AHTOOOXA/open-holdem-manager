@@ -57,6 +57,8 @@ _STAT_FLAG_KEYS = (
     "river_bets", "river_raises", "river_calls", "river_checks", "river_folds",
     "steal_opp", "donk_bet_flop_opp", "donk_bet_turn_opp", "donk_bet_river_opp",
     "squeeze_opp", "five_bet_opp",
+    "limp_fold", "four_bet_fold", "call_4bet", "is_3bet_pot",
+    "call_cbet_flop", "raise_cbet_flop", "vs_missed_cbet_flop_opp",
 )
 _HP_ALL_COLS = _HP_BASE_COLS + _STAT_FLAG_KEYS
 _BOARD_COLS = ("hand_id", "street", "card", "card_order")
