@@ -14,7 +14,7 @@ export default function App() {
     <BrowserRouter>
       <div className="min-h-screen flex flex-col">
         <nav className="border-b border-border bg-surface px-6 py-3 flex items-center gap-6">
-          <span className="text-lg font-bold text-primary">HM</span>
+          <span className="text-lg font-bold text-primary">OHM</span>
           {navItems.map((item) => (
             <NavLink
               key={item.to}

@@ -1,4 +1,4 @@
-# Holdem Manager — Project Handoff
+# Open Holdem Manager (OHM) — Project Handoff
 
 ## What This Is
 

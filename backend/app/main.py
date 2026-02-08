@@ -7,7 +7,7 @@ from app.api import import_hands, stats, reports, settings
 
 MultiPartParser.max_part_size = 50 * 1024 * 1024  # 50MB
 
-app = FastAPI(title="Holdem Manager", version="0.1.0")
+app = FastAPI(title="Open Holdem Manager", version="0.1.0")
 
 app.add_middleware(
     CORSMiddleware,

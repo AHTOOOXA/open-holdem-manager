@@ -1,6 +1,6 @@
 # Poker Tracker PRD
 
-> Open-source alternative to Hand2Note / Holdem Manager
+> Open Holdem Manager (OHM) — Open-source alternative to Hand2Note / HoldemManager
 > Focus: Database, Analytics, Learning — not HUD
 
 ---
