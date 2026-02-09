@@ -12,6 +12,9 @@ if TYPE_CHECKING:
     from app.parsers.ggpoker import ParsedHand
 
 
+_POS_ORDER = {"SB": 0, "BB": 1, "EP": 2, "MP": 3, "CO": 4, "BTN": 5}
+
+
 def _find_action_order(actions: list[dict], username: str, action_type: str) -> int | None:
     """Find the order number of a specific player's action."""
     for a in actions:
@@ -46,6 +49,7 @@ def compute_stat_flags(parsed: ParsedHand) -> dict[str, dict]:
             "pfr": False,
             "three_bet": False,
             "three_bet_opp": False,
+            "three_bet_opp_ip": None,
             "four_bet": False,
             "four_bet_opp": False,
             "fold_to_3bet": None,
@@ -53,6 +57,7 @@ def compute_stat_flags(parsed: ParsedHand) -> dict[str, dict]:
             "open_raise": False,
             "open_raise_opp": False,
             "call_open_raise": False,
+            "call_open_raise_opp": False,
             "limp": False,
             "squeeze": False,
             "five_bet": False,
@@ -134,6 +139,7 @@ def compute_stat_flags(parsed: ParsedHand) -> dict[str, dict]:
     folded_preflop = set()
     players_who_called = set()
     has_limper = False
+    already_invested = set()  # players who limped (can't cold-call an open raise)
 
     for a in voluntary_preflop:
         uname = a["username"]
@@ -151,6 +157,10 @@ def compute_stat_flags(parsed: ParsedHand) -> dict[str, dict]:
         # Squeeze opportunity: facing open raise with at least one caller already
         if raise_count == 1 and players_who_called:
             player_stats[uname]["squeeze_opp"] = True
+
+        # Call open raise opportunity: facing open raise and didn't limp
+        if raise_count == 1 and uname not in already_invested:
+            player_stats[uname]["call_open_raise_opp"] = True
 
         if action == "fold":
             folded_preflop.add(uname)
@@ -185,9 +195,12 @@ def compute_stat_flags(parsed: ParsedHand) -> dict[str, dict]:
                 player_stats[uname]["limp"] = True
                 has_caller_or_limper_before_raise = True
                 has_limper = True
+                already_invested.add(uname)
             elif raise_count == 1:
                 # Calling an open raise
-                player_stats[uname]["call_open_raise"] = True
+                if uname not in already_invested:
+                    # Cold-call (not a limp-call)
+                    player_stats[uname]["call_open_raise"] = True
                 players_who_called.add(uname)
 
                 # After at least one caller of the open, subsequent players have squeeze_opp
@@ -309,11 +322,14 @@ def compute_stat_flags(parsed: ParsedHand) -> dict[str, dict]:
             three_bet_order = _find_action_order(voluntary_preflop, second_raiser, "raise")
 
         if first_raise_order is not None:
+            raiser_pos_order = _POS_ORDER.get(username_to_info[first_raiser]["position"], 0)
             for a in voluntary_preflop:
                 if a["order"] > first_raise_order and a["username"] != first_raiser:
                     # Include the 3-bettor themselves (<=), exclude players after
                     if three_bet_order is None or a["order"] <= three_bet_order:
                         player_stats[a["username"]]["three_bet_opp"] = True
+                        player_pos_order = _POS_ORDER.get(username_to_info[a["username"]]["position"], 0)
+                        player_stats[a["username"]]["three_bet_opp_ip"] = player_pos_order > raiser_pos_order
 
     # ── Mark faced_steal fold defaults ──
     for s in seats:
@@ -343,10 +359,9 @@ def compute_stat_flags(parsed: ParsedHand) -> dict[str, dict]:
                     player_stats[uname]["saw_flop"] = True
                 # Compute postflop IP: player with latest position among flop survivors
                 if len(flop_survivors) >= 2:
-                    _PF_ORDER = {"SB": 0, "BB": 1, "EP": 2, "MP": 3, "CO": 4, "BTN": 5}
-                    max_order = max(_PF_ORDER.get(username_to_info[u]["position"], 0) for u in flop_survivors)
+                    max_order = max(_POS_ORDER.get(username_to_info[u]["position"], 0) for u in flop_survivors)
                     for uname in flop_survivors:
-                        pos_order = _PF_ORDER.get(username_to_info[uname]["position"], 0)
+                        pos_order = _POS_ORDER.get(username_to_info[uname]["position"], 0)
                         player_stats[uname]["postflop_ip"] = (pos_order == max_order)
         elif street == "flop":
             if board_cards["turn"]:

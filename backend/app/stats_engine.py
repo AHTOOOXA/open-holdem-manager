@@ -2,8 +2,6 @@ import duckdb
 from app.models import HeroStats, PositionalStats, StatValue
 
 POSITIONS = ["EP", "MP", "CO", "BTN", "SB", "BB"]
-IP_POSITIONS = {"CO", "BTN", "MP"}
-OOP_POSITIONS = {"EP", "SB", "BB"}
 
 
 def compute_hero_stats(
@@ -71,19 +69,19 @@ def compute_hero_stats(
                                           flag_when_opp=True, flag_is_response=True)
     stats.fold_to_4bet = _positional_pct(data, "fold_to_4bet", "four_bet_opp",
                                           flag_when_opp=True, flag_is_response=True)
-    stats.call_open_raise = _positional_pct(data, "call_open_raise", None)
+    stats.call_open_raise = _positional_pct(data, "call_open_raise", "call_open_raise_opp")
     stats.limp = _positional_pct(data, "limp", None)
 
-    # 3-bet IP/OOP with positional breakdown
-    ip_3b = [r for r in data if r["three_bet_opp"] and r["position"] in IP_POSITIONS]
+    # 3-bet IP/OOP with positional breakdown (relative to raiser position)
+    ip_3b = [r for r in data if r["three_bet_opp"] and r.get("three_bet_opp_ip") is True]
     stats.three_bet_ip = PositionalStats(total=_simple_pct(ip_3b, "three_bet"))
-    for pos in IP_POSITIONS:
+    for pos in POSITIONS:
         pos_data = [r for r in ip_3b if r["position"] == pos]
         setattr(stats.three_bet_ip, pos.lower(), _simple_pct(pos_data, "three_bet"))
 
-    oop_3b = [r for r in data if r["three_bet_opp"] and r["position"] in OOP_POSITIONS]
+    oop_3b = [r for r in data if r["three_bet_opp"] and r.get("three_bet_opp_ip") is False]
     stats.three_bet_oop = PositionalStats(total=_simple_pct(oop_3b, "three_bet"))
-    for pos in OOP_POSITIONS:
+    for pos in POSITIONS:
         pos_data = [r for r in oop_3b if r["position"] == pos]
         setattr(stats.three_bet_oop, pos.lower(), _simple_pct(pos_data, "three_bet"))
 
@@ -360,7 +358,7 @@ def _aggression_factor(data: list[dict], street: str) -> StatValue:
     raises = sum(r.get(f"{street}_raises", 0) or 0 for r in data)
     calls = sum(r.get(f"{street}_calls", 0) or 0 for r in data)
     if calls == 0:
-        return StatValue(value=float(bets + raises) if (bets + raises) > 0 else None, sample=bets + raises)
+        return StatValue(value=None, sample=bets + raises)
     return StatValue(
         value=round((bets + raises) / calls, 2),
         sample=bets + raises + calls,
@@ -371,8 +369,9 @@ def _aggression_freq(data: list[dict], street: str) -> StatValue:
     bets = sum(r.get(f"{street}_bets", 0) or 0 for r in data)
     raises = sum(r.get(f"{street}_raises", 0) or 0 for r in data)
     calls = sum(r.get(f"{street}_calls", 0) or 0 for r in data)
+    checks = sum(r.get(f"{street}_checks", 0) or 0 for r in data)
     folds = sum(r.get(f"{street}_folds", 0) or 0 for r in data)
-    total = bets + raises + calls + folds
+    total = bets + raises + calls + checks + folds
     if total == 0:
         return StatValue(value=None, sample=0)
     return StatValue(

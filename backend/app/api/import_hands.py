@@ -44,9 +44,9 @@ _HP_BASE_COLS = (
     "won", "won_bb", "rake", "rake_bb", "jackpot", "jackpot_bb", "all_in_ev_bb",
 )
 _STAT_FLAG_KEYS = (
-    "vpip", "pfr", "three_bet", "three_bet_opp", "four_bet", "four_bet_opp",
+    "vpip", "pfr", "three_bet", "three_bet_opp", "three_bet_opp_ip", "four_bet", "four_bet_opp",
     "fold_to_3bet", "fold_to_4bet",
-    "open_raise", "open_raise_opp", "call_open_raise", "limp", "squeeze", "five_bet",
+    "open_raise", "open_raise_opp", "call_open_raise", "call_open_raise_opp", "limp", "squeeze", "five_bet",
     "steal_attempted", "faced_steal", "fold_to_steal", "call_steal", "three_bet_vs_steal",
     "saw_flop", "saw_turn", "saw_river", "went_to_showdown", "won_at_showdown",
     "cbet_flop", "cbet_flop_opp", "cbet_turn", "cbet_turn_opp", "cbet_river", "cbet_river_opp",

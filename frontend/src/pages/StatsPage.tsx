@@ -494,30 +494,8 @@ export default function StatsPage() {
                 posRow('Fold to 3Bet', stats.fold_to_3bet, 'fold_to_3bet', fullPosKeys),
                 posRow('Call Open Raise', stats.call_open_raise, undefined, fullPosKeys),
                 posRow('3-Bet', stats.three_bet, 'three_bet', fullPosKeys),
-                {
-                  label: '3-Bet IP',
-                  cells: [
-                    { sv: stats.three_bet_ip.total, statKey: 'three_bet' },
-                    { sv: undefined },
-                    { sv: stats.three_bet_ip.mp, statKey: 'three_bet' },
-                    { sv: stats.three_bet_ip.co, statKey: 'three_bet' },
-                    { sv: stats.three_bet_ip.btn, statKey: 'three_bet' },
-                    { sv: undefined },
-                    { sv: undefined },
-                  ],
-                },
-                {
-                  label: '3-Bet OOP',
-                  cells: [
-                    { sv: stats.three_bet_oop.total, statKey: 'three_bet' },
-                    { sv: stats.three_bet_oop.ep, statKey: 'three_bet' },
-                    { sv: undefined },
-                    { sv: undefined },
-                    { sv: undefined },
-                    { sv: stats.three_bet_oop.sb, statKey: 'three_bet' },
-                    { sv: stats.three_bet_oop.bb, statKey: 'three_bet' },
-                  ],
-                },
+                posRow('3-Bet IP', stats.three_bet_ip, 'three_bet', fullPosKeys),
+                posRow('3-Bet OOP', stats.three_bet_oop, 'three_bet', fullPosKeys),
               ]}
             />
           </div>

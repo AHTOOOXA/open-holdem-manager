@@ -112,6 +112,7 @@ def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
             pfr BOOLEAN DEFAULT FALSE,
             three_bet BOOLEAN DEFAULT FALSE,
             three_bet_opp BOOLEAN DEFAULT FALSE,
+            three_bet_opp_ip BOOLEAN,
             four_bet BOOLEAN DEFAULT FALSE,
             four_bet_opp BOOLEAN DEFAULT FALSE,
             fold_to_3bet BOOLEAN,
@@ -119,6 +120,7 @@ def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
             open_raise BOOLEAN DEFAULT FALSE,
             open_raise_opp BOOLEAN DEFAULT FALSE,
             call_open_raise BOOLEAN DEFAULT FALSE,
+            call_open_raise_opp BOOLEAN DEFAULT FALSE,
             limp BOOLEAN DEFAULT FALSE,
             squeeze BOOLEAN DEFAULT FALSE,
             five_bet BOOLEAN DEFAULT FALSE,
@@ -276,6 +278,8 @@ def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
         ("preflop_allin_raise", "BOOLEAN DEFAULT FALSE"),
         ("preflop_allin_call", "BOOLEAN DEFAULT FALSE"),
         ("postflop_ip", "BOOLEAN"),
+        ("call_open_raise_opp", "BOOLEAN DEFAULT FALSE"),
+        ("three_bet_opp_ip", "BOOLEAN"),
     ]:
         try:
             conn.execute(f"ALTER TABLE hand_players ADD COLUMN {col} {default}")
