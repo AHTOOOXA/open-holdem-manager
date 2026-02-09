@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { getHands, getTags, getFilterOptions } from '@/lib/api';
 import type { HandListResponse, TagCount, ActionItem } from '@/lib/api';
 import EmptyState from '@/components/EmptyState';
@@ -98,12 +99,17 @@ function getDateRange(preset: string, dateFrom: string, dateTo: string): { from?
 // ── Main component ──────────────────────────────────────────────────
 
 export default function HandsPage() {
+  const [searchParams] = useSearchParams();
   const [data, setData] = useState<HandListResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
   const [perPage, setPerPage] = useState(50);
   const [sort, setSort] = useState<string>('played_at');
   const [order, setOrder] = useState<string>('desc');
+
+  // Read stat_flag from URL on mount
+  const initialStatFlags = searchParams.getAll('stat_flag');
+
   const [filters, setFilters] = useState<FilterState>({
     position: [],
     stakes: [],
@@ -113,6 +119,7 @@ export default function HandsPage() {
     dateFrom: '',
     dateTo: '',
     search: '',
+    statFlags: initialStatFlags,
   });
   const [distinctStakes, setDistinctStakes] = useState<string[]>([]);
   const [allTags, setAllTags] = useState<TagCount[]>([]);
@@ -151,6 +158,7 @@ export default function HandsPage() {
         date_from: dateRange.from,
         date_to: dateRange.to,
         search: debouncedSearch || undefined,
+        stat_flag: filters.statFlags.length > 0 ? filters.statFlags : undefined,
       });
       setData(resp);
     } catch (err) {
@@ -158,7 +166,7 @@ export default function HandsPage() {
     } finally {
       setLoading(false);
     }
-  }, [page, perPage, sort, order, filters.position, filters.stakes, filters.result, filters.tags, filters.date, filters.dateFrom, filters.dateTo, debouncedSearch]);
+  }, [page, perPage, sort, order, filters.position, filters.stakes, filters.result, filters.tags, filters.date, filters.dateFrom, filters.dateTo, debouncedSearch, filters.statFlags]);
 
   useEffect(() => { loadData(); loadTags(); }, [loadData, loadTags]);
 
@@ -197,7 +205,8 @@ export default function HandsPage() {
   };
 
   const hasFilters = filters.position.length > 0 || filters.stakes.length > 0 ||
-    filters.result !== '' || filters.tags.length > 0 || filters.date !== '' || debouncedSearch !== '';
+    filters.result !== '' || filters.tags.length > 0 || filters.date !== '' || debouncedSearch !== '' ||
+    filters.statFlags.length > 0;
 
   return (
     <div className="max-w-[1600px] mx-auto px-2">
@@ -249,7 +258,7 @@ export default function HandsPage() {
       ) : !data || data.total === 0 ? (
         <EmptyState
           variant={hasFilters ? 'no-match' : 'no-data'}
-          onClearFilters={hasFilters ? () => handleFilterChange({ position: [], stakes: [], result: '', tags: [], date: '', dateFrom: '', dateTo: '', search: '' }) : undefined}
+          onClearFilters={hasFilters ? () => handleFilterChange({ position: [], stakes: [], result: '', tags: [], date: '', dateFrom: '', dateTo: '', search: '', statFlags: [] }) : undefined}
         />
       ) : (
         <>

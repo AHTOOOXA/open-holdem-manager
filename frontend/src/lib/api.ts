@@ -365,6 +365,7 @@ export interface HandListParams {
   date_from?: string;
   date_to?: string;
   search?: string;
+  stat_flag?: string[];
 }
 
 export async function getHands(params?: HandListParams): Promise<HandListResponse> {
@@ -380,6 +381,9 @@ export async function getHands(params?: HandListParams): Promise<HandListRespons
   if (params?.date_from) sp.set('date_from', params.date_from);
   if (params?.date_to) sp.set('date_to', params.date_to);
   if (params?.search) sp.set('search', params.search);
+  if (params?.stat_flag) {
+    for (const flag of params.stat_flag) sp.append('stat_flag', flag);
+  }
   const res = await fetch(`${BASE}/hands?${sp}`);
   if (!res.ok) throw new Error(`Hands failed: ${res.statusText}`);
   return res.json();
@@ -617,6 +621,42 @@ export async function getCashDropStats(params?: {
   if (params?.date_to) sp.set('date_to', params.date_to);
   const res = await fetch(`${BASE}/reports/cash-drop?${sp}`);
   if (!res.ok) throw new Error(`Cash drop stats failed: ${res.statusText}`);
+  return res.json();
+}
+
+// ── Drift Detection Types ────────────────────────────────────────────
+
+export interface DriftStat {
+  stat: string;
+  lifetime_avg: number;
+  window_avg: number;
+  lifetime_n: number;
+  window_n: number;
+  z_score: number;
+  significant: boolean;
+  direction: string;
+  interpretation: string;
+}
+
+export interface DriftResponse {
+  stats: DriftStat[];
+  window_size: number;
+  total_hands: number;
+}
+
+export async function getDrift(params?: {
+  window?: number;
+  stakes?: string;
+  date_from?: string;
+  date_to?: string;
+}): Promise<DriftResponse> {
+  const sp = new URLSearchParams();
+  if (params?.window) sp.set('window', String(params.window));
+  if (params?.stakes) sp.set('stakes', params.stakes);
+  if (params?.date_from) sp.set('date_from', params.date_from);
+  if (params?.date_to) sp.set('date_to', params.date_to);
+  const res = await fetch(`${BASE}/reports/drift?${sp}`);
+  if (!res.ok) throw new Error(`Drift failed: ${res.statusText}`);
   return res.json();
 }
 

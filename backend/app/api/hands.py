@@ -12,6 +12,20 @@ from app.models import (
 
 router = APIRouter()
 
+VALID_STAT_FLAGS: frozenset[str] = frozenset({
+    "vpip", "pfr", "three_bet", "three_bet_opp", "four_bet", "four_bet_opp",
+    "five_bet", "five_bet_opp", "fold_to_3bet", "fold_to_4bet",
+    "open_raise", "open_raise_opp", "call_open_raise", "limp", "squeeze", "squeeze_opp",
+    "steal_attempted", "steal_opp", "faced_steal", "fold_to_steal", "call_steal",
+    "three_bet_vs_steal", "saw_flop", "saw_turn", "saw_river",
+    "went_to_showdown", "won_at_showdown",
+    "cbet_flop", "cbet_flop_opp", "cbet_turn", "cbet_turn_opp",
+    "cbet_river", "cbet_river_opp",
+    "fold_to_cbet_flop", "fold_to_cbet_turn", "fold_to_cbet_river",
+    "donk_bet_flop", "donk_bet_flop_opp", "donk_bet_turn", "donk_bet_turn_opp",
+    "donk_bet_river", "donk_bet_river_opp",
+})
+
 # ── Raw-text action parser ───────────────────────────────────────────
 
 _RE_FOLD = re.compile(r"^(.+?): folds")
@@ -175,6 +189,7 @@ def list_hands(
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
     search: Optional[str] = None,
+    stat_flag: list[str] | None = Query(None),
 ):
     with db_lock():
         db = get_db()
@@ -234,6 +249,12 @@ def list_hands(
         if search:
             where_clauses.append("h.id LIKE ?")
             params.append(f"%{search.strip()}%")
+
+        if stat_flag:
+            for flag in stat_flag:
+                if flag not in VALID_STAT_FLAGS:
+                    raise HTTPException(status_code=400, detail=f"Invalid stat flag: {flag}")
+                where_clauses.append(f"hp.{flag} = true")
 
         where_sql = (" AND " + " AND ".join(where_clauses)) if where_clauses else ""
 

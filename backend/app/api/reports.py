@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Query
 from app.db import get_db, db_lock
-from app.models import GraphPoint, GraphResponse, VarianceStats, SessionMarker, FilterOptions, StakeBreakdown, MonthBreakdown, PositionBreakdown, ResultsBreakdown
+from app.models import GraphPoint, GraphResponse, VarianceStats, SessionMarker, FilterOptions, StakeBreakdown, MonthBreakdown, PositionBreakdown, ResultsBreakdown, DriftStat, DriftResponse
 import math
 from datetime import datetime, timedelta
 
@@ -388,3 +388,137 @@ def get_breakdown(
             ))
 
     return ResultsBreakdown(by_stakes=by_stakes, by_month=by_month, by_position=by_position)
+
+
+# ── Drift Detection ─────────────────────────────────────────────────
+
+# Stats to track for drift, with optional opportunity columns
+# (stat_col, opp_col_or_None)
+_DRIFT_STATS = [
+    ("vpip", None),
+    ("pfr", None),
+    ("fold_to_3bet", "three_bet_opp"),
+    ("cbet_flop", "cbet_flop_opp"),
+    ("went_to_showdown", "saw_flop"),
+    ("won_at_showdown", "went_to_showdown"),
+    ("saw_flop", None),  # proxy for WWSF denominator
+]
+
+_DRIFT_INTERPRETATIONS: dict[str, dict[str, str]] = {
+    "vpip":              {"up": "Playing more hands than usual",        "down": "Playing fewer hands than usual"},
+    "pfr":               {"up": "Raising more preflop than usual",      "down": "Raising less preflop than usual"},
+    "fold_to_3bet":      {"up": "Folding to 3-bets more than usual",   "down": "Defending vs 3-bets more than usual"},
+    "cbet_flop":         {"up": "C-betting the flop more than usual",  "down": "Checking the flop more than usual"},
+    "went_to_showdown":  {"up": "Going to showdown more often",        "down": "Folding before showdown more often"},
+    "won_at_showdown":   {"up": "Winning more at showdown",            "down": "Losing more at showdown"},
+    "saw_flop":          {"up": "Seeing more flops than usual",        "down": "Seeing fewer flops than usual"},
+}
+
+
+@router.get("/reports/drift", response_model=DriftResponse)
+def get_drift(
+    window: int = Query(2000, ge=100, le=50000),
+    stakes: str | None = Query(None),
+    date_from: str | None = Query(None),
+    date_to: str | None = Query(None),
+):
+    with db_lock():
+        db = get_db()
+        player_id = _get_hero_player_id(db)
+        if not player_id:
+            return DriftResponse()
+
+        # Build shared WHERE clause
+        where = "hp.player_id = ?"
+        params: list = [player_id]
+        if stakes:
+            where += " AND h.stakes = ?"
+            params.append(stakes)
+        if date_from:
+            where += " AND h.played_at >= ?"
+            params.append(date_from)
+        if date_to:
+            where += " AND h.played_at <= ?"
+            params.append(date_to)
+
+        # Get total hand count
+        total_count = db.execute(
+            f"SELECT COUNT(*) FROM hand_players hp JOIN hands h ON hp.hand_id = h.id WHERE {where}",
+            params,
+        ).fetchone()[0]
+
+        if total_count < 200:
+            return DriftResponse(total_hands=total_count)
+
+        # Build aggregate expressions for lifetime and window
+        results: list[DriftStat] = []
+
+        for stat_col, opp_col in _DRIFT_STATS:
+            # Lifetime: AVG + STDDEV where opportunity is true (or all hands)
+            opp_filter = f"AND hp.{opp_col} = true" if opp_col else ""
+
+            lifetime_row = db.execute(
+                f"""
+                SELECT AVG(CAST(hp.{stat_col} AS DOUBLE)),
+                       STDDEV_SAMP(CAST(hp.{stat_col} AS DOUBLE)),
+                       COUNT(*)
+                FROM hand_players hp
+                JOIN hands h ON hp.hand_id = h.id
+                WHERE {where} {opp_filter}
+                """,
+                params,
+            ).fetchone()
+
+            lifetime_avg = float(lifetime_row[0]) if lifetime_row[0] is not None else 0.0
+            lifetime_std = float(lifetime_row[1]) if lifetime_row[1] is not None else 0.0
+            lifetime_n = int(lifetime_row[2])
+
+            if lifetime_n < 30 or lifetime_std == 0:
+                continue
+
+            # Window: last N hands (by played_at) where opportunity is true
+            window_row = db.execute(
+                f"""
+                WITH recent AS (
+                    SELECT hp.{stat_col} AS val
+                    FROM hand_players hp
+                    JOIN hands h ON hp.hand_id = h.id
+                    WHERE {where} {opp_filter}
+                    ORDER BY h.played_at DESC, h.id DESC
+                    LIMIT ?
+                )
+                SELECT AVG(CAST(val AS DOUBLE)), COUNT(*) FROM recent
+                """,
+                params + [window],
+            ).fetchone()
+
+            window_avg = float(window_row[0]) if window_row[0] is not None else 0.0
+            window_n = int(window_row[1])
+
+            if window_n < 30:
+                continue
+
+            # Z-score using standard error
+            se = lifetime_std / math.sqrt(window_n)
+            z = (window_avg - lifetime_avg) / se if se > 0 else 0.0
+
+            direction = "up" if z > 0 else "down"
+            interp = _DRIFT_INTERPRETATIONS.get(stat_col, {}).get(direction, "")
+
+            results.append(DriftStat(
+                stat=stat_col,
+                lifetime_avg=round(lifetime_avg * 100, 2),
+                window_avg=round(window_avg * 100, 2),
+                lifetime_n=lifetime_n,
+                window_n=window_n,
+                z_score=round(z, 2),
+                significant=abs(z) > 2.0,
+                direction=direction,
+                interpretation=interp,
+            ))
+
+    return DriftResponse(
+        stats=results,
+        window_size=window,
+        total_hands=total_count,
+    )

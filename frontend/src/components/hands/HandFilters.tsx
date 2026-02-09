@@ -16,6 +16,7 @@ interface FilterState {
   dateFrom: string;
   dateTo: string;
   search: string;
+  statFlags: string[];
 }
 
 function FilterDropdown({
@@ -99,7 +100,8 @@ export default function HandFilters({
     filters.result !== '' ||
     filters.tags.length > 0 ||
     filters.date !== '' ||
-    filters.search !== '';
+    filters.search !== '' ||
+    filters.statFlags.length > 0;
 
   const clearAll = () =>
     onChange({
@@ -111,6 +113,7 @@ export default function HandFilters({
       dateFrom: '',
       dateTo: '',
       search: '',
+      statFlags: [],
     });
 
   return (
@@ -232,6 +235,22 @@ export default function HandFilters({
           placeholder="Search hand ID..."
           className="h-7 text-xs w-40"
         />
+
+        {/* Stat flag badges */}
+        {filters.statFlags.map((flag) => (
+          <span
+            key={flag}
+            className="inline-flex items-center gap-1 h-7 px-2 text-xs bg-primary/10 text-primary border border-primary/30 rounded"
+          >
+            {flag.replace(/_/g, ' ')}
+            <button
+              className="ml-0.5 text-primary/60 hover:text-primary"
+              onClick={() => onChange({ ...filters, statFlags: filters.statFlags.filter((f) => f !== flag) })}
+            >
+              &times;
+            </button>
+          </span>
+        ))}
 
         {hasFilters && (
           <Button

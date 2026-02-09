@@ -1,124 +1,184 @@
 import { useState, useEffect, useMemo } from 'react';
 import { getHeroStats, getFilterOptions } from '@/lib/api';
-import type { HeroStats, PositionalStats, StatValue, FilterOptions } from '@/lib/api';
+import type { HeroStats, PositionalStats, StatValue, FilterOptions, DriftStat } from '@/lib/api';
 import { getPresetDates } from '@/lib/date-presets';
 import type { DatePreset } from '@/lib/date-presets';
 import FilterBar from '@/components/FilterBar';
 import EmptyState from '@/components/EmptyState';
+import LeakSummaryPanel from '@/components/LeakSummaryPanel';
+import { useDrift } from '@/hooks/useDrift';
+import {
+  getBenchmarkForPosition,
+  getStatHealth,
+  STAT_DISPLAY_NAMES,
+} from '@/lib/benchmarks';
+import type { BenchmarkRange, StatHealth } from '@/lib/benchmarks';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
 type ColorClass = 'text-green' | 'text-red' | 'text-yellow' | 'text-blue' | 'text-text' | 'text-text-muted';
 
+const HEALTH_COLORS: Record<string, ColorClass> = {
+  green: 'text-green',
+  yellow: 'text-yellow',
+  red: 'text-red',
+  neutral: 'text-text',
+};
+
+function healthToColor(health: StatHealth): ColorClass {
+  return HEALTH_COLORS[health.status] || 'text-text';
+}
+
 /** Format a StatValue for display. Returns {text, color, subscript?} */
 function fmtStat(
   sv: StatValue | undefined,
-  colorFn?: (v: number) => ColorClass,
+  statKey?: string,
+  position?: string,
   decimals: number = 0,
-): { text: string; color: ColorClass; sub?: string } {
+  colorFn?: (v: number) => ColorClass,
+): { text: string; color: ColorClass; sub?: string; health?: StatHealth; benchmark?: BenchmarkRange } {
   if (!sv) return { text: '-', color: 'text-text-muted' };
   if (sv.sample === 0) return { text: '--', color: 'text-text-muted' };
   if (sv.value === null || sv.value === undefined) return { text: '--', color: 'text-text-muted' };
 
   const v = sv.value;
   const formatted = decimals > 0 ? v.toFixed(decimals) : Math.round(v).toString();
-  const color = colorFn ? colorFn(v) : 'text-text';
 
   if (sv.sample < 10) {
     return { text: formatted, color: 'text-text-muted', sub: String(sv.sample) };
   }
 
-  return { text: formatted, color };
+  // Use colorFn override (for win rate etc.)
+  if (colorFn) {
+    return { text: formatted, color: colorFn(v) };
+  }
+
+  // Use benchmark-based coloring
+  if (statKey) {
+    const benchmark = getBenchmarkForPosition(statKey, position);
+    if (benchmark) {
+      const health = getStatHealth(v, benchmark, sv.sample);
+      return { text: formatted, color: healthToColor(health), health, benchmark };
+    }
+  }
+
+  return { text: formatted, color: 'text-text' };
 }
 
-/** Render a stat cell with optional subscript */
-function StatCell({
-  sv,
-  colorFn,
-  decimals = 0,
-}: {
+// ── Cell type ────────────────────────────────────────────────────────
+
+interface CellDef {
   sv: StatValue | undefined;
-  colorFn?: (v: number) => ColorClass;
+  statKey?: string;
+  position?: string;
   decimals?: number;
-}) {
-  const { text, color, sub } = fmtStat(sv, colorFn, decimals);
+  colorFn?: (v: number) => ColorClass;
+}
+
+// ── Drift Arrow ──────────────────────────────────────────────────────
+
+function DriftArrow({ drift, statKey }: { drift: DriftStat; statKey?: string }) {
+  if (Math.abs(drift.z_score) < 1.5) return null;
+
+  const arrow = drift.direction === 'up' ? '\u2191' : '\u2193';
+
+  // Color: green if drifting toward benchmark midpoint, red if away
+  let arrowColor = 'text-yellow';
+  if (statKey) {
+    const benchmark = getBenchmarkForPosition(statKey);
+    if (benchmark) {
+      const midpoint = (benchmark.low + benchmark.high) / 2;
+      const lifetimeDist = Math.abs(drift.lifetime_avg - midpoint);
+      const windowDist = Math.abs(drift.window_avg - midpoint);
+      arrowColor = windowDist < lifetimeDist ? 'text-green' : 'text-red';
+    }
+  }
+
   return (
-    <td className="py-1 px-2 text-center font-mono text-[13px] leading-tight">
-      <span className={color}>
-        {text}
-        {sub && <sub className="text-[9px] ml-0.5 text-text-muted">{sub}</sub>}
-      </span>
-    </td>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className={`ml-0.5 text-[11px] font-bold ${arrowColor} cursor-help`}>{arrow}</span>
+      </TooltipTrigger>
+      <TooltipContent side="top" className="max-w-[240px] text-xs">
+        <div className="space-y-1">
+          <div className="font-semibold">{drift.interpretation}</div>
+          <div className="text-text-muted">
+            Lifetime: {drift.lifetime_avg.toFixed(1)}% &rarr; Recent: {drift.window_avg.toFixed(1)}%
+          </div>
+          <div className="text-text-muted">z = {drift.z_score.toFixed(2)}</div>
+        </div>
+      </TooltipContent>
+    </Tooltip>
   );
 }
 
-// ── Color functions (thresholds inspired by H2N) ─────────────────────
+// ── Stat Cell ────────────────────────────────────────────────────────
 
-const colorVpip = (v: number): ColorClass =>
-  v >= 20 && v <= 28 ? 'text-green' : v > 35 ? 'text-red' : v < 15 ? 'text-blue' : 'text-yellow';
+/** Render a stat cell with optional tooltip and drift arrow */
+function StatCell({
+  sv,
+  statKey,
+  position,
+  decimals = 0,
+  colorFn,
+  driftMap,
+}: CellDef & { driftMap?: Map<string, DriftStat> }) {
+  const { text, color, sub, health, benchmark } = fmtStat(sv, statKey, position, decimals, colorFn);
 
-const colorPfr = (v: number): ColorClass =>
-  v >= 16 && v <= 24 ? 'text-green' : v > 30 ? 'text-red' : v < 12 ? 'text-blue' : 'text-yellow';
+  // Map stat keys to drift keys (drift uses DB column names)
+  const driftKeyMap: Record<string, string> = {
+    vpip: 'vpip', pfr: 'pfr', fold_to_3bet: 'fold_to_3bet',
+    cbet_flop: 'cbet_flop', wtsd: 'went_to_showdown', wsd: 'won_at_showdown',
+    wwsf: 'saw_flop',
+  };
+  const driftKey = statKey ? driftKeyMap[statKey] : undefined;
+  const drift = driftKey && driftMap?.get(driftKey);
 
-const colorOpenRaise = (v: number): ColorClass =>
-  v >= 15 && v <= 30 ? 'text-green' : v > 40 ? 'text-red' : v < 10 ? 'text-blue' : 'text-yellow';
+  const hasTooltip = benchmark && health && sv?.value != null && health.status !== 'neutral';
+  const displayName = statKey ? (STAT_DISPLAY_NAMES[statKey] || statKey) : '';
 
-const colorThreeBet = (v: number): ColorClass =>
-  v >= 6 && v <= 10 ? 'text-green' : v > 14 ? 'text-red' : v < 4 ? 'text-blue' : 'text-yellow';
+  const inner = (
+    <span className={color}>
+      {text}
+      {sub && <sub className="text-[9px] ml-0.5 text-text-muted">{sub}</sub>}
+      {drift && <DriftArrow drift={drift} statKey={statKey} />}
+    </span>
+  );
 
-const colorFoldTo3Bet = (v: number): ColorClass =>
-  v >= 55 && v <= 65 ? 'text-green' : v > 70 ? 'text-red' : v < 45 ? 'text-yellow' : 'text-text';
+  if (!hasTooltip) {
+    return (
+      <td className="py-1 px-2 text-center font-mono text-[13px] leading-tight">
+        {inner}
+      </td>
+    );
+  }
 
-const colorCallOpen = (v: number): ColorClass =>
-  v >= 5 && v <= 12 ? 'text-green' : v > 20 ? 'text-red' : 'text-text';
+  const tip = health.direction === 'low' ? benchmark.tipLow : benchmark.tipHigh;
 
-const colorFourBet = (v: number): ColorClass =>
-  v >= 3 && v <= 7 ? 'text-green' : v > 10 ? 'text-red' : v < 2 ? 'text-blue' : 'text-text';
-
-const colorSteal = (v: number): ColorClass =>
-  v >= 25 && v <= 40 ? 'text-green' : v > 50 ? 'text-red' : v < 20 ? 'text-blue' : 'text-yellow';
-
-const colorVsStealFold = (v: number): ColorClass =>
-  v > 75 ? 'text-red' : v < 60 ? 'text-green' : 'text-yellow';
-
-const colorVsSteal3Bet = (v: number): ColorClass =>
-  v >= 8 && v <= 14 ? 'text-green' : v > 18 ? 'text-red' : v < 5 ? 'text-blue' : 'text-text';
-
-const colorCbet = (v: number): ColorClass =>
-  v >= 50 && v <= 70 ? 'text-green' : v > 80 ? 'text-red' : v < 40 ? 'text-blue' : 'text-yellow';
-
-const colorFoldToCbet = (v: number): ColorClass =>
-  v >= 40 && v <= 55 ? 'text-green' : v > 65 ? 'text-red' : v < 30 ? 'text-blue' : 'text-text';
-
-const colorAf = (v: number): ColorClass =>
-  v >= 2 && v <= 4 ? 'text-green' : v > 5 ? 'text-red' : v < 1.5 ? 'text-blue' : 'text-text';
-
-const colorAfq = (v: number): ColorClass =>
-  v >= 40 && v <= 60 ? 'text-green' : v > 70 ? 'text-red' : v < 30 ? 'text-blue' : 'text-text';
-
-const colorDonk = (v: number): ColorClass =>
-  v > 15 ? 'text-red' : v > 5 ? 'text-yellow' : 'text-green';
-
-const colorWtsd = (v: number): ColorClass =>
-  v >= 24 && v <= 30 ? 'text-green' : v > 35 ? 'text-red' : v < 20 ? 'text-blue' : 'text-text';
-
-const colorWsd = (v: number): ColorClass =>
-  v >= 50 && v <= 55 ? 'text-green' : v > 60 ? 'text-yellow' : v < 45 ? 'text-red' : 'text-text';
-
-const colorWwsf = (v: number): ColorClass =>
-  v >= 42 && v <= 50 ? 'text-green' : v > 55 ? 'text-yellow' : v < 38 ? 'text-red' : 'text-text';
-
-const colorLimp = (v: number): ColorClass =>
-  v > 10 ? 'text-red' : v > 3 ? 'text-yellow' : 'text-green';
-
-const colorSqueeze = (v: number): ColorClass =>
-  v >= 5 && v <= 10 ? 'text-green' : v > 14 ? 'text-red' : v < 3 ? 'text-blue' : 'text-text';
-
-const colorFoldTo4Bet = (v: number): ColorClass =>
-  v >= 55 && v <= 65 ? 'text-green' : v > 70 ? 'text-red' : v < 45 ? 'text-yellow' : 'text-text';
-
-const colorMissedCbet = (v: number): ColorClass =>
-  v > 50 ? 'text-red' : v > 30 ? 'text-yellow' : 'text-green';
+  return (
+    <td className="py-1 px-2 text-center font-mono text-[13px] leading-tight">
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className="cursor-help">{inner}</span>
+        </TooltipTrigger>
+        <TooltipContent side="top" className="max-w-[280px] text-xs">
+          <div className="space-y-1">
+            <div className="font-semibold">{displayName}{position && position !== 'total' ? ` (${position.toUpperCase()})` : ''}</div>
+            <div>Your value: <span className={`font-mono font-semibold ${color}`}>{text}</span></div>
+            <div className="text-text-muted">Target: {benchmark.low}–{benchmark.high}</div>
+            {tip && <div className="text-text-muted">{tip}</div>}
+          </div>
+        </TooltipContent>
+      </Tooltip>
+    </td>
+  );
+}
 
 // ── Section Components ───────────────────────────────────────────────
 
@@ -134,12 +194,11 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
 function PosTable({
   headers,
   rows,
+  driftMap,
 }: {
   headers: string[];
-  rows: {
-    label: string;
-    cells: { sv: StatValue | undefined; colorFn?: (v: number) => ColorClass; decimals?: number }[];
-  }[];
+  rows: { label: string; cells: CellDef[] }[];
+  driftMap?: Map<string, DriftStat>;
 }) {
   return (
     <table className="w-full">
@@ -160,7 +219,7 @@ function PosTable({
           <tr key={row.label} className="border-b border-border/30 hover:bg-surface-hover">
             <td className="py-1 px-2 text-[13px] text-text-muted whitespace-nowrap">{row.label}</td>
             {row.cells.map((cell, i) => (
-              <StatCell key={i} sv={cell.sv} colorFn={cell.colorFn} decimals={cell.decimals} />
+              <StatCell key={i} {...cell} driftMap={driftMap} />
             ))}
           </tr>
         ))}
@@ -172,20 +231,55 @@ function PosTable({
 /** Key-value grid: two columns of label + value pairs */
 function KVGrid({
   items,
+  driftMap,
 }: {
-  items: { label: string; sv: StatValue | undefined; colorFn?: (v: number) => ColorClass; decimals?: number }[];
+  items: (CellDef & { label: string })[];
+  driftMap?: Map<string, DriftStat>;
 }) {
   return (
     <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 p-2">
       {items.map((item) => {
-        const { text, color, sub } = fmtStat(item.sv, item.colorFn, item.decimals);
+        const { text, color, sub, health, benchmark } = fmtStat(item.sv, item.statKey, item.position, item.decimals, item.colorFn);
+        const displayName = item.statKey ? (STAT_DISPLAY_NAMES[item.statKey] || item.statKey) : item.label;
+
+        // Drift arrow for KV items
+        const driftKeyMap: Record<string, string> = {
+          vpip: 'vpip', pfr: 'pfr', fold_to_3bet: 'fold_to_3bet',
+          cbet_flop: 'cbet_flop', wtsd: 'went_to_showdown', wsd: 'won_at_showdown',
+          wwsf: 'saw_flop',
+        };
+        const driftKey = item.statKey ? driftKeyMap[item.statKey] : undefined;
+        const drift = driftKey && driftMap?.get(driftKey);
+
+        const hasTooltip = benchmark && health && item.sv?.value != null && health.status !== 'neutral';
+        const tip = health?.direction === 'low' ? benchmark?.tipLow : benchmark?.tipHigh;
+
+        const valueSpan = (
+          <span className={`font-mono text-[13px] ${color}`}>
+            {text}
+            {sub && <sub className="text-[9px] ml-0.5 text-text-muted">{sub}</sub>}
+            {drift && <DriftArrow drift={drift} statKey={item.statKey} />}
+          </span>
+        );
+
         return (
           <div key={item.label} className="flex items-baseline justify-between py-0.5">
             <span className="text-[12px] text-text-muted mr-2 whitespace-nowrap">{item.label}</span>
-            <span className={`font-mono text-[13px] ${color}`}>
-              {text}
-              {sub && <sub className="text-[9px] ml-0.5 text-text-muted">{sub}</sub>}
-            </span>
+            {hasTooltip ? (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="cursor-help">{valueSpan}</span>
+                </TooltipTrigger>
+                <TooltipContent side="top" className="max-w-[280px] text-xs">
+                  <div className="space-y-1">
+                    <div className="font-semibold">{displayName}</div>
+                    <div>Your value: <span className={`font-mono font-semibold ${color}`}>{text}</span></div>
+                    <div className="text-text-muted">Target: {benchmark!.low}–{benchmark!.high}</div>
+                    {tip && <div className="text-text-muted">{tip}</div>}
+                  </div>
+                </TooltipContent>
+              </Tooltip>
+            ) : valueSpan}
           </div>
         );
       })}
@@ -197,19 +291,67 @@ function KVGrid({
 function posRow(
   label: string,
   ps: PositionalStats | undefined,
-  colorFn?: (v: number) => ColorClass,
+  statKey?: string,
   positions: ('total' | 'ep' | 'mp' | 'co' | 'btn' | 'sb' | 'bb')[] = ['total', 'ep', 'mp', 'co', 'btn', 'sb', 'bb'],
 ) {
   if (!ps) {
     return {
       label,
-      cells: positions.map(() => ({ sv: undefined, colorFn })),
+      cells: positions.map(() => ({ sv: undefined as StatValue | undefined, statKey })),
     };
   }
   return {
     label,
-    cells: positions.map((p) => ({ sv: ps[p], colorFn })),
+    cells: positions.map((p) => ({ sv: ps[p], statKey, position: p })),
   };
+}
+
+/** Inline stat value for the missed-cbet / showdown sections */
+function InlineStat({ sv, statKey, position, driftMap }: {
+  sv: StatValue | undefined;
+  statKey?: string;
+  position?: string;
+  driftMap?: Map<string, DriftStat>;
+}) {
+  const { text, color, sub, health, benchmark } = fmtStat(sv, statKey, position);
+  const displayName = statKey ? (STAT_DISPLAY_NAMES[statKey] || statKey) : '';
+
+  const driftKeyMap: Record<string, string> = {
+    vpip: 'vpip', pfr: 'pfr', fold_to_3bet: 'fold_to_3bet',
+    cbet_flop: 'cbet_flop', wtsd: 'went_to_showdown', wsd: 'won_at_showdown',
+    wwsf: 'saw_flop',
+  };
+  const driftKey = statKey ? driftKeyMap[statKey] : undefined;
+  const drift = driftKey && driftMap?.get(driftKey);
+
+  const hasTooltip = benchmark && health && sv?.value != null && health.status !== 'neutral';
+  const tip = health?.direction === 'low' ? benchmark?.tipLow : benchmark?.tipHigh;
+
+  const inner = (
+    <span className={`font-mono text-[13px] ${color}`}>
+      {text}
+      {sub && <sub className="text-[9px] ml-0.5 text-text-muted">{sub}</sub>}
+      {drift && <DriftArrow drift={drift} statKey={statKey} />}
+    </span>
+  );
+
+  if (!hasTooltip) return inner;
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className="cursor-help">{inner}</span>
+      </TooltipTrigger>
+      <TooltipContent side="top" className="max-w-[280px] text-xs">
+        <div className="space-y-1">
+          <div className="font-semibold">{displayName}</div>
+          <div>Your value: <span className={`font-mono font-semibold ${color}`}>{text}</span></div>
+          <div className="text-text-muted">Target: {benchmark!.low}–{benchmark!.high}</div>
+          {tip && <div className="text-text-muted">{tip}</div>}
+        </div>
+      </TooltipContent>
+    </Tooltip>
+  );
 }
 
 // ── Main Component ───────────────────────────────────────────────────
@@ -229,6 +371,14 @@ export default function StatsPage() {
     date_from: dateFrom || undefined,
     date_to: dateTo || undefined,
   }), [stakes, dateFrom, dateTo]);
+
+  // Drift detection
+  const { driftMap } = useDrift({
+    stakes: filterParams.stakes,
+    date_from: filterParams.date_from,
+    date_to: filterParams.date_to,
+    enabled: (stats?.hands ?? 0) >= 1000,
+  });
 
   // Load filter options once
   useEffect(() => {
@@ -323,377 +473,323 @@ export default function StatsPage() {
   const fullPosKeys: ('total' | 'ep' | 'mp' | 'co' | 'btn' | 'sb' | 'bb')[] = ['total', 'ep', 'mp', 'co', 'btn', 'sb', 'bb'];
 
   return (
-    <div className="max-w-6xl mx-auto px-2">
-      {/* ── Filter Bar ── */}
-      <div className="mb-3">{filterBarContent}</div>
+    <TooltipProvider delayDuration={200}>
+      <div className="max-w-6xl mx-auto px-2">
+        {/* ── Filter Bar ── */}
+        <div className="mb-3">{filterBarContent}</div>
 
-      {/* ── PRE-FLOP ── */}
-      <SectionTitle>Pre-Flop</SectionTitle>
-      <div className="flex flex-col lg:flex-row gap-0 border-x border-b border-border">
-        {/* Left: Positional table */}
-        <div className="flex-1 min-w-0 overflow-x-auto lg:border-r border-border">
-          <PosTable
-            headers={fullPosHeaders}
-            rows={[
-              posRow('Open Raise', stats.open_raise, colorOpenRaise, fullPosKeys),
-              posRow('Fold to 3Bet', stats.fold_to_3bet, colorFoldTo3Bet, fullPosKeys),
-              posRow('Call Open Raise', stats.call_open_raise, colorCallOpen, fullPosKeys),
-              posRow('3-Bet', stats.three_bet, colorThreeBet, fullPosKeys),
-              {
-                label: '3-Bet IP',
-                cells: [
-                  { sv: stats.three_bet_ip.total, colorFn: colorThreeBet },
-                  { sv: undefined },  // EP — not IP
-                  { sv: stats.three_bet_ip.mp, colorFn: colorThreeBet },
-                  { sv: stats.three_bet_ip.co, colorFn: colorThreeBet },
-                  { sv: stats.three_bet_ip.btn, colorFn: colorThreeBet },
-                  { sv: undefined },  // SB — not IP
-                  { sv: undefined },  // BB — not IP
-                ],
-              },
-              {
-                label: '3-Bet OOP',
-                cells: [
-                  { sv: stats.three_bet_oop.total, colorFn: colorThreeBet },
-                  { sv: stats.three_bet_oop.ep, colorFn: colorThreeBet },
-                  { sv: undefined },  // MP — not OOP
-                  { sv: undefined },  // CO — not OOP
-                  { sv: undefined },  // BTN — not OOP
-                  { sv: stats.three_bet_oop.sb, colorFn: colorThreeBet },
-                  { sv: stats.three_bet_oop.bb, colorFn: colorThreeBet },
-                ],
-              },
-            ]}
-          />
-        </div>
+        {/* ── Leak Summary Panel ── */}
+        {stats.hands >= 200 && <LeakSummaryPanel stats={stats} />}
 
-        {/* Right: KV grid */}
-        <div className="w-full lg:w-72 lg:shrink-0">
-          <KVGrid
-            items={[
-              { label: 'VPIP', sv: stats.vpip.total, colorFn: colorVpip },
-              { label: 'PFR', sv: stats.pfr.total, colorFn: colorPfr },
-              { label: '4-Bet', sv: stats.four_bet.total, colorFn: colorFourBet },
-              { label: 'Limp', sv: stats.limp.total, colorFn: colorLimp },
-              { label: '4-Bet Range', sv: stats.four_bet_range, colorFn: colorFourBet, decimals: 1 },
-              { label: 'Limp-Fold', sv: stats.limp_fold, colorFn: colorLimp },
-              { label: 'Squeeze', sv: stats.squeeze, colorFn: colorSqueeze },
-              { label: '4-Bet-Fold', sv: stats.four_bet_fold, colorFn: colorFoldTo4Bet },
-              { label: 'Fold to 4-Bet', sv: stats.fold_to_4bet.total, colorFn: colorFoldTo4Bet },
-              { label: 'Win Rate', sv: wr !== null ? { value: wr, sample: stats.hands } : undefined, colorFn: (v) => v >= 0 ? 'text-green' : 'text-red', decimals: 2 },
-              { label: 'Win Rate EV', sv: wrEv !== null ? { value: wrEv, sample: stats.hands } : undefined, colorFn: (v) => v >= 0 ? 'text-green' : 'text-red', decimals: 2 },
-              { label: 'Call 4-Bet', sv: stats.call_4bet },
-              { label: 'Hands', sv: { value: stats.hands, sample: stats.hands } },
-              { label: '5-Bet', sv: stats.five_bet, colorFn: colorFourBet },
-            ]}
-          />
-        </div>
-      </div>
+        {/* ── PRE-FLOP ── */}
+        <SectionTitle>Pre-Flop</SectionTitle>
+        <div className="flex flex-col lg:flex-row gap-0 border-x border-b border-border">
+          {/* Left: Positional table */}
+          <div className="flex-1 min-w-0 overflow-x-auto lg:border-r border-border">
+            <PosTable
+              headers={fullPosHeaders}
+              driftMap={driftMap}
+              rows={[
+                posRow('Open Raise', stats.open_raise, 'open_raise', fullPosKeys),
+                posRow('Fold to 3Bet', stats.fold_to_3bet, 'fold_to_3bet', fullPosKeys),
+                posRow('Call Open Raise', stats.call_open_raise, undefined, fullPosKeys),
+                posRow('3-Bet', stats.three_bet, 'three_bet', fullPosKeys),
+                {
+                  label: '3-Bet IP',
+                  cells: [
+                    { sv: stats.three_bet_ip.total, statKey: 'three_bet' },
+                    { sv: undefined },
+                    { sv: stats.three_bet_ip.mp, statKey: 'three_bet' },
+                    { sv: stats.three_bet_ip.co, statKey: 'three_bet' },
+                    { sv: stats.three_bet_ip.btn, statKey: 'three_bet' },
+                    { sv: undefined },
+                    { sv: undefined },
+                  ],
+                },
+                {
+                  label: '3-Bet OOP',
+                  cells: [
+                    { sv: stats.three_bet_oop.total, statKey: 'three_bet' },
+                    { sv: stats.three_bet_oop.ep, statKey: 'three_bet' },
+                    { sv: undefined },
+                    { sv: undefined },
+                    { sv: undefined },
+                    { sv: stats.three_bet_oop.sb, statKey: 'three_bet' },
+                    { sv: stats.three_bet_oop.bb, statKey: 'three_bet' },
+                  ],
+                },
+              ]}
+            />
+          </div>
 
-      {/* ── STEAL ── */}
-      <SectionTitle>Steal</SectionTitle>
-      <div className="flex gap-0 border-x border-b border-border">
-        {/* Left: Steal table (Total, BTN, SB) */}
-        <div className="flex-1 min-w-0 overflow-x-auto border-r border-border">
-          <PosTable
-            headers={['Total', 'BTN', 'SB']}
-            rows={[
-              {
-                label: 'Steal',
-                cells: [
-                  { sv: stats.steal.total, colorFn: colorSteal },
-                  { sv: stats.steal.btn, colorFn: colorSteal },
-                  { sv: stats.steal.sb, colorFn: colorSteal },
-                ],
-              },
-              {
-                label: 'Fold to 3Bet',
-                cells: [
-                  { sv: stats.fold_to_3bet_steal.total, colorFn: colorFoldTo3Bet },
-                  { sv: stats.fold_to_3bet_steal.btn, colorFn: colorFoldTo3Bet },
-                  { sv: stats.fold_to_3bet_steal.sb, colorFn: colorFoldTo3Bet },
-                ],
-              },
-              {
-                label: '4-Bet',
-                cells: [
-                  { sv: stats.four_bet_steal.total, colorFn: colorFourBet },
-                  { sv: stats.four_bet_steal.btn, colorFn: colorFourBet },
-                  { sv: stats.four_bet_steal.sb, colorFn: colorFourBet },
-                ],
-              },
-              {
-                label: '4-Bet-Fold',
-                cells: [
-                  { sv: stats.four_bet_fold_steal.total, colorFn: colorFoldTo4Bet },
-                  { sv: stats.four_bet_fold_steal.btn, colorFn: colorFoldTo4Bet },
-                  { sv: stats.four_bet_fold_steal.sb, colorFn: colorFoldTo4Bet },
-                ],
-              },
-            ]}
-          />
-        </div>
-
-        {/* Right: vs Steal (SB, BB) */}
-        <div className="flex-1 min-w-0 overflow-x-auto">
-          <PosTable
-            headers={['SB', 'BB']}
-            rows={[
-              {
-                label: 'Fold',
-                cells: [
-                  { sv: stats.vs_steal_fold.sb, colorFn: colorVsStealFold },
-                  { sv: stats.vs_steal_fold.bb, colorFn: colorVsStealFold },
-                ],
-              },
-              {
-                label: 'Call',
-                cells: [
-                  { sv: stats.vs_steal_call.sb },
-                  { sv: stats.vs_steal_call.bb },
-                ],
-              },
-              {
-                label: '3-Bet',
-                cells: [
-                  { sv: stats.vs_steal_3bet.sb, colorFn: colorVsSteal3Bet },
-                  { sv: stats.vs_steal_3bet.bb, colorFn: colorVsSteal3Bet },
-                ],
-              },
-            ]}
-          />
-          <div className="px-2 py-0.5 text-[10px] text-text-muted uppercase tracking-wide border-t border-border/30">
-            vs. Steal
+          {/* Right: KV grid */}
+          <div className="w-full lg:w-72 lg:shrink-0">
+            <KVGrid
+              driftMap={driftMap}
+              items={[
+                { label: 'VPIP', sv: stats.vpip.total, statKey: 'vpip' },
+                { label: 'PFR', sv: stats.pfr.total, statKey: 'pfr' },
+                { label: '4-Bet', sv: stats.four_bet.total, statKey: 'four_bet' },
+                { label: 'Limp', sv: stats.limp.total },
+                { label: '4-Bet Range', sv: stats.four_bet_range, decimals: 1 },
+                { label: 'Limp-Fold', sv: stats.limp_fold },
+                { label: 'Squeeze', sv: stats.squeeze },
+                { label: '4-Bet-Fold', sv: stats.four_bet_fold },
+                { label: 'Fold to 4-Bet', sv: stats.fold_to_4bet.total, statKey: 'fold_to_4bet' },
+                { label: 'Win Rate', sv: wr !== null ? { value: wr, sample: stats.hands } : undefined, colorFn: (v: number) => v >= 0 ? 'text-green' : 'text-red', decimals: 2 },
+                { label: 'Win Rate EV', sv: wrEv !== null ? { value: wrEv, sample: stats.hands } : undefined, colorFn: (v: number) => v >= 0 ? 'text-green' : 'text-red', decimals: 2 },
+                { label: 'Call 4-Bet', sv: stats.call_4bet },
+                { label: 'Hands', sv: { value: stats.hands, sample: stats.hands } },
+                { label: '5-Bet', sv: stats.five_bet },
+              ]}
+            />
           </div>
         </div>
-      </div>
 
-      {/* ── POSTFLOP ── */}
-      <SectionTitle>Postflop</SectionTitle>
-      <div className="flex gap-0 border-x border-b border-border">
-        {/* Left: Postflop stats by street */}
-        <div className="flex-1 min-w-0 overflow-x-auto border-r border-border">
-          <PosTable
-            headers={['Flop', 'Turn', 'River']}
-            rows={[
-              {
-                label: 'Continuation Bet',
-                cells: [
-                  { sv: stats.cbet_flop.total, colorFn: colorCbet },
-                  { sv: stats.cbet_turn.total, colorFn: colorCbet },
-                  { sv: stats.cbet_river.total, colorFn: colorCbet },
-                ],
-              },
-              {
-                label: 'Fold to CBet',
-                cells: [
-                  { sv: stats.fold_to_cbet_flop.total, colorFn: colorFoldToCbet },
-                  { sv: stats.fold_to_cbet_turn.total, colorFn: colorFoldToCbet },
-                  { sv: stats.fold_to_cbet_river.total, colorFn: colorFoldToCbet },
-                ],
-              },
-              {
-                label: 'Aggression',
-                cells: [
-                  { sv: stats.af_flop, colorFn: colorAf, decimals: 1 },
-                  { sv: stats.af_turn, colorFn: colorAf, decimals: 1 },
-                  { sv: stats.af_river, colorFn: colorAf, decimals: 1 },
-                ],
-              },
-              {
-                label: 'Agg Frequency',
-                cells: [
-                  { sv: stats.afq_flop, colorFn: colorAfq },
-                  { sv: stats.afq_turn, colorFn: colorAfq },
-                  { sv: stats.afq_river, colorFn: colorAfq },
-                ],
-              },
-              {
-                label: 'Donk Bet',
-                cells: [
-                  { sv: stats.donk_bet_flop, colorFn: colorDonk },
-                  { sv: stats.donk_bet_turn, colorFn: colorDonk },
-                  { sv: stats.donk_bet_river, colorFn: colorDonk },
-                ],
-              },
-            ]}
-          />
-        </div>
-
-        {/* Right: vs CBet Flop (Fold/Call/Raise) */}
-        <div className="flex-1 min-w-0 overflow-x-auto">
-          <PosTable
-            headers={['Fold', 'Call', 'Raise']}
-            rows={[
-              {
-                label: 'Raised Pot',
-                cells: [
-                  { sv: stats.fold_cbet_flop_raised, colorFn: colorFoldToCbet },
-                  { sv: stats.call_cbet_flop_raised },
-                  { sv: stats.raise_cbet_flop_raised },
-                ],
-              },
-              {
-                label: '3-Bet Pot',
-                cells: [
-                  { sv: stats.fold_cbet_flop_3bet, colorFn: colorFoldToCbet },
-                  { sv: stats.call_cbet_flop_3bet },
-                  { sv: stats.raise_cbet_flop_3bet },
-                ],
-              },
-            ]}
-          />
-          <div className="px-2 py-0.5 text-[10px] text-text-muted uppercase tracking-wide border-t border-border/30">
-            vs. Continuation Bet Flop
+        {/* ── STEAL ── */}
+        <SectionTitle>Steal</SectionTitle>
+        <div className="flex gap-0 border-x border-b border-border">
+          {/* Left: Steal table (Total, BTN, SB) */}
+          <div className="flex-1 min-w-0 overflow-x-auto border-r border-border">
+            <PosTable
+              headers={['Total', 'BTN', 'SB']}
+              driftMap={driftMap}
+              rows={[
+                {
+                  label: 'Steal',
+                  cells: [
+                    { sv: stats.steal.total, statKey: 'steal', position: 'total' },
+                    { sv: stats.steal.btn, statKey: 'steal', position: 'btn' },
+                    { sv: stats.steal.sb, statKey: 'steal', position: 'sb' },
+                  ],
+                },
+                {
+                  label: 'Fold to 3Bet',
+                  cells: [
+                    { sv: stats.fold_to_3bet_steal.total, statKey: 'fold_to_3bet', position: 'total' },
+                    { sv: stats.fold_to_3bet_steal.btn, statKey: 'fold_to_3bet', position: 'btn' },
+                    { sv: stats.fold_to_3bet_steal.sb, statKey: 'fold_to_3bet', position: 'sb' },
+                  ],
+                },
+                {
+                  label: '4-Bet',
+                  cells: [
+                    { sv: stats.four_bet_steal.total, statKey: 'four_bet', position: 'total' },
+                    { sv: stats.four_bet_steal.btn, statKey: 'four_bet', position: 'btn' },
+                    { sv: stats.four_bet_steal.sb, statKey: 'four_bet', position: 'sb' },
+                  ],
+                },
+                {
+                  label: '4-Bet-Fold',
+                  cells: [
+                    { sv: stats.four_bet_fold_steal.total },
+                    { sv: stats.four_bet_fold_steal.btn },
+                    { sv: stats.four_bet_fold_steal.sb },
+                  ],
+                },
+              ]}
+            />
           </div>
-        </div>
-      </div>
 
-      {/* ── MISSED C-BET ── */}
-      <SectionTitle>Missed C-Bet</SectionTitle>
-      <div className="flex gap-0 border-x border-b border-border">
-        {/* Left: Missed CBet breakdown */}
-        <div className="flex-1 min-w-0 p-2 border-r border-border">
-          <div className="space-y-2">
-            <div className="flex items-baseline justify-between">
-              <span className="text-[13px] text-text-muted">Missed Continuation Bet</span>
-              <span className={`font-mono text-[13px] ${fmtStat(stats.missed_cbet_flop, colorMissedCbet).color}`}>
-                {fmtStat(stats.missed_cbet_flop, colorMissedCbet).text}
-                {fmtStat(stats.missed_cbet_flop, colorMissedCbet).sub && (
-                  <sub className="text-[9px] ml-0.5 text-text-muted">{fmtStat(stats.missed_cbet_flop, colorMissedCbet).sub}</sub>
-                )}
-              </span>
-            </div>
-            <div className="pl-3 space-y-1">
-              <div className="flex items-baseline justify-between">
-                <span className="text-[12px] text-text-muted">In Position</span>
-                <span className={`font-mono text-[13px] ${fmtStat(stats.missed_cbet_flop_ip, colorMissedCbet).color}`}>
-                  {fmtStat(stats.missed_cbet_flop_ip, colorMissedCbet).text}
-                  {fmtStat(stats.missed_cbet_flop_ip, colorMissedCbet).sub && (
-                    <sub className="text-[9px] ml-0.5 text-text-muted">{fmtStat(stats.missed_cbet_flop_ip, colorMissedCbet).sub}</sub>
-                  )}
-                </span>
-              </div>
-              <div className="flex items-baseline justify-between">
-                <span className="text-[12px] text-text-muted">→ Fold</span>
-                <span className={`font-mono text-[13px] ${fmtStat(stats.missed_cbet_fold_ip, colorMissedCbet).color}`}>
-                  {fmtStat(stats.missed_cbet_fold_ip, colorMissedCbet).text}
-                  {fmtStat(stats.missed_cbet_fold_ip, colorMissedCbet).sub && (
-                    <sub className="text-[9px] ml-0.5 text-text-muted">{fmtStat(stats.missed_cbet_fold_ip, colorMissedCbet).sub}</sub>
-                  )}
-                </span>
-              </div>
-              <div className="flex items-baseline justify-between">
-                <span className="text-[12px] text-text-muted">Out of Position</span>
-                <span className={`font-mono text-[13px] ${fmtStat(stats.missed_cbet_flop_oop, colorMissedCbet).color}`}>
-                  {fmtStat(stats.missed_cbet_flop_oop, colorMissedCbet).text}
-                  {fmtStat(stats.missed_cbet_flop_oop, colorMissedCbet).sub && (
-                    <sub className="text-[9px] ml-0.5 text-text-muted">{fmtStat(stats.missed_cbet_flop_oop, colorMissedCbet).sub}</sub>
-                  )}
-                </span>
-              </div>
-              <div className="flex items-baseline justify-between">
-                <span className="text-[12px] text-text-muted">→ Fold</span>
-                <span className={`font-mono text-[13px] ${fmtStat(stats.missed_cbet_fold_oop, colorMissedCbet).color}`}>
-                  {fmtStat(stats.missed_cbet_fold_oop, colorMissedCbet).text}
-                  {fmtStat(stats.missed_cbet_fold_oop, colorMissedCbet).sub && (
-                    <sub className="text-[9px] ml-0.5 text-text-muted">{fmtStat(stats.missed_cbet_fold_oop, colorMissedCbet).sub}</sub>
-                  )}
-                </span>
-              </div>
+          {/* Right: vs Steal (SB, BB) */}
+          <div className="flex-1 min-w-0 overflow-x-auto">
+            <PosTable
+              headers={['SB', 'BB']}
+              driftMap={driftMap}
+              rows={[
+                {
+                  label: 'Fold',
+                  cells: [
+                    { sv: stats.vs_steal_fold.sb, statKey: 'vs_steal_fold', position: 'sb' },
+                    { sv: stats.vs_steal_fold.bb, statKey: 'vs_steal_fold', position: 'bb' },
+                  ],
+                },
+                {
+                  label: 'Call',
+                  cells: [
+                    { sv: stats.vs_steal_call.sb },
+                    { sv: stats.vs_steal_call.bb },
+                  ],
+                },
+                {
+                  label: '3-Bet',
+                  cells: [
+                    { sv: stats.vs_steal_3bet.sb },
+                    { sv: stats.vs_steal_3bet.bb },
+                  ],
+                },
+              ]}
+            />
+            <div className="px-2 py-0.5 text-[10px] text-text-muted uppercase tracking-wide border-t border-border/30">
+              vs. Steal
             </div>
           </div>
         </div>
 
-        {/* Right: vs Missed CBet */}
-        <div className="flex-1 min-w-0 p-2">
-          <div className="space-y-2">
-            <div className="flex items-baseline justify-between">
-              <span className="text-[13px] text-text-muted">vs. Missed Continuation Bet</span>
-              <span className={`font-mono text-[13px] ${fmtStat(stats.vs_missed_cbet).color}`}>
-                {fmtStat(stats.vs_missed_cbet).text}
-                {fmtStat(stats.vs_missed_cbet).sub && (
-                  <sub className="text-[9px] ml-0.5 text-text-muted">{fmtStat(stats.vs_missed_cbet).sub}</sub>
-                )}
-              </span>
+        {/* ── POSTFLOP ── */}
+        <SectionTitle>Postflop</SectionTitle>
+        <div className="flex gap-0 border-x border-b border-border">
+          {/* Left: Postflop stats by street */}
+          <div className="flex-1 min-w-0 overflow-x-auto border-r border-border">
+            <PosTable
+              headers={['Flop', 'Turn', 'River']}
+              driftMap={driftMap}
+              rows={[
+                {
+                  label: 'Continuation Bet',
+                  cells: [
+                    { sv: stats.cbet_flop.total, statKey: 'cbet_flop', position: 'total' },
+                    { sv: stats.cbet_turn.total, statKey: 'cbet_turn', position: 'total' },
+                    { sv: stats.cbet_river.total, statKey: 'cbet_river', position: 'total' },
+                  ],
+                },
+                {
+                  label: 'Fold to CBet',
+                  cells: [
+                    { sv: stats.fold_to_cbet_flop.total, statKey: 'fold_to_cbet_flop', position: 'total' },
+                    { sv: stats.fold_to_cbet_turn.total, statKey: 'fold_to_cbet_turn', position: 'total' },
+                    { sv: stats.fold_to_cbet_river.total },
+                  ],
+                },
+                {
+                  label: 'Aggression',
+                  cells: [
+                    { sv: stats.af_flop, statKey: 'af_flop', decimals: 1 },
+                    { sv: stats.af_turn, statKey: 'af_turn', decimals: 1 },
+                    { sv: stats.af_river, statKey: 'af_river', decimals: 1 },
+                  ],
+                },
+                {
+                  label: 'Agg Frequency',
+                  cells: [
+                    { sv: stats.afq_flop },
+                    { sv: stats.afq_turn },
+                    { sv: stats.afq_river },
+                  ],
+                },
+                {
+                  label: 'Donk Bet',
+                  cells: [
+                    { sv: stats.donk_bet_flop },
+                    { sv: stats.donk_bet_turn },
+                    { sv: stats.donk_bet_river },
+                  ],
+                },
+              ]}
+            />
+          </div>
+
+          {/* Right: vs CBet Flop (Fold/Call/Raise) */}
+          <div className="flex-1 min-w-0 overflow-x-auto">
+            <PosTable
+              headers={['Fold', 'Call', 'Raise']}
+              driftMap={driftMap}
+              rows={[
+                {
+                  label: 'Raised Pot',
+                  cells: [
+                    { sv: stats.fold_cbet_flop_raised, statKey: 'fold_to_cbet_flop' },
+                    { sv: stats.call_cbet_flop_raised },
+                    { sv: stats.raise_cbet_flop_raised },
+                  ],
+                },
+                {
+                  label: '3-Bet Pot',
+                  cells: [
+                    { sv: stats.fold_cbet_flop_3bet, statKey: 'fold_to_cbet_flop' },
+                    { sv: stats.call_cbet_flop_3bet },
+                    { sv: stats.raise_cbet_flop_3bet },
+                  ],
+                },
+              ]}
+            />
+            <div className="px-2 py-0.5 text-[10px] text-text-muted uppercase tracking-wide border-t border-border/30">
+              vs. Continuation Bet Flop
             </div>
-            <div className="pl-3 space-y-1">
+          </div>
+        </div>
+
+        {/* ── MISSED C-BET ── */}
+        <SectionTitle>Missed C-Bet</SectionTitle>
+        <div className="flex gap-0 border-x border-b border-border">
+          {/* Left: Missed CBet breakdown */}
+          <div className="flex-1 min-w-0 p-2 border-r border-border">
+            <div className="space-y-2">
               <div className="flex items-baseline justify-between">
-                <span className="text-[12px] text-text-muted">Bet In Position</span>
-                <span className={`font-mono text-[13px] ${fmtStat(stats.vs_missed_cbet_bet_ip).color}`}>
-                  {fmtStat(stats.vs_missed_cbet_bet_ip).text}
-                  {fmtStat(stats.vs_missed_cbet_bet_ip).sub && (
-                    <sub className="text-[9px] ml-0.5 text-text-muted">{fmtStat(stats.vs_missed_cbet_bet_ip).sub}</sub>
-                  )}
-                </span>
+                <span className="text-[13px] text-text-muted">Missed Continuation Bet</span>
+                <InlineStat sv={stats.missed_cbet_flop} driftMap={driftMap} />
               </div>
-              <div className="flex items-baseline justify-between">
-                <span className="text-[12px] text-text-muted">Check | Fold</span>
-                <span className={`font-mono text-[13px] ${fmtStat(stats.vs_missed_cbet_check_fold_ip, colorMissedCbet).color}`}>
-                  {fmtStat(stats.vs_missed_cbet_check_fold_ip, colorMissedCbet).text}
-                  {fmtStat(stats.vs_missed_cbet_check_fold_ip, colorMissedCbet).sub && (
-                    <sub className="text-[9px] ml-0.5 text-text-muted">{fmtStat(stats.vs_missed_cbet_check_fold_ip, colorMissedCbet).sub}</sub>
-                  )}
-                </span>
+              <div className="pl-3 space-y-1">
+                <div className="flex items-baseline justify-between">
+                  <span className="text-[12px] text-text-muted">In Position</span>
+                  <InlineStat sv={stats.missed_cbet_flop_ip} driftMap={driftMap} />
+                </div>
+                <div className="flex items-baseline justify-between">
+                  <span className="text-[12px] text-text-muted">&rarr; Fold</span>
+                  <InlineStat sv={stats.missed_cbet_fold_ip} driftMap={driftMap} />
+                </div>
+                <div className="flex items-baseline justify-between">
+                  <span className="text-[12px] text-text-muted">Out of Position</span>
+                  <InlineStat sv={stats.missed_cbet_flop_oop} driftMap={driftMap} />
+                </div>
+                <div className="flex items-baseline justify-between">
+                  <span className="text-[12px] text-text-muted">&rarr; Fold</span>
+                  <InlineStat sv={stats.missed_cbet_fold_oop} driftMap={driftMap} />
+                </div>
               </div>
+            </div>
+          </div>
+
+          {/* Right: vs Missed CBet */}
+          <div className="flex-1 min-w-0 p-2">
+            <div className="space-y-2">
               <div className="flex items-baseline justify-between">
-                <span className="text-[12px] text-text-muted">Bet Out of Position Turn</span>
-                <span className={`font-mono text-[13px] ${fmtStat(stats.vs_missed_cbet_bet_oop_turn).color}`}>
-                  {fmtStat(stats.vs_missed_cbet_bet_oop_turn).text}
-                  {fmtStat(stats.vs_missed_cbet_bet_oop_turn).sub && (
-                    <sub className="text-[9px] ml-0.5 text-text-muted">{fmtStat(stats.vs_missed_cbet_bet_oop_turn).sub}</sub>
-                  )}
-                </span>
+                <span className="text-[13px] text-text-muted">vs. Missed Continuation Bet</span>
+                <InlineStat sv={stats.vs_missed_cbet} driftMap={driftMap} />
               </div>
-              <div className="flex items-baseline justify-between">
-                <span className="text-[12px] text-text-muted">Check-Fold</span>
-                <span className={`font-mono text-[13px] ${fmtStat(stats.vs_missed_cbet_check_fold_oop, colorMissedCbet).color}`}>
-                  {fmtStat(stats.vs_missed_cbet_check_fold_oop, colorMissedCbet).text}
-                  {fmtStat(stats.vs_missed_cbet_check_fold_oop, colorMissedCbet).sub && (
-                    <sub className="text-[9px] ml-0.5 text-text-muted">{fmtStat(stats.vs_missed_cbet_check_fold_oop, colorMissedCbet).sub}</sub>
-                  )}
-                </span>
+              <div className="pl-3 space-y-1">
+                <div className="flex items-baseline justify-between">
+                  <span className="text-[12px] text-text-muted">Bet In Position</span>
+                  <InlineStat sv={stats.vs_missed_cbet_bet_ip} driftMap={driftMap} />
+                </div>
+                <div className="flex items-baseline justify-between">
+                  <span className="text-[12px] text-text-muted">Check | Fold</span>
+                  <InlineStat sv={stats.vs_missed_cbet_check_fold_ip} driftMap={driftMap} />
+                </div>
+                <div className="flex items-baseline justify-between">
+                  <span className="text-[12px] text-text-muted">Bet Out of Position Turn</span>
+                  <InlineStat sv={stats.vs_missed_cbet_bet_oop_turn} driftMap={driftMap} />
+                </div>
+                <div className="flex items-baseline justify-between">
+                  <span className="text-[12px] text-text-muted">Check-Fold</span>
+                  <InlineStat sv={stats.vs_missed_cbet_check_fold_oop} driftMap={driftMap} />
+                </div>
               </div>
             </div>
           </div>
         </div>
-      </div>
 
-      {/* ── SHOWDOWN ── */}
-      <SectionTitle>Showdown</SectionTitle>
-      <div className="border-x border-b border-border p-2">
-        <div className="flex gap-6">
-          <div className="flex items-baseline gap-2">
-            <span className="text-[12px] text-text-muted">Went to Showdown</span>
-            <span className={`font-mono text-[13px] ${fmtStat(stats.wtsd, colorWtsd).color}`}>
-              {fmtStat(stats.wtsd, colorWtsd).text}
-              {fmtStat(stats.wtsd, colorWtsd).sub && (
-                <sub className="text-[9px] ml-0.5 text-text-muted">{fmtStat(stats.wtsd, colorWtsd).sub}</sub>
-              )}
-            </span>
-          </div>
-          <div className="flex items-baseline gap-2">
-            <span className="text-[12px] text-text-muted">Won at Showdown</span>
-            <span className={`font-mono text-[13px] ${fmtStat(stats.wsd, colorWsd).color}`}>
-              {fmtStat(stats.wsd, colorWsd).text}
-              {fmtStat(stats.wsd, colorWsd).sub && (
-                <sub className="text-[9px] ml-0.5 text-text-muted">{fmtStat(stats.wsd, colorWsd).sub}</sub>
-              )}
-            </span>
-          </div>
-          <div className="flex items-baseline gap-2">
-            <span className="text-[12px] text-text-muted">Won When Saw Flop</span>
-            <span className={`font-mono text-[13px] ${fmtStat(stats.wwsf, colorWwsf).color}`}>
-              {fmtStat(stats.wwsf, colorWwsf).text}
-              {fmtStat(stats.wwsf, colorWwsf).sub && (
-                <sub className="text-[9px] ml-0.5 text-text-muted">{fmtStat(stats.wwsf, colorWwsf).sub}</sub>
-              )}
-            </span>
+        {/* ── SHOWDOWN ── */}
+        <SectionTitle>Showdown</SectionTitle>
+        <div className="border-x border-b border-border p-2">
+          <div className="flex gap-6">
+            <div className="flex items-baseline gap-2">
+              <span className="text-[12px] text-text-muted">Went to Showdown</span>
+              <InlineStat sv={stats.wtsd} statKey="wtsd" driftMap={driftMap} />
+            </div>
+            <div className="flex items-baseline gap-2">
+              <span className="text-[12px] text-text-muted">Won at Showdown</span>
+              <InlineStat sv={stats.wsd} statKey="wsd" driftMap={driftMap} />
+            </div>
+            <div className="flex items-baseline gap-2">
+              <span className="text-[12px] text-text-muted">Won When Saw Flop</span>
+              <InlineStat sv={stats.wwsf} statKey="wwsf" driftMap={driftMap} />
+            </div>
           </div>
         </div>
-      </div>
 
-      <div className="h-4" />
-    </div>
+        <div className="h-4" />
+      </div>
+    </TooltipProvider>
   );
 }

@@ -293,6 +293,25 @@ class ResultsBreakdown(BaseModel):
     by_position: list[PositionBreakdown] = []
 
 
+# ── Drift Detection Models ──────────────────────────────────────────
+
+class DriftStat(BaseModel):
+    stat: str
+    lifetime_avg: float
+    window_avg: float
+    lifetime_n: int
+    window_n: int
+    z_score: float
+    significant: bool
+    direction: str      # "up" or "down"
+    interpretation: str  # human-readable meaning
+
+class DriftResponse(BaseModel):
+    stats: list[DriftStat] = []
+    window_size: int = 0
+    total_hands: int = 0
+
+
 # ── Range Page Models ────────────────────────────────────────────────
 
 class ComboStats(BaseModel):
