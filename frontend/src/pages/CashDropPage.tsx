@@ -76,7 +76,7 @@ function FieldHeatmap({ category }: { category: CashDropRangeCategory }) {
                 style={{
                   backgroundColor: bg,
                   aspectRatio: '1',
-                  border: '1px solid rgba(54,54,72,0.3)',
+                  border: '1px solid oklch(1 0 0 / 10%)',
                 }}
                 onMouseEnter={() => setHovered(key)}
                 onMouseLeave={() => setHovered(null)}
@@ -144,7 +144,7 @@ export default function CashDropPage() {
   return (
     <div className="max-w-[1400px] mx-auto">
       {/* Header + Filters */}
-      <div className="flex items-center justify-between mb-5 flex-wrap gap-3">
+      <div className="flex items-center justify-between mb-2 flex-wrap gap-3">
         <h1 className="text-xl font-bold">Cash Drop Analysis</h1>
         <div className="flex items-center gap-3 flex-wrap">
           {filterOpts && filterOpts.stakes.length > 1 && (
@@ -187,7 +187,7 @@ export default function CashDropPage() {
       ) : (
         <>
           {/* ── Financial Summary ── */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-3">
             <SummaryCard label="Paid to Fund" value={`${s.total_paid_bb.toFixed(0)} BB`} sub={`$${s.total_paid_usd.toFixed(2)} (${s.pots_won} pots won)`} color="text-red" />
             <SummaryCard label="Received (EV)" value={`${s.total_received_bb.toFixed(0)} BB`} sub={`$${s.total_received_usd.toFixed(2)} (${s.cash_drop_hands} drops)`} color="text-green" />
             <SummaryCard label="Net" value={`${s.net_bb >= 0 ? '+' : ''}${s.net_bb.toFixed(0)} BB`} sub={`$${s.net_usd >= 0 ? '+' : ''}${s.net_usd.toFixed(2)}`} color={s.net_bb >= 0 ? 'text-green' : 'text-red'} />
@@ -195,13 +195,13 @@ export default function CashDropPage() {
           </div>
 
           {/* ── Cash Drop Pots: Hero + Field ── */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-            <Card className="p-5">
-              <div className="flex items-center justify-between mb-3">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mb-3">
+            <Card className="gap-0 py-0 p-3">
+              <div className="flex items-center justify-between mb-2">
                 <h2 className="text-sm font-medium text-text-muted uppercase tracking-wide">Hero in Cash Drop Pots</h2>
                 <span className="text-xs text-text-muted">{s.cash_drop_hands} hands</span>
               </div>
-              <div className="grid grid-cols-2 gap-x-8 gap-y-2 text-[15px]">
+              <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-[15px]">
                 <StatRow label="Won" value={s.hero_won_bb} suffix=" BB" color />
                 <StatRow label="bb/100" value={s.hero_bb100} color />
                 <StatRow label="VPIP" value={s.hero_vpip_pct} suffix="%" />
@@ -216,12 +216,12 @@ export default function CashDropPage() {
             </Card>
 
             {data!.field ? (
-              <Card className="p-5">
-                <div className="flex items-center justify-between mb-3">
+              <Card className="gap-0 py-0 p-3">
+                <div className="flex items-center justify-between mb-2">
                   <h2 className="text-sm font-medium text-text-muted uppercase tracking-wide">Field in Cash Drop Pots</h2>
                   <span className="text-xs text-text-muted">{data!.field.total_players} player-hands</span>
                 </div>
-                <div className="grid grid-cols-2 gap-x-8 gap-y-2 text-[15px]">
+                <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-[15px]">
                   <StatRow label="Avg Players" value={data!.field.avg_players_per_pot} />
                   <StatRow label="Avg bb Won" value={data!.field.avg_won_bb} color />
                   <StatRow label="VPIP" value={data!.field.vpip_pct} suffix="%" />
@@ -243,8 +243,8 @@ export default function CashDropPage() {
 
           {/* ── Drop Size Breakdown ── */}
           {data!.by_type.length > 0 && (
-            <Card className="p-5 mb-6">
-              <h2 className="text-sm font-medium text-text-muted uppercase tracking-wide mb-3">Drop Size Breakdown</h2>
+            <Card className="gap-0 py-0 p-3 mb-2">
+              <h2 className="text-sm font-medium text-text-muted uppercase tracking-wide mb-2">Drop Size Breakdown</h2>
               <div className="flex gap-4 flex-wrap">
                 {data!.by_type.map(t => (
                   <div key={t.drop_bb} className="flex items-baseline gap-2">
@@ -260,7 +260,7 @@ export default function CashDropPage() {
           {/* ── Field Ranges by Action Type ── */}
           {data!.ranges.length > 0 && (
             <div>
-              <h2 className="text-sm font-medium text-text-muted uppercase tracking-wide mb-3">
+              <h2 className="text-sm font-medium text-text-muted uppercase tracking-wide mb-2">
                 Field Ranges in Cash Drop Pots
               </h2>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -296,11 +296,11 @@ function StatRow({ label, value, suffix, color }: { label: string; value: number
 
 function SummaryCard({ label, value, sub, color }: { label: string; value: string; sub?: string; color?: string }) {
   return (
-    <Card>
-      <CardContent className="p-4">
-        <div className="text-xs text-text-muted uppercase tracking-wide mb-1">{label}</div>
-        <div className={`text-lg font-bold font-mono ${color ?? 'text-text'}`}>{value}</div>
-        {sub && <div className="text-xs text-text-muted mt-0.5">{sub}</div>}
+    <Card className="gap-0 py-0">
+      <CardContent className="px-3 py-2">
+        <div className="text-[10px] text-text-muted uppercase tracking-wide mb-0.5">{label}</div>
+        <div className={`text-sm font-bold font-mono ${color ?? 'text-text'}`}>{value}</div>
+        {sub && <div className="text-[11px] text-text-muted mt-0.5">{sub}</div>}
       </CardContent>
     </Card>
   );

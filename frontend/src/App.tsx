@@ -17,7 +17,7 @@ export default function App() {
           <header className="flex h-10 items-center gap-2 border-b border-border px-4">
             <SidebarTrigger className="-ml-1" />
           </header>
-          <main className="flex-1 p-6">
+          <main className="flex-1 p-4">
             <Routes>
               <Route path="/" element={<UploadPage />} />
               <Route path="/stats" element={<StatsPage />} />

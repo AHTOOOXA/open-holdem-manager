@@ -166,7 +166,7 @@ export default function RangePage() {
   return (
     <div className="max-w-[1400px] mx-auto">
       {/* Header + Filters */}
-      <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
+      <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
         <h1 className="text-xl font-bold">Preflop Range</h1>
         <div className="flex items-center gap-3 flex-wrap">
           {/* Position */}
@@ -257,7 +257,7 @@ export default function RangePage() {
                           backgroundColor: bg,
                           width: 68,
                           height: 56,
-                          border: '1px solid rgba(54,54,72,0.4)',
+                          border: '1px solid oklch(1 0 0 / 10%)',
                         }}
                         onMouseEnter={() => setHovered(key)}
                         onMouseLeave={() => setHovered(null)}
@@ -301,8 +301,8 @@ export default function RangePage() {
           <div className="flex-1 min-w-[300px]">
             {/* Combo detail */}
             {detail ? (
-              <Card className="p-5 mb-4">
-                <div className="flex items-center justify-between mb-4">
+              <Card className="gap-0 py-0 p-3 mb-1.5">
+                <div className="flex items-center justify-between mb-2">
                   <span className="text-2xl font-bold font-mono">{activeCombo}</span>
                   <span className="text-sm text-text-muted">
                     {detail.hands} hands
@@ -311,7 +311,7 @@ export default function RangePage() {
                     )}
                   </span>
                 </div>
-                <div className="grid grid-cols-2 gap-x-8 gap-y-3 text-[15px]">
+                <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-[15px]">
                   <DetailRow label="Won" value={`${detail.won_bb >= 0 ? '+' : ''}${detail.won_bb.toFixed(1)} BB`} color={detail.won_bb >= 0 ? 'text-green' : 'text-red'} />
                   <DetailRow label="bb/100" value={detail.bb_per_100.toFixed(1)} color={detail.bb_per_100 >= 0 ? 'text-green' : 'text-red'} />
                   <DetailRow label="EV Won" value={`${detail.ev_bb >= 0 ? '+' : ''}${detail.ev_bb.toFixed(1)} BB`} color={detail.ev_bb >= 0 ? 'text-green' : 'text-red'} />
@@ -324,15 +324,15 @@ export default function RangePage() {
                 </div>
               </Card>
             ) : (
-              <Card className="p-5 mb-4 text-text-muted text-[15px]">
+              <Card className="p-3 mb-2 text-text-muted text-[15px]">
                 Hover or click a cell to see details
               </Card>
             )}
 
             {/* Biggest leaks */}
             {biggestLeaks.length > 0 && (
-              <Card className="p-5 mb-4">
-                <h3 className="text-sm font-medium text-text-muted uppercase tracking-wide mb-3">Biggest Leaks</h3>
+              <Card className="gap-0 py-0 p-3 mb-1.5">
+                <h3 className="text-sm font-medium text-text-muted uppercase tracking-wide mb-2">Biggest Leaks</h3>
                 <div className="space-y-2">
                   {biggestLeaks.map(c => (
                     <div
@@ -355,8 +355,8 @@ export default function RangePage() {
 
             {/* Biggest winners */}
             {biggestWinners.length > 0 && (
-              <Card className="p-5">
-                <h3 className="text-sm font-medium text-text-muted uppercase tracking-wide mb-3">Top Winners</h3>
+              <Card className="gap-0 py-0 p-3">
+                <h3 className="text-sm font-medium text-text-muted uppercase tracking-wide mb-2">Top Winners</h3>
                 <div className="space-y-2">
                   {biggestWinners.map(c => (
                     <div

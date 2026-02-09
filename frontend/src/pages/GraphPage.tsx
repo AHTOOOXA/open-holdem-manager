@@ -85,12 +85,12 @@ function StatCard({
   detail?: string;
 }) {
   return (
-    <Card style={border ? { borderLeftWidth: 3, borderLeftColor: border } : undefined}>
-      <CardContent className="px-4 py-3">
-        <div className="text-[11px] text-text-muted mb-1.5 uppercase tracking-wide">{label}</div>
-        <div className={`text-lg font-bold font-mono leading-tight ${bbColor ?? ''}`}>{bb}</div>
-        <div className={`text-sm font-mono leading-tight mt-0.5 ${usdColor ?? 'text-text-muted'}`}>{usd}</div>
-        {detail && <div className="text-[11px] font-mono text-text-muted mt-1">{detail}</div>}
+    <Card className="gap-0 py-0" style={border ? { borderLeftWidth: 3, borderLeftColor: border } : undefined}>
+      <CardContent className="px-3 py-2">
+        <div className="text-[10px] text-text-muted mb-0.5 uppercase tracking-wide">{label}</div>
+        <div className={`text-sm font-bold font-mono leading-tight ${bbColor ?? ''}`}>{bb}</div>
+        {usd && <div className={`text-xs font-mono leading-tight ${usdColor ?? 'text-text-muted'}`}>{usd}</div>}
+        {detail && <div className="text-[10px] font-mono text-text-muted mt-0.5">{detail}</div>}
       </CardContent>
     </Card>
   );
@@ -100,13 +100,13 @@ type LineToggle = 'ev' | 'showdown' | 'rake' | 'ci' | 'sessions';
 type DatePreset = 'today' | 'week' | 'month' | 'all';
 
 const LINE_COLORS = {
-  main: '#818cf8',
-  ev: '#eab308',
+  main: '#fbbf24',
+  ev: '#06b6d4',
   showdown: '#22c55e',
   nonshowdown: '#ef4444',
-  rake: '#f97316',
-  ci: '#818cf8',
-  session: '#555570',
+  rake: '#a78bfa',
+  ci: '#fbbf24',
+  session: 'oklch(0.553 0.013 58.071)',
 } as const;
 
 function formatDateTime(iso: string): string {
@@ -154,14 +154,14 @@ function CustomTooltip({ active, payload, label, unit, tooltipNames, activeSessi
   const suffix = unit === 'bb' ? ' BB' : '';
   return (
     <div style={{
-      backgroundColor: '#1a1a2e',
-      border: '1px solid #2a2a3a',
+      backgroundColor: 'oklch(0.216 0.006 56.043)',
+      border: '1px solid oklch(1 0 0 / 10%)',
       borderRadius: '8px',
-      color: '#e4e4ef',
+      color: 'oklch(0.985 0.001 106.423)',
       padding: '8px 12px',
       fontSize: '13px',
     }}>
-      <div style={{ marginBottom: 4, color: '#888' }}>
+      <div style={{ marginBottom: 4, color: 'oklch(0.709 0.01 56.259)' }}>
         {point?.played_at ? formatDateTime(point.played_at) : ''}
       </div>
       <div style={{ marginBottom: 6, fontWeight: 600 }}>
@@ -189,7 +189,7 @@ function CustomTooltip({ active, payload, label, unit, tooltipNames, activeSessi
         const hrs = sessionDurationHours(activeSession);
         const hph = hrs > 0 ? Math.round(hands / hrs) : 0;
         return (
-          <div style={{ marginTop: 6, paddingTop: 6, borderTop: '1px solid #2a2a3a', color: '#777', fontSize: 11 }}>
+          <div style={{ marginTop: 6, paddingTop: 6, borderTop: '1px solid oklch(1 0 0 / 10%)', color: 'oklch(0.709 0.01 56.259)', fontSize: 11 }}>
             Session: {formatTime(activeSession.start_time)} – {formatTime(activeSession.end_time)}
             <span style={{ marginLeft: 8 }}>({hands} hands{hph > 0 ? ` · ${hph} hands/hr` : ''})</span>
           </div>
@@ -394,7 +394,7 @@ export default function GraphPage() {
   // Empty state
   if (!loading && data.length === 0 && !breakdown?.by_stakes.length) {
     return (
-      <div className="max-w-6xl mx-auto space-y-4">
+      <div className="max-w-6xl mx-auto space-y-1.5">
         {filterBarJSX}
         <div className="text-center py-12">
           <p className="text-text-muted text-lg">No hands match the selected filters.</p>
@@ -450,8 +450,8 @@ export default function GraphPage() {
   };
 
   const filterBarJSX = (
-    <Card>
-      <CardContent className="px-4 py-3 flex flex-wrap items-center gap-3">
+    <Card className="gap-0 py-0">
+      <CardContent className="px-3 py-2 flex flex-wrap items-center gap-3">
         {/* Stakes filter */}
         <Select value={stakes || '__all__'} onValueChange={(v) => setStakes(v === '__all__' ? '' : v)}>
           <SelectTrigger className="w-[130px] h-8 text-sm">
@@ -523,7 +523,7 @@ export default function GraphPage() {
   );
 
   return (
-    <div className="max-w-6xl mx-auto space-y-4">
+    <div className="max-w-6xl mx-auto space-y-1.5">
       {/* Filter Bar */}
       {filterBarJSX}
 
@@ -533,8 +533,8 @@ export default function GraphPage() {
         <>
           {/* Graph */}
           {data.length > 0 && (
-            <Card className="p-4">
-              <div className="flex gap-4 mb-2 ml-12 text-xs text-text-muted">
+            <Card className="gap-0 py-0 p-2">
+              <div className="flex gap-4 mb-0.5 ml-12 text-xs text-text-muted">
                 <span className="flex items-center gap-1.5">
                   <span className="inline-block w-4 h-0.5 rounded" style={{ background: LINE_COLORS.main }} />
                   Actual
@@ -571,7 +571,7 @@ export default function GraphPage() {
                 )}
                 {lines.has('sessions') && sessions.length > 1 && (
                   <span className="flex items-center gap-1.5">
-                    <span className="inline-block w-4 h-0.5 rounded" style={{ background: LINE_COLORS.session, borderTop: '1px dashed #555570' }} />
+                    <span className="inline-block w-4 h-0.5 rounded" style={{ background: LINE_COLORS.session, borderTop: '1px dashed oklch(0.553 0.013 58.071)' }} />
                     Sessions
                   </span>
                 )}
@@ -584,21 +584,21 @@ export default function GraphPage() {
                       <stop offset="100%" stopColor={LINE_COLORS.main} stopOpacity={0} />
                     </linearGradient>
                   </defs>
-                  <CartesianGrid vertical={false} stroke="#1e1e2e" strokeDasharray="none" />
+                  <CartesianGrid vertical={false} stroke="oklch(0.268 0.007 34.298)" strokeDasharray="none" />
                   <XAxis
                     dataKey="hand_number"
                     type="number"
                     domain={[0, 'dataMax']}
                     ticks={niceXTicks(data.length)}
-                    stroke="#555570"
-                    tick={{ fontSize: 11, fill: '#555570' }}
+                    stroke="oklch(0.553 0.013 58.071)"
+                    tick={{ fontSize: 11, fill: 'oklch(0.553 0.013 58.071)' }}
                     tickFormatter={formatXTick}
                     axisLine={false}
                     tickLine={false}
                   />
                   <YAxis
-                    stroke="#555570"
-                    tick={{ fontSize: 11, fill: '#555570' }}
+                    stroke="oklch(0.553 0.013 58.071)"
+                    tick={{ fontSize: 11, fill: 'oklch(0.553 0.013 58.071)' }}
                     axisLine={false}
                     tickLine={false}
                     width={50}
@@ -607,12 +607,12 @@ export default function GraphPage() {
                   <Tooltip
                     content={<CustomTooltip unit={unit} tooltipNames={tooltipNames} activeSession={activeSession} />}
                   />
-                  <ReferenceLine y={0} stroke="#444460" strokeDasharray="4 4" />
+                  <ReferenceLine y={0} stroke="oklch(0.553 0.013 58.071 / 50%)" strokeDasharray="4 4" />
                   {lines.has('sessions') && activeSession && (
                     <ReferenceArea
                       x1={activeSession.start_hand}
                       x2={activeSession.end_hand}
-                      fill="#818cf8"
+                      fill="oklch(0.77 0.16 70)"
                       fillOpacity={0.06}
                       strokeOpacity={0}
                     />
@@ -627,7 +627,7 @@ export default function GraphPage() {
                       label={{
                         value: formatTime(s.start_time),
                         position: 'top',
-                        fill: '#555570',
+                        fill: 'oklch(0.553 0.013 58.071)',
                         fontSize: 9,
                       }}
                     />
@@ -716,7 +716,7 @@ export default function GraphPage() {
           )}
 
           {/* Stat Cards - Row 1 */}
-          <div className="grid gap-3 grid-cols-6">
+          <div className="grid gap-2 grid-cols-6">
             <StatCard
               label="Hands"
               bb={n.toLocaleString()}
@@ -776,7 +776,7 @@ export default function GraphPage() {
           </div>
 
           {/* Stat Cards - Row 2 */}
-          <div className="grid gap-3 grid-cols-4">
+          <div className="grid gap-2 grid-cols-4">
             <StatCard
               label="Rake"
               bb={fmtBB(rakeBB)}
@@ -814,7 +814,7 @@ export default function GraphPage() {
 
           {/* Variance Stats */}
           {variance && (
-            <div className="grid gap-3 grid-cols-4">
+            <div className="grid gap-2 grid-cols-4">
               <StatCard
                 label="Std Dev bb/100"
                 bb={variance.sd_bb100.toFixed(1)}
@@ -903,9 +903,9 @@ function BreakdownTable<T>({
   unit: 'bb' | 'usd';
 }) {
   return (
-    <Card className="overflow-hidden">
-      <CardHeader className="px-4 py-3">
-        <h2 className="text-sm font-semibold text-text">{title}</h2>
+    <Card className="overflow-hidden gap-0 py-0">
+      <CardHeader className="px-3 py-1.5">
+        <h2 className="text-xs font-semibold text-text">{title}</h2>
       </CardHeader>
       <div className="overflow-x-auto">
         <Table>
@@ -914,7 +914,7 @@ function BreakdownTable<T>({
               {columns.map(col => (
                 <TableHead
                   key={col.key}
-                  className={`px-4 py-2.5 h-auto text-[11px] uppercase tracking-wide ${
+                  className={`px-3 py-1.5 h-auto text-[11px] uppercase tracking-wide ${
                     col.align === 'right' ? 'text-right' : 'text-left'
                   }`}
                 >
@@ -929,7 +929,7 @@ function BreakdownTable<T>({
                 {columns.map(col => (
                   <TableCell
                     key={col.key}
-                    className={`px-4 py-2.5 font-mono ${col.align === 'right' ? 'text-right' : 'text-left'}`}
+                    className={`px-3 py-1.5 font-mono ${col.align === 'right' ? 'text-right' : 'text-left'}`}
                   >
                     {col.render(row, unit)}
                   </TableCell>

@@ -49,7 +49,7 @@ export function BoardDisplay({ cards }: { cards: string[] }) {
 // ── H2N-style card boxes (colored background by suit) ───────────────
 
 const SUIT_BG: Record<string, string> = {
-  s: '#2a2a3a',  // spades - dark
+  s: 'oklch(0.268 0.007 34.298)',  // spades - dark stone
   h: '#dc2626',  // hearts - red
   d: '#2563eb',  // diamonds - blue
   c: '#16a34a',  // clubs - green
@@ -59,7 +59,7 @@ export function CardBox({ card }: { card: string }) {
   if (!card || card.length < 2) return null;
   const rank = card.slice(0, -1).toUpperCase();
   const suit = card.slice(-1).toLowerCase();
-  const bg = SUIT_BG[suit] || '#333';
+  const bg = SUIT_BG[suit] || 'oklch(0.268 0.007 34.298)';
   return (
     <span
       className="inline-flex items-center justify-center w-[30px] h-[34px] rounded-[3px] text-[17px] font-bold text-white leading-none shrink-0"

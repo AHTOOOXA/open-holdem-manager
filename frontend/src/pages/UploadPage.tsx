@@ -130,7 +130,7 @@ export default function UploadPage() {
     : 0;
 
   return (
-    <div className="max-w-2xl mx-auto space-y-6">
+    <div className="max-w-2xl mx-auto space-y-4">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">Import Hands</h1>
         <div className="flex items-center gap-3">
@@ -227,7 +227,7 @@ export default function UploadPage() {
 
       {/* Drop zone */}
       <div
-        className={`border-2 border-dashed rounded-lg p-12 text-center transition-colors cursor-pointer ${
+        className={`border-2 border-dashed rounded-lg p-8 text-center transition-colors cursor-pointer ${
           dragging
             ? 'border-primary bg-primary/10'
             : 'border-border hover:border-text-muted'

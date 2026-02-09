@@ -2,15 +2,44 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 
+@font-face {
+  font-family: 'GeistMono';
+  src: url('/node_modules/geist/dist/fonts/geist-mono/GeistMono-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'GeistMono';
+  src: url('/node_modules/geist/dist/fonts/geist-mono/GeistMono-Medium.woff2') format('woff2');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'GeistMono';
+  src: url('/node_modules/geist/dist/fonts/geist-mono/GeistMono-SemiBold.woff2') format('woff2');
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'GeistMono';
+  src: url('/node_modules/geist/dist/fonts/geist-mono/GeistMono-Bold.woff2') format('woff2');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
 @custom-variant dark (&:is(.dark *));
 
 /* ── Our poker theme colors (used by existing pages) ── */
 @theme {
-  --color-surface: #12121a;
-  --color-surface-hover: #1a1a25;
-  --color-text: #eaeaf4;
-  --color-text-muted: #9c9cb8;
-  --color-primary-hover: #818cf8;
+  --color-surface: oklch(0.216 0.006 56.043);
+  --color-surface-hover: oklch(0.268 0.007 34.298);
+  --color-text: oklch(0.985 0.001 106.423);
+  --color-text-muted: oklch(0.709 0.01 56.259);
+  --color-primary-hover: oklch(0.88 0.15 92);
   --color-green: #22c55e;
   --color-red: #ef4444;
   --color-yellow: #eab308;
@@ -59,44 +88,46 @@
   --color-sidebar-ring: var(--sidebar-ring);
 }
 
-/* ── CSS variables: dark-only app, no light/dark toggle ── */
+/* ── CSS variables: dark-only app ── */
+/* ── Stone base + Amber theme (mira dense style) ── */
 :root {
   --radius: 0.625rem;
 
-  /* Map shadcn vars → our dark poker theme */
-  --background: #0a0a0f;
-  --foreground: #eaeaf4;
-  --card: #12121a;
-  --card-foreground: #eaeaf4;
-  --popover: #12121a;
-  --popover-foreground: #eaeaf4;
-  --primary: #6366f1;
-  --primary-foreground: #ffffff;
-  --secondary: #1a1a25;
-  --secondary-foreground: #eaeaf4;
-  --muted: #1a1a25;
-  --muted-foreground: #9c9cb8;
-  --accent: #1a1a25;
-  --accent-foreground: #eaeaf4;
-  --destructive: #ef4444;
-  --border: #363648;
-  --input: #363648;
-  --ring: #6366f1;
+  /* Stone dark base + Amber primary overlay */
+  --background: oklch(0.147 0.004 49.25);
+  --foreground: oklch(0.985 0.001 106.423);
+  --card: oklch(0.216 0.006 56.043);
+  --card-foreground: oklch(0.985 0.001 106.423);
+  --popover: oklch(0.216 0.006 56.043);
+  --popover-foreground: oklch(0.985 0.001 106.423);
+  --primary: oklch(0.77 0.16 70);
+  --primary-foreground: oklch(0.28 0.07 46);
+  --secondary: oklch(0.274 0.006 286.033);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.268 0.007 34.298);
+  --muted-foreground: oklch(0.709 0.01 56.259);
+  --accent: oklch(0.268 0.007 34.298);
+  --accent-foreground: oklch(0.985 0.001 106.423);
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.553 0.013 58.071);
 
-  --chart-1: #6366f1;
-  --chart-2: #22c55e;
-  --chart-3: #eab308;
-  --chart-4: #ef4444;
-  --chart-5: #60a5fa;
+  /* Chart: amber-scale + poker semantics */
+  --chart-1: oklch(0.88 0.15 92);
+  --chart-2: oklch(0.77 0.16 70);
+  --chart-3: oklch(0.67 0.16 58);
+  --chart-4: oklch(0.56 0.15 49);
+  --chart-5: oklch(0.47 0.12 46);
 
-  --sidebar: #0e0e16;
-  --sidebar-foreground: #eaeaf4;
-  --sidebar-primary: #6366f1;
-  --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #1a1a25;
-  --sidebar-accent-foreground: #eaeaf4;
-  --sidebar-border: #363648;
-  --sidebar-ring: #6366f1;
+  --sidebar: oklch(0.216 0.006 56.043);
+  --sidebar-foreground: oklch(0.985 0.001 106.423);
+  --sidebar-primary: oklch(0.77 0.16 70);
+  --sidebar-primary-foreground: oklch(0.28 0.07 46);
+  --sidebar-accent: oklch(0.268 0.007 34.298);
+  --sidebar-accent-foreground: oklch(0.985 0.001 106.423);
+  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-ring: oklch(0.553 0.013 58.071);
 }
 
 @layer base {
@@ -110,5 +141,5 @@
 
 body {
   margin: 0;
-  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  font-family: 'GeistMono', 'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
 }
