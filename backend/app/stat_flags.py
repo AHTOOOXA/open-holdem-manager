@@ -164,8 +164,8 @@ def compute_stat_flags(parsed: ParsedHand) -> dict[str, dict]:
             if raise_count >= 4 and uname == third_raiser:
                 player_stats[uname]["four_bet_fold"] = True
 
-            # Check fold to steal
-            if player_stats[uname]["faced_steal"]:
+            # Check fold to steal (only if steal is still the last raise)
+            if player_stats[uname]["faced_steal"] and raise_count == 1:
                 player_stats[uname]["fold_to_steal"] = True
             continue
 
@@ -378,6 +378,7 @@ def compute_stat_flags(parsed: ParsedHand) -> dict[str, dict]:
         first_bet_or_raise = None
         aggressor_acted = False
         aggressor_bet = False
+        donk_before_aggressor = False  # someone bet before the prev aggressor acted
 
         for a in street_actions:
             uname = a["username"]
@@ -399,15 +400,20 @@ def compute_stat_flags(parsed: ParsedHand) -> dict[str, dict]:
             if action in ("bet", "raise") and first_bet_or_raise is None:
                 first_bet_or_raise = a
 
-            # Cbet: only a "bet" (first aggression) counts, NOT a raise (Bug #3)
+            # Detect donk bet before prev aggressor acts (kills cbet opportunity)
+            if prev_aggressor and not aggressor_acted and uname != prev_aggressor:
+                if action in ("bet", "raise"):
+                    donk_before_aggressor = True
+
+            # Cbet: only a "bet" (first aggression) counts, NOT a raise
             if prev_aggressor and uname == prev_aggressor:
                 aggressor_acted = True
                 if action == "bet":
                     aggressor_bet = True
 
-        # Set cbet stats — use saw_{street} which correctly reflects
-        # who was present at the start of each street (not stale global fold set)
-        if prev_aggressor and player_stats[prev_aggressor][f"saw_{street}"]:
+        # Set cbet stats — only when action checked to the aggressor (no donk bet)
+        # If someone bet before the aggressor, they had no cbet opportunity
+        if prev_aggressor and player_stats[prev_aggressor][f"saw_{street}"] and not donk_before_aggressor:
             player_stats[prev_aggressor][f"cbet_{street}_opp"] = True
             if aggressor_bet:
                 player_stats[prev_aggressor][f"cbet_{street}"] = True
@@ -423,14 +429,13 @@ def compute_stat_flags(parsed: ParsedHand) -> dict[str, dict]:
                 street_aggressor[street] = a["username"]
                 break
 
-        # Donk bet opportunity: first actor before the prev aggressor
+        # Donk bet opportunity: all actors before the prev aggressor
         if prev_aggressor:
             for a in street_actions:
                 if a["username"] == prev_aggressor:
                     break  # Aggressor acts, no more donk opp
                 if a["action"] in ("bet", "check", "fold") and a["username"] != prev_aggressor:
                     player_stats[a["username"]][f"donk_bet_{street}_opp"] = True
-                    break  # Only the FIRST actor before aggressor has the opp
 
         # Donk bet: first bet into the previous street's aggressor
         if first_bet_or_raise and first_bet_or_raise["action"] == "bet":

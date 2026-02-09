@@ -371,9 +371,8 @@ def _aggression_freq(data: list[dict], street: str) -> StatValue:
     bets = sum(r.get(f"{street}_bets", 0) or 0 for r in data)
     raises = sum(r.get(f"{street}_raises", 0) or 0 for r in data)
     calls = sum(r.get(f"{street}_calls", 0) or 0 for r in data)
-    checks = sum(r.get(f"{street}_checks", 0) or 0 for r in data)
     folds = sum(r.get(f"{street}_folds", 0) or 0 for r in data)
-    total = bets + raises + calls + checks + folds
+    total = bets + raises + calls + folds
     if total == 0:
         return StatValue(value=None, sample=0)
     return StatValue(
