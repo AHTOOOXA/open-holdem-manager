@@ -26,6 +26,26 @@ import type {
   MonthBreakdown,
   PositionBreakdown,
 } from '@/lib/api';
+import { Card, CardContent, CardHeader } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Toggle } from '@/components/ui/toggle';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
 
 function formatXTick(value: number) {
   if (value >= 1000) return `${(value / 1000).toFixed(value % 1000 === 0 ? 0 : 1)}k`;
@@ -65,15 +85,14 @@ function StatCard({
   detail?: string;
 }) {
   return (
-    <div
-      className="bg-surface rounded-lg border border-border px-4 py-3"
-      style={border ? { borderLeftWidth: 3, borderLeftColor: border } : undefined}
-    >
-      <div className="text-[11px] text-text-muted mb-1.5 uppercase tracking-wide">{label}</div>
-      <div className={`text-lg font-bold font-mono leading-tight ${bbColor ?? ''}`}>{bb}</div>
-      <div className={`text-sm font-mono leading-tight mt-0.5 ${usdColor ?? 'text-text-muted'}`}>{usd}</div>
-      {detail && <div className="text-[11px] font-mono text-text-muted mt-1">{detail}</div>}
-    </div>
+    <Card style={border ? { borderLeftWidth: 3, borderLeftColor: border } : undefined}>
+      <CardContent className="px-4 py-3">
+        <div className="text-[11px] text-text-muted mb-1.5 uppercase tracking-wide">{label}</div>
+        <div className={`text-lg font-bold font-mono leading-tight ${bbColor ?? ''}`}>{bb}</div>
+        <div className={`text-sm font-mono leading-tight mt-0.5 ${usdColor ?? 'text-text-muted'}`}>{usd}</div>
+        {detail && <div className="text-[11px] font-mono text-text-muted mt-1">{detail}</div>}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -349,31 +368,27 @@ export default function GraphPage() {
   // Toggle button helper
   const toggleBtn = (key: LineToggle, label: string, color: string, show = true) =>
     show && (
-      <button
+      <Toggle
         key={key}
-        className={`px-3 py-1.5 text-xs rounded transition-colors ${
-          lines.has(key)
-            ? 'text-white'
-            : 'bg-surface border border-border text-text-muted hover:text-text'
-        }`}
+        size="sm"
+        className="h-7 text-xs data-[state=on]:text-white"
+        pressed={lines.has(key)}
+        onPressedChange={() => toggle(key)}
         style={lines.has(key) ? { backgroundColor: color } : undefined}
-        onClick={() => toggle(key)}
       >
         {label}
-      </button>
+      </Toggle>
     );
 
   const presetBtn = (preset: DatePreset, label: string) => (
-    <button
-      className={`px-3 py-1.5 text-xs rounded transition-colors ${
-        activePreset === preset
-          ? 'bg-primary text-white'
-          : 'bg-surface border border-border text-text-muted hover:text-text'
-      }`}
+    <Button
+      variant={activePreset === preset ? 'default' : 'outline'}
+      size="sm"
+      className="h-7 text-xs"
       onClick={() => handlePreset(preset)}
     >
       {label}
-    </button>
+    </Button>
   );
 
   // Empty state
@@ -435,87 +450,76 @@ export default function GraphPage() {
   };
 
   const filterBarJSX = (
-    <div className="bg-surface rounded-lg border border-border px-4 py-3 flex flex-wrap items-center gap-3">
-      {/* Stakes filter */}
-      <select
-        value={stakes}
-        onChange={(e) => setStakes(e.target.value)}
-        className="bg-background border border-border rounded px-3 py-1.5 text-sm text-text focus:outline-none focus:border-primary"
-      >
-        <option value="">All Stakes</option>
-        {filterOpts?.stakes.map(s => (
-          <option key={s} value={s}>{s}</option>
-        ))}
-      </select>
+    <Card>
+      <CardContent className="px-4 py-3 flex flex-wrap items-center gap-3">
+        {/* Stakes filter */}
+        <Select value={stakes || '__all__'} onValueChange={(v) => setStakes(v === '__all__' ? '' : v)}>
+          <SelectTrigger className="w-[130px] h-8 text-sm">
+            <SelectValue placeholder="All Stakes" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__all__">All Stakes</SelectItem>
+            {filterOpts?.stakes.map(s => (
+              <SelectItem key={s} value={s}>{s}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
 
-      {/* Date inputs */}
-      <input
-        type="date"
-        value={dateFrom}
-        onChange={(e) => handleDateFromChange(e.target.value)}
-        className="bg-background border border-border rounded px-3 py-1.5 text-sm text-text focus:outline-none focus:border-primary"
-        placeholder="From"
-      />
-      <input
-        type="date"
-        value={dateTo}
-        onChange={(e) => handleDateToChange(e.target.value)}
-        className="bg-background border border-border rounded px-3 py-1.5 text-sm text-text focus:outline-none focus:border-primary"
-        placeholder="To"
-      />
-
-      {/* Date presets */}
-      <div className="flex gap-1.5">
-        {presetBtn('today', 'Today')}
-        {presetBtn('week', 'Week')}
-        {presetBtn('month', 'Month')}
-        {presetBtn('all', 'All')}
-      </div>
-
-      {/* Last N hands */}
-      <div className="flex items-center gap-1.5">
-        <span className="text-xs text-text-muted">Last</span>
-        <input
-          type="number"
-          value={lastN}
-          onChange={(e) => setLastN(e.target.value)}
-          placeholder="All"
-          min={1}
-          className="bg-background border border-border rounded px-2 py-1.5 text-sm text-text w-20 focus:outline-none focus:border-primary [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+        {/* Date inputs */}
+        <Input
+          type="date"
+          value={dateFrom}
+          onChange={(e) => handleDateFromChange(e.target.value)}
+          className="w-[140px] h-8 text-sm"
+          placeholder="From"
         />
-        <span className="text-xs text-text-muted">hands</span>
-      </div>
+        <Input
+          type="date"
+          value={dateTo}
+          onChange={(e) => handleDateToChange(e.target.value)}
+          className="w-[140px] h-8 text-sm"
+          placeholder="To"
+        />
 
-      {/* Spacer */}
-      <div className="flex-1" />
-
-      {/* Unit toggle + line toggles */}
-      <div className="flex gap-1.5 items-center">
-        <div className="flex rounded overflow-hidden border border-border">
-          <button
-            className={`px-3 py-1.5 text-xs transition-colors ${
-              unit === 'bb' ? 'bg-primary text-white' : 'bg-surface text-text-muted hover:text-text'
-            }`}
-            onClick={() => setUnit('bb')}
-          >
-            BB
-          </button>
-          <button
-            className={`px-3 py-1.5 text-xs transition-colors ${
-              unit === 'usd' ? 'bg-primary text-white' : 'bg-surface text-text-muted hover:text-text'
-            }`}
-            onClick={() => setUnit('usd')}
-          >
-            $
-          </button>
+        {/* Date presets */}
+        <div className="flex gap-1.5">
+          {presetBtn('today', 'Today')}
+          {presetBtn('week', 'Week')}
+          {presetBtn('month', 'Month')}
+          {presetBtn('all', 'All')}
         </div>
-        {toggleBtn('ev', 'EV', LINE_COLORS.ev, hasEVData)}
-        {toggleBtn('showdown', 'SD', LINE_COLORS.showdown)}
-        {toggleBtn('rake', 'Rake', LINE_COLORS.rake)}
-        {toggleBtn('ci', 'CI', LINE_COLORS.ci, !!variance)}
-        {toggleBtn('sessions', 'Sessions', LINE_COLORS.session, sessions.length > 1)}
-      </div>
-    </div>
+
+        {/* Last N hands */}
+        <div className="flex items-center gap-1.5">
+          <span className="text-xs text-text-muted">Last</span>
+          <Input
+            type="number"
+            value={lastN}
+            onChange={(e) => setLastN(e.target.value)}
+            placeholder="All"
+            min={1}
+            className="w-20 h-8 text-sm [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+          />
+          <span className="text-xs text-text-muted">hands</span>
+        </div>
+
+        {/* Spacer */}
+        <div className="flex-1" />
+
+        {/* Unit toggle + line toggles */}
+        <div className="flex gap-1.5 items-center">
+          <ToggleGroup type="single" value={unit} onValueChange={(v) => { if (v) setUnit(v as 'bb' | 'usd'); }}>
+            <ToggleGroupItem value="bb" className="h-7 text-xs px-3">BB</ToggleGroupItem>
+            <ToggleGroupItem value="usd" className="h-7 text-xs px-3">$</ToggleGroupItem>
+          </ToggleGroup>
+          {toggleBtn('ev', 'EV', LINE_COLORS.ev, hasEVData)}
+          {toggleBtn('showdown', 'SD', LINE_COLORS.showdown)}
+          {toggleBtn('rake', 'Rake', LINE_COLORS.rake)}
+          {toggleBtn('ci', 'CI', LINE_COLORS.ci, !!variance)}
+          {toggleBtn('sessions', 'Sessions', LINE_COLORS.session, sessions.length > 1)}
+        </div>
+      </CardContent>
+    </Card>
   );
 
   return (
@@ -529,7 +533,7 @@ export default function GraphPage() {
         <>
           {/* Graph */}
           {data.length > 0 && (
-            <div className="bg-surface rounded-lg border border-border p-4">
+            <Card className="p-4">
               <div className="flex gap-4 mb-2 ml-12 text-xs text-text-muted">
                 <span className="flex items-center gap-1.5">
                   <span className="inline-block w-4 h-0.5 rounded" style={{ background: LINE_COLORS.main }} />
@@ -708,7 +712,7 @@ export default function GraphPage() {
                   )}
                 </ComposedChart>
               </ResponsiveContainer>
-            </div>
+            </Card>
           )}
 
           {/* Stat Cards - Row 1 */}
@@ -899,43 +903,43 @@ function BreakdownTable<T>({
   unit: 'bb' | 'usd';
 }) {
   return (
-    <div className="bg-surface rounded-lg border border-border overflow-hidden">
-      <div className="px-4 py-3 border-b border-border">
+    <Card className="overflow-hidden">
+      <CardHeader className="px-4 py-3">
         <h2 className="text-sm font-semibold text-text">{title}</h2>
-      </div>
+      </CardHeader>
       <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-border">
+        <Table>
+          <TableHeader>
+            <TableRow>
               {columns.map(col => (
-                <th
+                <TableHead
                   key={col.key}
-                  className={`px-4 py-2.5 text-[11px] uppercase tracking-wide text-text-muted font-medium ${
+                  className={`px-4 py-2.5 h-auto text-[11px] uppercase tracking-wide ${
                     col.align === 'right' ? 'text-right' : 'text-left'
                   }`}
                 >
                   {col.label}
-                </th>
+                </TableHead>
               ))}
-            </tr>
-          </thead>
-          <tbody>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {rows.map(row => (
-              <tr key={rowKey(row)} className="border-b border-border last:border-0 hover:bg-surface-hover transition-colors">
+              <TableRow key={rowKey(row)} className="hover:bg-surface-hover transition-colors">
                 {columns.map(col => (
-                  <td
+                  <TableCell
                     key={col.key}
                     className={`px-4 py-2.5 font-mono ${col.align === 'right' ? 'text-right' : 'text-left'}`}
                   >
                     {col.render(row, unit)}
-                  </td>
+                  </TableCell>
                 ))}
-              </tr>
+              </TableRow>
             ))}
-          </tbody>
-        </table>
+          </TableBody>
+        </Table>
       </div>
-    </div>
+    </Card>
   );
 }
 

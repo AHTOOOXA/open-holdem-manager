@@ -1,5 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import type { TagCount } from '@/lib/api';
+import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
 
 interface FilterState {
   position: string[];
@@ -34,18 +36,16 @@ function Dropdown({
 
   return (
     <div className="relative" ref={ref}>
-      <button
+      <Button
+        variant={active ? 'secondary' : 'outline'}
+        size="sm"
+        className={`h-7 text-xs ${active ? 'border-primary text-primary bg-primary/10' : ''}`}
         onClick={() => setOpen(!open)}
-        className={`px-2.5 py-1 text-[12px] rounded border transition-colors ${
-          active
-            ? 'border-primary text-primary bg-primary/10'
-            : 'border-border text-text-muted hover:border-text-muted'
-        }`}
       >
         {label} &#9662;
-      </button>
+      </Button>
       {open && (
-        <div className="absolute z-40 top-full left-0 mt-1 bg-surface border border-border rounded-lg shadow-lg p-2 min-w-[160px]">
+        <div className="absolute z-40 top-full left-0 mt-1 bg-popover border border-border rounded-lg shadow-lg p-2 min-w-[160px]">
           {children}
         </div>
       )}
@@ -226,38 +226,40 @@ export default function HandFilters({
         ))}
         {filters.date === 'custom' && (
           <div className="flex flex-col gap-1 mt-2 pt-2 border-t border-border">
-            <input
+            <Input
               type="date"
               value={filters.dateFrom}
               onChange={(e) => onChange({ ...filters, dateFrom: e.target.value })}
-              className="bg-background border border-border rounded px-1.5 py-0.5 text-[11px] text-text outline-none"
+              className="h-6 text-[11px]"
             />
-            <input
+            <Input
               type="date"
               value={filters.dateTo}
               onChange={(e) => onChange({ ...filters, dateTo: e.target.value })}
-              className="bg-background border border-border rounded px-1.5 py-0.5 text-[11px] text-text outline-none"
+              className="h-6 text-[11px]"
             />
           </div>
         )}
       </Dropdown>
 
       {/* Search */}
-      <input
+      <Input
         type="text"
         value={filters.search}
         onChange={(e) => onChange({ ...filters, search: e.target.value })}
         placeholder="Search hand ID..."
-        className="bg-background border border-border rounded px-2 py-1 text-[12px] text-text placeholder:text-text-muted outline-none focus:border-primary w-40"
+        className="h-7 text-xs w-40"
       />
 
       {hasFilters && (
-        <button
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-7 text-xs text-text-muted hover:text-red"
           onClick={clearAll}
-          className="text-[11px] text-text-muted hover:text-red transition-colors"
         >
           Clear all
-        </button>
+        </Button>
       )}
     </div>
   );

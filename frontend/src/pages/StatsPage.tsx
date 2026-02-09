@@ -1,6 +1,16 @@
 import { useState, useEffect, useMemo } from 'react';
 import { getHeroStats, getSettings, getFilterOptions } from '@/lib/api';
 import type { HeroStats, PositionalStats, StatValue, Settings, FilterOptions } from '@/lib/api';
+import { Card, CardContent } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -269,84 +279,85 @@ export default function StatsPage() {
   };
 
   const presetBtn = (preset: DatePreset, label: string) => (
-    <button
-      className={`px-3 py-1.5 text-xs rounded transition-colors ${
-        activePreset === preset
-          ? 'bg-primary text-white'
-          : 'bg-surface border border-border text-text-muted hover:text-text'
-      }`}
+    <Button
+      variant={activePreset === preset ? 'default' : 'outline'}
+      size="sm"
+      className="h-7 text-xs"
       onClick={() => handlePreset(preset)}
     >
       {label}
-    </button>
+    </Button>
   );
 
   const filterBarJSX = (
-    <div className="bg-surface rounded-lg border border-border px-4 py-3 mb-3 flex flex-wrap items-center gap-3">
-      {/* Hero badge */}
-      <div className="flex items-center gap-2">
-        <span className="bg-primary/20 text-primary px-2.5 py-0.5 rounded text-sm font-semibold">
-          {settings?.hero_username || 'Hero'}
-        </span>
-        <span className="text-[11px] text-text-muted uppercase">{settings?.hero_site || 'GGPoker'}</span>
-      </div>
+    <Card className="mb-3">
+      <CardContent className="px-4 py-3 flex flex-wrap items-center gap-3">
+        {/* Hero badge */}
+        <div className="flex items-center gap-2">
+          <span className="bg-primary/20 text-primary px-2.5 py-0.5 rounded text-sm font-semibold">
+            {settings?.hero_username || 'Hero'}
+          </span>
+          <span className="text-[11px] text-text-muted uppercase">{settings?.hero_site || 'GGPoker'}</span>
+        </div>
 
-      {/* Stakes filter */}
-      <select
-        value={stakes}
-        onChange={(e) => setStakes(e.target.value)}
-        className="bg-background border border-border rounded px-3 py-1.5 text-sm text-text focus:outline-none focus:border-primary"
-      >
-        <option value="">All Stakes</option>
-        {filterOpts?.stakes.map(s => (
-          <option key={s} value={s}>{s}</option>
-        ))}
-      </select>
+        {/* Stakes filter */}
+        <Select value={stakes || '__all__'} onValueChange={(v) => setStakes(v === '__all__' ? '' : v)}>
+          <SelectTrigger className="w-[130px] h-8 text-sm">
+            <SelectValue placeholder="All Stakes" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__all__">All Stakes</SelectItem>
+            {filterOpts?.stakes.map(s => (
+              <SelectItem key={s} value={s}>{s}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
 
-      {/* Date inputs */}
-      <input
-        type="date"
-        value={dateFrom}
-        onChange={(e) => { setDateFrom(e.target.value); setActivePreset('all'); }}
-        className="bg-background border border-border rounded px-3 py-1.5 text-sm text-text focus:outline-none focus:border-primary"
-      />
-      <input
-        type="date"
-        value={dateTo}
-        onChange={(e) => { setDateTo(e.target.value); setActivePreset('all'); }}
-        className="bg-background border border-border rounded px-3 py-1.5 text-sm text-text focus:outline-none focus:border-primary"
-      />
+        {/* Date inputs */}
+        <Input
+          type="date"
+          value={dateFrom}
+          onChange={(e) => { setDateFrom(e.target.value); setActivePreset('all'); }}
+          className="w-[140px] h-8 text-sm"
+        />
+        <Input
+          type="date"
+          value={dateTo}
+          onChange={(e) => { setDateTo(e.target.value); setActivePreset('all'); }}
+          className="w-[140px] h-8 text-sm"
+        />
 
-      {/* Date presets */}
-      <div className="flex gap-1.5">
-        {presetBtn('today', 'Today')}
-        {presetBtn('week', 'Week')}
-        {presetBtn('month', 'Month')}
-        {presetBtn('all', 'All')}
-      </div>
+        {/* Date presets */}
+        <div className="flex gap-1.5">
+          {presetBtn('today', 'Today')}
+          {presetBtn('week', 'Week')}
+          {presetBtn('month', 'Month')}
+          {presetBtn('all', 'All')}
+        </div>
 
-      {/* Spacer */}
-      <div className="flex-1" />
+        {/* Spacer */}
+        <div className="flex-1" />
 
-      {/* Summary stats */}
-      {stats && stats.hands > 0 && (() => {
-        const wr = stats.win_rate_bb100;
-        const wrEv = stats.win_rate_ev_bb100;
-        const wrColor = wr !== null ? (wr >= 0 ? 'text-green' : 'text-red') : 'text-text-muted';
-        const wrEvColor = wrEv !== null ? (wrEv >= 0 ? 'text-green' : 'text-red') : 'text-text-muted';
-        return (
-          <div className="flex items-center gap-3">
-            <span className="text-sm text-text-muted">{stats.hands.toLocaleString()} hands</span>
-            <span className={`text-sm font-bold font-mono ${wrColor}`}>
-              {wr !== null ? `${wr >= 0 ? '+' : ''}${wr.toFixed(2)} bb/100` : '—'}
-            </span>
-            <span className={`text-sm font-bold font-mono ${wrEvColor}`}>
-              EV {wrEv !== null ? `${wrEv >= 0 ? '+' : ''}${wrEv.toFixed(2)}` : '—'}
-            </span>
-          </div>
-        );
-      })()}
-    </div>
+        {/* Summary stats */}
+        {stats && stats.hands > 0 && (() => {
+          const wr = stats.win_rate_bb100;
+          const wrEv = stats.win_rate_ev_bb100;
+          const wrColor = wr !== null ? (wr >= 0 ? 'text-green' : 'text-red') : 'text-text-muted';
+          const wrEvColor = wrEv !== null ? (wrEv >= 0 ? 'text-green' : 'text-red') : 'text-text-muted';
+          return (
+            <div className="flex items-center gap-3">
+              <span className="text-sm text-text-muted">{stats.hands.toLocaleString()} hands</span>
+              <span className={`text-sm font-bold font-mono ${wrColor}`}>
+                {wr !== null ? `${wr >= 0 ? '+' : ''}${wr.toFixed(2)} bb/100` : '—'}
+              </span>
+              <span className={`text-sm font-bold font-mono ${wrEvColor}`}>
+                EV {wrEv !== null ? `${wrEv >= 0 ? '+' : ''}${wrEv.toFixed(2)}` : '—'}
+              </span>
+            </div>
+          );
+        })()}
+      </CardContent>
+    </Card>
   );
 
   if (loading) return (

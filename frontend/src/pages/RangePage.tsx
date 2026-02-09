@@ -1,6 +1,15 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { getRangeStats, getFilterOptions } from '@/lib/api';
 import type { ComboStats, RangeResponse, FilterOptions } from '@/lib/api';
+import { Card } from '@/components/ui/card';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 
 const RANKS = ['A', 'K', 'Q', 'J', 'T', '9', '8', '7', '6', '5', '4', '3', '2'];
 
@@ -161,44 +170,38 @@ export default function RangePage() {
         <h1 className="text-xl font-bold">Preflop Range</h1>
         <div className="flex items-center gap-3 flex-wrap">
           {/* Position */}
-          <div className="flex gap-1">
+          <ToggleGroup type="single" value={position} onValueChange={(v) => { if (v) { setPosition(v); setSelected(null); } }}>
             {POSITIONS.map(p => (
-              <button
-                key={p}
-                onClick={() => { setPosition(p); setSelected(null); }}
-                className={`px-2.5 py-1 text-xs font-medium rounded transition-colors ${
-                  position === p
-                    ? 'bg-primary text-white'
-                    : 'bg-surface text-text-muted hover:text-text hover:bg-surface-hover'
-                }`}
-              >
+              <ToggleGroupItem key={p} value={p} className="h-7 text-xs px-2.5">
                 {p}
-              </button>
+              </ToggleGroupItem>
             ))}
-          </div>
+          </ToggleGroup>
           {/* Stakes */}
           {filterOpts && filterOpts.stakes.length > 1 && (
-            <select
-              value={stakes}
-              onChange={e => { setStakes(e.target.value); setSelected(null); }}
-              className="bg-surface border border-border rounded px-2.5 py-1 text-xs text-text"
-            >
-              <option value="">All Stakes</option>
-              {filterOpts.stakes.map(s => (
-                <option key={s} value={s}>{s}</option>
-              ))}
-            </select>
+            <Select value={stakes || '__all__'} onValueChange={(v) => { setStakes(v === '__all__' ? '' : v); setSelected(null); }}>
+              <SelectTrigger className="w-[120px] h-7 text-xs">
+                <SelectValue placeholder="All Stakes" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all__">All Stakes</SelectItem>
+                {filterOpts.stakes.map(s => (
+                  <SelectItem key={s} value={s}>{s}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           )}
           {/* Color by */}
-          <select
-            value={colorBy}
-            onChange={e => setColorBy(e.target.value as ColorBy)}
-            className="bg-surface border border-border rounded px-2.5 py-1 text-xs text-text"
-          >
-            {COLOR_OPTIONS.map(o => (
-              <option key={o.value} value={o.value}>{o.label}</option>
-            ))}
-          </select>
+          <Select value={colorBy} onValueChange={(v) => setColorBy(v as ColorBy)}>
+            <SelectTrigger className="w-[110px] h-7 text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {COLOR_OPTIONS.map(o => (
+                <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           {/* Hand count */}
           {data && (
             <span className="text-xs text-text-muted">
@@ -298,7 +301,7 @@ export default function RangePage() {
           <div className="flex-1 min-w-[300px]">
             {/* Combo detail */}
             {detail ? (
-              <div className="bg-surface rounded-lg border border-border p-5 mb-4">
+              <Card className="p-5 mb-4">
                 <div className="flex items-center justify-between mb-4">
                   <span className="text-2xl font-bold font-mono">{activeCombo}</span>
                   <span className="text-sm text-text-muted">
@@ -319,16 +322,16 @@ export default function RangePage() {
                   <DetailRow label="WTSD" value={detail.wtsd_opp > 0 ? `${((detail.wtsd / detail.wtsd_opp) * 100).toFixed(0)}%` : '--'} sub={detail.wtsd_opp > 0 ? `${detail.wtsd}/${detail.wtsd_opp}` : undefined} />
                   <DetailRow label="W$SD" value={detail.wsd_opp > 0 ? `${((detail.wsd / detail.wsd_opp) * 100).toFixed(0)}%` : '--'} sub={detail.wsd_opp > 0 ? `${detail.wsd}/${detail.wsd_opp}` : undefined} />
                 </div>
-              </div>
+              </Card>
             ) : (
-              <div className="bg-surface rounded-lg border border-border p-5 mb-4 text-text-muted text-[15px]">
+              <Card className="p-5 mb-4 text-text-muted text-[15px]">
                 Hover or click a cell to see details
-              </div>
+              </Card>
             )}
 
             {/* Biggest leaks */}
             {biggestLeaks.length > 0 && (
-              <div className="bg-surface rounded-lg border border-border p-5 mb-4">
+              <Card className="p-5 mb-4">
                 <h3 className="text-sm font-medium text-text-muted uppercase tracking-wide mb-3">Biggest Leaks</h3>
                 <div className="space-y-2">
                   {biggestLeaks.map(c => (
@@ -347,12 +350,12 @@ export default function RangePage() {
                     </div>
                   ))}
                 </div>
-              </div>
+              </Card>
             )}
 
             {/* Biggest winners */}
             {biggestWinners.length > 0 && (
-              <div className="bg-surface rounded-lg border border-border p-5">
+              <Card className="p-5">
                 <h3 className="text-sm font-medium text-text-muted uppercase tracking-wide mb-3">Top Winners</h3>
                 <div className="space-y-2">
                   {biggestWinners.map(c => (
@@ -371,7 +374,7 @@ export default function RangePage() {
                     </div>
                   ))}
                 </div>
-              </div>
+              </Card>
             )}
           </div>
         </div>

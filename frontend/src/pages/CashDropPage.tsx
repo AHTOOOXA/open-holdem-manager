@@ -1,6 +1,15 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { getCashDropStats, getFilterOptions } from '@/lib/api';
 import type { CashDropResponse, CashDropRangeCategory, ComboStats, FilterOptions } from '@/lib/api';
+import { Card, CardContent } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 
 // ── Heatmap helpers ──────────────────────────────────────────────────
 
@@ -41,7 +50,7 @@ function FieldHeatmap({ category }: { category: CashDropRangeCategory }) {
   const hoveredCombo = hovered ? comboMap.get(hovered) : null;
 
   return (
-    <div className="bg-surface rounded-lg border border-border p-4">
+    <Card className="p-4">
       <div className="flex items-center justify-between mb-2">
         <h3 className="text-sm font-medium">{category.label}</h3>
         <span className="text-xs text-text-muted">{category.total_hands} hands</span>
@@ -94,7 +103,7 @@ function FieldHeatmap({ category }: { category: CashDropRangeCategory }) {
           {hovered}: {hoveredCombo.hands} hands
         </div>
       )}
-    </div>
+    </Card>
   );
 }
 
@@ -139,31 +148,32 @@ export default function CashDropPage() {
         <h1 className="text-xl font-bold">Cash Drop Analysis</h1>
         <div className="flex items-center gap-3 flex-wrap">
           {filterOpts && filterOpts.stakes.length > 1 && (
-            <select
-              value={stakes}
-              onChange={e => setStakes(e.target.value)}
-              className="bg-surface border border-border rounded px-2.5 py-1 text-xs text-text"
-            >
-              <option value="">All Stakes</option>
-              {filterOpts.stakes.map(s => (
-                <option key={s} value={s}>{s}</option>
-              ))}
-            </select>
+            <Select value={stakes || '__all__'} onValueChange={(v) => setStakes(v === '__all__' ? '' : v)}>
+              <SelectTrigger className="w-[120px] h-7 text-xs">
+                <SelectValue placeholder="All Stakes" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all__">All Stakes</SelectItem>
+                {filterOpts.stakes.map(s => (
+                  <SelectItem key={s} value={s}>{s}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           )}
           {filterOpts?.date_range?.min && (
             <>
-              <input
+              <Input
                 type="date"
                 value={dateFrom}
                 onChange={e => setDateFrom(e.target.value)}
-                className="bg-surface border border-border rounded px-2 py-1 text-xs text-text"
+                className="w-[130px] h-7 text-xs"
               />
               <span className="text-text-muted text-xs">to</span>
-              <input
+              <Input
                 type="date"
                 value={dateTo}
                 onChange={e => setDateTo(e.target.value)}
-                className="bg-surface border border-border rounded px-2 py-1 text-xs text-text"
+                className="w-[130px] h-7 text-xs"
               />
             </>
           )}
@@ -178,15 +188,15 @@ export default function CashDropPage() {
         <>
           {/* ── Financial Summary ── */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
-            <StatCard label="Paid to Fund" value={`${s.total_paid_bb.toFixed(0)} BB`} sub={`$${s.total_paid_usd.toFixed(2)} (${s.pots_won} pots won)`} color="text-red" />
-            <StatCard label="Received (EV)" value={`${s.total_received_bb.toFixed(0)} BB`} sub={`$${s.total_received_usd.toFixed(2)} (${s.cash_drop_hands} drops)`} color="text-green" />
-            <StatCard label="Net" value={`${s.net_bb >= 0 ? '+' : ''}${s.net_bb.toFixed(0)} BB`} sub={`$${s.net_usd >= 0 ? '+' : ''}${s.net_usd.toFixed(2)}`} color={s.net_bb >= 0 ? 'text-green' : 'text-red'} />
-            <StatCard label="Frequency" value={s.cash_drop_hands > 0 ? `1 in ${s.frequency.toFixed(0)}` : '--'} sub={`${s.cash_drop_hands} drops in ${s.total_hands.toLocaleString()} hands`} />
+            <SummaryCard label="Paid to Fund" value={`${s.total_paid_bb.toFixed(0)} BB`} sub={`$${s.total_paid_usd.toFixed(2)} (${s.pots_won} pots won)`} color="text-red" />
+            <SummaryCard label="Received (EV)" value={`${s.total_received_bb.toFixed(0)} BB`} sub={`$${s.total_received_usd.toFixed(2)} (${s.cash_drop_hands} drops)`} color="text-green" />
+            <SummaryCard label="Net" value={`${s.net_bb >= 0 ? '+' : ''}${s.net_bb.toFixed(0)} BB`} sub={`$${s.net_usd >= 0 ? '+' : ''}${s.net_usd.toFixed(2)}`} color={s.net_bb >= 0 ? 'text-green' : 'text-red'} />
+            <SummaryCard label="Frequency" value={s.cash_drop_hands > 0 ? `1 in ${s.frequency.toFixed(0)}` : '--'} sub={`${s.cash_drop_hands} drops in ${s.total_hands.toLocaleString()} hands`} />
           </div>
 
           {/* ── Cash Drop Pots: Hero + Field ── */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-            <div className="bg-surface rounded-lg border border-border p-5">
+            <Card className="p-5">
               <div className="flex items-center justify-between mb-3">
                 <h2 className="text-sm font-medium text-text-muted uppercase tracking-wide">Hero in Cash Drop Pots</h2>
                 <span className="text-xs text-text-muted">{s.cash_drop_hands} hands</span>
@@ -203,10 +213,10 @@ export default function CashDropPage() {
                 <StatRow label="WTSD" value={s.hero_wtsd_pct} suffix="%" />
                 <StatRow label="W$SD" value={s.hero_wsd_pct} suffix="%" />
               </div>
-            </div>
+            </Card>
 
             {data!.field ? (
-              <div className="bg-surface rounded-lg border border-border p-5">
+              <Card className="p-5">
                 <div className="flex items-center justify-between mb-3">
                   <h2 className="text-sm font-medium text-text-muted uppercase tracking-wide">Field in Cash Drop Pots</h2>
                   <span className="text-xs text-text-muted">{data!.field.total_players} player-hands</span>
@@ -223,17 +233,17 @@ export default function CashDropPage() {
                   <StatRow label="WTSD" value={data!.field.wtsd_pct} suffix="%" />
                   <StatRow label="W$SD" value={data!.field.wsd_pct} suffix="%" />
                 </div>
-              </div>
+              </Card>
             ) : (
-              <div className="bg-surface rounded-lg border border-border p-5 text-text-muted text-sm flex items-center justify-center">
+              <Card className="p-5 text-text-muted text-sm flex items-center justify-center">
                 No field data available
-              </div>
+              </Card>
             )}
           </div>
 
           {/* ── Drop Size Breakdown ── */}
           {data!.by_type.length > 0 && (
-            <div className="bg-surface rounded-lg border border-border p-5 mb-6">
+            <Card className="p-5 mb-6">
               <h2 className="text-sm font-medium text-text-muted uppercase tracking-wide mb-3">Drop Size Breakdown</h2>
               <div className="flex gap-4 flex-wrap">
                 {data!.by_type.map(t => (
@@ -244,7 +254,7 @@ export default function CashDropPage() {
                   </div>
                 ))}
               </div>
-            </div>
+            </Card>
           )}
 
           {/* ── Field Ranges by Action Type ── */}
@@ -284,12 +294,14 @@ function StatRow({ label, value, suffix, color }: { label: string; value: number
   );
 }
 
-function StatCard({ label, value, sub, color }: { label: string; value: string; sub?: string; color?: string }) {
+function SummaryCard({ label, value, sub, color }: { label: string; value: string; sub?: string; color?: string }) {
   return (
-    <div className="bg-surface rounded-lg border border-border p-4">
-      <div className="text-xs text-text-muted uppercase tracking-wide mb-1">{label}</div>
-      <div className={`text-lg font-bold font-mono ${color ?? 'text-text'}`}>{value}</div>
-      {sub && <div className="text-xs text-text-muted mt-0.5">{sub}</div>}
-    </div>
+    <Card>
+      <CardContent className="p-4">
+        <div className="text-xs text-text-muted uppercase tracking-wide mb-1">{label}</div>
+        <div className={`text-lg font-bold font-mono ${color ?? 'text-text'}`}>{value}</div>
+        {sub && <div className="text-xs text-text-muted mt-0.5">{sub}</div>}
+      </CardContent>
+    </Card>
   );
 }

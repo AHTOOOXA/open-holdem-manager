@@ -1,4 +1,6 @@
-import { BrowserRouter, Routes, Route, NavLink } from 'react-router-dom';
+import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { SidebarProvider, SidebarInset, SidebarTrigger } from '@/components/ui/sidebar';
+import AppSidebar from '@/components/AppSidebar';
 import UploadPage from './pages/UploadPage';
 import StatsPage from './pages/StatsPage';
 import GraphPage from './pages/GraphPage';
@@ -6,47 +8,27 @@ import HandsPage from './pages/HandsPage';
 import RangePage from './pages/RangePage';
 import CashDropPage from './pages/CashDropPage';
 
-const navItems = [
-  { to: '/', label: 'Upload' },
-  { to: '/stats', label: 'Stats' },
-  { to: '/range', label: 'Range' },
-  { to: '/graph', label: 'Results' },
-  { to: '/hands', label: 'Hands' },
-  { to: '/cash-drop', label: 'Cash Drop' },
-];
-
 export default function App() {
   return (
     <BrowserRouter>
-      <div className="min-h-screen flex flex-col">
-        <nav className="border-b border-border bg-surface px-6 py-3 flex items-center gap-6">
-          <span className="text-lg font-bold text-primary">OHM</span>
-          {navItems.map((item) => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              className={({ isActive }) =>
-                `text-sm font-medium transition-colors ${
-                  isActive ? 'text-primary' : 'text-text-muted hover:text-text'
-                }`
-              }
-              end={item.to === '/'}
-            >
-              {item.label}
-            </NavLink>
-          ))}
-        </nav>
-        <main className="flex-1 p-6">
-          <Routes>
-            <Route path="/" element={<UploadPage />} />
-            <Route path="/stats" element={<StatsPage />} />
-            <Route path="/graph" element={<GraphPage />} />
-            <Route path="/range" element={<RangePage />} />
-            <Route path="/hands" element={<HandsPage />} />
-            <Route path="/cash-drop" element={<CashDropPage />} />
-          </Routes>
-        </main>
-      </div>
+      <SidebarProvider>
+        <AppSidebar />
+        <SidebarInset>
+          <header className="flex h-10 items-center gap-2 border-b border-border px-4">
+            <SidebarTrigger className="-ml-1" />
+          </header>
+          <main className="flex-1 p-6">
+            <Routes>
+              <Route path="/" element={<UploadPage />} />
+              <Route path="/stats" element={<StatsPage />} />
+              <Route path="/graph" element={<GraphPage />} />
+              <Route path="/range" element={<RangePage />} />
+              <Route path="/hands" element={<HandsPage />} />
+              <Route path="/cash-drop" element={<CashDropPage />} />
+            </Routes>
+          </main>
+        </SidebarInset>
+      </SidebarProvider>
     </BrowserRouter>
   );
 }

@@ -7,6 +7,15 @@ import { CardBoxPair, CardBoxRow, CardBox } from '@/components/hands/CardDisplay
 import TagPill from '@/components/hands/TagPill';
 import Pagination from '@/components/hands/Pagination';
 import HandDrawer from '@/components/hands/HandDrawer';
+import { Button } from '@/components/ui/button';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
 
 // ── Action display (H2N style) ──────────────────────────────────────
 
@@ -243,128 +252,129 @@ export default function HandsPage() {
             {hasFilters ? 'No hands match your filters.' : 'No hands yet. Import hand histories to get started.'}
           </p>
           {hasFilters && (
-            <button
+            <Button
+              variant="link"
               onClick={() => handleFilterChange({ position: [], stakes: [], result: '', tags: [], date: '', dateFrom: '', dateTo: '', search: '' })}
-              className="mt-2 text-sm text-primary hover:text-primary-hover"
+              className="mt-2 text-sm"
             >
               Clear filters
-            </button>
+            </Button>
           )}
         </div>
       ) : (
         <>
           <div className="overflow-x-auto">
-            <table className="w-full border-collapse">
-              <thead>
-                <tr className="text-[13px] text-text-muted border-b border-border uppercase tracking-wide">
-                  <th className="py-2 px-2 text-left font-semibold">Preflop</th>
-                  <th className="py-2 px-2 text-left font-semibold">Actions</th>
-                  <th className="py-2 pl-4 pr-2 text-left font-semibold">Flop</th>
-                  <th className="py-2 px-1 text-center font-semibold">Pot</th>
-                  <th className="py-2 px-2 text-left font-semibold">Actions</th>
-                  <th className="py-2 pl-4 pr-2 text-left font-semibold">Turn</th>
-                  <th className="py-2 px-1 text-center font-semibold">Pot</th>
-                  <th className="py-2 px-2 text-left font-semibold">Actions</th>
-                  <th className="py-2 pl-4 pr-2 text-left font-semibold">River</th>
-                  <th className="py-2 px-1 text-center font-semibold">Pot</th>
-                  <th className="py-2 px-2 text-left font-semibold">Actions</th>
-                  <th className="py-2 pl-4 pr-2 text-left font-semibold cursor-pointer hover:text-text select-none" onClick={() => handleSort('stakes')}>
+            <Table>
+              <TableHeader>
+                <TableRow className="text-[13px] uppercase tracking-wide">
+                  <TableHead className="py-2 px-2 h-auto">Preflop</TableHead>
+                  <TableHead className="py-2 px-2 h-auto">Actions</TableHead>
+                  <TableHead className="py-2 pl-4 pr-2 h-auto">Flop</TableHead>
+                  <TableHead className="py-2 px-1 h-auto text-center">Pot</TableHead>
+                  <TableHead className="py-2 px-2 h-auto">Actions</TableHead>
+                  <TableHead className="py-2 pl-4 pr-2 h-auto">Turn</TableHead>
+                  <TableHead className="py-2 px-1 h-auto text-center">Pot</TableHead>
+                  <TableHead className="py-2 px-2 h-auto">Actions</TableHead>
+                  <TableHead className="py-2 pl-4 pr-2 h-auto">River</TableHead>
+                  <TableHead className="py-2 px-1 h-auto text-center">Pot</TableHead>
+                  <TableHead className="py-2 px-2 h-auto">Actions</TableHead>
+                  <TableHead className="py-2 pl-4 pr-2 h-auto cursor-pointer hover:text-text select-none" onClick={() => handleSort('stakes')}>
                     Stakes{sortArrow('stakes')}
-                  </th>
-                  <th className="py-2 px-2 text-right font-semibold cursor-pointer hover:text-text select-none" onClick={() => handleSort('won_bb')}>
+                  </TableHead>
+                  <TableHead className="py-2 px-2 h-auto text-right cursor-pointer hover:text-text select-none" onClick={() => handleSort('won_bb')}>
                     Won{sortArrow('won_bb')}
-                  </th>
-                  <th className="py-2 px-2 text-right font-semibold">EV Diff.</th>
-                  <th className="py-2 px-2 text-right font-semibold cursor-pointer hover:text-text select-none" onClick={() => handleSort('played_at')}>
+                  </TableHead>
+                  <TableHead className="py-2 px-2 h-auto text-right">EV Diff.</TableHead>
+                  <TableHead className="py-2 px-2 h-auto text-right cursor-pointer hover:text-text select-none" onClick={() => handleSort('played_at')}>
                     Date{sortArrow('played_at')}
-                  </th>
-                  <th className="py-2 px-2 text-left font-semibold">Tags</th>
-                </tr>
-              </thead>
-              <tbody>
+                  </TableHead>
+                  <TableHead className="py-2 px-2 h-auto">Tags</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {hands.map((h) => {
                   const wonUsd = h.won_bb * h.bb_amount;
                   const evDiffBb = h.all_in_ev_bb - h.won_bb;
                   const evDiffUsd = evDiffBb * h.bb_amount;
                   return (
-                    <tr
+                    <TableRow
                       key={h.id}
                       onClick={() => setSelectedId(h.id)}
-                      className={`border-b border-border/30 cursor-pointer transition-colors text-[15px] ${
+                      className={`cursor-pointer transition-colors text-[15px] ${
                         selectedId === h.id ? 'bg-primary/10' : 'hover:bg-surface-hover'
                       }`}
                     >
                       {/* Preflop cards */}
-                      <td className="py-1.5 px-2">
+                      <TableCell className="py-1.5 px-2">
                         <CardBoxPair card1={h.card1} card2={h.card2} />
-                      </td>
+                      </TableCell>
                       {/* Preflop actions — trim leading folds */}
-                      <td className="py-1.5 px-2">
+                      <TableCell className="py-1.5 px-2">
                         <Actions items={h.preflop_actions} trimFolds />
-                      </td>
+                      </TableCell>
                       {/* Flop cards */}
-                      <td className="py-1.5 pl-4 pr-2">
+                      <TableCell className="py-1.5 pl-4 pr-2">
                         <CardBoxRow cards={h.flop_cards} />
-                      </td>
+                      </TableCell>
                       {/* Flop pot */}
-                      <td className="py-1.5 px-1 text-center font-mono text-[14px] text-text-muted">
+                      <TableCell className="py-1.5 px-1 text-center font-mono text-[14px] text-text-muted">
                         {h.flop_cards.length > 0 ? h.flop_pot : ''}
-                      </td>
+                      </TableCell>
                       {/* Flop actions */}
-                      <td className="py-1.5 px-2">
+                      <TableCell className="py-1.5 px-2">
                         <Actions items={h.flop_actions} />
-                      </td>
+                      </TableCell>
                       {/* Turn card */}
-                      <td className="py-1.5 pl-4 pr-2">
+                      <TableCell className="py-1.5 pl-4 pr-2">
                         {h.turn_card && <CardBox card={h.turn_card} />}
-                      </td>
+                      </TableCell>
                       {/* Turn pot */}
-                      <td className="py-1.5 px-1 text-center font-mono text-[14px] text-text-muted">
+                      <TableCell className="py-1.5 px-1 text-center font-mono text-[14px] text-text-muted">
                         {h.turn_card ? h.turn_pot : ''}
-                      </td>
+                      </TableCell>
                       {/* Turn actions */}
-                      <td className="py-1.5 px-2">
+                      <TableCell className="py-1.5 px-2">
                         <Actions items={h.turn_actions} />
-                      </td>
+                      </TableCell>
                       {/* River card */}
-                      <td className="py-1.5 pl-4 pr-2">
+                      <TableCell className="py-1.5 pl-4 pr-2">
                         {h.river_card && <CardBox card={h.river_card} />}
-                      </td>
+                      </TableCell>
                       {/* River pot */}
-                      <td className="py-1.5 px-1 text-center font-mono text-[14px] text-text-muted">
+                      <TableCell className="py-1.5 px-1 text-center font-mono text-[14px] text-text-muted">
                         {h.river_card ? h.river_pot : ''}
-                      </td>
+                      </TableCell>
                       {/* River actions */}
-                      <td className="py-1.5 px-2">
+                      <TableCell className="py-1.5 px-2">
                         <Actions items={h.river_actions} />
-                      </td>
+                      </TableCell>
                       {/* Stakes */}
-                      <td className="py-1.5 pl-4 pr-2 font-mono text-[15px] text-text-muted">
+                      <TableCell className="py-1.5 pl-4 pr-2 font-mono text-[15px] text-text-muted">
                         {formatStakes(h.bb_amount)}
-                      </td>
+                      </TableCell>
                       {/* Won (USD) */}
-                      <td className={`py-1.5 px-2 text-right font-mono text-[15px] font-semibold ${
+                      <TableCell className={`py-1.5 px-2 text-right font-mono text-[15px] font-semibold ${
                         wonUsd > 0.005 ? 'text-green' : wonUsd < -0.005 ? 'text-red' : 'text-text-muted'
                       }`}>
                         {Math.abs(wonUsd) < 0.005
                           ? '\u2014'
                           : `${wonUsd < 0 ? '-' : ''}${Math.abs(wonUsd).toFixed(2)}$`}
-                      </td>
+                      </TableCell>
                       {/* EV Diff */}
-                      <td className={`py-1.5 px-2 text-right font-mono text-[15px] ${
+                      <TableCell className={`py-1.5 px-2 text-right font-mono text-[15px] ${
                         Math.abs(evDiffUsd) < 0.005 ? 'text-text-muted/40' :
                         evDiffUsd > 0 ? 'text-green' : 'text-red'
                       }`}>
                         {Math.abs(evDiffUsd) < 0.005
                           ? '\u2014'
                           : `${evDiffUsd < 0 ? '-' : ''}${Math.abs(evDiffUsd).toFixed(2)}$`}
-                      </td>
+                      </TableCell>
                       {/* Date */}
-                      <td className="py-1.5 px-2 text-right text-[14px] text-text-muted whitespace-nowrap">
+                      <TableCell className="py-1.5 px-2 text-right text-[14px] text-text-muted whitespace-nowrap">
                         {formatDate(h.played_at)}
-                      </td>
+                      </TableCell>
                       {/* Tags */}
-                      <td className="py-1.5 px-2">
+                      <TableCell className="py-1.5 px-2">
                         <div className="flex items-center gap-0.5">
                           {h.tags.slice(0, 2).map((t) => (
                             <TagPill key={t} tag={t} />
@@ -373,12 +383,12 @@ export default function HandsPage() {
                             <span className="text-[11px] text-text-muted">+{h.tags.length - 2}</span>
                           )}
                         </div>
-                      </td>
-                    </tr>
+                      </TableCell>
+                    </TableRow>
                   );
                 })}
-              </tbody>
-            </table>
+              </TableBody>
+            </Table>
           </div>
 
           <Pagination

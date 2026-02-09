@@ -1,6 +1,11 @@
 import { useState, useCallback, useEffect } from 'react';
 import { uploadFilesStream, rebuildHands, getSettings, updateSettings, getHealth, clearDatabase } from '@/lib/api';
 import type { ImportResult, ImportProgress, Settings } from '@/lib/api';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Progress } from '@/components/ui/progress';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 
 export default function UploadPage() {
   const [dragging, setDragging] = useState(false);
@@ -65,7 +70,7 @@ export default function UploadPage() {
                 const files = await collectFilesFromEntry(e);
                 allFiles.push(...files);
               }
-              readBatch(); // continue reading (batched at 100 entries)
+              readBatch();
             });
           };
           readBatch();
@@ -120,6 +125,10 @@ export default function UploadPage() {
     setEditingName(false);
   };
 
+  const pct = progress?.total != null && progress.total > 0
+    ? Math.round(((progress.processed ?? 0) / progress.total) * 100)
+    : 0;
+
   return (
     <div className="max-w-2xl mx-auto space-y-6">
       <div className="flex items-center justify-between">
@@ -128,8 +137,10 @@ export default function UploadPage() {
           <span className="text-sm text-text-muted">{handCount.toLocaleString()} hands in database</span>
           {handCount > 0 && (
             <>
-              <button
-                className="text-xs text-primary hover:text-primary-hover transition-colors disabled:opacity-50"
+              <Button
+                variant="link"
+                size="sm"
+                className="text-xs"
                 disabled={uploading}
                 onClick={async () => {
                   if (!confirm('Rebuild all stats from stored hands? This re-parses everything with the latest parser.')) return;
@@ -151,9 +162,11 @@ export default function UploadPage() {
                 }}
               >
                 Rebuild Stats
-              </button>
-              <button
-                className="text-xs text-red hover:text-red/80 transition-colors"
+              </Button>
+              <Button
+                variant="link"
+                size="sm"
+                className="text-xs text-red hover:text-red/80"
                 onClick={async () => {
                   if (!confirm('Clear all hands from the database? This cannot be undone.')) return;
                   await clearDatabase();
@@ -163,56 +176,54 @@ export default function UploadPage() {
                 }}
               >
                 Clear DB
-              </button>
+              </Button>
             </>
           )}
         </div>
       </div>
 
       {/* Hero username */}
-      <div className="bg-surface rounded-lg border border-border p-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <span className="text-sm text-text-muted">Hero: </span>
-            {editingName ? (
-              <span className="inline-flex gap-2 items-center">
-                <input
-                  className="bg-background border border-border rounded px-2 py-1 text-sm text-text"
-                  value={nameInput}
-                  onChange={(e) => setNameInput(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && saveName()}
-                  autoFocus
-                />
-                <button
-                  className="text-xs text-primary hover:text-primary-hover"
-                  onClick={saveName}
-                >
-                  Save
-                </button>
-                <button
-                  className="text-xs text-text-muted hover:text-text"
-                  onClick={() => setEditingName(false)}
-                >
-                  Cancel
-                </button>
-              </span>
-            ) : (
-              <span>
-                <span className="font-medium">{settings?.hero_username || '...'}</span>
-                <button
-                  className="ml-2 text-xs text-text-muted hover:text-primary"
-                  onClick={() => {
-                    setNameInput(settings?.hero_username || '');
-                    setEditingName(true);
-                  }}
-                >
-                  Edit
-                </button>
-              </span>
-            )}
+      <Card>
+        <CardContent className="py-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <span className="text-sm text-text-muted">Hero: </span>
+              {editingName ? (
+                <span className="inline-flex gap-2 items-center">
+                  <Input
+                    className="h-7 w-48"
+                    value={nameInput}
+                    onChange={(e) => setNameInput(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && saveName()}
+                    autoFocus
+                  />
+                  <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={saveName}>
+                    Save
+                  </Button>
+                  <Button size="sm" variant="ghost" className="h-7 text-xs text-text-muted" onClick={() => setEditingName(false)}>
+                    Cancel
+                  </Button>
+                </span>
+              ) : (
+                <span>
+                  <span className="font-medium">{settings?.hero_username || '...'}</span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="ml-2 h-6 text-xs text-text-muted hover:text-primary"
+                    onClick={() => {
+                      setNameInput(settings?.hero_username || '');
+                      setEditingName(true);
+                    }}
+                  >
+                    Edit
+                  </Button>
+                </span>
+              )}
+            </div>
           </div>
-        </div>
-      </div>
+        </CardContent>
+      </Card>
 
       {/* Drop zone */}
       <div
@@ -256,15 +267,10 @@ export default function UploadPage() {
                 </p>
                 {progress?.total != null && progress.total > 0 && (
                   <>
-                    <div className="w-full bg-background rounded-full h-2 overflow-hidden">
-                      <div
-                        className="bg-primary h-2 rounded-full transition-all duration-200"
-                        style={{ width: `${Math.round(((progress.processed ?? 0) / progress.total) * 100)}%` }}
-                      />
-                    </div>
+                    <Progress value={pct} className="h-2" />
                     <div className="flex justify-between text-xs text-text-muted">
                       <span>{(progress.processed ?? 0).toLocaleString()} / {progress.total.toLocaleString()}</span>
-                      <span>{Math.round(((progress.processed ?? 0) / progress.total) * 100)}%</span>
+                      <span>{pct}%</span>
                     </div>
                     <div className="flex gap-4 justify-center text-xs">
                       <span className="text-green">{(progress.imported ?? 0).toLocaleString()} imported</span>
@@ -292,26 +298,23 @@ export default function UploadPage() {
             <p className="text-lg mb-2">Drop files or folders here</p>
             <p className="text-sm text-text-muted mb-4">.txt files, .zip archives, or folders</p>
             <div className="flex gap-3 justify-center">
-              <button
-                type="button"
-                className="px-4 py-2 text-sm bg-primary text-white rounded hover:bg-primary-hover transition-colors"
+              <Button
                 onClick={(e) => {
                   e.stopPropagation();
                   document.getElementById('file-input')?.click();
                 }}
               >
                 Browse Files
-              </button>
-              <button
-                type="button"
-                className="px-4 py-2 text-sm bg-surface border border-border text-text rounded hover:bg-background transition-colors"
+              </Button>
+              <Button
+                variant="outline"
                 onClick={(e) => {
                   e.stopPropagation();
                   document.getElementById('folder-input')?.click();
                 }}
               >
                 Browse Folder
-              </button>
+              </Button>
             </div>
           </>
         )}
@@ -319,46 +322,50 @@ export default function UploadPage() {
 
       {/* Results */}
       {result && (
-        <div className="bg-surface rounded-lg border border-border p-4 space-y-2">
-          <h3 className="font-medium">Import Complete</h3>
-          {result.elapsed_ms != null && result.imported > 0 && (
-            <p className="text-sm text-text-muted">
-              {result.imported.toLocaleString()} hands in {(result.elapsed_ms / 1000).toFixed(1)}s ({result.hands_per_sec?.toLocaleString()} h/s)
-            </p>
-          )}
-          <div className="grid grid-cols-3 gap-4 text-center">
-            <div>
-              <div className="text-2xl font-bold text-green">{result.imported}</div>
-              <div className="text-xs text-text-muted">Imported</div>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">Import Complete</CardTitle>
+            {result.elapsed_ms != null && result.imported > 0 && (
+              <p className="text-sm text-text-muted">
+                {result.imported.toLocaleString()} hands in {(result.elapsed_ms / 1000).toFixed(1)}s ({result.hands_per_sec?.toLocaleString()} h/s)
+              </p>
+            )}
+          </CardHeader>
+          <CardContent className="space-y-2">
+            <div className="grid grid-cols-3 gap-4 text-center">
+              <div>
+                <div className="text-2xl font-bold text-green">{result.imported}</div>
+                <div className="text-xs text-text-muted">Imported</div>
+              </div>
+              <div>
+                <div className="text-2xl font-bold text-yellow">{result.duplicates}</div>
+                <div className="text-xs text-text-muted">Duplicates</div>
+              </div>
+              <div>
+                <div className="text-2xl font-bold text-red">{result.errors}</div>
+                <div className="text-xs text-text-muted">Errors</div>
+              </div>
             </div>
-            <div>
-              <div className="text-2xl font-bold text-yellow">{result.duplicates}</div>
-              <div className="text-xs text-text-muted">Duplicates</div>
-            </div>
-            <div>
-              <div className="text-2xl font-bold text-red">{result.errors}</div>
-              <div className="text-xs text-text-muted">Errors</div>
-            </div>
-          </div>
-          {result.parse_ms != null && result.imported > 0 && (
-            <div className="text-xs text-text-muted text-center">
-              parse {result.parse_ms}ms / stats {result.stats_ms}ms / db {result.db_ms}ms
-            </div>
-          )}
-          {result.error_details.length > 0 && (
-            <div className="mt-3 text-xs text-red space-y-1">
-              {result.error_details.map((e, i) => (
-                <div key={i}>{e}</div>
-              ))}
-            </div>
-          )}
-        </div>
+            {result.parse_ms != null && result.imported > 0 && (
+              <div className="text-xs text-text-muted text-center">
+                parse {result.parse_ms}ms / stats {result.stats_ms}ms / db {result.db_ms}ms
+              </div>
+            )}
+            {result.error_details.length > 0 && (
+              <div className="mt-3 text-xs text-red space-y-1">
+                {result.error_details.map((e, i) => (
+                  <div key={i}>{e}</div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
       )}
 
       {error && (
-        <div className="bg-red/10 border border-red/30 rounded-lg p-4 text-red text-sm">
-          {error}
-        </div>
+        <Alert variant="destructive">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
       )}
     </div>
   );
