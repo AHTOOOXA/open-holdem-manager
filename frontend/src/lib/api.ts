@@ -550,9 +550,9 @@ export async function getResultsBreakdown(params?: {
 
 export interface CashDropSummary {
   total_hands: number;
+  cash_drop_hands: number;
   eligible_hands: number;
   pots_won: number;
-  cash_drop_hands: number;
   total_paid_bb: number;
   total_paid_usd: number;
   total_received_bb: number;
@@ -561,13 +561,16 @@ export interface CashDropSummary {
   net_usd: number;
   frequency: number;
   avg_drop_bb: number;
-  win_pct: number | null;
-  win_rate_bb100: number | null;
-  vpip_pct: number | null;
-  pfr_pct: number | null;
-  three_bet_pct: number | null;
-  wtsd_pct: number | null;
-  wsd_pct: number | null;
+  hero_vpip_pct: number | null;
+  hero_pfr_pct: number | null;
+  hero_three_bet_pct: number | null;
+  hero_limp_pct: number | null;
+  hero_allin_raise_pct: number | null;
+  hero_allin_call_pct: number | null;
+  hero_wtsd_pct: number | null;
+  hero_wsd_pct: number | null;
+  hero_won_bb: number | null;
+  hero_bb100: number | null;
 }
 
 export interface CashDropTypeBreakdown {
@@ -582,8 +585,23 @@ export interface CashDropRangeCategory {
   total_hands: number;
 }
 
+export interface CashDropFieldStats {
+  total_players: number;
+  avg_players_per_pot: number | null;
+  vpip_pct: number | null;
+  pfr_pct: number | null;
+  three_bet_pct: number | null;
+  limp_pct: number | null;
+  allin_raise_pct: number | null;
+  allin_call_pct: number | null;
+  wtsd_pct: number | null;
+  wsd_pct: number | null;
+  avg_won_bb: number | null;
+}
+
 export interface CashDropResponse {
   summary: CashDropSummary;
+  field: CashDropFieldStats | null;
   by_type: CashDropTypeBreakdown[];
   ranges: CashDropRangeCategory[];
 }

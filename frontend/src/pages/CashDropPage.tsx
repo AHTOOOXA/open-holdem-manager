@@ -14,14 +14,6 @@ function comboKey(row: number, col: number): string {
   return r2 + r1 + 'o';
 }
 
-function comboLabel(row: number, col: number): string {
-  const r1 = RANKS[row];
-  const r2 = RANKS[col];
-  if (row === col) return r1 + r2;
-  if (col > row) return r1 + r2 + 's';
-  return r2 + r1 + 'o';
-}
-
 function getCellColor(hands: number, maxHands: number): string {
   if (hands === 0) return 'transparent';
   const intensity = maxHands > 0 ? Math.min(hands / maxHands, 1) : 0;
@@ -29,9 +21,11 @@ function getCellColor(hands: number, maxHands: number): string {
   return `rgba(99, 102, 241, ${alpha / 100})`;
 }
 
-// ── Mini Heatmap Component ───────────────────────────────────────────
+// ── Field Heatmap ────────────────────────────────────────────────────
 
-function MiniHeatmap({ category }: { category: CashDropRangeCategory }) {
+function FieldHeatmap({ category }: { category: CashDropRangeCategory }) {
+  const [hovered, setHovered] = useState<string | null>(null);
+
   const comboMap = useMemo(() => {
     const m = new Map<string, ComboStats>();
     for (const c of category.combos) m.set(c.combo, c);
@@ -43,6 +37,8 @@ function MiniHeatmap({ category }: { category: CashDropRangeCategory }) {
     for (const c of category.combos) max = Math.max(max, c.hands);
     return max || 1;
   }, [category]);
+
+  const hoveredCombo = hovered ? comboMap.get(hovered) : null;
 
   return (
     <div className="bg-surface rounded-lg border border-border p-4">
@@ -62,30 +58,42 @@ function MiniHeatmap({ category }: { category: CashDropRangeCategory }) {
             const bg = getCellColor(hands, maxHands);
             const isSuited = col > row;
             const isPair = col === row;
+            const isHovered = hovered === key;
 
             return (
               <div
                 key={`${row}-${col}`}
-                className="flex items-center justify-center"
+                className={`flex flex-col items-center justify-center ${isHovered ? 'ring-1 ring-primary z-10' : ''}`}
                 style={{
                   backgroundColor: bg,
                   aspectRatio: '1',
                   border: '1px solid rgba(54,54,72,0.3)',
                 }}
-                title={`${key}: ${hands}`}
+                onMouseEnter={() => setHovered(key)}
+                onMouseLeave={() => setHovered(null)}
               >
-                <span className={`text-[8px] font-mono leading-none ${
+                <span className={`text-[7px] font-mono leading-none ${
                   hands > 0
                     ? isSuited ? 'text-primary' : isPair ? 'text-yellow' : 'text-text'
                     : 'text-text-muted/40'
                 }`}>
-                  {comboLabel(row, col)}
+                  {key}
                 </span>
+                {hands > 0 && (
+                  <span className="text-[7px] font-mono text-text-muted leading-none mt-px">
+                    {hands}
+                  </span>
+                )}
               </div>
             );
           })
         )}
       </div>
+      {hoveredCombo && (
+        <div className="mt-2 text-xs text-text-muted font-mono">
+          {hovered}: {hoveredCombo.hands} hands
+        </div>
+      )}
     </div>
   );
 }
@@ -168,56 +176,78 @@ export default function CashDropPage() {
         <div className="text-center text-text-muted py-20">No data available</div>
       ) : (
         <>
-          {/* Summary Cards */}
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
+          {/* ── Financial Summary ── */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
             <StatCard label="Paid to Fund" value={`${s.total_paid_bb.toFixed(0)} BB`} sub={`$${s.total_paid_usd.toFixed(2)} (${s.pots_won} pots won)`} color="text-red" />
-            <StatCard label="Received (EV)" value={`${s.total_received_bb.toFixed(0)} BB`} sub={`$${s.total_received_usd.toFixed(2)} (${s.cash_drop_hands} drops / ${s.total_hands} hands)`} color="text-green" />
+            <StatCard label="Received (EV)" value={`${s.total_received_bb.toFixed(0)} BB`} sub={`$${s.total_received_usd.toFixed(2)} (${s.cash_drop_hands} drops)`} color="text-green" />
             <StatCard label="Net" value={`${s.net_bb >= 0 ? '+' : ''}${s.net_bb.toFixed(0)} BB`} sub={`$${s.net_usd >= 0 ? '+' : ''}${s.net_usd.toFixed(2)}`} color={s.net_bb >= 0 ? 'text-green' : 'text-red'} />
-            <StatCard label="Frequency" value={s.frequency > 0 ? `1 in ${s.frequency.toFixed(0)}` : '--'} sub={`${s.cash_drop_hands} drops`} />
-            <StatCard label="Avg Drop" value={s.avg_drop_bb > 0 ? `${s.avg_drop_bb.toFixed(0)} BB` : '--'} sub={`${s.eligible_hands} eligible pots`} />
+            <StatCard label="Frequency" value={s.cash_drop_hands > 0 ? `1 in ${s.frequency.toFixed(0)}` : '--'} sub={`${s.cash_drop_hands} drops in ${s.total_hands.toLocaleString()} hands`} />
           </div>
 
-          {/* Hero Stats in Eligible Pots + Type Breakdown */}
+          {/* ── Cash Drop Pots: Hero + Field ── */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
             <div className="bg-surface rounded-lg border border-border p-5">
-              <h2 className="text-sm font-medium text-text-muted uppercase tracking-wide mb-3">Hero in Eligible Pots</h2>
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="text-sm font-medium text-text-muted uppercase tracking-wide">Hero in Cash Drop Pots</h2>
+                <span className="text-xs text-text-muted">{s.cash_drop_hands} hands</span>
+              </div>
               <div className="grid grid-cols-2 gap-x-8 gap-y-2 text-[15px]">
-                <StatRow label="Win %" value={s.win_pct} suffix="%" />
-                <StatRow label="bb/100" value={s.win_rate_bb100} color />
-                <StatRow label="VPIP" value={s.vpip_pct} suffix="%" />
-                <StatRow label="PFR" value={s.pfr_pct} suffix="%" />
-                <StatRow label="3-Bet" value={s.three_bet_pct} suffix="%" />
-                <StatRow label="WTSD" value={s.wtsd_pct} suffix="%" />
-                <StatRow label="W$SD" value={s.wsd_pct} suffix="%" />
+                <StatRow label="Won" value={s.hero_won_bb} suffix=" BB" color />
+                <StatRow label="bb/100" value={s.hero_bb100} color />
+                <StatRow label="VPIP" value={s.hero_vpip_pct} suffix="%" />
+                <StatRow label="PFR" value={s.hero_pfr_pct} suffix="%" />
+                <StatRow label="3-Bet" value={s.hero_three_bet_pct} suffix="%" />
+                <StatRow label="Limp" value={s.hero_limp_pct} suffix="%" />
+                <StatRow label="All-in" value={s.hero_allin_raise_pct} suffix="%" />
+                <StatRow label="AI Call" value={s.hero_allin_call_pct} suffix="%" />
+                <StatRow label="WTSD" value={s.hero_wtsd_pct} suffix="%" />
+                <StatRow label="W$SD" value={s.hero_wsd_pct} suffix="%" />
               </div>
             </div>
 
-          {data!.by_type.length > 0 && (
-            <div className="bg-surface rounded-lg border border-border p-5">
-              <h2 className="text-sm font-medium text-text-muted uppercase tracking-wide mb-3">Drop Types</h2>
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="text-text-muted text-left border-b border-border">
-                    <th className="py-2 pr-4">Size</th>
-                    <th className="py-2 pr-4 text-right">Count</th>
-                    <th className="py-2 text-right">Total USD</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data!.by_type.map(t => (
-                    <tr key={t.drop_bb} className="border-b border-border/50">
-                      <td className="py-2 pr-4 font-mono font-medium">{t.drop_bb.toFixed(0)} BB</td>
-                      <td className="py-2 pr-4 text-right">{t.count}</td>
-                      <td className="py-2 text-right text-green font-mono">${t.total_usd.toFixed(2)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+            {data!.field ? (
+              <div className="bg-surface rounded-lg border border-border p-5">
+                <div className="flex items-center justify-between mb-3">
+                  <h2 className="text-sm font-medium text-text-muted uppercase tracking-wide">Field in Cash Drop Pots</h2>
+                  <span className="text-xs text-text-muted">{data!.field.total_players} player-hands</span>
+                </div>
+                <div className="grid grid-cols-2 gap-x-8 gap-y-2 text-[15px]">
+                  <StatRow label="Avg Players" value={data!.field.avg_players_per_pot} />
+                  <StatRow label="Avg bb Won" value={data!.field.avg_won_bb} color />
+                  <StatRow label="VPIP" value={data!.field.vpip_pct} suffix="%" />
+                  <StatRow label="PFR" value={data!.field.pfr_pct} suffix="%" />
+                  <StatRow label="3-Bet" value={data!.field.three_bet_pct} suffix="%" />
+                  <StatRow label="Limp" value={data!.field.limp_pct} suffix="%" />
+                  <StatRow label="All-in" value={data!.field.allin_raise_pct} suffix="%" />
+                  <StatRow label="AI Call" value={data!.field.allin_call_pct} suffix="%" />
+                  <StatRow label="WTSD" value={data!.field.wtsd_pct} suffix="%" />
+                  <StatRow label="W$SD" value={data!.field.wsd_pct} suffix="%" />
+                </div>
+              </div>
+            ) : (
+              <div className="bg-surface rounded-lg border border-border p-5 text-text-muted text-sm flex items-center justify-center">
+                No field data available
+              </div>
+            )}
           </div>
 
-          {/* Range Heatmaps by Action Type */}
+          {/* ── Drop Size Breakdown ── */}
+          {data!.by_type.length > 0 && (
+            <div className="bg-surface rounded-lg border border-border p-5 mb-6">
+              <h2 className="text-sm font-medium text-text-muted uppercase tracking-wide mb-3">Drop Size Breakdown</h2>
+              <div className="flex gap-4 flex-wrap">
+                {data!.by_type.map(t => (
+                  <div key={t.drop_bb} className="flex items-baseline gap-2">
+                    <span className="font-mono font-medium">{t.drop_bb.toFixed(0)} BB</span>
+                    <span className="text-text-muted text-sm">{t.count}x</span>
+                    <span className="text-green font-mono text-sm">${t.total_usd.toFixed(2)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* ── Field Ranges by Action Type ── */}
           {data!.ranges.length > 0 && (
             <div>
               <h2 className="text-sm font-medium text-text-muted uppercase tracking-wide mb-3">
@@ -225,13 +255,12 @@ export default function CashDropPage() {
               </h2>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {data!.ranges.map(cat => (
-                  <MiniHeatmap key={cat.label} category={cat} />
+                  <FieldHeatmap key={cat.label} category={cat} />
                 ))}
               </div>
-              <div className="flex items-center gap-5 mt-3 text-xs text-text-muted">
-                <span><span className="text-primary font-mono">AKs</span> = suited</span>
-                <span><span className="text-yellow font-mono">AA</span> = pair</span>
-                <span><span className="text-text-muted font-mono">AKo</span> = offsuit</span>
+              <div className="flex items-center gap-4 mt-2 text-[10px] text-text-muted">
+                <span><span className="text-primary font-mono">AKs</span> suited</span>
+                <span><span className="text-yellow font-mono">AA</span> pair</span>
                 <span>Brighter = more hands</span>
               </div>
             </div>

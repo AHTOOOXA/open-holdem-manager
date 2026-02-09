@@ -320,25 +320,29 @@ class RangeResponse(BaseModel):
 
 class CashDropSummary(BaseModel):
     total_hands: int
-    eligible_hands: int        # hands where pot had jackpot
-    pots_won: int              # eligible pots hero won
     cash_drop_hands: int       # hands with a cash drop at table
-    total_paid_bb: float       # pots_won * 0.5
+    eligible_hands: int        # hands where hero paid jackpot fee
+    pots_won: int              # eligible pots hero won
+    # Financials
+    total_paid_bb: float       # actual jackpot fees paid
     total_paid_usd: float
-    total_received_bb: float   # sum(cash_drop / table_size) in BB
+    total_received_bb: float   # EV share of cash drops (1/table_size)
     total_received_usd: float
     net_bb: float
     net_usd: float
     frequency: float           # 1 drop every N hands
-    avg_drop_bb: float
-    # Hero stats in eligible pots
-    win_pct: float | None      # how often hero wins eligible pots
-    win_rate_bb100: float | None
-    vpip_pct: float | None
-    pfr_pct: float | None
-    three_bet_pct: float | None
-    wtsd_pct: float | None
-    wsd_pct: float | None
+    avg_drop_bb: float         # avg full drop size in BB
+    # Hero stats in cash drop pots
+    hero_vpip_pct: float | None
+    hero_pfr_pct: float | None
+    hero_three_bet_pct: float | None
+    hero_limp_pct: float | None
+    hero_allin_raise_pct: float | None
+    hero_allin_call_pct: float | None
+    hero_wtsd_pct: float | None
+    hero_wsd_pct: float | None
+    hero_won_bb: float | None
+    hero_bb100: float | None
 
 
 class CashDropTypeBreakdown(BaseModel):
@@ -353,7 +357,22 @@ class CashDropRangeCategory(BaseModel):
     total_hands: int
 
 
+class CashDropFieldStats(BaseModel):
+    total_players: int         # total player-hand entries in cash drop pots
+    avg_players_per_pot: float | None
+    vpip_pct: float | None
+    pfr_pct: float | None
+    three_bet_pct: float | None
+    limp_pct: float | None
+    allin_raise_pct: float | None
+    allin_call_pct: float | None
+    wtsd_pct: float | None
+    wsd_pct: float | None
+    avg_won_bb: float | None   # avg bb won per hand (field)
+
+
 class CashDropResponse(BaseModel):
     summary: CashDropSummary
+    field: CashDropFieldStats | None = None
     by_type: list[CashDropTypeBreakdown]
     ranges: list[CashDropRangeCategory]
