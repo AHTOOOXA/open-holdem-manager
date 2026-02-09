@@ -1,5 +1,9 @@
 # Poker Tracker PRD
 
+> **DEPRECATED** — This document's content has been redistributed into milestone-specific PRDs.
+> See `PRD_ROADMAP.md` for the master roadmap and `prd/M1-M6_*.md` for detailed specs.
+> This file is kept for historical reference only. Do not update it.
+
 > Open Holdem Manager (OHM) — Open-source alternative to Hand2Note / HoldemManager
 > Focus: Database, Analytics, Learning — not HUD
 

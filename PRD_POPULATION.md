@@ -1,5 +1,8 @@
 # PRD: Population Analysis Page (`/population`)
 
+> **DEPRECATED** — This document's content has been moved to `prd/M4_KNOW_OPPONENTS.md`.
+> See `PRD_ROADMAP.md` for the master roadmap. This file is kept for historical reference only.
+
 ## Overview
 
 A dedicated page for **field research** — analyzing the aggregate tendencies of all opponents (the "population" or "pool") across the entire database. This answers the question: "How does the average player at my stake play?"
@@ -72,6 +75,18 @@ Sample confidence thresholds:
 │  │  WTSD, WSD, AF by street, bet frequency as bluff proxy       │    │
 │  └──────────────────────────────────────────────────────────────┘    │
 │                                                                      │
+│  ┌─ PLAYER SEGMENTATION ───────────────────────────────────────┐    │
+│  │  NIT / TAG / LAG / REC / MAN side-by-side comparison         │    │
+│  └──────────────────────────────────────────────────────────────┘    │
+│                                                                      │
+│  ┌─ SIZING TELLS AT SHOWDOWN ──────────────────────────────────┐    │
+│  │  Bet size vs hand strength heatmap per street                 │    │
+│  └──────────────────────────────────────────────────────────────┘    │
+│                                                                      │
+│  ┌─ HEADS-UP vs MULTIWAY ─────────────────────────────────────┐    │
+│  │  Side-by-side stats for HU vs MW pots                        │    │
+│  └──────────────────────────────────────────────────────────────┘    │
+│                                                                      │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -87,8 +102,12 @@ Each section is collapsible. Sections are ordered top-to-bottom by statistical r
 | **Date range** | From/To with presets (Week/Month/3M/6M/Year/All) | All |
 | **Min hands per player** | 1 / 10 / 20 / 50 / 100 | 20 |
 | **Exclude hero** | Toggle | On (exclude hero by default) |
+| **Player type** | All / Recreational / Regular / Nit (see Section 7) | All |
+| **Pot players** | All / HU only / Multiway only | All |
 
 **Min hands per player** filters out drive-by players with very few hands — their stats are noise. At min=20, we filter to regulars + semi-regulars who have played enough to contribute meaningful data.
+
+**Pot players** filters postflop stats to only heads-up pots (2 players saw flop) or multiway pots (3+ players saw flop). Multiway pots play fundamentally differently — lower cbet%, higher fold-to-cbet%, less bluffing. This filter applies to all postflop sections (Flop/Turn/River/Pot Type).
 
 ---
 
@@ -186,17 +205,17 @@ Primary axis — **Rank Structure** (based on card ranks, Broadway = T+):
 | 3 Broadways (no A) | BBB | 3 broadways, no ace | K Q T |
 | 2 Broadways + x (no A) | BBx | 2 broadways + low, no ace | K J 6 |
 | 1 Broadway + x + x (no A) | Bxx | 1 broadway + 2 low, no ace | Q 7 3 |
-| Mid-High Connected | MHC | T-9 high, connected (<=2 gap) | T 9 7 |
-| Mid-High Disconnected | MHD | T-9 high, disconnected | T 6 2 |
-| Low Connected | LC | 8-high or lower, connected | 8 7 5 |
-| Low Disconnected | LD | 8-high or lower, disconnected | 8 4 2 |
+| T-9 High Connected | T-9 Conn | Highest card T or 9, connected (<=2 gap) | T 9 7 |
+| T-9 High Disconnected | T-9 Disc | Highest card T or 9, disconnected | T 6 2 |
+| 8-2 High Connected | 8-2 Conn | Highest card 8 or lower, connected | 8 7 5 |
+| 8-2 High Disconnected | 8-2 Disc | Highest card 8 or lower, disconnected | 8 4 2 |
 
 Secondary axis — **Suit Structure**:
-- **Monotone** (M): 3 cards same suit
-- **Two-tone** (T): 2 cards same suit
+- **Monocolor** (M): 3 cards same suit
+- **2tone** (T): 2 cards same suit (flush draw possible)
 - **Rainbow** (R): all different suits
 
-Tertiary axis — **Pairing**:
+Tertiary axis — **Pairing** (overlay, cross-cuts rank categories):
 - **Paired** (P): 2+ cards same rank
 - **Unpaired** (U): all different ranks
 
@@ -207,11 +226,11 @@ Example:
 Texture        │ C-Bet%│ Avg Size│ F to CB│  XR% │ Sample
 ───────────────┼───────┼─────────┼────────┼──────┼───────
 Axx Rainbow    │  72.1 │  33%pot │  48.3  │  6.2 │ 45,230
-Axx Two-tone   │  65.3 │  40%pot │  44.1  │  8.5 │ 52,100
+Axx 2tone      │  65.3 │  40%pot │  44.1  │  8.5 │ 52,100
 ABx Rainbow    │  58.2 │  50%pot │  42.0  │  9.1 │ 38,400
 BBB            │  51.0 │  55%pot │  38.5  │ 12.3 │ 12,800
-Low Connected  │  55.8 │  52%pot │  40.2  │ 11.5 │ 28,900
-Monotone       │  48.5 │  35%pot │  35.0  │ 14.2 │ 18,600
+8-2 Conn       │  55.8 │  52%pot │  40.2  │ 11.5 │ 28,900
+Monocolor      │  48.5 │  35%pot │  35.0  │ 14.2 │ 18,600
 Paired         │  60.3 │  45%pot │  46.1  │  7.8 │ 22,300
 ...
 ```
@@ -364,6 +383,124 @@ Caveat shown in UI: "Bluff % measured at showdown only — actual bluff frequenc
 
 ---
 
+## Section 7: Player Segmentation
+
+Instead of treating the pool as one homogeneous group, segment players by type based on preflop tendencies. This reveals how different player populations behave differently.
+
+### Player Type Classification
+
+Players are classified based on their aggregate VPIP and PFR over all observed hands (minimum `min_hands_per_player` threshold applies):
+
+| Type | Code | VPIP | PFR | Description |
+|------|------|------|-----|-------------|
+| **Nit** | NIT | < 18% | < 14% | Very tight, only premium hands |
+| **TAG (Tight-Aggressive)** | TAG | 18–27% | 14–22% | Standard regular, solid range |
+| **LAG (Loose-Aggressive)** | LAG | 27–38% | 20–30% | Wide range, aggressive |
+| **Recreational / Fish** | REC | > 35% | any, typically PFR < VPIP×0.6 | Loose-passive, calls too much |
+| **Maniac** | MAN | > 38% | > 28% | Very loose and very aggressive |
+| **Unknown** | UNK | — | — | Not enough hands to classify |
+
+### Display
+
+Each section on the population page can be **segmented by player type** using the filter dropdown. When a player type is selected, all stats are recalculated for only that segment.
+
+Additionally, a **comparison table** at the top of this section shows key stats side-by-side:
+
+```
+Metric         │  All  │  NIT  │  TAG  │  LAG  │  REC  │  MAN
+───────────────┼───────┼───────┼───────┼───────┼───────┼──────
+Players        │ 8,432 │ 1,205 │ 3,150 │   890 │ 2,800 │   387
+VPIP           │  28.5 │  14.2 │  22.0 │  32.5 │  42.1 │  45.0
+PFR            │  20.1 │  11.5 │  18.2 │  26.0 │  15.5 │  35.0
+3-Bet          │   7.2 │   4.5 │   7.0 │  10.5 │   4.0 │  12.5
+Fold to 3-Bet  │  58.0 │  72.0 │  60.0 │  48.0 │  45.0 │  35.0
+Flop CBet      │  62.0 │  70.0 │  65.0 │  58.0 │  48.0 │  55.0
+WTSD           │  29.5 │  24.0 │  28.0 │  30.5 │  35.0 │  38.0
+WSD            │  52.0 │  58.0 │  55.0 │  52.0 │  45.0 │  42.0
+```
+
+### Backend
+
+- Player type classification computed from aggregate VPIP/PFR per player
+- Stored as a column on the `players` table: `player_type VARCHAR` (NIT/TAG/LAG/REC/MAN/UNK)
+- Recalculated on import (after new hands change a player's aggregate stats)
+- Population endpoints accept `player_type` filter param
+
+---
+
+## Section 8: Sizing Tells at Showdown
+
+Analyzes the relationship between **bet sizing** and **hand strength at showdown**. Answers the question: "When the pool bets small vs large, what do they actually have?"
+
+This is inspired by H2N's ProTools Scatter analysis.
+
+### Display
+
+For each street and pot type, show a **sizing vs strength matrix**:
+
+```
+River Bet Size    │ Nuts+ │ Strong │ Top Pair │ Marginal │ Draw │  Air  │ Sample
+──────────────────┼───────┼────────┼──────────┼──────────┼──────┼───────┼───────
+< 33% pot         │  12%  │  25%   │   30%    │   18%    │  5%  │  10%  │ 2,500
+33–50% pot        │  18%  │  28%   │   25%    │   12%    │  8%  │   9%  │ 3,800
+50–75% pot        │  22%  │  30%   │   22%    │    8%    │  6%  │  12%  │ 4,200
+75–100% pot       │  30%  │  25%   │   18%    │    5%    │  4%  │  18%  │ 1,800
+> 100% (overbet)  │  35%  │  20%   │   10%    │    3%    │  2%  │  30%  │   900
+```
+
+Hand strength categories use the composite groups from PRD_STATS_V2.md (Nuts+, Strong, Top Pair, Marginal Made, Draw Only, Air).
+
+### Key Insights This Reveals
+
+- **Polarization patterns**: Do overbets correlate with nuts or air (polarized) vs medium sizing with value?
+- **Sizing tells**: Does the pool use different sizes for bluffs vs value?
+- **Street-specific patterns**: Pool might be balanced on flop but exploitable on river
+- **Pot type differences**: SRP sizing tells vs 3-bet pot sizing tells
+
+### Limitations
+
+- **Showdown-only data**: Only hands that reached showdown contribute, creating selection bias (folded hands = unknown strength)
+- **Sample requirements**: Need meaningful sample per sizing bucket per street — noisy on river in 3-bet pots
+- Show confidence badges; grey out cells with < 100 observations
+
+### Backend
+
+New endpoint: `GET /api/population/sizing-tells`
+- Query params: `street`, `pot_type`, `stakes`, `date_from`, `date_to`, `player_type`
+- Joins `actions` (for sizing) with `hand_players` (for made hand at showdown) and `board_cards`
+- Requires hand strength evaluation (same utility as Stats v2 detail panels)
+- Only includes hands that went to showdown
+
+---
+
+## Section 9: Heads-Up vs Multiway Comparison
+
+Side-by-side view showing how the population plays differently when heads-up vs in multiway pots.
+
+### Display
+
+```
+Metric              │    HU     │  Multiway  │  Difference
+────────────────────┼───────────┼────────────┼────────────
+% of flop pots      │   72.0%   │   28.0%    │
+Flop C-Bet IP       │   68.2%   │   42.5%    │   -25.7%
+Flop C-Bet OOP      │   55.1%   │   30.2%    │   -24.9%
+Fold to Flop CB     │   45.3%   │   55.8%    │   +10.5%
+Flop Check-Raise    │    8.1%   │   10.5%    │    +2.4%
+Turn Barrel         │   58.3%   │   38.0%    │   -20.3%
+WTSD                │   28.5%   │   25.0%    │    -3.5%
+WSD                 │   52.3%   │   48.0%    │    -4.3%
+Avg Pot (bb)        │    8.5    │   12.3     │    +3.8
+```
+
+### Backend
+
+- Requires `is_multiway` flag on `hand_players` (true if 3+ players saw flop)
+- All existing postflop population endpoints gain `multiway` filter parameter
+- This section queries the same endpoints twice (once HU, once MW) and displays diff
+
+---
+
 ## Shared Utilities (with Stats v2 — see PRD_STATS_V2.md)
 
 ### Board Texture Classification
@@ -376,8 +513,8 @@ Shared Python utility used by both Stats v2 detail panels and Population Analysi
 def classify_flop(cards: list[str]) -> FlopTexture:
     """
     Returns FlopTexture with:
-      - rank_structure: ABB|ABx|Axx|BBB|BBx|Bxx|MHC|MHD|LC|LD
-      - suit_structure: monotone|two_tone|rainbow
+      - rank_structure: ABB|ABx|Axx|BBB|BBx|Bxx|T-9 Conn|T-9 Disc|8-2 Conn|8-2 Disc
+      - suit_structure: monocolor|2tone|rainbow
       - paired: bool
     """
 ```
@@ -385,8 +522,8 @@ def classify_flop(cards: list[str]) -> FlopTexture:
 Definitions:
 - **Broadway** = T, J, Q, K (not Ace — Ace is treated separately as a premium card)
 - **Connected** = at least 2 cards within rank gap <= 2 (e.g. 8-7, T-8, 9-7)
-- **Mid-High** = highest card is T or 9 (no broadway, no ace)
-- **Low** = highest card is 8 or below
+- **T-9 High** = highest card is T or 9 (no broadway, no ace)
+- **8-2 High** = highest card is 8 or below
 
 #### Turn Classification
 
@@ -424,9 +561,11 @@ Precomputed `pot_before_action` and `bet_pct_pot` columns on the `actions` table
 | GET | `/api/population/board-textures` | Stats broken down by board texture categories |
 | GET | `/api/population/pot-types` | SRP vs 3-bet vs 4-bet pot comparison |
 | GET | `/api/population/showdown` | Showdown stats, aggression proxies, bluff frequencies |
+| GET | `/api/population/sizing-tells` | Sizing vs hand strength at showdown (scatter analysis) |
+| GET | `/api/population/segments` | Player type comparison table |
 | GET | `/api/population/overview` | Summary: player count, observation count, date range |
 
-All endpoints accept query params: `stakes`, `date_from`, `date_to`, `min_hands_per_player`
+All endpoints accept query params: `stakes`, `date_from`, `date_to`, `min_hands_per_player`, `player_type`, `multiway`
 
 ### Query Architecture
 
@@ -450,8 +589,8 @@ Key patterns:
 
 ```sql
 -- On hands table: precomputed board texture
-ALTER TABLE hands ADD COLUMN flop_texture_rank VARCHAR;   -- ABB, ABx, Axx, BBB, BBx, Bxx, MHC, MHD, LC, LD
-ALTER TABLE hands ADD COLUMN flop_texture_suit VARCHAR;   -- monotone, two_tone, rainbow
+ALTER TABLE hands ADD COLUMN flop_texture_rank VARCHAR;   -- ABB, ABx, Axx, BBB, BBx, Bxx, T-9 Conn, T-9 Disc, 8-2 Conn, 8-2 Disc
+ALTER TABLE hands ADD COLUMN flop_texture_suit VARCHAR;   -- monocolor, 2tone, rainbow
 ALTER TABLE hands ADD COLUMN flop_paired BOOLEAN;
 ALTER TABLE hands ADD COLUMN turn_texture VARCHAR;         -- completed_draw, draw_adding, overcard, paired_board, brick
 ALTER TABLE hands ADD COLUMN river_texture VARCHAR;        -- same categories
@@ -460,8 +599,12 @@ ALTER TABLE hands ADD COLUMN river_texture VARCHAR;        -- same categories
 ALTER TABLE actions ADD COLUMN pot_before_action DECIMAL;  -- pot size before this action
 ALTER TABLE actions ADD COLUMN bet_pct_pot DECIMAL;        -- amount / pot_before_action (for bets/raises)
 
--- On hand_players table: pot type flag
+-- On hand_players table: pot type and multiway flag
 ALTER TABLE hand_players ADD COLUMN pot_type VARCHAR;      -- srp, 3bet, 4bet, 5bet
+ALTER TABLE hand_players ADD COLUMN is_multiway BOOLEAN;   -- true if 3+ players saw flop
+
+-- On players table: player type classification
+ALTER TABLE players ADD COLUMN player_type VARCHAR;        -- NIT, TAG, LAG, REC, MAN, UNK
 ```
 
 ---
@@ -488,6 +631,13 @@ PopulationPage.tsx
 │   ├── RiverLineFrequencies.tsx
 │   └── RiverSizing.tsx
 ├── PotTypeComparison.tsx (SRP vs 3BP vs 4BP side-by-side)
+├── PlayerSegmentation/
+│   ├── SegmentComparison.tsx (side-by-side NIT/TAG/LAG/REC/MAN table)
+│   └── PlayerTypeFilter.tsx (dropdown, used in filter bar)
+├── SizingTells/
+│   └── SizingStrengthMatrix.tsx (sizing bucket × hand strength heatmap)
+├── HuVsMultiway/
+│   └── HuMwComparison.tsx (side-by-side HU vs MW stats table)
 └── ShowdownAggression/
     ├── ShowdownByPosition.tsx
     └── AggressionProxy.tsx
@@ -498,6 +648,7 @@ PopulationPage.tsx
 - `BoardTextureTable.tsx` — texture breakdown table with sortable columns
 - `SizingDistribution.tsx` — horizontal bar chart for sizing buckets
 - `PositionMatrix.tsx` — 6x6 heatmap grid (used for preflop matrices)
+- `HandStrengthTable.tsx` — made hand category breakdown table (shared with Stats v2 detail panels)
 
 ---
 
@@ -529,7 +680,21 @@ PopulationPage.tsx
 - Build showdown stats + aggression proxy metrics
 - Showdown bluff % calculation (showdown-only sample with caveat)
 
-### Phase P5: Polish
+### Phase P5: Player Segmentation + HU vs MW
+- Compute and store player_type on `players` table based on aggregate VPIP/PFR
+- Build `/api/population/segments` endpoint
+- Build player type comparison table + filter dropdown
+- Add `is_multiway` flag to `hand_players` (computed during insert: count players who saw flop)
+- Build HU vs MW comparison section
+- Add `multiway` and `player_type` filters to all population endpoints
+
+### Phase P6: Sizing Tells
+- Build hand strength evaluator (shared with Stats v2 — classify made hand + draw flags)
+- Build `/api/population/sizing-tells` endpoint (joins actions + hand_players + board_cards)
+- Build sizing vs strength heatmap component
+- Show per street, per pot type, with confidence badges
+
+### Phase P7: Polish
 - Loading skeletons for heavy queries
 - Collapsible sections with persistence
 - Export to CSV/clipboard for key tables

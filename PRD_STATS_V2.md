@@ -1,5 +1,8 @@
 # PRD: Stats Page v2 — Master-Detail Layout with Drill-Down
 
+> **DEPRECATED** — This document's content has been moved to `prd/M2_STUDY_SPOTS.md` (master-detail layout, stat categories, hand review) and `prd/M5_GO_DEEP.md` (shared infrastructure: board texture, hand strength, bet sizing).
+> See `PRD_ROADMAP.md` for the master roadmap. This file is kept for historical reference only.
+
 ## Overview
 
 Redesign the `/stats` page from a full-width stat summary into a **master-detail layout** inspired by Hand2Note's Statistics page. The left panel keeps the existing stat tables (squeezed to ~40% width), and clicking any stat opens a **context-aware detail panel** on the right with sub-breakdowns, range heatmaps, sizing splits, and filtered hand histories.
@@ -127,8 +130,9 @@ Every detail panel has 3 zones:
 - Stat name + overall % + sample
 - **Street tabs** (if multi-street stat): [Flop] [Turn] [River]
 - **Position filter**: [All] [IP] [OOP] or full position set
+- **Pot filter**: [All] [HU] [Multiway] — heads-up vs multiway pots (multiway = 3+ players to flop)
 
-**Analysis zone** — 3 sub-sections:
+**Analysis zone** — 4 sub-sections:
 
 #### a) Bet Sizing Distribution
 - Horizontal bar chart or table showing sizing buckets:
@@ -140,23 +144,112 @@ Every detail panel has 3 zones:
 - Average sizing as % of pot
 
 #### b) Board Texture Splits
-- Table showing stat frequency broken down by board texture (H2N-style categories):
-  - **Rank structure**: ABB, ABx, Axx, BBB, BBx, Bxx, MHC, MHD, LC, LD
-  - **Suits**: Monotone / Two-tone / Rainbow
-  - **Pairing**: Unpaired / Paired
+- Table showing stat frequency broken down by board texture (H2N / Smart Research convention):
+  - **Rank structure**: ABB, ABx, Axx, BBB, BBx, Bxx, T-9 Conn, T-9 Disc, 8-2 Conn, 8-2 Disc
+  - **Suits**: Monocolor / 2tone / Rainbow
+  - **Pairing overlay**: Paired (cross-cuts rank categories)
 - Each row: texture category, stat % in that texture, sample size
 
 See "Shared: Board Texture Classification" section below for full category definitions.
 
 #### c) Hand Strength at Action
-- Table showing what hands hero had when taking this action:
-  - **Strong value**: Overpair+, Top pair top kicker, Top pair
-  - **Marginal made**: Middle pair, Bottom pair, Weak pair
-  - **Draws**: Flush draw, Straight draw (OESD/gutshot), Combo draw
-  - **Air**: No pair no draw, Overcards only
-- Each row: category, count, % of total actions, average result (bb)
 
-See "Shared: Hand Strength Evaluation" section below for full category definitions.
+Hand strength is classified along **two orthogonal dimensions** — a hand can be both a made hand AND a draw (e.g. top pair + flush draw):
+
+**Made Hand Strength** (mutually exclusive):
+  - Straight Flush / Quads / Full House / Flush / Straight
+  - Set (pocket pair hit board) / Trips (board pair + hole card)
+  - Two Pair
+  - Overpair
+  - Top Pair Good Kicker (TPTK — kicker A-T)
+  - Top Pair Weak Kicker (kicker 9 or lower)
+  - Middle Pair (second pair on board)
+  - Weak Pair (bottom pair, underpair, third pair)
+  - Overcards (2 cards above board, no pair)
+  - Ace High (ace in hand, no pair)
+  - No Made Hand
+
+**Draw Flags** (can co-occur with any made hand, orthogonal):
+  - Flush Draw (4 to a flush)
+  - OESD (open-ended straight draw, 8 outs)
+  - Gutshot (inside straight draw, 4 outs)
+  - Combo Draw (flush draw + straight draw)
+  - Backdoor Flush Draw (3 to a flush, flop only)
+  - Backdoor Straight Draw (3 to a straight, flop only)
+  - No Draw
+
+**Display**: Table with made hand categories as rows. Each row: category, count, % of total actions, average result (bb). Draw flags shown as a separate summary or as tags on each hand in the hand list.
+
+See "Shared: Hand Strength Evaluation" section below for full classification definitions.
+
+#### d) Stat Trend Over Time
+- **Mini line chart** showing this stat's value over time
+- X-axis: time (by week or by every N hands, auto-scaled)
+- Y-axis: stat percentage
+- Rolling window (e.g. last 500 opportunities) to smooth noise
+- Highlights: overall average as a horizontal reference line
+- Helps detect leaks developing or improving over time
+
+#### e) EV of the Line
+
+Compares the **average result (bb/hand)** when hero took the action vs when hero didn't — broken down by hand strength and board texture. This is the most powerful leak-finding tool: it reveals not just *what* you do, but *which subsets* of your decisions are profitable or costly.
+
+**Overall EV comparison**:
+```
+               │   Action    │  No Action  │
+───────────────┼─────────────┼─────────────┤
+Avg result     │  +0.82 bb   │  +0.31 bb   │
+Hands          │     650     │     350     │
+```
+
+**EV by Hand Strength** (the most actionable breakdown):
+```
+Hand         │ EV Bet   │ EV Check │  Diff  │
+─────────────┼──────────┼──────────┼────────┤
+Nuts+        │ +5.20 bb │ +3.10 bb │ +2.10  │ ✓ action better
+Top Pair     │ +1.80 bb │ +1.20 bb │ +0.60  │ ✓ action better
+Middle Pair  │ +0.20 bb │ +0.45 bb │ -0.25  │ ⚠ no-action better
+Draws        │ -0.10 bb │ -0.35 bb │ +0.25  │ ✓ action better
+Air          │ -0.55 bb │ -0.18 bb │ -0.37  │ ✗ no-action better
+```
+Color coding: green diff = action is more profitable, red = no-action is more profitable.
+
+**EV by Board Texture**:
+```
+Texture      │ EV Bet   │ EV Check │  Diff  │
+─────────────┼──────────┼──────────┼────────┤
+Axx          │ +1.20 bb │ +0.50 bb │ +0.70  │ ✓
+BBx          │ +0.60 bb │ +0.30 bb │ +0.30  │ ✓
+8-2 Conn     │ -0.30 bb │ +0.10 bb │ -0.40  │ ✗
+Monocolor    │ -0.15 bb │ +0.20 bb │ -0.35  │ ✗
+```
+
+**EV by Sizing** (when action was a bet/raise — which size is most profitable):
+```
+Size         │ Avg EV   │ Hands   │
+─────────────┼──────────┼─────────┤
+< 33% pot    │ +0.95 bb │   280   │
+33-50% pot   │ +0.70 bb │   250   │
+50-75% pot   │ +0.55 bb │    90   │
+> 75% pot    │ +0.30 bb │    30   │
+```
+
+**How it applies to each stat type**:
+
+| Stat clicked | "Action taken" | "Action not taken" |
+|---|---|---|
+| C-Bet | Hero bet (cbetting) | Hero checked (missed cbet) |
+| 3-Bet | Hero 3-bet | Hero called or folded |
+| Open Raise | Hero raised | Hero folded or limped |
+| Fold to C-Bet | Hero folded | Hero called or raised |
+| Check-Raise | Hero check-raised | Hero check-called or check-folded |
+| Steal | Hero attempted steal | Hero folded from steal position |
+
+**Caveats** (shown as info tooltip in UI):
+- **Not causal**: Betting with strong hands and checking weak ones naturally makes bet-EV higher. The insight is in the *direction within each hand strength/texture subset*, not the overall numbers.
+- **Selection bias**: Compares outcomes of your actual decisions, not a hypothetical optimal strategy.
+- **Variance**: Individual hand results are high variance. Cells with < 50 hands are greyed out. Use all-in EV (`all_in_ev_bb`) where available to reduce noise.
+- **Minimum sample**: Each row needs 50+ observations in both columns to be meaningful. Show confidence badge per row.
 
 **Hand history**:
 - All hands where hero had the opportunity (e.g. was PFR and flop checked to = cbet opp)
@@ -172,9 +265,22 @@ See "Shared: Hand Strength Evaluation" section below for full category definitio
 - Position filter
 
 **Analysis zone**:
-- **Response distribution**: Pie chart or horizontal bars showing Fold / Call / Raise split
-- **By position**: Small table showing the fold/call/raise % per position
-- **Range heatmap** (if preflop): What hands hero folds / calls / raises with
+
+**Response distribution**: Pie chart or horizontal bars showing Fold / Call / Raise split
+
+**By position**: Small table showing the fold/call/raise % per position
+
+**Range heatmap** (if preflop): What hands hero folds / calls / raises with
+
+**EV of each response** (same concept as above, applied to multi-way decisions):
+```
+Response │ Avg EV    │ Hands │ % of total │
+─────────┼───────────┼───────┼────────────┤
+Fold     │ -0.50 bb  │  250  │   62.5%    │  (dead money lost)
+Call     │ +0.35 bb  │  120  │   30.0%    │
+Raise    │ +1.80 bb  │   30  │    7.5%    │
+```
+For defensive stats, fold EV is always negative (the money already in the pot). The question is whether calling/raising recovers enough to justify not folding. Breakdown by hand strength shows which calls are profitable vs which are spewy.
 
 **Hand history**:
 - All hands where hero faced this action
@@ -257,7 +363,7 @@ Stats to add to the left panel summary + detail drill-down:
 
 **`GET /api/stats/detail/{stat_key}`**
 
-Query params: `position`, `stakes`, `date_from`, `date_to`, `street` (for multi-street stats), `page`, `per_page`
+Query params: `position`, `stakes`, `date_from`, `date_to`, `street` (for multi-street stats), `multiway` (true/false/all), `page`, `per_page`
 
 Response structure:
 ```json
@@ -310,10 +416,48 @@ Response structure:
     ]
   },
 
-  "response_distribution": {
-    "fold": { "pct": 62.5, "count": 250 },
-    "call": { "pct": 30.0, "count": 120 },
-    "raise": { "pct": 7.5, "count": 30 }
+  "response_distribution": {   // only for defensive/facing stats
+    "fold": { "pct": 62.5, "count": 250, "avg_ev_bb": -0.50 },
+    "call": { "pct": 30.0, "count": 120, "avg_ev_bb": 0.35 },
+    "raise": { "pct": 7.5, "count": 30, "avg_ev_bb": 1.80 }
+  },
+
+  "ev_analysis": {            // EV of the line — action vs no-action comparison
+    "overall": {
+      "action_ev": 0.82, "action_count": 650,
+      "no_action_ev": 0.31, "no_action_count": 350
+    },
+    "by_hand_strength": [     // EV comparison broken down by made hand group
+      { "label": "Nuts+", "action_ev": 5.20, "action_n": 80,
+        "no_action_ev": 3.10, "no_action_n": 15, "diff": 2.10 },
+      { "label": "Top Pair", "action_ev": 1.80, "action_n": 180,
+        "no_action_ev": 1.20, "no_action_n": 60, "diff": 0.60 },
+      { "label": "Middle Pair", "action_ev": 0.20, "action_n": 90,
+        "no_action_ev": 0.45, "no_action_n": 80, "diff": -0.25 },
+      { "label": "Air", "action_ev": -0.55, "action_n": 150,
+        "no_action_ev": -0.18, "no_action_n": 120, "diff": -0.37 }
+    ],
+    "by_board_texture": [     // EV comparison broken down by flop texture
+      { "label": "Axx", "action_ev": 1.20, "action_n": 120,
+        "no_action_ev": 0.50, "no_action_n": 55, "diff": 0.70 },
+      { "label": "8-2 Conn", "action_ev": -0.30, "action_n": 60,
+        "no_action_ev": 0.10, "no_action_n": 45, "diff": -0.40 }
+    ],
+    "by_sizing": [            // EV by bet size bucket (only when action = bet/raise)
+      { "label": "< 33% pot", "avg_ev": 0.95, "count": 280 },
+      { "label": "33-50%", "avg_ev": 0.70, "count": 250 },
+      { "label": "50-75%", "avg_ev": 0.55, "count": 90 },
+      { "label": "> 75%", "avg_ev": 0.30, "count": 30 }
+    ]
+  },
+
+  "trend": {                  // stat value over time for sparkline
+    "points": [
+      { "date": "2025-01-01", "value": 17.2, "sample": 500 },
+      { "date": "2025-01-08", "value": 19.1, "sample": 500 },
+      ...
+    ],
+    "window_size": 500        // rolling window in opportunities
   },
 
   "hands": {
@@ -366,8 +510,8 @@ delayed_cbet_river BOOLEAN, delayed_cbet_river_opp BOOLEAN
 **New columns shared with Population PRD** (see PRD_POPULATION.md):
 ```sql
 -- On hands table: precomputed board texture
-flop_texture_rank VARCHAR,   -- ABB, ABx, Axx, BBB, BBx, Bxx, MHC, MHD, LC, LD
-flop_texture_suit VARCHAR,   -- monotone, two_tone, rainbow
+flop_texture_rank VARCHAR,   -- ABB, ABx, Axx, BBB, BBx, Bxx, T-9 Conn, T-9 Disc, 8-2 Conn, 8-2 Disc
+flop_texture_suit VARCHAR,   -- monocolor, 2tone, rainbow
 flop_paired BOOLEAN,
 turn_texture VARCHAR,         -- completed_draw, draw_adding, overcard, paired_board, brick
 river_texture VARCHAR,
@@ -376,8 +520,9 @@ river_texture VARCHAR,
 pot_before_action DECIMAL,
 bet_pct_pot DECIMAL,
 
--- On hand_players table: pot type
-pot_type VARCHAR              -- srp, 3bet, 4bet, 5bet
+-- On hand_players table: pot type and multiway flag
+pot_type VARCHAR,             -- srp, 3bet, 4bet, 5bet
+is_multiway BOOLEAN           -- true if 3+ players saw the flop
 ```
 
 After schema migration: run `/api/import/rebuild` to recompute all flags from stored raw hand text.
@@ -386,22 +531,54 @@ After schema migration: run `/api/import/rebuild` to recompute all flags from st
 
 ## Shared: Hand Strength Evaluation
 
-New utility needed: given hero's hole cards + board cards, classify hand strength.
+New utility needed: given hero's hole cards + board cards, classify hand strength along **two orthogonal dimensions** (matching PokerTracker / H2N convention — a hand can be both a made hand AND have a draw).
 
-Categories:
-- **Overpair+**: Overpair, set, two pair+, straight, flush, full house, quads, straight flush
-- **Top pair (good kicker)**: Top pair with A-T kicker
-- **Top pair (weak kicker)**: Top pair with 9 or lower kicker
-- **Middle pair**: Second pair on board
-- **Bottom / Weak pair**: Third pair or lower, pocket pair below middle pair
-- **Flush draw**: 4 to a flush
-- **OESD**: Open-ended straight draw (8 outs)
-- **Gutshot**: Inside straight draw (4 outs)
-- **Combo draw**: Flush draw + straight draw
-- **Overcards**: Two cards above the board, no pair/draw
-- **Air**: No pair, no draw, no overcards
+### Made Hand Categories (mutually exclusive, highest match wins)
 
-This requires a small poker hand evaluator function. Doesn't need full hand ranking — just classification into these buckets based on hole cards vs board.
+| ID | Category | Definition |
+|----|----------|------------|
+| 11 | Straight Flush | 5-card straight flush |
+| 10 | Quads | Four of a kind |
+| 9 | Full House | Three of a kind + pair |
+| 8 | Flush | 5 cards same suit |
+| 7 | Straight | 5 sequential ranks |
+| 6 | Set | Pocket pair + board match (3 of a kind from pair in hand) |
+| 5 | Trips | Board pair + 1 hole card match (3 of a kind from pair on board) |
+| 4 | Two Pair | Two pair (both hole cards paired with board, or one hole card + board two-pair) |
+| 3 | Overpair | Pocket pair higher than all board cards |
+| 2 | Top Pair Good Kicker | Top pair with A, K, Q, J, or T kicker |
+| 1 | Top Pair Weak Kicker | Top pair with 9 or lower kicker |
+| 0 | Middle Pair | Paired with second-highest board card |
+| -1 | Weak Pair | Bottom pair, third pair, underpair (pocket pair below middle card) |
+| -2 | Overcards | Two hole cards above all board cards, no pair |
+| -3 | Ace High | Ace in hand, no pair, not both overcards |
+| -4 | No Made Hand | Nothing above |
+
+### Draw Flags (orthogonal — can co-occur with any made hand)
+
+| Flag | Definition |
+|------|------------|
+| `flush_draw` | 4 cards to a flush (hole + board) |
+| `oesd` | Open-ended straight draw (8 outs) |
+| `gutshot` | Inside straight draw (4 outs) |
+| `combo_draw` | Flush draw + any straight draw (OESD or gutshot) |
+| `backdoor_flush` | 3 cards to a flush (flop only, 2 to come) |
+| `backdoor_straight` | 3 to a straight with 2 cards to come (flop only) |
+
+### Composite Categories (for display grouping)
+
+For simplified display in detail panels, these composite groups can be used:
+
+| Group | Includes |
+|-------|----------|
+| **Nuts+** | Straight flush, quads, full house, flush, straight |
+| **Strong** | Set, trips, two pair, overpair |
+| **Top Pair** | Top pair good kicker, top pair weak kicker |
+| **Marginal Made** | Middle pair, weak pair |
+| **Draw Only** | No made hand (or weak made) + any draw flag |
+| **Air** | No made hand, no draw |
+
+This requires a poker hand evaluator function. Doesn't need full hand ranking — just classification into the above buckets based on hole cards vs board. Consider using the `treys` Python library for the made-hand evaluation, with custom draw detection on top.
 
 ---
 
@@ -411,7 +588,7 @@ Shared utility between Stats v2 detail panels and Population Analysis (see PRD_P
 
 ### Flop Classification
 
-Primary axis — **Rank Structure** (Broadway = T, J, Q, K; Ace treated separately):
+Primary axis — **Rank Structure** (H2N / Smart Research convention. Broadway = T, J, Q, K; Ace treated separately):
 
 | Category | Code | Definition | Example |
 |----------|------|------------|---------|
@@ -421,14 +598,19 @@ Primary axis — **Rank Structure** (Broadway = T, J, Q, K; Ace treated separate
 | 3 Broadways (no A) | BBB | 3 broadways, no ace | K♠ Q♥ T♦ |
 | 2 Broadways + x (no A) | BBx | 2 broadways + low, no ace | K♠ J♥ 6♦ |
 | 1 Broadway + x + x (no A) | Bxx | 1 broadway + 2 low, no ace | Q♠ 7♥ 3♦ |
-| Mid-High Connected | MHC | T-9 high, connected (≤2 gap) | T♠ 9♥ 7♦ |
-| Mid-High Disconnected | MHD | T-9 high, disconnected | T♠ 6♥ 2♦ |
-| Low Connected | LC | 8-high or lower, connected | 8♠ 7♥ 5♦ |
-| Low Disconnected | LD | 8-high or lower, disconnected | 8♠ 4♥ 2♦ |
+| T-9 High Connected | T-9 Conn | Highest card T or 9, connected (≤2 gap between at least 2 cards) | T♠ 9♥ 7♦ |
+| T-9 High Disconnected | T-9 Disc | Highest card T or 9, disconnected | T♠ 6♥ 2♦ |
+| 8-2 High Connected | 8-2 Conn | Highest card 8 or lower, connected | 8♠ 7♥ 5♦ |
+| 8-2 High Disconnected | 8-2 Disc | Highest card 8 or lower, disconnected | 8♠ 4♥ 2♦ |
 
-Secondary axis — **Suit Structure**: Monotone / Two-tone / Rainbow
+Secondary axis — **Suit Structure**:
+- **Monocolor**: 3 cards same suit
+- **2tone**: 2 cards same suit (flush draw possible)
+- **Rainbow**: all different suits
 
-Tertiary axis — **Pairing**: Paired / Unpaired
+Tertiary axis — **Pairing** (overlay, cross-cuts rank categories):
+- **Paired**: 2+ cards same rank
+- **Unpaired**: all different ranks
 
 ### Turn Classification
 
