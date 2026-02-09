@@ -165,10 +165,10 @@ def compute_hero_stats(
     stats.missed_cbet_flop = _simple_pct(
         [r for r in data if r["cbet_flop_opp"]], "missed_cbet_flop"
     )
-    # Missed cbet flop by position (IP vs OOP)
-    ip_cbet_opp = [r for r in data if r["cbet_flop_opp"] and r["position"] in IP_POSITIONS]
+    # Missed cbet flop by position (IP vs OOP relative to remaining players)
+    ip_cbet_opp = [r for r in data if r["cbet_flop_opp"] and r.get("postflop_ip")]
     stats.missed_cbet_flop_ip = _simple_pct(ip_cbet_opp, "missed_cbet_flop")
-    oop_cbet_opp = [r for r in data if r["cbet_flop_opp"] and r["position"] in OOP_POSITIONS]
+    oop_cbet_opp = [r for r in data if r["cbet_flop_opp"] and r.get("postflop_ip") is False]
     stats.missed_cbet_flop_oop = _simple_pct(oop_cbet_opp, "missed_cbet_flop")
 
     stats.missed_cbet_turn = _simple_pct(
@@ -177,14 +177,14 @@ def compute_hero_stats(
 
     # Missed cbet fold: after missing cbet, hero folded
     # IP: checked behind on flop, folded on turn
-    ip_missed = [r for r in data if r["missed_cbet_flop"] and r["position"] in IP_POSITIONS]
+    ip_missed = [r for r in data if r["missed_cbet_flop"] and r.get("postflop_ip")]
     ip_missed_fold = sum(1 for r in ip_missed if (r.get("turn_folds") or 0) > 0)
     stats.missed_cbet_fold_ip = StatValue(
         value=round(ip_missed_fold / len(ip_missed) * 100, 1) if ip_missed else None,
         sample=len(ip_missed),
     )
     # OOP: checked on flop, folded on flop or turn
-    oop_missed = [r for r in data if r["missed_cbet_flop"] and r["position"] in OOP_POSITIONS]
+    oop_missed = [r for r in data if r["missed_cbet_flop"] and r.get("postflop_ip") is False]
     oop_missed_fold = sum(
         1 for r in oop_missed
         if (r.get("flop_folds") or 0) > 0 or (r.get("turn_folds") or 0) > 0
@@ -196,8 +196,8 @@ def compute_hero_stats(
 
     # vs Missed cbet: opponent missed cbet, what did hero do
     vs_mc = [r for r in data if r.get("vs_missed_cbet_flop_opp")]
-    vs_mc_ip = [r for r in vs_mc if r["position"] in IP_POSITIONS]
-    vs_mc_oop = [r for r in vs_mc if r["position"] in OOP_POSITIONS]
+    vs_mc_ip = [r for r in vs_mc if r.get("postflop_ip")]
+    vs_mc_oop = [r for r in vs_mc if r.get("postflop_ip") is False]
 
     # Total: hero bet (IP: flop bet, OOP: turn bet)
     vs_mc_bet_total = (
@@ -360,7 +360,7 @@ def _aggression_factor(data: list[dict], street: str) -> StatValue:
     raises = sum(r.get(f"{street}_raises", 0) or 0 for r in data)
     calls = sum(r.get(f"{street}_calls", 0) or 0 for r in data)
     if calls == 0:
-        return StatValue(value=None, sample=bets + raises + calls)
+        return StatValue(value=float(bets + raises) if (bets + raises) > 0 else None, sample=bets + raises)
     return StatValue(
         value=round((bets + raises) / calls, 2),
         sample=bets + raises + calls,

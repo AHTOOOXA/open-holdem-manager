@@ -110,6 +110,7 @@ def compute_stat_flags(parsed: ParsedHand) -> dict[str, dict]:
             "vs_missed_cbet_flop_opp": False,
             "preflop_allin_raise": False,
             "preflop_allin_call": False,
+            "postflop_ip": None,
         }
 
     # ── Preflop stat computation ──
@@ -139,8 +140,8 @@ def compute_stat_flags(parsed: ParsedHand) -> dict[str, dict]:
         action = a["action"]
         position = username_to_info[uname]["position"]
 
-        # Mark open raise opportunity: pot is unopened (no raise yet)
-        if raise_count == 0:
+        # Mark open raise opportunity: pot is unopened (no raise, no limp = RFI)
+        if raise_count == 0 and not has_limper:
             player_stats[uname]["open_raise_opp"] = True
 
         # Steal opportunity: CO/BTN/SB with no raise and no limper before them
@@ -169,6 +170,9 @@ def compute_stat_flags(parsed: ParsedHand) -> dict[str, dict]:
             # Check fold to steal (only if steal is still the last raise)
             if player_stats[uname]["faced_steal"] and raise_count == 1:
                 player_stats[uname]["fold_to_steal"] = True
+            elif player_stats[uname]["faced_steal"] and raise_count > 1:
+                # Folded to a re-raise (e.g., 3-bet over steal), not to the steal itself
+                player_stats[uname]["fold_to_steal"] = False
             continue
 
         if action == "call":
@@ -334,8 +338,16 @@ def compute_stat_flags(parsed: ParsedHand) -> dict[str, dict]:
         if street == "preflop":
             # Players who didn't fold preflop saw the flop (if flop was dealt)
             if board_cards["flop"]:
-                for uname in players_in_hand - players_folded:
+                flop_survivors = players_in_hand - players_folded
+                for uname in flop_survivors:
                     player_stats[uname]["saw_flop"] = True
+                # Compute postflop IP: player with latest position among flop survivors
+                if len(flop_survivors) >= 2:
+                    _PF_ORDER = {"SB": 0, "BB": 1, "EP": 2, "MP": 3, "CO": 4, "BTN": 5}
+                    max_order = max(_PF_ORDER.get(username_to_info[u]["position"], 0) for u in flop_survivors)
+                    for uname in flop_survivors:
+                        pos_order = _PF_ORDER.get(username_to_info[uname]["position"], 0)
+                        player_stats[uname]["postflop_ip"] = (pos_order == max_order)
         elif street == "flop":
             if board_cards["turn"]:
                 for uname in players_in_hand - players_folded:
@@ -419,7 +431,8 @@ def compute_stat_flags(parsed: ParsedHand) -> dict[str, dict]:
 
         # Set cbet stats — only when action checked to the aggressor (no donk bet)
         # If someone bet before the aggressor, they had no cbet opportunity
-        if prev_aggressor and player_stats[prev_aggressor][f"saw_{street}"] and not donk_before_aggressor:
+        # If the aggressor never acted (all-in from prior street), no cbet opportunity
+        if prev_aggressor and player_stats[prev_aggressor][f"saw_{street}"] and not donk_before_aggressor and aggressor_acted:
             player_stats[prev_aggressor][f"cbet_{street}_opp"] = True
             if aggressor_bet:
                 player_stats[prev_aggressor][f"cbet_{street}"] = True
@@ -440,7 +453,7 @@ def compute_stat_flags(parsed: ParsedHand) -> dict[str, dict]:
             for a in street_actions:
                 if a["username"] == prev_aggressor:
                     break  # Aggressor acts, no more donk opp
-                if a["action"] in ("bet", "check", "fold") and a["username"] != prev_aggressor:
+                if a["action"] in ("bet", "check") and a["username"] != prev_aggressor:
                     player_stats[a["username"]][f"donk_bet_{street}_opp"] = True
 
         # Donk bet: first bet into the previous street's aggressor
@@ -458,8 +471,14 @@ def compute_stat_flags(parsed: ParsedHand) -> dict[str, dict]:
                     cbet_order = a["order"]
                     break
             if cbet_order is not None:
+                responded_to_cbet = set()
                 for a in street_actions:
                     if a["order"] > cbet_order and a["username"] != prev_aggressor:
+                        # Only count first response per player (ignore later actions
+                        # like folding to a raise after calling the cbet)
+                        if a["username"] in responded_to_cbet:
+                            continue
+                        responded_to_cbet.add(a["username"])
                         if a["action"] == "fold":
                             player_stats[a["username"]][f"fold_to_cbet_{street}"] = True
                         elif a["action"] == "call":

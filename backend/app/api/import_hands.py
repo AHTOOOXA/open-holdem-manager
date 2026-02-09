@@ -61,6 +61,7 @@ _STAT_FLAG_KEYS = (
     "limp_fold", "four_bet_fold", "call_4bet", "is_3bet_pot",
     "call_cbet_flop", "raise_cbet_flop", "vs_missed_cbet_flop_opp",
     "preflop_allin_raise", "preflop_allin_call",
+    "postflop_ip",
 )
 _HP_ALL_COLS = _HP_BASE_COLS + _STAT_FLAG_KEYS
 _BOARD_COLS = ("hand_id", "street", "card", "card_order")

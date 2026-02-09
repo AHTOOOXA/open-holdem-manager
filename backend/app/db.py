@@ -189,7 +189,8 @@ def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
             raise_cbet_flop BOOLEAN,
             vs_missed_cbet_flop_opp BOOLEAN DEFAULT FALSE,
             preflop_allin_raise BOOLEAN DEFAULT FALSE,
-            preflop_allin_call BOOLEAN DEFAULT FALSE
+            preflop_allin_call BOOLEAN DEFAULT FALSE,
+            postflop_ip BOOLEAN
         )
     """)
     conn.execute("""
@@ -274,6 +275,7 @@ def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
         ("vs_missed_cbet_flop_opp", "BOOLEAN DEFAULT FALSE"),
         ("preflop_allin_raise", "BOOLEAN DEFAULT FALSE"),
         ("preflop_allin_call", "BOOLEAN DEFAULT FALSE"),
+        ("postflop_ip", "BOOLEAN"),
     ]:
         try:
             conn.execute(f"ALTER TABLE hand_players ADD COLUMN {col} {default}")
