@@ -4,6 +4,7 @@ import StatsPage from './pages/StatsPage';
 import GraphPage from './pages/GraphPage';
 import HandsPage from './pages/HandsPage';
 import RangePage from './pages/RangePage';
+import CashDropPage from './pages/CashDropPage';
 
 const navItems = [
   { to: '/', label: 'Upload' },
@@ -11,6 +12,7 @@ const navItems = [
   { to: '/range', label: 'Range' },
   { to: '/graph', label: 'Results' },
   { to: '/hands', label: 'Hands' },
+  { to: '/cash-drop', label: 'Cash Drop' },
 ];
 
 export default function App() {
@@ -41,6 +43,7 @@ export default function App() {
             <Route path="/graph" element={<GraphPage />} />
             <Route path="/range" element={<RangePage />} />
             <Route path="/hands" element={<HandsPage />} />
+            <Route path="/cash-drop" element={<CashDropPage />} />
           </Routes>
         </main>
       </div>

@@ -546,6 +546,62 @@ export async function getResultsBreakdown(params?: {
   return res.json();
 }
 
+// ── Cash Drop Types ──────────────────────────────────────────────────
+
+export interface CashDropSummary {
+  total_hands: number;
+  eligible_hands: number;
+  pots_won: number;
+  cash_drop_hands: number;
+  total_paid_bb: number;
+  total_paid_usd: number;
+  total_received_bb: number;
+  total_received_usd: number;
+  net_bb: number;
+  net_usd: number;
+  frequency: number;
+  avg_drop_bb: number;
+  win_pct: number | null;
+  win_rate_bb100: number | null;
+  vpip_pct: number | null;
+  pfr_pct: number | null;
+  three_bet_pct: number | null;
+  wtsd_pct: number | null;
+  wsd_pct: number | null;
+}
+
+export interface CashDropTypeBreakdown {
+  drop_bb: number;
+  count: number;
+  total_usd: number;
+}
+
+export interface CashDropRangeCategory {
+  label: string;
+  combos: ComboStats[];
+  total_hands: number;
+}
+
+export interface CashDropResponse {
+  summary: CashDropSummary;
+  by_type: CashDropTypeBreakdown[];
+  ranges: CashDropRangeCategory[];
+}
+
+export async function getCashDropStats(params?: {
+  stakes?: string;
+  date_from?: string;
+  date_to?: string;
+}): Promise<CashDropResponse> {
+  const sp = new URLSearchParams();
+  if (params?.stakes) sp.set('stakes', params.stakes);
+  if (params?.date_from) sp.set('date_from', params.date_from);
+  if (params?.date_to) sp.set('date_to', params.date_to);
+  const res = await fetch(`${BASE}/reports/cash-drop?${sp}`);
+  if (!res.ok) throw new Error(`Cash drop stats failed: ${res.statusText}`);
+  return res.json();
+}
+
 export async function clearDatabase(): Promise<void> {
   const res = await fetch(`${BASE}/import/clear`, { method: 'POST' });
   if (!res.ok) throw new Error(`Clear failed: ${res.statusText}`);

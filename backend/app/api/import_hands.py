@@ -36,6 +36,7 @@ BATCH_SIZE = 500
 _HANDS_COLS = (
     "id", "site_id", "played_at", "game_type", "stakes",
     "sb_amount", "bb_amount", "table_name", "table_size", "button_seat", "raw_text",
+    "cash_drop_received",
 )
 _HP_BASE_COLS = (
     "id", "hand_id", "player_id", "seat", "position",
@@ -59,6 +60,7 @@ _STAT_FLAG_KEYS = (
     "squeeze_opp", "five_bet_opp",
     "limp_fold", "four_bet_fold", "call_4bet", "is_3bet_pot",
     "call_cbet_flop", "raise_cbet_flop", "vs_missed_cbet_flop_opp",
+    "preflop_allin_raise", "preflop_allin_call",
 )
 _HP_ALL_COLS = _HP_BASE_COLS + _STAT_FLAG_KEYS
 _BOARD_COLS = ("hand_id", "street", "card", "card_order")
@@ -269,6 +271,7 @@ def _flush_batch(
         hands_cols["table_size"].append(parsed.table_size)
         hands_cols["button_seat"].append(parsed.button_seat)
         hands_cols["raw_text"].append(parsed.raw_text)
+        hands_cols["cash_drop_received"].append(float(parsed.cash_drop_received))
 
         for s in parsed.seats:
             uname = s["username"]

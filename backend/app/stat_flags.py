@@ -108,6 +108,8 @@ def compute_stat_flags(parsed: ParsedHand) -> dict[str, dict]:
             "call_cbet_flop": None,
             "raise_cbet_flop": None,
             "vs_missed_cbet_flop_opp": False,
+            "preflop_allin_raise": False,
+            "preflop_allin_call": False,
         }
 
     # ── Preflop stat computation ──
@@ -171,6 +173,8 @@ def compute_stat_flags(parsed: ParsedHand) -> dict[str, dict]:
 
         if action == "call":
             player_stats[uname]["vpip"] = True
+            if a["is_all_in"]:
+                player_stats[uname]["preflop_allin_call"] = True
 
             if raise_count == 0:
                 # Calling the big blind = limp
@@ -205,6 +209,8 @@ def compute_stat_flags(parsed: ParsedHand) -> dict[str, dict]:
         elif action == "raise":
             player_stats[uname]["vpip"] = True
             player_stats[uname]["pfr"] = True
+            if a["is_all_in"]:
+                player_stats[uname]["preflop_allin_raise"] = True
             raise_count += 1
 
             if raise_count == 1:

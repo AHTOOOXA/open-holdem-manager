@@ -86,6 +86,7 @@ def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
             table_size INTEGER,
             button_seat INTEGER,
             raw_text TEXT,
+            cash_drop_received DECIMAL DEFAULT 0,
             imported_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
@@ -186,7 +187,9 @@ def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
             is_3bet_pot BOOLEAN DEFAULT FALSE,
             call_cbet_flop BOOLEAN,
             raise_cbet_flop BOOLEAN,
-            vs_missed_cbet_flop_opp BOOLEAN DEFAULT FALSE
+            vs_missed_cbet_flop_opp BOOLEAN DEFAULT FALSE,
+            preflop_allin_raise BOOLEAN DEFAULT FALSE,
+            preflop_allin_call BOOLEAN DEFAULT FALSE
         )
     """)
     conn.execute("""
@@ -269,9 +272,20 @@ def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
         ("call_cbet_flop", "BOOLEAN"),
         ("raise_cbet_flop", "BOOLEAN"),
         ("vs_missed_cbet_flop_opp", "BOOLEAN DEFAULT FALSE"),
+        ("preflop_allin_raise", "BOOLEAN DEFAULT FALSE"),
+        ("preflop_allin_call", "BOOLEAN DEFAULT FALSE"),
     ]:
         try:
             conn.execute(f"ALTER TABLE hand_players ADD COLUMN {col} {default}")
+        except duckdb.CatalogException:
+            pass
+
+    # Migrations for hands table
+    for col, default in [
+        ("cash_drop_received", "DECIMAL DEFAULT 0"),
+    ]:
+        try:
+            conn.execute(f"ALTER TABLE hands ADD COLUMN {col} {default}")
         except duckdb.CatalogException:
             pass
 

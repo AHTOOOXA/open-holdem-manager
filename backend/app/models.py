@@ -314,3 +314,46 @@ class ComboStats(BaseModel):
 class RangeResponse(BaseModel):
     combos: list[ComboStats] = []
     total_hands: int = 0
+
+
+# ── Cash Drop Models ────────────────────────────────────────────────
+
+class CashDropSummary(BaseModel):
+    total_hands: int
+    eligible_hands: int        # hands where pot had jackpot
+    pots_won: int              # eligible pots hero won
+    cash_drop_hands: int       # hands with a cash drop at table
+    total_paid_bb: float       # pots_won * 0.5
+    total_paid_usd: float
+    total_received_bb: float   # sum(cash_drop / table_size) in BB
+    total_received_usd: float
+    net_bb: float
+    net_usd: float
+    frequency: float           # 1 drop every N hands
+    avg_drop_bb: float
+    # Hero stats in eligible pots
+    win_pct: float | None      # how often hero wins eligible pots
+    win_rate_bb100: float | None
+    vpip_pct: float | None
+    pfr_pct: float | None
+    three_bet_pct: float | None
+    wtsd_pct: float | None
+    wsd_pct: float | None
+
+
+class CashDropTypeBreakdown(BaseModel):
+    drop_bb: float
+    count: int
+    total_usd: float
+
+
+class CashDropRangeCategory(BaseModel):
+    label: str
+    combos: list[ComboStats]
+    total_hands: int
+
+
+class CashDropResponse(BaseModel):
+    summary: CashDropSummary
+    by_type: list[CashDropTypeBreakdown]
+    ranges: list[CashDropRangeCategory]

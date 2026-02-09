@@ -39,6 +39,7 @@ class ParsedHand:
     sb_player: str | None
     bb_player: str | None
     raw_text: str
+    cash_drop_received: Decimal = Decimal("0")
 
 
 # Position labels for 6-max (clockwise from BTN)
@@ -59,7 +60,7 @@ POSITIONS_BY_COUNT = {
 RE_SKIP = re.compile(
     r"is disconnected|has timed out|is sitting out|is connected|"
     r"has returned|Cashout:|was removed from the table|said,|"
-    r"leaves the table|joins the table|Cash Drop to Pot|"
+    r"leaves the table|joins the table|"
     r"\*\*\* (?:FIRST|SECOND) BOARD \*\*\*|"
     r"\*\*\* (?:SECOND|THIRD) (?:FLOP|TURN|RIVER) \*\*\*|"
     r"\*\*\* (?:SECOND|THIRD) SHOWDOWN \*\*\*|"
@@ -127,6 +128,7 @@ RE_SUMMARY_FEE = re.compile(
 RE_SUMMARY_JACKPOT = re.compile(
     r"Jackpot \$([0-9.]+)"
 )
+RE_CASH_DROP = re.compile(r"Cash Drop to Pot : total \$([0-9.]+)")
 RE_SUMMARY_SEAT = re.compile(
     r"Seat (\d+): (.+?)(?:\s+\(.*?\))* (?:collected|folded|showed|mucked|lost|won)"
 )
@@ -333,6 +335,7 @@ def parse_hand_history(hand_text: str) -> ParsedHand:
     collected = {}  # username -> total amount collected
     total_rake = Decimal("0")
     total_jackpot = Decimal("0")
+    cash_drop_received = Decimal("0")
     went_to_showdown_players = set()
     in_showdown = False
     in_summary = False
@@ -349,6 +352,12 @@ def parse_hand_history(hand_text: str) -> ParsedHand:
         if not line:
             continue
         if _should_skip(line):
+            continue
+
+        # Cash Drop line (appears before blinds)
+        m = RE_CASH_DROP.search(line)
+        if m:
+            cash_drop_received = Decimal(m.group(1))
             continue
 
         # Street markers
@@ -623,5 +632,6 @@ def parse_hand_history(hand_text: str) -> ParsedHand:
         in_showdown=in_showdown,
         sb_player=sb_player,
         bb_player=bb_player,
+        cash_drop_received=cash_drop_received,
         raw_text=hand_text,
     )
