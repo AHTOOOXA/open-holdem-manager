@@ -392,16 +392,16 @@ def get_breakdown(
 
 # ── Drift Detection ─────────────────────────────────────────────────
 
-# Stats to track for drift, with optional opportunity columns
-# (stat_col, opp_col_or_None)
+# Stats to track for drift: (stat_col, opp_col_or_None, min_lifetime, min_window)
+# min values are opportunity-filtered counts (not total hands)
 _DRIFT_STATS = [
-    ("vpip", None),
-    ("pfr", None),
-    ("fold_to_3bet", "three_bet_opp"),
-    ("cbet_flop", "cbet_flop_opp"),
-    ("went_to_showdown", "saw_flop"),
-    ("won_at_showdown", "went_to_showdown"),
-    ("saw_flop", None),  # proxy for WWSF denominator
+    ("vpip", None, 500, 200),
+    ("pfr", None, 500, 200),
+    ("fold_to_3bet", "three_bet_opp", 200, 50),
+    ("cbet_flop", "cbet_flop_opp", 200, 50),
+    ("went_to_showdown", "saw_flop", 300, 100),
+    ("won_at_showdown", "went_to_showdown", 200, 50),
+    ("saw_flop", None, 500, 200),
 ]
 
 _DRIFT_INTERPRETATIONS: dict[str, dict[str, str]] = {
@@ -417,7 +417,7 @@ _DRIFT_INTERPRETATIONS: dict[str, dict[str, str]] = {
 
 @router.get("/reports/drift", response_model=DriftResponse)
 def get_drift(
-    window: int = Query(2000, ge=100, le=50000),
+    window: int = Query(5000, ge=100, le=100000),
     stakes: str | None = Query(None),
     date_from: str | None = Query(None),
     date_to: str | None = Query(None),
@@ -453,7 +453,7 @@ def get_drift(
         # Build aggregate expressions for lifetime and window
         results: list[DriftStat] = []
 
-        for stat_col, opp_col in _DRIFT_STATS:
+        for stat_col, opp_col, min_lifetime, min_window in _DRIFT_STATS:
             # Lifetime: AVG + STDDEV where opportunity is true (or all hands)
             opp_filter = f"AND hp.{opp_col} = true" if opp_col else ""
 
@@ -473,7 +473,7 @@ def get_drift(
             lifetime_std = float(lifetime_row[1]) if lifetime_row[1] is not None else 0.0
             lifetime_n = int(lifetime_row[2])
 
-            if lifetime_n < 30 or lifetime_std == 0:
+            if lifetime_n < min_lifetime or lifetime_std == 0:
                 continue
 
             # Window: last N hands (by played_at) where opportunity is true
@@ -495,7 +495,7 @@ def get_drift(
             window_avg = float(window_row[0]) if window_row[0] is not None else 0.0
             window_n = int(window_row[1])
 
-            if window_n < 30:
+            if window_n < min_window:
                 continue
 
             # Z-score using standard error

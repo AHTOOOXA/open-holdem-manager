@@ -6,6 +6,7 @@ import type { DatePreset } from '@/lib/date-presets';
 import FilterBar from '@/components/FilterBar';
 import EmptyState from '@/components/EmptyState';
 import LeakSummaryPanel from '@/components/LeakSummaryPanel';
+import DriftPanel from '@/components/DriftPanel';
 import { useDrift } from '@/hooks/useDrift';
 import {
   getBenchmarkForPosition,
@@ -373,7 +374,7 @@ export default function StatsPage() {
   }), [stakes, dateFrom, dateTo]);
 
   // Drift detection
-  const { driftMap } = useDrift({
+  const { driftMap, stats: driftStats, totalHands: driftTotalHands } = useDrift({
     stakes: filterParams.stakes,
     date_from: filterParams.date_from,
     date_to: filterParams.date_to,
@@ -480,6 +481,9 @@ export default function StatsPage() {
 
         {/* ── Leak Summary Panel ── */}
         {stats.hands >= 200 && <LeakSummaryPanel stats={stats} />}
+
+        {/* ── Drift Panel ── */}
+        <DriftPanel stats={driftStats} totalHands={driftTotalHands} />
 
         {/* ── PRE-FLOP ── */}
         <SectionTitle>Pre-Flop</SectionTitle>

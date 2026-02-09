@@ -4,6 +4,7 @@ import type { DriftStat, DriftResponse } from '@/lib/api';
 
 export interface UseDriftResult {
   driftMap: Map<string, DriftStat>;
+  stats: DriftStat[];
   totalHands: number;
 }
 
@@ -38,5 +39,9 @@ export function useDrift(params: {
     return map;
   }, [data]);
 
-  return { driftMap, totalHands: data?.total_hands ?? 0 };
+  return {
+    driftMap,
+    stats: data?.stats ?? [],
+    totalHands: data?.total_hands ?? 0,
+  };
 }
