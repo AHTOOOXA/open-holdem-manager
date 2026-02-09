@@ -366,7 +366,7 @@ Detail panel type: Postflop Action Detail (sizing splits, board texture, hand st
 | **Probe Bet Flop** | % hero bets flop when PFR/aggressor checks (OOP or IP) | Street table [Flop, Turn, River] |
 | **Probe Bet Turn** | % hero bets turn when PFR checks | |
 | **Probe Bet River** | % hero bets river when PFR checks | |
-| **Float Flop** | % hero calls flop IP (then can bet turn if checked to) | Single value |
+| **Float Flop** | % hero calls flop IP AND bets/raises turn when checked to (multi-street: requires flop IP call + turn aggression after check) | Single value |
 | **Delayed C-Bet Turn** | % hero bets turn after checking flop as PFR | Single value |
 | **Delayed C-Bet River** | % hero bets river after checking turn as PFR | Single value |
 
@@ -379,15 +379,15 @@ Detail panel type: Postflop Action Detail (sizing splits, board texture, hand st
 | # | Metric | Section | OHM Status | What's Needed |
 |---|--------|---------|------------|---------------|
 | 1 | 4-Bet Range | Preflop right | **NEW** | `4bet_count / total_hands * 100` (derived, no parser change) |
-| 2 | Limp-Fold | Preflop right | **NEW** | `limp_fold BOOLEAN` flag in stat_flags.py |
-| 3 | 4-Bet-Fold | Preflop right + Steal | **NEW** | `four_bet_fold BOOLEAN` flag in stat_flags.py |
-| 4 | Call 4-Bet | Preflop right | **NEW** | `call_4bet BOOLEAN` flag in stat_flags.py |
+| 2 | Limp-Fold | Preflop right | **EXISTS** | `limp_fold` already in stat_flags.py — wire into stats engine display |
+| 3 | 4-Bet-Fold | Preflop right + Steal | **EXISTS** | `four_bet_fold` already in stat_flags.py — wire into stats engine display |
+| 4 | Call 4-Bet | Preflop right | **EXISTS** | `call_4bet` already in stat_flags.py — wire into stats engine display |
 | 5 | 4-Bet-Fold (steal) | Steal | **NEW** | Reuse `four_bet_fold` + steal context |
 | 6 | Donk Bet Turn/River | Postflop left | Wire up | Columns exist in DB, wire into stats engine |
-| 7 | vs C-Bet Fold/Call/Raise by pot type | Postflop right | **NEW** | `pot_type VARCHAR` + `vs_cbet_action VARCHAR` flags |
+| 7 | vs C-Bet Fold/Call/Raise by pot type | Postflop right | **PARTIAL** | `call_cbet_flop`, `raise_cbet_flop` already in stat_flags.py — need `pot_type VARCHAR` column + pot-type split in stats engine |
 | 8 | Missed C-Bet IP/OOP split | Missed C-Bet left | **NEW** | Derive from position (no parser change) |
 | 9 | Missed C-Bet -> Fold | Missed C-Bet left | **NEW** | `missed_cbet_then_fold BOOLEAN` flag |
-| 10 | vs Missed C-Bet (probe bet) | Missed C-Bet right | **NEW** | `bet_vs_missed_cbet BOOLEAN` flag |
+| 10 | vs Missed C-Bet (probe bet) | Missed C-Bet right | **PARTIAL** | `vs_missed_cbet_flop_opp` already in stat_flags.py — need `bet_vs_missed_cbet BOOLEAN` flag |
 | 11 | vs Missed C-Bet IP/OOP | Missed C-Bet right | **NEW** | Derive from position |
 | 12 | Check-Fold vs Missed C-Bet | Missed C-Bet right | **NEW** | `check_fold_vs_missed_cbet BOOLEAN` flag |
 | 13 | Steal positional (SB/BB defense) | Steal right | Wire up | Already computed, make positional |
@@ -413,7 +413,7 @@ Stats that all three competitors (H2N, HM3, PT4) have and OHM lacks:
 | Probe Bet Flop/Turn/River | Bet into preflop raiser when they checked | `probe_bet_flop/turn/river BOOLEAN` | Track when non-PFR bets after PFR checks |
 | Bet When Checked To | Bet when action checked to you | `bet_when_checked_to_flop/turn/river BOOLEAN` | Track check-then-bet by next actor |
 | Donk Bet Turn/River | Columns exist in DB but not in stats engine | Already in schema | Wire up in `stats_engine.py` |
-| Float Flop | Call flop bet in position, then bet/raise turn when checked to | `float_flop BOOLEAN` | Multi-street tracking |
+| Float Flop | Call flop bet in position AND then bet/raise turn when checked to. Both conditions required — just calling IP is not a float. Denominator = IP flop calls where turn checks to hero. | `float_flop BOOLEAN` | Multi-street tracking (flop call IP + turn bet when checked to) |
 
 **New Showdown Stats**:
 
@@ -691,23 +691,72 @@ Visual indicator in the drawer header: "Hand 23 of 847" with left/right arrow bu
 
 ## 4. Technical Spec
 
-### New API Endpoint: `GET /api/stats/detail/{stat_key}`
+### New API Endpoints: Progressive Loading Detail
 
-**Query params**: `position`, `stakes`, `date_from`, `date_to`, `street` (for multi-street stats), `multiway` (true/false/all), `page`, `per_page`
+The detail panel uses **4 separate endpoints** for progressive loading. The frontend calls `/summary` first (instant), renders the header, then calls `/hands`, `/analysis`, and `/trend` in parallel. This avoids a monolithic 3-5 second request and gives the user immediate feedback.
 
-**Response structure**:
+#### 1. `GET /api/stats/detail/{stat_key}/summary` (instant, ~50ms)
+
+Returns stat metadata, overall/positional values, and detail type. Loaded first to render the header and position tabs immediately.
+
+**Query params**: `position`, `stakes`, `date_from`, `date_to`, `street`, `multiway`
+
 ```json
 {
   "stat_key": "open_raise",
   "stat_name": "Open Raise",
+  "detail_type": "range",
   "overall": { "value": 18.5, "numerator": 1247, "denominator": 6738 },
   "positional": { "ep": { "value": 16.0, "numerator": 200, "denominator": 1250 }, "mp": {}, "co": {}, "btn": {}, "sb": {}, "bb": {} },
+  "response_distribution": {
+    "fold": { "pct": 62.5, "count": 250, "avg_ev_bb": -0.50 },
+    "call": { "pct": 30.0, "count": 120, "avg_ev_bb": 0.35 },
+    "raise": { "pct": 7.5, "count": 30, "avg_ev_bb": 1.80 }
+  }
+}
+```
 
+Note: `response_distribution` only populated for defensive stats. `detail_type` is one of: `range`, `postflop_action`, `defensive`, `showdown`.
+
+#### 2. `GET /api/stats/detail/{stat_key}/hands` (~100-200ms)
+
+Returns paginated hand list filtered by stat opportunity/action. Called in parallel with `/analysis`.
+
+**Query params**: `position`, `stakes`, `date_from`, `date_to`, `street`, `multiway`, `page`, `per_page`
+
+```json
+{
+  "items": [
+    {
+      "hand_id": "RC1234567890",
+      "played_at": "2025-01-15T20:30:00",
+      "position": "CO",
+      "hole_cards": "AhKs",
+      "action_taken": true,
+      "action_detail": "raises $0.50 to $1.20",
+      "board": "Qh 7d 2c",
+      "result_bb": 2.5,
+      "stakes": "$0.05/$0.10"
+    }
+  ],
+  "total": 1247,
+  "page": 1,
+  "per_page": 50
+}
+```
+
+#### 3. `GET /api/stats/detail/{stat_key}/analysis` (~200-500ms)
+
+Returns the heavy analysis data: range heatmap (preflop), sizing/board texture/hand strength/EV (postflop). This is the slowest endpoint but loads in parallel with hands.
+
+**Query params**: `position`, `stakes`, `date_from`, `date_to`, `street`, `multiway`
+
+```json
+{
   "range_heatmap": {
     "AA": { "frequency": 95.2, "count": 40, "total": 42 },
     "AKs": { "frequency": 88.1, "count": 37, "total": 42 },
-    "AKo": { "frequency": 72.5, "count": 29, "total": 40 },
-    "..."
+    "AKo": { "frequency": 72.5, "count": 29, "total": 40 }
   },
 
   "sizing_distribution": {
@@ -756,12 +805,6 @@ Visual indicator in the drawer header: "Hand 23 of 847" with left/right arrow bu
     ]
   },
 
-  "response_distribution": {
-    "fold": { "pct": 62.5, "count": 250, "avg_ev_bb": -0.50 },
-    "call": { "pct": 30.0, "count": 120, "avg_ev_bb": 0.35 },
-    "raise": { "pct": 7.5, "count": 30, "avg_ev_bb": 1.80 }
-  },
-
   "ev_analysis": {
     "overall": {
       "action_ev": 0.82, "action_count": 650,
@@ -791,39 +834,39 @@ Visual indicator in the drawer header: "Hand 23 of 847" with left/right arrow bu
       { "label": "50-75%", "avg_ev": 0.55, "count": 90 },
       { "label": "> 75%", "avg_ev": 0.30, "count": 30 }
     ]
-  },
-
-  "trend": {
-    "points": [
-      { "date": "2025-01-01", "value": 17.2, "sample": 500 },
-      { "date": "2025-01-08", "value": 19.1, "sample": 500 },
-      { "date": "2025-01-15", "value": 18.5, "sample": 500 }
-    ],
-    "window_size": 500
-  },
-
-  "hands": {
-    "items": [
-      {
-        "hand_id": "RC1234567890",
-        "played_at": "2025-01-15T20:30:00",
-        "position": "CO",
-        "hole_cards": "AhKs",
-        "action_taken": true,
-        "action_detail": "raises $0.50 to $1.20",
-        "board": "Qh 7d 2c",
-        "result_bb": 2.5,
-        "stakes": "$0.05/$0.10"
-      }
-    ],
-    "total": 1247,
-    "page": 1,
-    "per_page": 50
   }
 }
 ```
 
-Note: Not all fields are populated for every stat type. For example, `range_heatmap` is only populated for preflop stats, `sizing_distribution` only for postflop betting stats, and `response_distribution` only for defensive stats. The frontend renders the appropriate sub-sections based on which fields have data.
+Note: Only relevant fields are populated per detail type. `range_heatmap` for preflop, `sizing_distribution`/`board_texture`/`hand_strength`/`ev_analysis` for postflop action stats.
+
+#### 4. `GET /api/stats/detail/{stat_key}/trend` (~100ms)
+
+Returns rolling stat trend over time. Loaded last (least critical for immediate analysis).
+
+**Query params**: `position`, `stakes`, `date_from`, `date_to`, `window_size` (default 500)
+
+```json
+{
+  "points": [
+    { "date": "2025-01-01", "value": 17.2, "sample": 500 },
+    { "date": "2025-01-08", "value": 19.1, "sample": 500 },
+    { "date": "2025-01-15", "value": 18.5, "sample": 500 }
+  ],
+  "window_size": 500
+}
+```
+
+#### Frontend Loading Sequence
+
+```
+User clicks stat cell
+  → fetch /summary (instant)          → render header + position tabs
+  → fetch /hands + /analysis (parallel) → render hand list + analysis zone
+  → fetch /trend (after above)         → render sparkline
+```
+
+Each section shows a skeleton/spinner independently until its data arrives. If the user clicks a different stat before loading completes, in-flight requests are aborted (`AbortController`).
 
 ### New Database Columns
 
@@ -859,9 +902,9 @@ delayed_cbet_river BOOLEAN, delayed_cbet_river_opp BOOLEAN,
 
 ```sql
 -- H2N parity (from PRD.md Section 3.2.0)
-limp_fold BOOLEAN,
-four_bet_fold BOOLEAN,
-call_4bet BOOLEAN,
+-- NOTE: limp_fold, four_bet_fold, call_4bet, call_cbet_flop, raise_cbet_flop
+-- already exist in stat_flags.py and hand_players schema. Only need stats engine wiring.
+-- NEW columns needed:
 missed_cbet_then_fold BOOLEAN,
 bet_vs_missed_cbet BOOLEAN,
 check_fold_vs_missed_cbet BOOLEAN,
@@ -1023,11 +1066,17 @@ Requires knowing who the PFR is and tracking their check action.
 
 #### Float Detection
 
-Logic: Hero calls a flop bet in position, enabling a potential turn bet if checked to.
+Logic: A float is a **two-street play** — hero calls a flop bet in position, then bets or raises the turn when the opponent checks to them. Just calling IP on the flop is not a float; the follow-through aggression on the turn is what makes it a float.
 
 ```python
-# float_flop_opp = True if hero was IP and faced a flop bet
-# float_flop = True if hero called a flop bet while IP
+# float_flop_opp = True if hero called flop bet IP AND turn action checks to hero
+#   (i.e., hero has the opportunity to complete the float)
+# float_flop = True if hero called flop bet IP AND then bet/raised turn when checked to
+#   (both conditions must be met — flop IP call + turn aggression after check)
+#
+# Note: float_flop_opp denominator is IP flop calls where turn checks to hero,
+#   NOT all IP flop bet facings. A hero who calls IP but faces a turn bet
+#   has no float opportunity.
 ```
 
 #### Delayed C-Bet Detection
@@ -1044,9 +1093,15 @@ Logic: Hero was PFR, checked the flop (missed c-bet), then bets the turn.
 #### H2N Parity Flag Detection
 
 ```python
-# limp_fold: Hero limped preflop, then folded to a raise
-# four_bet_fold: Hero 4-bet, then folded to a 5-bet
-# call_4bet: Hero called a 4-bet (facing 4-bet, did not fold or 5-bet)
+# ALREADY IMPLEMENTED in stat_flags.py (need stats engine wiring only):
+#   limp_fold: Hero limped preflop, then folded to a raise
+#   four_bet_fold: Hero 4-bet, then folded to a 5-bet
+#   call_4bet: Hero called a 4-bet (facing 4-bet, did not fold or 5-bet)
+#   call_cbet_flop: Hero called a flop c-bet
+#   raise_cbet_flop: Hero raised a flop c-bet
+#   vs_missed_cbet_flop_opp: Hero was in hand when PFR missed flop c-bet
+#
+# NEW flags to implement:
 # missed_cbet_then_fold: Hero missed c-bet (checked as PFR), then folded to opponent bet
 # bet_vs_missed_cbet: Opponent missed c-bet, hero bet
 # check_fold_vs_missed_cbet: Opponent missed c-bet, hero checked, then folded
@@ -1336,9 +1391,9 @@ This phase alone transforms the stats page from read-only to interactive. Every 
    - Probe: identify PFR, track their check, detect hero bet
    - Float: track IP calls on flop
    - Delayed c-bet: PFR checked previous street, now bets
-3. Add H2N parity flags (1 day)
-   - limp_fold, four_bet_fold, call_4bet
-   - missed_cbet_then_fold, bet_vs_missed_cbet, check_fold_vs_missed_cbet
+3. Add H2N parity flags (0.5 day)
+   - limp_fold, four_bet_fold, call_4bet, call_cbet_flop, raise_cbet_flop already in stat_flags.py — wire into stats_engine.py
+   - NEW: missed_cbet_then_fold, bet_vs_missed_cbet, check_fold_vs_missed_cbet
 4. Add core gap flags (0.5 day)
    - cold_call, call_3bet, fold_to_squeeze
 5. Update `db.py` schema with all new columns (0.5 day)

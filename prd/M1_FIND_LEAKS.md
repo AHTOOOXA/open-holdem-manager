@@ -145,9 +145,22 @@ interface StatBenchmarks {
 - Shows top 5 leaks, sorted by estimated impact (bb/100)
 - Each leak shows: stat name, current value, target range, estimated cost, one-line fix suggestion
 - "View hands" link deep-links to hand browser with pre-applied filters
+  - **Blocker**: The current `GET /api/hands` endpoint does NOT support filtering by stat flags. A new `stat_flag` query parameter must be added first (see Prerequisite below).
 - Below leaks: list of "on-track" stats (green checkmarks) for positive reinforcement
 - Minimum sample: only show leaks from stats with 200+ opportunities
 - Refresh when filters change (different stakes may reveal different leaks)
+
+**Prerequisite — `stat_flag` filter on hands API**:
+
+The "View hands" deep links require filtering hands by stat flags (e.g. "show hands where hero faced a 3-bet"). This doesn't exist yet.
+
+Required backend change to `GET /api/hands`:
+- Add `stat_flag: Optional[str] = None` parameter (repeatable for AND logic)
+- `?stat_flag=fold_to_3bet_opp` → `AND hp.fold_to_3bet_opp = true` (hands where hero faced a 3-bet)
+- `?stat_flag=steal_opp` → `AND hp.steal_opp = true` (hands where hero had a steal opportunity)
+- Whitelist valid flag names against `hand_players` boolean columns to prevent SQL injection
+- ~20 lines in `hands.py` — small change but a **hard blocker** for the deep link UX
+- Deep link URL format: `/hands?stat_flag=fold_to_3bet_opp`
 
 **Impact estimation**:
 - `deviation = abs(actual_value - midpoint_of_optimal_range)`
@@ -192,7 +205,8 @@ cbet_flop:
 **How it works**:
 1. Compute **lifetime baseline** stats (the player's overall "A-game" profile)
 2. Compute stats over **rolling windows** (configurable: last 500, 1k, 2k, 5k, 10k hands)
-3. Compare using z-scores: `z = (rolling_mean - lifetime_mean) / lifetime_stddev`
+3. Compare using z-scores: `z = (rolling_mean - lifetime_mean) / (lifetime_stddev / sqrt(window_size))`
+   - The denominator is the **standard error**, not the raw stddev. For a boolean stat (VPIP, PFR, etc.), each hand is a Bernoulli trial. The standard deviation of the *sample mean* over N hands is `stddev / sqrt(N)`. Using raw stddev would make the z-score ~45x too small for a 2000-hand window (sqrt(2000) ≈ 44.7), meaning drift would essentially never trigger.
 4. Flag when |z| > 2.0 (statistically significant deviation at ~95% confidence)
 
 **Stats to monitor**:
@@ -267,7 +281,18 @@ cbet_flop:
 └─┴──────┘
 ```
 
-**Recommendation**: Option B (background tint) at very low opacity (5-10%). It's the most visible without cluttering the table. The existing color coding (green/red text for good/bad play) stays — the background tint is an additional layer for benchmark comparison.
+**Dual color system conflict — RESOLVED**:
+
+The existing Stats page already has H2N-style **text coloring** (green/red/yellow/blue) via per-stat threshold functions (`colorVpip`, `colorPfr`, etc. in `StatsPage.tsx`). These use hardcoded ranges that partially overlap with but don't match the benchmark ranges defined here (e.g. H2N `colorVpip` marks 20-28 green, while benchmarks say 22-27).
+
+Running two independent coloring systems creates confusion: a stat could show green text (H2N says fine) with a red background tint (benchmark says leak), or vice versa.
+
+**Decision: Replace, don't layer.** Remove the existing H2N-style `color*` functions and replace them with the unified benchmark system. One source of truth for what's good/bad.
+
+- **Text color**: Driven by benchmark ranges (`getStatHealth()`). Green/yellow/red text replaces the old per-stat functions.
+- **Background tint**: NOT used. Text color alone is sufficient and avoids visual noise.
+- **Migration**: Delete all `color*` functions from `StatsPage.tsx`. The `StatCell` component takes the benchmark range instead and calls `getStatHealth()` to determine text color.
+- **Benefit**: Benchmark ranges, coaching tips, and coloring are all defined in one place (`benchmarks.ts`), making them easy to update.
 
 **Tooltip design**:
 ```
@@ -573,15 +598,20 @@ def get_drift(
     lifetime = db.execute(lifetime_sql, params).fetchone()
     window_result = db.execute(window_sql, params + [window]).fetchone()
 
-    # Compute z-scores
+    # Compute z-scores using standard error (stddev / sqrt(N))
+    # Each hand is a Bernoulli trial for boolean stats. The standard
+    # deviation of the sample mean is stddev/sqrt(N), not raw stddev.
+    import math
+
     results = []
     for stat_key, stat_name in DRIFT_STATS:
         lifetime_avg = getattr(lifetime, f"{stat_key}_avg")
         lifetime_std = getattr(lifetime, f"{stat_key}_std")
         window_avg = getattr(window_result, f"{stat_key}_avg")
 
-        if lifetime_std and lifetime_std > 0:
-            z = (window_avg - lifetime_avg) / lifetime_std
+        if lifetime_std and lifetime_std > 0 and window_result.hands > 0:
+            std_error = lifetime_std / math.sqrt(window_result.hands)
+            z = (window_avg - lifetime_avg) / std_error
         else:
             z = 0
 
@@ -632,22 +662,23 @@ def get_drift_interpretation(stat_key: str, z_score: float) -> str | None:
 **M1.1 — Benchmarks (3-4 days)**:
 1. Create `src/lib/benchmarks.ts` with all benchmark ranges and coaching tips
 2. Create `getStatHealth()` utility function
-3. Add background tint (or dot) to `StatCell` component in `StatsPage.tsx`
+3. **Replace** existing H2N-style `color*` functions in `StatsPage.tsx` with benchmark-driven text coloring (delete `colorVpip`, `colorPfr`, `colorOpenRaise`, etc. — replace with `getStatHealth()` calls)
 4. Add tooltip component with benchmark info on hover
 5. Test: verify all stats get correct coloring across different stat profiles
 
 **M1.2 — Leak Summary (3-4 days)**:
-1. Create `computeLeaks()` function in `src/lib/benchmarks.ts`
-2. Create `LeakSummaryPanel` component
-3. Create `LeakCard` sub-component (stat name, value, benchmark, tip, fix, hand link)
-4. Create `OnTrackList` sub-component (green checkmarks for good stats)
-5. Add panel to top of `StatsPage.tsx` (collapsible)
-6. Wire "View hands" links to hand browser with pre-applied filters
-7. Test: verify leak ranking, impact estimation, deep links
+1. Add `stat_flag` query parameter to `GET /api/hands` in `backend/app/api/hands.py` (blocker for deep links)
+2. Create `computeLeaks()` function in `src/lib/benchmarks.ts`
+3. Create `LeakSummaryPanel` component
+4. Create `LeakCard` sub-component (stat name, value, benchmark, tip, fix, hand link)
+5. Create `OnTrackList` sub-component (green checkmarks for good stats)
+6. Add panel to top of `StatsPage.tsx` (collapsible)
+7. Wire "View hands" links to hand browser with pre-applied `stat_flag` filters
+8. Test: verify leak ranking, impact estimation, deep links end-to-end
 
 **M1.3 — Drift Detection (3-4 days)**:
 1. Add `GET /api/reports/drift` endpoint to `backend/app/api/reports.py`
-2. Add drift SQL queries (lifetime vs. rolling window)
+2. Add drift SQL queries (lifetime vs. rolling window) — use **standard error** (`stddev / sqrt(N)`) not raw stddev
 3. Add interpretation helper
 4. Create `useDrift()` hook in frontend
 5. Add trend arrows to `StatCell` component
@@ -698,7 +729,7 @@ def get_drift_interpretation(stat_key: str, z_score: float) -> str | None:
 ### M1.3 — Drift Detection
 
 **Unit tests**:
-- Z-score computation: `z = (rolling - lifetime) / stddev`
+- Z-score computation: `z = (rolling - lifetime) / (stddev / sqrt(N))` (standard error, not raw stddev)
 - Significant flag: true when |z| > 2.0, false otherwise
 - Direction: "up" when z > 0, "down" when z < 0
 - Handle edge cases: zero stddev, insufficient sample, identical values

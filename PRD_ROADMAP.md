@@ -216,7 +216,7 @@ Monitor rolling windows of key stats and alert when play deviates from baseline.
 **How it works**:
 1. Compute lifetime baseline stats (player's "A-game" profile)
 2. Compute stats over rolling windows (last 500, 1k, 2k, 5k hands)
-3. Compare using z-scores: `z = (rolling_mean - lifetime_mean) / lifetime_stddev`
+3. Compare using z-scores: `z = (rolling_mean - lifetime_mean) / (lifetime_stddev / sqrt(window_size))` — denominator is standard error, not raw stddev
 4. Flag when |z| > 2.0 (statistically significant deviation)
 
 **Stats to monitor (and what drift means)**:
