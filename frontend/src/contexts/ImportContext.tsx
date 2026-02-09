@@ -21,6 +21,8 @@ interface ImportActions {
   dismiss: () => void;
   updateHeroName: (name: string) => Promise<void>;
   refreshHandCount: () => Promise<void>;
+  importPopoverOpen: boolean;
+  setImportPopoverOpen: (open: boolean) => void;
 }
 
 type ImportContextValue = ImportState & ImportActions;
@@ -41,6 +43,7 @@ function ImportProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState<string | null>(null);
   const [handCount, setHandCount] = useState(0);
   const [settings, setSettings] = useState<Settings | null>(null);
+  const [importPopoverOpen, setImportPopoverOpen] = useState(false);
 
   useEffect(() => {
     getSettings().then(setSettings).catch(() => {});
@@ -129,6 +132,7 @@ function ImportProvider({ children }: { children: ReactNode }) {
       value={{
         phase, fileInfo, progress, result, error, handCount, settings,
         startImport, startRebuild, clearDb, dismiss, updateHeroName, refreshHandCount,
+        importPopoverOpen, setImportPopoverOpen,
       }}
     >
       {children}

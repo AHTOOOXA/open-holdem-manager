@@ -1,15 +1,9 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { getCashDropStats, getFilterOptions } from '@/lib/api';
 import type { CashDropResponse, CashDropRangeCategory, ComboStats, FilterOptions } from '@/lib/api';
+import FilterBar from '@/components/FilterBar';
+import EmptyState from '@/components/EmptyState';
 import { Card, CardContent } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 
 // ── Heatmap helpers ──────────────────────────────────────────────────
 
@@ -141,49 +135,29 @@ export default function CashDropPage() {
 
   const s = data?.summary;
 
+  const hasFilters = !!(stakes || dateFrom || dateTo);
+
   return (
-    <div className="max-w-[1400px] mx-auto">
-      {/* Header + Filters */}
-      <div className="flex items-center justify-between mb-2 flex-wrap gap-3">
-        <h1 className="text-xl font-bold">Cash Drop Analysis</h1>
-        <div className="flex items-center gap-3 flex-wrap">
-          {filterOpts && filterOpts.stakes.length > 1 && (
-            <Select value={stakes || '__all__'} onValueChange={(v) => setStakes(v === '__all__' ? '' : v)}>
-              <SelectTrigger className="w-[120px] h-7 text-xs">
-                <SelectValue placeholder="All Stakes" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__all__">All Stakes</SelectItem>
-                {filterOpts.stakes.map(s => (
-                  <SelectItem key={s} value={s}>{s}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          )}
-          {filterOpts?.date_range?.min && (
-            <>
-              <Input
-                type="date"
-                value={dateFrom}
-                onChange={e => setDateFrom(e.target.value)}
-                className="w-[130px] h-7 text-xs"
-              />
-              <span className="text-text-muted text-xs">to</span>
-              <Input
-                type="date"
-                value={dateTo}
-                onChange={e => setDateTo(e.target.value)}
-                className="w-[130px] h-7 text-xs"
-              />
-            </>
-          )}
-        </div>
-      </div>
+    <div className="max-w-[1400px] mx-auto space-y-2">
+      {/* Filter Bar */}
+      <FilterBar
+        stakes={stakes}
+        onStakesChange={setStakes}
+        dateFrom={dateFrom}
+        onDateFromChange={setDateFrom}
+        dateTo={dateTo}
+        onDateToChange={setDateTo}
+        showDatePresets={false}
+        filterOptions={filterOpts}
+      />
 
       {loading && !data ? (
         <div className="text-center text-text-muted py-20">Loading...</div>
       ) : !s || s.total_hands === 0 ? (
-        <div className="text-center text-text-muted py-20">No data available</div>
+        <EmptyState
+          variant={hasFilters ? 'no-match' : 'no-data'}
+          onClearFilters={hasFilters ? () => { setStakes(''); setDateFrom(''); setDateTo(''); } : undefined}
+        />
       ) : (
         <>
           {/* ── Financial Summary ── */}

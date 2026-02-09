@@ -1,13 +1,13 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { getHands, getTags } from '@/lib/api';
+import { getHands, getTags, getFilterOptions } from '@/lib/api';
 import type { HandListResponse, TagCount, ActionItem } from '@/lib/api';
+import EmptyState from '@/components/EmptyState';
 import HandFilters from '@/components/hands/HandFilters';
 import type { FilterState } from '@/components/hands/HandFilters';
 import { CardBoxPair, CardBoxRow, CardBox } from '@/components/hands/CardDisplay';
 import TagPill from '@/components/hands/TagPill';
 import Pagination from '@/components/hands/Pagination';
 import HandDrawer from '@/components/hands/HandDrawer';
-import { Button } from '@/components/ui/button';
 import {
   Table,
   TableBody,
@@ -164,8 +164,8 @@ export default function HandsPage() {
 
   // Load distinct stakes on mount
   useEffect(() => {
-    getHands({ per_page: 200, sort: 'played_at', order: 'desc' }).then((resp) => {
-      setDistinctStakes([...new Set(resp.hands.map((h) => h.stakes))].sort());
+    getFilterOptions().then((fo) => {
+      setDistinctStakes(fo.stakes);
     }).catch(() => {});
   }, []);
 
@@ -247,20 +247,10 @@ export default function HandsPage() {
       {loading && !data ? (
         <p className="text-text-muted text-sm py-8 text-center">Loading hands...</p>
       ) : !data || data.total === 0 ? (
-        <div className="text-center py-12">
-          <p className="text-text-muted">
-            {hasFilters ? 'No hands match your filters.' : 'No hands yet. Import hand histories to get started.'}
-          </p>
-          {hasFilters && (
-            <Button
-              variant="link"
-              onClick={() => handleFilterChange({ position: [], stakes: [], result: '', tags: [], date: '', dateFrom: '', dateTo: '', search: '' })}
-              className="mt-2 text-sm"
-            >
-              Clear filters
-            </Button>
-          )}
-        </div>
+        <EmptyState
+          variant={hasFilters ? 'no-match' : 'no-data'}
+          onClearFilters={hasFilters ? () => handleFilterChange({ position: [], stakes: [], result: '', tags: [], date: '', dateFrom: '', dateTo: '', search: '' }) : undefined}
+        />
       ) : (
         <>
           <div className="overflow-x-auto">

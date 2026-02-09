@@ -26,18 +26,14 @@ import type {
   MonthBreakdown,
   PositionBreakdown,
 } from '@/lib/api';
+import { getPresetDates } from '@/lib/date-presets';
+import type { DatePreset } from '@/lib/date-presets';
+import FilterBar from '@/components/FilterBar';
+import EmptyState from '@/components/EmptyState';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Toggle } from '@/components/ui/toggle';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import {
   Table,
   TableBody,
@@ -97,7 +93,6 @@ function StatCard({
 }
 
 type LineToggle = 'ev' | 'showdown' | 'rake' | 'ci' | 'sessions';
-type DatePreset = 'today' | 'week' | 'month' | 'all';
 
 const LINE_COLORS = {
   main: '#fbbf24',
@@ -197,24 +192,6 @@ function CustomTooltip({ active, payload, label, unit, tooltipNames, activeSessi
       })()}
     </div>
   );
-}
-
-function getPresetDates(preset: DatePreset): { date_from?: string; date_to?: string } {
-  if (preset === 'all') return {};
-  const now = new Date();
-  if (preset === 'today') {
-    return { date_from: now.toISOString().slice(0, 10) };
-  }
-  if (preset === 'week') {
-    const day = now.getDay();
-    const diff = day === 0 ? 6 : day - 1; // Monday = 0
-    const monday = new Date(now);
-    monday.setDate(now.getDate() - diff);
-    return { date_from: monday.toISOString().slice(0, 10) };
-  }
-  // month
-  const first = new Date(now.getFullYear(), now.getMonth(), 1);
-  return { date_from: first.toISOString().slice(0, 10) };
 }
 
 function formatMonth(ym: string): string {
@@ -380,26 +357,17 @@ export default function GraphPage() {
       </Toggle>
     );
 
-  const presetBtn = (preset: DatePreset, label: string) => (
-    <Button
-      variant={activePreset === preset ? 'default' : 'outline'}
-      size="sm"
-      className="h-7 text-xs"
-      onClick={() => handlePreset(preset)}
-    >
-      {label}
-    </Button>
-  );
+  const hasFilters = !!(stakes || dateFrom || dateTo || lastN);
 
   // Empty state
   if (!loading && data.length === 0 && !breakdown?.by_stakes.length) {
     return (
       <div className="max-w-6xl mx-auto space-y-1.5">
-        {filterBarJSX}
-        <div className="text-center py-12">
-          <p className="text-text-muted text-lg">No hands match the selected filters.</p>
-          <p className="text-text-muted text-sm mt-2">Try adjusting your filters or import more hand histories.</p>
-        </div>
+        {filterBarContent}
+        <EmptyState
+          variant={hasFilters ? 'no-match' : 'no-data'}
+          onClearFilters={hasFilters ? () => { setStakes(''); setDateFrom(''); setDateTo(''); setLastN(''); handlePreset('all'); } : undefined}
+        />
       </div>
     );
   }
@@ -449,83 +417,51 @@ export default function GraphPage() {
     ci_range: '95% CI',
   };
 
-  const filterBarJSX = (
-    <Card className="gap-0 py-0">
-      <CardContent className="px-3 py-2 flex flex-wrap items-center gap-3">
-        {/* Stakes filter */}
-        <Select value={stakes || '__all__'} onValueChange={(v) => setStakes(v === '__all__' ? '' : v)}>
-          <SelectTrigger className="w-[130px] h-8 text-sm">
-            <SelectValue placeholder="All Stakes" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="__all__">All Stakes</SelectItem>
-            {filterOpts?.stakes.map(s => (
-              <SelectItem key={s} value={s}>{s}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-
-        {/* Date inputs */}
+  const filterBarContent = (
+    <FilterBar
+      stakes={stakes}
+      onStakesChange={setStakes}
+      dateFrom={dateFrom}
+      onDateFromChange={handleDateFromChange}
+      dateTo={dateTo}
+      onDateToChange={handleDateToChange}
+      activePreset={activePreset}
+      onPresetChange={handlePreset}
+      filterOptions={filterOpts}
+    >
+      {/* Last N hands */}
+      <div className="flex items-center gap-1.5">
+        <span className="text-xs text-text-muted">Last</span>
         <Input
-          type="date"
-          value={dateFrom}
-          onChange={(e) => handleDateFromChange(e.target.value)}
-          className="w-[140px] h-8 text-sm"
-          placeholder="From"
+          type="number"
+          value={lastN}
+          onChange={(e) => setLastN(e.target.value)}
+          placeholder="All"
+          min={1}
+          className="w-20 h-8 text-sm [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
         />
-        <Input
-          type="date"
-          value={dateTo}
-          onChange={(e) => handleDateToChange(e.target.value)}
-          className="w-[140px] h-8 text-sm"
-          placeholder="To"
-        />
+        <span className="text-xs text-text-muted">hands</span>
+      </div>
 
-        {/* Date presets */}
-        <div className="flex gap-1.5">
-          {presetBtn('today', 'Today')}
-          {presetBtn('week', 'Week')}
-          {presetBtn('month', 'Month')}
-          {presetBtn('all', 'All')}
-        </div>
-
-        {/* Last N hands */}
-        <div className="flex items-center gap-1.5">
-          <span className="text-xs text-text-muted">Last</span>
-          <Input
-            type="number"
-            value={lastN}
-            onChange={(e) => setLastN(e.target.value)}
-            placeholder="All"
-            min={1}
-            className="w-20 h-8 text-sm [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-          />
-          <span className="text-xs text-text-muted">hands</span>
-        </div>
-
-        {/* Spacer */}
-        <div className="flex-1" />
-
-        {/* Unit toggle + line toggles */}
-        <div className="flex gap-1.5 items-center">
-          <ToggleGroup type="single" value={unit} onValueChange={(v) => { if (v) setUnit(v as 'bb' | 'usd'); }}>
-            <ToggleGroupItem value="bb" className="h-7 text-xs px-3">BB</ToggleGroupItem>
-            <ToggleGroupItem value="usd" className="h-7 text-xs px-3">$</ToggleGroupItem>
-          </ToggleGroup>
-          {toggleBtn('ev', 'EV', LINE_COLORS.ev, hasEVData)}
-          {toggleBtn('showdown', 'SD', LINE_COLORS.showdown)}
-          {toggleBtn('rake', 'Rake', LINE_COLORS.rake)}
-          {toggleBtn('ci', 'CI', LINE_COLORS.ci, !!variance)}
-          {toggleBtn('sessions', 'Sessions', LINE_COLORS.session, sessions.length > 1)}
-        </div>
-      </CardContent>
-    </Card>
+      {/* Unit toggle + line toggles */}
+      <div className="flex gap-1.5 items-center">
+        <ToggleGroup type="single" value={unit} onValueChange={(v) => { if (v) setUnit(v as 'bb' | 'usd'); }}>
+          <ToggleGroupItem value="bb" className="h-7 text-xs px-3">BB</ToggleGroupItem>
+          <ToggleGroupItem value="usd" className="h-7 text-xs px-3">$</ToggleGroupItem>
+        </ToggleGroup>
+        {toggleBtn('ev', 'EV', LINE_COLORS.ev, hasEVData)}
+        {toggleBtn('showdown', 'SD', LINE_COLORS.showdown)}
+        {toggleBtn('rake', 'Rake', LINE_COLORS.rake)}
+        {toggleBtn('ci', 'CI', LINE_COLORS.ci, !!variance)}
+        {toggleBtn('sessions', 'Sessions', LINE_COLORS.session, sessions.length > 1)}
+      </div>
+    </FilterBar>
   );
 
   return (
     <div className="max-w-6xl mx-auto space-y-1.5">
       {/* Filter Bar */}
-      {filterBarJSX}
+      {filterBarContent}
 
       {loading ? (
         <p className="text-text-muted py-8 text-center">Loading...</p>
@@ -716,7 +652,7 @@ export default function GraphPage() {
           )}
 
           {/* Stat Cards - Row 1 */}
-          <div className="grid gap-2 grid-cols-6">
+          <div className="grid gap-2 grid-cols-2 sm:grid-cols-3 lg:grid-cols-6">
             <StatCard
               label="Hands"
               bb={n.toLocaleString()}
@@ -776,7 +712,7 @@ export default function GraphPage() {
           </div>
 
           {/* Stat Cards - Row 2 */}
-          <div className="grid gap-2 grid-cols-4">
+          <div className="grid gap-2 grid-cols-2 lg:grid-cols-4">
             <StatCard
               label="Rake"
               bb={fmtBB(rakeBB)}
@@ -814,7 +750,7 @@ export default function GraphPage() {
 
           {/* Variance Stats */}
           {variance && (
-            <div className="grid gap-2 grid-cols-4">
+            <div className="grid gap-2 grid-cols-2 lg:grid-cols-4">
               <StatCard
                 label="Std Dev bb/100"
                 bb={variance.sd_bb100.toFixed(1)}

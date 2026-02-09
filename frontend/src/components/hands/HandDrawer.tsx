@@ -99,7 +99,7 @@ export default function HandDrawer({
 
   return (
     <Sheet open={true} onOpenChange={(open) => { if (!open) onClose(); }}>
-      <SheetContent side="right" className="w-[640px] max-w-full p-0 flex flex-col [&>button:first-child]:hidden">
+      <SheetContent side="right" className="w-full sm:w-[640px] max-w-full p-0 flex flex-col [&>button:first-child]:hidden">
         {/* Header */}
         <SheetHeader className="px-4 py-2 border-b border-border shrink-0">
           <div className="flex items-center justify-between">

@@ -1,7 +1,11 @@
-import { useState, useRef, useEffect } from 'react';
 import type { TagCount } from '@/lib/api';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
+import { Card, CardContent } from '@/components/ui/card';
+import { Checkbox } from '@/components/ui/checkbox';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover';
+import { DatePicker } from '@/components/ui/date-picker';
 
 interface FilterState {
   position: string[];
@@ -14,7 +18,7 @@ interface FilterState {
   search: string;
 }
 
-function Dropdown({
+function FilterDropdown({
   label,
   children,
   active,
@@ -23,33 +27,21 @@ function Dropdown({
   children: React.ReactNode;
   active: boolean;
 }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    function handleClick(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    }
-    if (open) document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
-  }, [open]);
-
   return (
-    <div className="relative" ref={ref}>
-      <Button
-        variant={active ? 'secondary' : 'outline'}
-        size="sm"
-        className={`h-7 text-xs ${active ? 'border-primary text-primary bg-primary/10' : ''}`}
-        onClick={() => setOpen(!open)}
-      >
-        {label} &#9662;
-      </Button>
-      {open && (
-        <div className="absolute z-40 top-full left-0 mt-1 bg-popover border border-border rounded-lg shadow-lg p-2 min-w-[160px]">
-          {children}
-        </div>
-      )}
-    </div>
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button
+          variant={active ? 'secondary' : 'outline'}
+          size="sm"
+          className={`h-7 text-xs ${active ? 'border-primary text-primary bg-primary/10' : ''}`}
+        >
+          {label} &#9662;
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-auto min-w-[160px] p-2">
+        {children}
+      </PopoverContent>
+    </Popover>
   );
 }
 
@@ -64,29 +56,10 @@ function CheckboxOption({
 }) {
   return (
     <label className="flex items-center gap-2 py-0.5 cursor-pointer text-[12px] text-text hover:text-primary">
-      <input
-        type="checkbox"
+      <Checkbox
         checked={checked}
-        onChange={(e) => onChange(e.target.checked)}
-        className="accent-primary"
+        onCheckedChange={(c) => onChange(c === true)}
       />
-      {label}
-    </label>
-  );
-}
-
-function RadioOption({
-  label,
-  checked,
-  onChange,
-}: {
-  label: string;
-  checked: boolean;
-  onChange: () => void;
-}) {
-  return (
-    <label className="flex items-center gap-2 py-0.5 cursor-pointer text-[12px] text-text hover:text-primary">
-      <input type="radio" checked={checked} onChange={onChange} className="accent-primary" />
       {label}
     </label>
   );
@@ -141,127 +114,137 @@ export default function HandFilters({
     });
 
   return (
-    <div className="flex items-center gap-2 flex-wrap">
-      {/* Stakes */}
-      <Dropdown label="Stakes" active={filters.stakes.length > 0}>
-        {distinctStakes.map((s) => (
-          <CheckboxOption
-            key={s}
-            label={s}
-            checked={filters.stakes.includes(s)}
-            onChange={(c) => {
-              const next = c ? [...filters.stakes, s] : filters.stakes.filter((x) => x !== s);
-              onChange({ ...filters, stakes: next });
-            }}
-          />
-        ))}
-        {distinctStakes.length === 0 && (
-          <span className="text-[11px] text-text-muted">No stakes found</span>
-        )}
-      </Dropdown>
+    <Card className="gap-0 py-0">
+      <CardContent className="px-3 py-2 flex items-center gap-2 flex-wrap">
+        {/* Stakes */}
+        <FilterDropdown label="Stakes" active={filters.stakes.length > 0}>
+          {distinctStakes.map((s) => (
+            <CheckboxOption
+              key={s}
+              label={s}
+              checked={filters.stakes.includes(s)}
+              onChange={(c) => {
+                const next = c ? [...filters.stakes, s] : filters.stakes.filter((x) => x !== s);
+                onChange({ ...filters, stakes: next });
+              }}
+            />
+          ))}
+          {distinctStakes.length === 0 && (
+            <span className="text-[11px] text-text-muted">No stakes found</span>
+          )}
+        </FilterDropdown>
 
-      {/* Position */}
-      <Dropdown label="Position" active={filters.position.length > 0}>
-        {POSITIONS.map((p) => (
-          <CheckboxOption
-            key={p}
-            label={p}
-            checked={filters.position.includes(p)}
-            onChange={(c) => {
-              const next = c ? [...filters.position, p] : filters.position.filter((x) => x !== p);
-              onChange({ ...filters, position: next });
-            }}
-          />
-        ))}
-      </Dropdown>
+        {/* Position */}
+        <FilterDropdown label="Position" active={filters.position.length > 0}>
+          {POSITIONS.map((p) => (
+            <CheckboxOption
+              key={p}
+              label={p}
+              checked={filters.position.includes(p)}
+              onChange={(c) => {
+                const next = c ? [...filters.position, p] : filters.position.filter((x) => x !== p);
+                onChange({ ...filters, position: next });
+              }}
+            />
+          ))}
+        </FilterDropdown>
 
-      {/* Result */}
-      <Dropdown label="Result" active={filters.result !== ''}>
-        {RESULTS.map((r) => (
-          <RadioOption
-            key={r.value}
-            label={r.label}
-            checked={filters.result === r.value}
-            onChange={() => onChange({ ...filters, result: r.value })}
-          />
-        ))}
-      </Dropdown>
+        {/* Result */}
+        <FilterDropdown label="Result" active={filters.result !== ''}>
+          <RadioGroup
+            value={filters.result}
+            onValueChange={(v) => onChange({ ...filters, result: v })}
+            className="gap-1"
+          >
+            {RESULTS.map((r) => (
+              <label key={r.value} className="flex items-center gap-2 py-0.5 cursor-pointer text-[12px] text-text hover:text-primary">
+                <RadioGroupItem value={r.value} />
+                {r.label}
+              </label>
+            ))}
+          </RadioGroup>
+        </FilterDropdown>
 
-      {/* Tags */}
-      <Dropdown label="Tags" active={filters.tags.length > 0}>
-        <CheckboxOption
-          label="Untagged"
-          checked={filters.tags.includes('untagged')}
-          onChange={(c) => {
-            const next = c
-              ? [...filters.tags, 'untagged']
-              : filters.tags.filter((x) => x !== 'untagged');
-            onChange({ ...filters, tags: next });
-          }}
-        />
-        {allTags.map((t) => (
+        {/* Tags */}
+        <FilterDropdown label="Tags" active={filters.tags.length > 0}>
           <CheckboxOption
-            key={t.tag}
-            label={`${t.tag} (${t.count})`}
-            checked={filters.tags.includes(t.tag)}
+            label="Untagged"
+            checked={filters.tags.includes('untagged')}
             onChange={(c) => {
               const next = c
-                ? [...filters.tags, t.tag]
-                : filters.tags.filter((x) => x !== t.tag);
+                ? [...filters.tags, 'untagged']
+                : filters.tags.filter((x) => x !== 'untagged');
               onChange({ ...filters, tags: next });
             }}
           />
-        ))}
-      </Dropdown>
+          {allTags.map((t) => (
+            <CheckboxOption
+              key={t.tag}
+              label={`${t.tag} (${t.count})`}
+              checked={filters.tags.includes(t.tag)}
+              onChange={(c) => {
+                const next = c
+                  ? [...filters.tags, t.tag]
+                  : filters.tags.filter((x) => x !== t.tag);
+                onChange({ ...filters, tags: next });
+              }}
+            />
+          ))}
+        </FilterDropdown>
 
-      {/* Date */}
-      <Dropdown label="Date" active={filters.date !== ''}>
-        {DATE_PRESETS.map((d) => (
-          <RadioOption
-            key={d.value}
-            label={d.label}
-            checked={filters.date === d.value}
-            onChange={() => onChange({ ...filters, date: d.value })}
-          />
-        ))}
-        {filters.date === 'custom' && (
-          <div className="flex flex-col gap-1 mt-2 pt-2 border-t border-border">
-            <Input
-              type="date"
-              value={filters.dateFrom}
-              onChange={(e) => onChange({ ...filters, dateFrom: e.target.value })}
-              className="h-6 text-[11px]"
-            />
-            <Input
-              type="date"
-              value={filters.dateTo}
-              onChange={(e) => onChange({ ...filters, dateTo: e.target.value })}
-              className="h-6 text-[11px]"
-            />
-          </div>
+        {/* Date */}
+        <FilterDropdown label="Date" active={filters.date !== ''}>
+          <RadioGroup
+            value={filters.date}
+            onValueChange={(v) => onChange({ ...filters, date: v })}
+            className="gap-1"
+          >
+            {DATE_PRESETS.map((d) => (
+              <label key={d.value} className="flex items-center gap-2 py-0.5 cursor-pointer text-[12px] text-text hover:text-primary">
+                <RadioGroupItem value={d.value} />
+                {d.label}
+              </label>
+            ))}
+          </RadioGroup>
+          {filters.date === 'custom' && (
+            <div className="flex flex-col gap-1.5 mt-2 pt-2 border-t border-border">
+              <DatePicker
+                value={filters.dateFrom}
+                onChange={(v) => onChange({ ...filters, dateFrom: v })}
+                placeholder="From"
+                className="h-7 text-xs w-full"
+              />
+              <DatePicker
+                value={filters.dateTo}
+                onChange={(v) => onChange({ ...filters, dateTo: v })}
+                placeholder="To"
+                className="h-7 text-xs w-full"
+              />
+            </div>
+          )}
+        </FilterDropdown>
+
+        {/* Search */}
+        <Input
+          type="text"
+          value={filters.search}
+          onChange={(e) => onChange({ ...filters, search: e.target.value })}
+          placeholder="Search hand ID..."
+          className="h-7 text-xs w-40"
+        />
+
+        {hasFilters && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 text-xs text-text-muted hover:text-red"
+            onClick={clearAll}
+          >
+            Clear all
+          </Button>
         )}
-      </Dropdown>
-
-      {/* Search */}
-      <Input
-        type="text"
-        value={filters.search}
-        onChange={(e) => onChange({ ...filters, search: e.target.value })}
-        placeholder="Search hand ID..."
-        className="h-7 text-xs w-40"
-      />
-
-      {hasFilters && (
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-7 text-xs text-text-muted hover:text-red"
-          onClick={clearAll}
-        >
-          Clear all
-        </Button>
-      )}
-    </div>
+      </CardContent>
+    </Card>
   );
 }
 

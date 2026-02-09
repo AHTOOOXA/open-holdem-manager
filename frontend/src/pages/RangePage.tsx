@@ -1,6 +1,8 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { getRangeStats, getFilterOptions } from '@/lib/api';
 import type { ComboStats, RangeResponse, FilterOptions } from '@/lib/api';
+import FilterBar from '@/components/FilterBar';
+import EmptyState from '@/components/EmptyState';
 import { Card } from '@/components/ui/card';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import {
@@ -164,57 +166,48 @@ export default function RangePage() {
   const detail = activeCombo ? comboMap.get(activeCombo) : null;
 
   return (
-    <div className="max-w-[1400px] mx-auto">
-      {/* Header + Filters */}
-      <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
-        <h1 className="text-xl font-bold">Preflop Range</h1>
-        <div className="flex items-center gap-3 flex-wrap">
-          {/* Position */}
-          <ToggleGroup type="single" value={position} onValueChange={(v) => { if (v) { setPosition(v); setSelected(null); } }}>
-            {POSITIONS.map(p => (
-              <ToggleGroupItem key={p} value={p} className="h-7 text-xs px-2.5">
-                {p}
-              </ToggleGroupItem>
+    <div className="max-w-[1400px] mx-auto space-y-2">
+      {/* Filter Bar */}
+      <FilterBar
+        stakes={stakes}
+        onStakesChange={(v) => { setStakes(v); setSelected(null); }}
+        showDateRange={false}
+        showDatePresets={false}
+        filterOptions={filterOpts}
+      >
+        {/* Position */}
+        <ToggleGroup type="single" value={position} onValueChange={(v) => { if (v) { setPosition(v); setSelected(null); } }}>
+          {POSITIONS.map(p => (
+            <ToggleGroupItem key={p} value={p} className="h-7 text-xs px-2.5">
+              {p}
+            </ToggleGroupItem>
+          ))}
+        </ToggleGroup>
+        {/* Color by */}
+        <Select value={colorBy} onValueChange={(v) => setColorBy(v as ColorBy)}>
+          <SelectTrigger className="w-[110px] h-7 text-xs">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {COLOR_OPTIONS.map(o => (
+              <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
             ))}
-          </ToggleGroup>
-          {/* Stakes */}
-          {filterOpts && filterOpts.stakes.length > 1 && (
-            <Select value={stakes || '__all__'} onValueChange={(v) => { setStakes(v === '__all__' ? '' : v); setSelected(null); }}>
-              <SelectTrigger className="w-[120px] h-7 text-xs">
-                <SelectValue placeholder="All Stakes" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__all__">All Stakes</SelectItem>
-                {filterOpts.stakes.map(s => (
-                  <SelectItem key={s} value={s}>{s}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          )}
-          {/* Color by */}
-          <Select value={colorBy} onValueChange={(v) => setColorBy(v as ColorBy)}>
-            <SelectTrigger className="w-[110px] h-7 text-xs">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {COLOR_OPTIONS.map(o => (
-                <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          {/* Hand count */}
-          {data && (
-            <span className="text-xs text-text-muted">
-              {data.total_hands.toLocaleString()} hands
-            </span>
-          )}
-        </div>
-      </div>
+          </SelectContent>
+        </Select>
+        {/* Hand count */}
+        {data && (
+          <span className="text-xs text-text-muted">
+            {data.total_hands.toLocaleString()} hands
+          </span>
+        )}
+      </FilterBar>
 
       {loading && !data ? (
         <div className="text-center text-text-muted py-20">Loading...</div>
+      ) : !data || data.total_hands === 0 ? (
+        <EmptyState variant={stakes ? 'no-match' : 'no-data'} onClearFilters={stakes ? () => setStakes('') : undefined} />
       ) : (
-        <div className="flex gap-5">
+        <div className="flex flex-wrap lg:flex-nowrap gap-5">
           {/* Matrix */}
           <div className="shrink-0">
             <div
@@ -255,8 +248,7 @@ export default function RangePage() {
                         `}
                         style={{
                           backgroundColor: bg,
-                          width: 68,
-                          height: 56,
+                          aspectRatio: '5/4',
                           border: '1px solid oklch(1 0 0 / 10%)',
                         }}
                         onMouseEnter={() => setHovered(key)}
@@ -298,7 +290,7 @@ export default function RangePage() {
           </div>
 
           {/* Right panel: detail + leaks */}
-          <div className="flex-1 min-w-[300px]">
+          <div className="w-full lg:w-auto lg:min-w-[280px] flex-1">
             {/* Combo detail */}
             {detail ? (
               <Card className="gap-0 py-0 p-3 mb-1.5">

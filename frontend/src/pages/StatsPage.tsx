@@ -1,16 +1,10 @@
 import { useState, useEffect, useMemo } from 'react';
-import { getHeroStats, getSettings, getFilterOptions } from '@/lib/api';
-import type { HeroStats, PositionalStats, StatValue, Settings, FilterOptions } from '@/lib/api';
-import { Card, CardContent } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { getHeroStats, getFilterOptions } from '@/lib/api';
+import type { HeroStats, PositionalStats, StatValue, FilterOptions } from '@/lib/api';
+import { getPresetDates } from '@/lib/date-presets';
+import type { DatePreset } from '@/lib/date-presets';
+import FilterBar from '@/components/FilterBar';
+import EmptyState from '@/components/EmptyState';
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -220,26 +214,8 @@ function posRow(
 
 // ── Main Component ───────────────────────────────────────────────────
 
-type DatePreset = 'today' | 'week' | 'month' | 'all';
-
-function getPresetDates(preset: DatePreset): { date_from?: string; date_to?: string } {
-  if (preset === 'all') return {};
-  const now = new Date();
-  if (preset === 'today') return { date_from: now.toISOString().slice(0, 10) };
-  if (preset === 'week') {
-    const day = now.getDay();
-    const diff = day === 0 ? 6 : day - 1;
-    const monday = new Date(now);
-    monday.setDate(now.getDate() - diff);
-    return { date_from: monday.toISOString().slice(0, 10) };
-  }
-  const first = new Date(now.getFullYear(), now.getMonth(), 1);
-  return { date_from: first.toISOString().slice(0, 10) };
-}
-
 export default function StatsPage() {
   const [stats, setStats] = useState<HeroStats | null>(null);
-  const [settings, setSettingsData] = useState<Settings | null>(null);
   const [filterOpts, setFilterOpts] = useState<FilterOptions | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -254,10 +230,9 @@ export default function StatsPage() {
     date_to: dateTo || undefined,
   }), [stakes, dateFrom, dateTo]);
 
-  // Load filter options + settings once
+  // Load filter options once
   useEffect(() => {
-    Promise.all([getFilterOptions(), getSettings()])
-      .then(([fo, st]) => { setFilterOpts(fo); setSettingsData(st); });
+    getFilterOptions().then(setFilterOpts);
   }, []);
 
   // Load stats when filters change
@@ -278,102 +253,65 @@ export default function StatsPage() {
     setDateTo(dates.date_to ?? '');
   };
 
-  const presetBtn = (preset: DatePreset, label: string) => (
-    <Button
-      variant={activePreset === preset ? 'default' : 'outline'}
-      size="sm"
-      className="h-7 text-xs"
-      onClick={() => handlePreset(preset)}
+  const handleDateFromChange = (v: string) => {
+    setDateFrom(v);
+    setActivePreset('all');
+  };
+
+  const handleDateToChange = (v: string) => {
+    setDateTo(v);
+    setActivePreset('all');
+  };
+
+  const hasFilters = !!(stakes || dateFrom || dateTo);
+
+  const filterBarContent = (
+    <FilterBar
+      stakes={stakes}
+      onStakesChange={setStakes}
+      dateFrom={dateFrom}
+      onDateFromChange={handleDateFromChange}
+      dateTo={dateTo}
+      onDateToChange={handleDateToChange}
+      activePreset={activePreset}
+      onPresetChange={handlePreset}
+      filterOptions={filterOpts}
     >
-      {label}
-    </Button>
-  );
-
-  const filterBarJSX = (
-    <Card className="mb-3">
-      <CardContent className="px-4 py-3 flex flex-wrap items-center gap-3">
-        {/* Hero badge */}
-        <div className="flex items-center gap-2">
-          <span className="bg-primary/20 text-primary px-2.5 py-0.5 rounded text-sm font-semibold">
-            {settings?.hero_username || 'Hero'}
-          </span>
-          <span className="text-[11px] text-text-muted uppercase">{settings?.hero_site || 'GGPoker'}</span>
-        </div>
-
-        {/* Stakes filter */}
-        <Select value={stakes || '__all__'} onValueChange={(v) => setStakes(v === '__all__' ? '' : v)}>
-          <SelectTrigger className="w-[130px] h-8 text-sm">
-            <SelectValue placeholder="All Stakes" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="__all__">All Stakes</SelectItem>
-            {filterOpts?.stakes.map(s => (
-              <SelectItem key={s} value={s}>{s}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-
-        {/* Date inputs */}
-        <Input
-          type="date"
-          value={dateFrom}
-          onChange={(e) => { setDateFrom(e.target.value); setActivePreset('all'); }}
-          className="w-[140px] h-8 text-sm"
-        />
-        <Input
-          type="date"
-          value={dateTo}
-          onChange={(e) => { setDateTo(e.target.value); setActivePreset('all'); }}
-          className="w-[140px] h-8 text-sm"
-        />
-
-        {/* Date presets */}
-        <div className="flex gap-1.5">
-          {presetBtn('today', 'Today')}
-          {presetBtn('week', 'Week')}
-          {presetBtn('month', 'Month')}
-          {presetBtn('all', 'All')}
-        </div>
-
-        {/* Spacer */}
-        <div className="flex-1" />
-
-        {/* Summary stats */}
-        {stats && stats.hands > 0 && (() => {
-          const wr = stats.win_rate_bb100;
-          const wrEv = stats.win_rate_ev_bb100;
-          const wrColor = wr !== null ? (wr >= 0 ? 'text-green' : 'text-red') : 'text-text-muted';
-          const wrEvColor = wrEv !== null ? (wrEv >= 0 ? 'text-green' : 'text-red') : 'text-text-muted';
-          return (
-            <div className="flex items-center gap-3">
-              <span className="text-sm text-text-muted">{stats.hands.toLocaleString()} hands</span>
-              <span className={`text-sm font-bold font-mono ${wrColor}`}>
-                {wr !== null ? `${wr >= 0 ? '+' : ''}${wr.toFixed(2)} bb/100` : '—'}
-              </span>
-              <span className={`text-sm font-bold font-mono ${wrEvColor}`}>
-                EV {wrEv !== null ? `${wrEv >= 0 ? '+' : ''}${wrEv.toFixed(2)}` : '—'}
-              </span>
-            </div>
-          );
-        })()}
-      </CardContent>
-    </Card>
+      {/* Summary stats */}
+      {stats && stats.hands > 0 && (() => {
+        const wr = stats.win_rate_bb100;
+        const wrEv = stats.win_rate_ev_bb100;
+        const wrColor = wr !== null ? (wr >= 0 ? 'text-green' : 'text-red') : 'text-text-muted';
+        const wrEvColor = wrEv !== null ? (wrEv >= 0 ? 'text-green' : 'text-red') : 'text-text-muted';
+        return (
+          <div className="flex items-center gap-3">
+            <span className="text-sm text-text-muted">{stats.hands.toLocaleString()} hands</span>
+            <span className={`text-sm font-bold font-mono ${wrColor}`}>
+              {wr !== null ? `${wr >= 0 ? '+' : ''}${wr.toFixed(2)} bb/100` : '—'}
+            </span>
+            <span className={`text-sm font-bold font-mono ${wrEvColor}`}>
+              EV {wrEv !== null ? `${wrEv >= 0 ? '+' : ''}${wrEv.toFixed(2)}` : '—'}
+            </span>
+          </div>
+        );
+      })()}
+    </FilterBar>
   );
 
   if (loading) return (
     <div className="max-w-6xl mx-auto px-2">
-      {filterBarJSX}
+      {filterBarContent}
       <p className="text-text-muted p-4 text-center">Loading stats...</p>
     </div>
   );
   if (!stats || stats.hands === 0) {
     return (
       <div className="max-w-6xl mx-auto px-2">
-        {filterBarJSX}
-        <div className="text-center py-12">
-          <p className="text-text-muted text-lg">No hands match the selected filters.</p>
-          <p className="text-text-muted text-sm mt-2">Try adjusting your filters or import more hand histories.</p>
-        </div>
+        {filterBarContent}
+        <EmptyState
+          variant={hasFilters ? 'no-match' : 'no-data'}
+          onClearFilters={hasFilters ? () => { setStakes(''); setDateFrom(''); setDateTo(''); handlePreset('all'); } : undefined}
+        />
       </div>
     );
   }
@@ -387,13 +325,13 @@ export default function StatsPage() {
   return (
     <div className="max-w-6xl mx-auto px-2">
       {/* ── Filter Bar ── */}
-      {filterBarJSX}
+      <div className="mb-3">{filterBarContent}</div>
 
       {/* ── PRE-FLOP ── */}
       <SectionTitle>Pre-Flop</SectionTitle>
-      <div className="flex gap-0 border-x border-b border-border">
+      <div className="flex flex-col lg:flex-row gap-0 border-x border-b border-border">
         {/* Left: Positional table */}
-        <div className="flex-1 min-w-0 overflow-x-auto border-r border-border">
+        <div className="flex-1 min-w-0 overflow-x-auto lg:border-r border-border">
           <PosTable
             headers={fullPosHeaders}
             rows={[
@@ -430,7 +368,7 @@ export default function StatsPage() {
         </div>
 
         {/* Right: KV grid */}
-        <div className="w-72 shrink-0">
+        <div className="w-full lg:w-72 lg:shrink-0">
           <KVGrid
             items={[
               { label: 'VPIP', sv: stats.vpip.total, colorFn: colorVpip },

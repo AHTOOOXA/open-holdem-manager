@@ -7,7 +7,7 @@ A local poker hand history tracker (like Hand2Note / HoldemManager) for GGPoker 
 ## Tech Stack
 
 - **Backend**: Python 3.12+, FastAPI >=0.115, DuckDB >=1.1, Pydantic >=2.0, python-multipart
-- **Frontend**: React 19, TypeScript 5.9, Vite 7, TailwindCSS v4 (@theme syntax), Recharts 3, React Router 7
+- **Frontend**: React 19, TypeScript 5.9, Vite 7, TailwindCSS v4 (@theme syntax), shadcn/ui (Radix), Recharts 3, React Router 7
 - **DB**: DuckDB file-based at `data/poker.duckdb` — schema auto-created on first startup
 - **No auth, no cloud** — fully local, single-user
 
@@ -31,6 +31,15 @@ API docs: http://localhost:8000/docs (FastAPI auto-generated Swagger)
 - Vite proxies `/api` requests to `http://localhost:8000` (see `frontend/vite.config.ts`)
 - Path alias: `@/` maps to `./src/` (configured in `tsconfig.app.json`)
 - Dark theme defined via Tailwind `@theme` in `frontend/src/index.css` — custom CSS vars: `--color-background`, `--color-surface`, `--color-primary` (indigo #6366f1), `--color-green`, `--color-red`, etc.
+
+## shadcn/ui
+
+This project uses [shadcn/ui](https://ui.shadcn.com/) (Radix primitives + Tailwind styling). Components live in `frontend/src/components/ui/`.
+
+- **Install new components**: `cd frontend && npx shadcn@latest add <component>`
+- **Always prefer shadcn** over raw HTML inputs, custom dropdowns, or hand-rolled UI. If a shadcn component exists for the pattern, use it.
+- Installed components: Button, Card, Input, Textarea, Select, Popover, Checkbox, RadioGroup, Toggle, ToggleGroup, Calendar, DatePicker (custom wrapper), Table, Sheet, Badge, Separator, Tooltip, Skeleton, Progress, Alert, DropdownMenu, Sidebar
+- Shared cross-page components: `FilterBar` (stakes/date filters), `EmptyState` (no-data/no-match variants with import CTA), `DatePicker` (Popover + Calendar)
 
 ## Project Structure
 

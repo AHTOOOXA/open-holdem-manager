@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import { BarChart3, Grid3X3, TrendingUp, List, DollarSign, FolderUp } from 'lucide-react';
 import { NavLink, useLocation } from 'react-router-dom';
 import {
@@ -15,6 +14,7 @@ import {
 import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover';
 import ImportPopover from '@/components/ImportPopover';
 import SidebarFooterSettings from '@/components/SidebarFooterSettings';
+import { useImport } from '@/contexts/ImportContext';
 
 const navItems = [
   { to: '/stats', label: 'Stats', icon: BarChart3 },
@@ -26,7 +26,7 @@ const navItems = [
 
 export default function AppSidebar() {
   const location = useLocation();
-  const [importOpen, setImportOpen] = useState(false);
+  const { importPopoverOpen: importOpen, setImportPopoverOpen: setImportOpen } = useImport();
 
   return (
     <Sidebar collapsible="icon">
