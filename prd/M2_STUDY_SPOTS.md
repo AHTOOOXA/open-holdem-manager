@@ -938,6 +938,27 @@ turn_texture VARCHAR,         -- completed_draw, draw_adding, overcard, paired_b
 river_texture VARCHAR,
 ```
 
+#### Hand Strength Columns (hand_players table, precomputed per street)
+
+Hand strength is pre-computed during `insert_parsed_hand` for each street the player saw. This avoids on-demand evaluation of thousands of hands per detail click (which would take 3-5 seconds). Backfilled via `/api/import/rebuild`.
+
+```sql
+-- Per-street hand strength (precomputed during insert)
+-- Made hand: integer ID from classification table (-4 to 11)
+-- Draw flags: bitmask or individual booleans
+flop_made_hand TINYINT,         -- classification ID (-4=no made hand ... 11=straight flush)
+flop_draw_flags TINYINT,        -- bitmask: 1=flush_draw, 2=oesd, 4=gutshot, 8=backdoor_flush, 16=backdoor_straight
+flop_hand_group VARCHAR,        -- composite display group: nuts_plus, strong, top_pair, marginal, draw_only, air
+turn_made_hand TINYINT,
+turn_draw_flags TINYINT,
+turn_hand_group VARCHAR,
+river_made_hand TINYINT,
+river_draw_flags TINYINT,
+river_hand_group VARCHAR,
+```
+
+The `/analysis` endpoint then aggregates from precomputed columns with simple `GROUP BY flop_hand_group` queries instead of evaluating hand strength at query time.
+
 #### Pot Size Tracking Columns (actions table, shared infrastructure)
 
 ```sql
@@ -1188,20 +1209,28 @@ Shared utility between Stats v2 detail panels and Population Analysis. Implement
 
 #### Flop Classification
 
-Primary axis -- **Rank Structure** (H2N / Smart Research convention. Broadway = T, J, Q, K; Ace treated separately):
+Primary axis -- **Rank Structure** (H2N / Smart Research convention. Broadway = J, Q, K only; Ace and Ten treated as special categories):
 
-| Category | Code | Definition | Example |
-|----------|------|------------|---------|
-| Ace + Broadway + Broadway | ABB | A + 2 broadways | As Kh Jd |
-| Ace + Broadway + x | ABx | A + 1 broadway + low | As Qh 5d |
-| Ace + x + x | Axx | A + 2 non-broadway | As 7h 3d |
-| 3 Broadways (no A) | BBB | 3 broadways, no ace | Ks Qh Td |
-| 2 Broadways + x (no A) | BBx | 2 broadways + low, no ace | Ks Jh 6d |
-| 1 Broadway + x + x (no A) | Bxx | 1 broadway + 2 low, no ace | Qs 7h 3d |
-| T-9 High Connected | T-9 Conn | Highest card T or 9, connected (<=2 gap between at least 2 cards) | Ts 9h 7d |
-| T-9 High Disconnected | T-9 Disc | Highest card T or 9, disconnected | Ts 6h 2d |
-| 8-2 High Connected | 8-2 Conn | Highest card 8 or lower, connected | 8s 7h 5d |
-| 8-2 High Disconnected | 8-2 Disc | Highest card 8 or lower, disconnected | 8s 4h 2d |
+**Priority rule**: Categories are evaluated top-to-bottom. The first match wins. Ten (T) is NOT a Broadway for this classification — it belongs in the T-9 tier. This follows the H2N convention where Broadway = {J, Q, K} and T is grouped with 9 as a mid-high card.
+
+| Priority | Category | Code | Definition | Example |
+|----------|----------|------|------------|---------|
+| 1 | Ace + Broadway + Broadway | ABB | A + 2 of {J,Q,K} | As Kh Jd |
+| 2 | Ace + Broadway + x | ABx | A + 1 of {J,Q,K} + non-broadway | As Qh 5d |
+| 3 | Ace + x + x | Axx | A + no {J,Q,K} | As 7h 3d, As Th 5d |
+| 4 | 3 Broadways (no A) | BBB | 3 of {J,Q,K}, no ace | Ks Qh Jd |
+| 5 | 2 Broadways + x (no A) | BBx | 2 of {J,Q,K} + non-broadway, no ace | Ks Jh 6d, Qs Jh Td |
+| 6 | 1 Broadway + x + x (no A) | Bxx | 1 of {J,Q,K} + 2 non-broadway, no ace | Qs 7h 3d, Jh Ts 5d |
+| 7 | T-9 High Connected | T-9 Conn | Highest card T or 9, no A/{J,Q,K}, connected (<=2 gap between at least 2 cards) | Ts 9h 7d |
+| 8 | T-9 High Disconnected | T-9 Disc | Highest card T or 9, no A/{J,Q,K}, disconnected | Ts 6h 2d, 9s 4h 2d |
+| 9 | 8-2 High Connected | 8-2 Conn | Highest card 8 or lower, connected | 8s 7h 5d |
+| 10 | 8-2 High Disconnected | 8-2 Disc | Highest card 8 or lower, disconnected | 8s 4h 2d |
+
+**Disambiguation examples**:
+- `Ts 6h 2d` → T-9 Disc (T is highest, no Broadway {J,Q,K}, not connected)
+- `Qs Th 5d` → Bxx (Q is a Broadway, so this is 1 Broadway + 2 non-broadway)
+- `Ks Jh Td` → BBx (K and J are Broadway, T is not — 2 Broadway + 1 non-broadway)
+- `As Th 3d` → Axx (A present, T is not Broadway — A + 2 non-broadway)
 
 Secondary axis -- **Suit Structure**:
 - **Monocolor**: 3 cards same suit
@@ -1297,7 +1326,12 @@ StatsPage.tsx (v2)
 ### State Management
 
 - Selected stat stored as `{ key: string, position?: string, street?: string }`
-- Detail panel fetches data from `/api/stats/detail/{key}` when selection changes
+- Detail panel uses progressive loading when selection changes:
+  1. Fetch `/api/stats/detail/{key}/summary` (instant) → render header + position tabs
+  2. Fetch `/api/stats/detail/{key}/hands` + `/analysis` in parallel → render hand list + analysis zone
+  3. Fetch `/api/stats/detail/{key}/trend` → render sparkline
+- Each section shows skeleton/spinner independently until data arrives
+- In-flight requests aborted via `AbortController` when selection changes
 - Left panel and right panel scroll independently (both `overflow-y: auto`)
 - URL reflects selected stat for shareability: `/stats?detail=open_raise&pos=co`
 
@@ -1363,11 +1397,14 @@ This phase alone transforms the stats page from read-only to interactive. Every 
    - Track running pot through each action during `insert_parsed_hand`
    - Store `pot_before_action` and `bet_pct_pot` on actions table
    - Backfill via rebuild
-3. Build hand strength evaluator (3 days)
-   - Python module: `classify_hand(hole_cards, board)`
-   - Returns made hand category + draw flags
+3. Build hand strength evaluator + pre-compute pipeline (3 days)
+   - Python module: `classify_hand(hole_cards, board)` → `(made_hand_id, draw_flags, hand_group)`
+   - Returns made hand category + draw flags + composite display group
    - Consider using `treys` library for made hand, custom draw detection
-   - Compute on-demand for detail queries (not precomputed -- too many per-action data points)
+   - Pre-compute during `insert_parsed_hand`: for each street (flop/turn/river), if player has hole cards and board is dealt, classify and store in `hand_players` columns
+   - Add `flop_made_hand`, `flop_draw_flags`, `flop_hand_group` (+ turn/river equivalents) to schema
+   - Backfill existing hands via `/api/import/rebuild`
+   - Detail `/analysis` endpoint aggregates via `GROUP BY flop_hand_group` (fast, no on-demand eval)
 4. Build `PostflopActionDetail.tsx` with 5 sub-sections (3 days)
    - Sizing distribution bars
    - Board texture split table
@@ -1431,11 +1468,11 @@ This phase alone transforms the stats page from read-only to interactive. Every 
 |-------|--------|----------------|
 | M2.1a: Layout + Hand List | 5-7 days | 70% of milestone value -- interactive drill-down |
 | M2.1b: Range Detail | 3-5 days | Preflop range visualization |
-| M2.1c-d: Postflop Detail + EV | 8-12 days | Deep postflop analysis (sizing, texture, strength, EV) |
-| M2.2: New Stat Flags | 5-7 days | Stat coverage matches competitors |
+| M2.1c-d: Postflop Detail + EV + Hand Strength Pre-compute | 10-14 days | Deep postflop analysis (sizing, texture, strength, EV). Includes shared infra: board texture classifier, pot tracker, hand evaluator + pre-compute pipeline |
+| M2.2: New Stat Flags | 4.5-6.5 days | Stat coverage matches competitors (reduced: 5 flags already exist, need wiring only) |
 | M2.3: Hand Review Workflow | 4-6 days | Efficient study workflow |
 | M2.4: Range Integration | 1-2 days | Cross-page linking |
-| **Total** | **26-39 days** | |
+| **Total** | **27.5-40.5 days** | |
 
 ### Dependency Graph
 
@@ -1534,7 +1571,7 @@ M2.4 (range integration) ---> after M2.1b
 - `8s 7h 5d` -> 8-2 Conn, Rainbow, Unpaired
 - `8s 4h 2d` -> 8-2 Disc, Rainbow, Unpaired
 - `As Ks Js` -> ABB, Monocolor, Unpaired
-- `Ts 9h Td` -> T-9 Conn (or T-9 Disc based on remaining cards), 2tone, Paired
+- `Ts 9h Td` -> T-9 Conn (T is highest, no Broadway; T-9 gap=1 so connected), 2tone, Paired
 
 **Turn classification**:
 - 3rd flush card -> Completed draw
