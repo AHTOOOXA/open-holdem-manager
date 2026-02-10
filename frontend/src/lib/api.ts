@@ -632,26 +632,25 @@ export interface DriftStat {
   window_avg: number;
   lifetime_n: number;
   window_n: number;
-  z_score: number;
-  significant: boolean;
+  drift_pct: number;
+  ci_lower: number;
+  ci_upper: number;
   direction: string;
   interpretation: string;
 }
 
 export interface DriftResponse {
   stats: DriftStat[];
-  window_size: number;
+  window_hands: number;
   total_hands: number;
 }
 
 export async function getDrift(params?: {
-  window?: number;
   stakes?: string;
   date_from?: string;
   date_to?: string;
 }): Promise<DriftResponse> {
   const sp = new URLSearchParams();
-  if (params?.window) sp.set('window', String(params.window));
   if (params?.stakes) sp.set('stakes', params.stakes);
   if (params?.date_from) sp.set('date_from', params.date_from);
   if (params?.date_to) sp.set('date_to', params.date_to);

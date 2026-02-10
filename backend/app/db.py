@@ -31,8 +31,17 @@ def get_db() -> duckdb.DuckDBPyConnection:
     return _conn
 
 
+def get_read_cursor() -> duckdb.DuckDBPyConnection:
+    """Return a new cursor for read-only queries (no lock needed).
+
+    DuckDB supports concurrent reads via separate cursors on the same
+    connection, so read-only endpoints can run in parallel.
+    """
+    return get_db().cursor()
+
+
 def db_lock() -> threading.Lock:
-    """Return the lock that must be held during any DB operation."""
+    """Return the lock that must be held during write operations."""
     return _lock
 
 

@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from app.db import get_db, db_lock
+from app.db import get_db, db_lock, get_read_cursor
 from app.models import Settings
 
 router = APIRouter()
@@ -7,14 +7,13 @@ router = APIRouter()
 
 @router.get("/settings", response_model=Settings)
 def get_settings():
-    with db_lock():
-        db = get_db()
-        rows = db.execute("SELECT key, value FROM settings").fetchall()
-        d = {k: v for k, v in rows}
-        return Settings(
-            hero_username=d.get("hero_username", "Hero"),
-            hero_site=d.get("hero_site", "GG"),
-        )
+    db = get_read_cursor()
+    rows = db.execute("SELECT key, value FROM settings").fetchall()
+    d = {k: v for k, v in rows}
+    return Settings(
+        hero_username=d.get("hero_username", "Hero"),
+        hero_site=d.get("hero_site", "GG"),
+    )
 
 
 @router.patch("/settings", response_model=Settings)

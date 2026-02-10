@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Query
-from app.db import get_db, db_lock
+from app.db import get_read_cursor
 from app.models import HeroStats, ComboStats, RangeResponse
 from app.stats_engine import compute_hero_stats
 
@@ -29,15 +29,14 @@ def get_hero_stats(
     date_from: str | None = Query(None),
     date_to: str | None = Query(None),
 ):
-    with db_lock():
-        db = get_db()
-        row = db.execute(
-            "SELECT value FROM settings WHERE key = 'hero_username'"
-        ).fetchone()
-        hero_username = row[0] if row else "Hero"
+    db = get_read_cursor()
+    row = db.execute(
+        "SELECT value FROM settings WHERE key = 'hero_username'"
+    ).fetchone()
+    hero_username = row[0] if row else "Hero"
 
-        return compute_hero_stats(db, hero_username, position=position, stakes=stakes,
-                                  date_from=date_from, date_to=date_to)
+    return compute_hero_stats(db, hero_username, position=position, stakes=stakes,
+                              date_from=date_from, date_to=date_to)
 
 
 @router.get("/stats/range", response_model=RangeResponse)
@@ -47,70 +46,69 @@ def get_range_stats(
     date_from: str | None = Query(None),
     date_to: str | None = Query(None),
 ):
-    with db_lock():
-        db = get_db()
-        row = db.execute(
-            "SELECT value FROM settings WHERE key = 'hero_username'"
-        ).fetchone()
-        hero_username = row[0] if row else "Hero"
+    db = get_read_cursor()
+    row = db.execute(
+        "SELECT value FROM settings WHERE key = 'hero_username'"
+    ).fetchone()
+    hero_username = row[0] if row else "Hero"
 
-        player = db.execute(
-            "SELECT id FROM players WHERE username = ? AND site_id = 1",
-            [hero_username],
-        ).fetchone()
-        if not player:
-            return RangeResponse()
+    player = db.execute(
+        "SELECT id FROM players WHERE username = ? AND site_id = 1",
+        [hero_username],
+    ).fetchone()
+    if not player:
+        return RangeResponse()
 
-        player_id = player[0]
+    player_id = player[0]
 
-        query = """
-            SELECT hp.card1, hp.card2,
-                   hp.won_bb, COALESCE(hp.all_in_ev_bb, hp.won_bb),
-                   hp.vpip, hp.pfr, hp.three_bet,
-                   hp.saw_flop, hp.went_to_showdown, hp.won_at_showdown
-            FROM hand_players hp
-            JOIN hands h ON hp.hand_id = h.id
-            WHERE hp.player_id = ?
-              AND hp.card1 IS NOT NULL AND hp.card2 IS NOT NULL
-        """
-        params: list = [player_id]
+    query = """
+        SELECT hp.card1, hp.card2,
+               hp.won_bb, COALESCE(hp.all_in_ev_bb, hp.won_bb),
+               hp.vpip, hp.pfr, hp.three_bet,
+               hp.saw_flop, hp.went_to_showdown, hp.won_at_showdown
+        FROM hand_players hp
+        JOIN hands h ON hp.hand_id = h.id
+        WHERE hp.player_id = ?
+          AND hp.card1 IS NOT NULL AND hp.card2 IS NOT NULL
+    """
+    params: list = [player_id]
 
-        if position:
-            query += " AND hp.position = ?"
-            params.append(position)
-        if stakes:
-            query += " AND h.stakes = ?"
-            params.append(stakes)
-        if date_from:
-            query += " AND h.played_at >= ?"
-            params.append(date_from)
-        if date_to:
-            query += " AND h.played_at <= ?"
-            params.append(date_to)
+    if position:
+        query += " AND hp.position = ?"
+        params.append(position)
+    if stakes:
+        query += " AND h.stakes = ?"
+        params.append(stakes)
+    if date_from:
+        query += " AND h.played_at >= ?"
+        params.append(date_from)
+    if date_to:
+        query += " AND h.played_at <= ?"
+        params.append(date_to)
 
-        rows = db.execute(query, params).fetchall()
+    rows = db.execute(query, params).fetchall()
 
-        # Also get total hands for context (including folded pre without seeing cards)
-        total_query = """
-            SELECT COUNT(*) FROM hand_players hp
-            JOIN hands h ON hp.hand_id = h.id
-            WHERE hp.player_id = ?
-        """
-        total_params: list = [player_id]
-        if position:
-            total_query += " AND hp.position = ?"
-            total_params.append(position)
-        if stakes:
-            total_query += " AND h.stakes = ?"
-            total_params.append(stakes)
-        if date_from:
-            total_query += " AND h.played_at >= ?"
-            total_params.append(date_from)
-        if date_to:
-            total_query += " AND h.played_at <= ?"
-            total_params.append(date_to)
+    # Also get total hands for context (including folded pre without seeing cards)
+    total_query = """
+        SELECT COUNT(*) FROM hand_players hp
+        JOIN hands h ON hp.hand_id = h.id
+        WHERE hp.player_id = ?
+    """
+    total_params: list = [player_id]
+    if position:
+        total_query += " AND hp.position = ?"
+        total_params.append(position)
+    if stakes:
+        total_query += " AND h.stakes = ?"
+        total_params.append(stakes)
+    if date_from:
+        total_query += " AND h.played_at >= ?"
+        total_params.append(date_from)
+    if date_to:
+        total_query += " AND h.played_at <= ?"
+        total_params.append(date_to)
 
-        total_hands = db.execute(total_query, total_params).fetchone()[0]
+    total_hands = db.execute(total_query, total_params).fetchone()[0]
 
     # Aggregate by combo in Python
     combo_data: dict[str, dict] = {}

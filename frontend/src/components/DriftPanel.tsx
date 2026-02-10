@@ -10,22 +10,31 @@ import {
 const DRIFT_DISPLAY: Record<string, string> = {
   vpip: 'VPIP',
   pfr: 'PFR',
+  three_bet: '3-Bet',
   fold_to_3bet: 'Fold to 3-Bet',
   cbet_flop: 'C-Bet Flop',
+  fold_to_cbet_flop: 'Fold to CBet Flop',
   went_to_showdown: 'WTSD',
   won_at_showdown: 'W$SD',
-  saw_flop: 'Saw Flop',
+  steal: 'Steal',
+  fold_to_steal: 'Fold to Steal',
+  wwsf: 'WWSF',
+  afq_flop: 'AFq Flop',
 };
 
 /** Map drift stat to benchmark key for midpoint comparison */
 const DRIFT_TO_BENCHMARK: Record<string, string> = {
   vpip: 'vpip',
   pfr: 'pfr',
+  three_bet: 'three_bet',
   fold_to_3bet: 'fold_to_3bet',
   cbet_flop: 'cbet_flop',
+  fold_to_cbet_flop: 'fold_to_cbet_flop',
   went_to_showdown: 'wtsd',
   won_at_showdown: 'wsd',
-  saw_flop: 'wwsf',
+  steal: 'steal',
+  fold_to_steal: 'vs_steal_fold',
+  wwsf: 'wwsf',
 };
 
 function DriftStatCard({ drift }: { drift: DriftStat }) {
@@ -66,6 +75,7 @@ function DriftStatCard({ drift }: { drift: DriftStat }) {
           </div>
           <div className="text-text-muted">
             Recent {drift.window_n.toLocaleString()} opp: {drift.window_avg.toFixed(1)}%
+            {' '}({drift.ci_lower.toFixed(1)}–{drift.ci_upper.toFixed(1)}%)
           </div>
         </div>
       </TooltipContent>
@@ -77,9 +87,7 @@ export default function DriftPanel({ stats, totalHands }: {
   stats: DriftStat[];
   totalHands: number;
 }) {
-  const notable = stats.filter((s) => Math.abs(s.z_score) >= 1.5);
-
-  if (totalHands < 1000 || notable.length === 0) return null;
+  if (totalHands < 20000 || stats.length === 0) return null;
 
   return (
     <div className="border border-border rounded overflow-hidden mb-3">
@@ -89,8 +97,8 @@ export default function DriftPanel({ stats, totalHands }: {
       </div>
       <div className="px-3 py-2">
         <div className="flex flex-wrap gap-2">
-          {notable
-            .sort((a, b) => Math.abs(b.z_score) - Math.abs(a.z_score))
+          {[...stats]
+            .sort((a, b) => Math.abs(b.drift_pct) - Math.abs(a.drift_pct))
             .map((d) => (
               <DriftStatCard key={d.stat} drift={d} />
             ))}

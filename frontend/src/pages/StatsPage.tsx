@@ -82,11 +82,26 @@ interface CellDef {
   colorFn?: (v: number) => ColorClass;
 }
 
+// ── Drift Key Mapping ────────────────────────────────────────────────
+
+/** Map stat display keys to drift backend keys */
+const STAT_TO_DRIFT_KEY: Record<string, string> = {
+  vpip: 'vpip',
+  pfr: 'pfr',
+  three_bet: 'three_bet',
+  fold_to_3bet: 'fold_to_3bet',
+  cbet_flop: 'cbet_flop',
+  fold_to_cbet_flop: 'fold_to_cbet_flop',
+  wtsd: 'went_to_showdown',
+  wsd: 'won_at_showdown',
+  wwsf: 'wwsf',
+  steal: 'steal',
+  vs_steal_fold: 'fold_to_steal',
+};
+
 // ── Drift Arrow ──────────────────────────────────────────────────────
 
 function DriftArrow({ drift, statKey }: { drift: DriftStat; statKey?: string }) {
-  if (Math.abs(drift.z_score) < 1.5) return null;
-
   const arrow = drift.direction === 'up' ? '\u2191' : '\u2193';
 
   // Color: green if drifting toward benchmark midpoint, red if away
@@ -112,7 +127,9 @@ function DriftArrow({ drift, statKey }: { drift: DriftStat; statKey?: string }) 
           <div className="text-text-muted">
             Lifetime: {drift.lifetime_avg.toFixed(1)}% &rarr; Recent: {drift.window_avg.toFixed(1)}%
           </div>
-          <div className="text-text-muted">z = {drift.z_score.toFixed(2)}</div>
+          <div className="text-text-muted">
+            CI: {drift.ci_lower.toFixed(1)}–{drift.ci_upper.toFixed(1)}%
+          </div>
         </div>
       </TooltipContent>
     </Tooltip>
@@ -132,13 +149,7 @@ function StatCell({
 }: CellDef & { driftMap?: Map<string, DriftStat> }) {
   const { text, color, sub, health, benchmark } = fmtStat(sv, statKey, position, decimals, colorFn);
 
-  // Map stat keys to drift keys (drift uses DB column names)
-  const driftKeyMap: Record<string, string> = {
-    vpip: 'vpip', pfr: 'pfr', fold_to_3bet: 'fold_to_3bet',
-    cbet_flop: 'cbet_flop', wtsd: 'went_to_showdown', wsd: 'won_at_showdown',
-    wwsf: 'saw_flop',
-  };
-  const driftKey = statKey ? driftKeyMap[statKey] : undefined;
+  const driftKey = statKey ? STAT_TO_DRIFT_KEY[statKey] : undefined;
   const drift = driftKey && driftMap?.get(driftKey);
 
   const hasTooltip = benchmark && health && sv?.value != null && health.status !== 'neutral';
@@ -244,12 +255,7 @@ function KVGrid({
         const displayName = item.statKey ? (STAT_DISPLAY_NAMES[item.statKey] || item.statKey) : item.label;
 
         // Drift arrow for KV items
-        const driftKeyMap: Record<string, string> = {
-          vpip: 'vpip', pfr: 'pfr', fold_to_3bet: 'fold_to_3bet',
-          cbet_flop: 'cbet_flop', wtsd: 'went_to_showdown', wsd: 'won_at_showdown',
-          wwsf: 'saw_flop',
-        };
-        const driftKey = item.statKey ? driftKeyMap[item.statKey] : undefined;
+        const driftKey = item.statKey ? STAT_TO_DRIFT_KEY[item.statKey] : undefined;
         const drift = driftKey && driftMap?.get(driftKey);
 
         const hasTooltip = benchmark && health && item.sv?.value != null && health.status !== 'neutral';
@@ -317,12 +323,7 @@ function InlineStat({ sv, statKey, position, driftMap }: {
   const { text, color, sub, health, benchmark } = fmtStat(sv, statKey, position);
   const displayName = statKey ? (STAT_DISPLAY_NAMES[statKey] || statKey) : '';
 
-  const driftKeyMap: Record<string, string> = {
-    vpip: 'vpip', pfr: 'pfr', fold_to_3bet: 'fold_to_3bet',
-    cbet_flop: 'cbet_flop', wtsd: 'went_to_showdown', wsd: 'won_at_showdown',
-    wwsf: 'saw_flop',
-  };
-  const driftKey = statKey ? driftKeyMap[statKey] : undefined;
+  const driftKey = statKey ? STAT_TO_DRIFT_KEY[statKey] : undefined;
   const drift = driftKey && driftMap?.get(driftKey);
 
   const hasTooltip = benchmark && health && sv?.value != null && health.status !== 'neutral';
@@ -378,7 +379,7 @@ export default function StatsPage() {
     stakes: filterParams.stakes,
     date_from: filterParams.date_from,
     date_to: filterParams.date_to,
-    enabled: (stats?.hands ?? 0) >= 1000,
+    enabled: (stats?.hands ?? 0) >= 20000,
   });
 
   // Load filter options once

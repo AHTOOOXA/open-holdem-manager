@@ -301,14 +301,15 @@ class DriftStat(BaseModel):
     window_avg: float
     lifetime_n: int
     window_n: int
-    z_score: float
-    significant: bool
-    direction: str      # "up" or "down"
+    drift_pct: float     # relative change: (window - lifetime) / lifetime * 100
+    ci_lower: float      # 95% CI lower bound for window estimate
+    ci_upper: float      # 95% CI upper bound for window estimate
+    direction: str       # "up" or "down"
     interpretation: str  # human-readable meaning
 
 class DriftResponse(BaseModel):
     stats: list[DriftStat] = []
-    window_size: int = 0
+    window_hands: int = 0
     total_hands: int = 0
 
 
