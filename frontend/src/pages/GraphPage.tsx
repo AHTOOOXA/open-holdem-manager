@@ -63,35 +63,6 @@ function niceXTicks(max: number): number[] {
   return ticks;
 }
 
-function StatCard({
-  label,
-  bb,
-  usd,
-  bbColor,
-  usdColor,
-  border,
-  detail,
-}: {
-  label: string;
-  bb: string;
-  usd: string;
-  bbColor?: string;
-  usdColor?: string;
-  border?: string;
-  detail?: string;
-}) {
-  return (
-    <Card className="gap-0 py-0" style={border ? { borderLeftWidth: 3, borderLeftColor: border } : undefined}>
-      <CardContent className="px-3 py-2">
-        <div className="text-[10px] text-text-muted mb-0.5 uppercase tracking-wide">{label}</div>
-        <div className={`text-sm font-bold font-mono leading-tight ${bbColor ?? ''}`}>{bb}</div>
-        {usd && <div className={`text-xs font-mono leading-tight ${usdColor ?? 'text-text-muted'}`}>{usd}</div>}
-        {detail && <div className="text-[10px] font-mono text-text-muted mt-0.5">{detail}</div>}
-      </CardContent>
-    </Card>
-  );
-}
-
 type LineToggle = 'ev' | 'showdown' | 'rake' | 'ci' | 'sessions';
 
 const LINE_COLORS = {
@@ -328,11 +299,9 @@ export default function GraphPage() {
 
   // Helpers
   const clr = (v: number) => v >= 0 ? 'text-green' : 'text-red';
-  const brd = (v: number) => v >= 0 ? '#22c55e' : '#ef4444';
   const fmtBB = (v: number) => `${v.toFixed(1)} BB`;
   const fmtUSD = (v: number) => `${v >= 0 ? '' : '-'}$${Math.abs(v).toFixed(2)}`;
   const fmtRateBB = (v: number) => `${v.toFixed(2)} bb/100`;
-  const fmtRateUSD = (v: number) => `${v >= 0 ? '' : '-'}$${Math.abs(v).toFixed(2)}/100`;
 
   // Toggle button helper
   const toggleBtn = (key: LineToggle, label: string, color: string, show = true) =>
@@ -369,11 +338,8 @@ export default function GraphPage() {
   const nsdUSD = last?.cumulative_nonshowdown_usd ?? 0;
 
   const rateBB = n > 0 ? (wonBB / n) * 100 : 0;
-  const rateUSD = n > 0 ? (wonUSD / n) * 100 : 0;
   const evRateBB = n > 0 ? (evBB / n) * 100 : 0;
-  const evRateUSD = n > 0 ? (evUSD / n) * 100 : 0;
   const rakePerBB = n > 0 ? (rakeBB / n) * 100 : 0;
-  const rakePerUSD = n > 0 ? (rakeUSD / n) * 100 : 0;
 
   const totalHrs = totalSessionHours(sessions);
   const handsPerHour = totalHrs > 0 ? Math.round(n / totalHrs) : 0;
@@ -647,147 +613,97 @@ export default function GraphPage() {
         </Card>
       )}
 
-      {/* Stat Cards - Row 1 */}
+      {/* Stats Panel */}
       {graphLoading ? (
-        <div className="grid gap-2 grid-cols-2 sm:grid-cols-3 lg:grid-cols-6">
-          {Array.from({ length: 6 }, (_, i) => (
-            <Card key={i} className="gap-0 py-0"><CardContent className="px-3 py-2"><Skeleton className="h-4 w-16 mb-1" /><Skeleton className="h-5 w-24" /></CardContent></Card>
-          ))}
-        </div>
+        <Card className="gap-0 py-0 overflow-hidden">
+          <div className="px-4 py-2"><Skeleton className="h-4 w-64" /></div>
+          <div className="grid grid-cols-2 border-t border-border">
+            <div className="px-4 py-3 space-y-2"><Skeleton className="h-6 w-24" /><Skeleton className="h-5 w-20" /><Skeleton className="h-3 w-16" /></div>
+            <div className="px-4 py-3 space-y-2 border-l border-border"><Skeleton className="h-6 w-24" /><Skeleton className="h-5 w-20" /><Skeleton className="h-3 w-16" /></div>
+          </div>
+          <div className="px-4 py-2 border-t border-border"><Skeleton className="h-4 w-full" /></div>
+        </Card>
       ) : (
-        <div className="grid gap-2 grid-cols-2 sm:grid-cols-3 lg:grid-cols-6">
-          <StatCard
-            label="Hands"
-            bb={n.toLocaleString()}
-            usd=""
-            bbColor="text-text"
-            detail={handsPerHour > 0 ? `${handsPerHour} hands/hr` : undefined}
-          />
-          <StatCard
-            label="Won"
-            bb={fmtBB(wonBB)}
-            usd={fmtUSD(wonUSD)}
-            bbColor={clr(wonBB)}
-            usdColor={clr(wonUSD)}
-            border={brd(wonBB)}
-          />
-          <StatCard
-            label="Winrate"
-            bb={fmtRateBB(rateBB)}
-            usd={fmtRateUSD(rateUSD)}
-            bbColor={clr(rateBB)}
-            usdColor={clr(rateUSD)}
-            border={brd(rateBB)}
-          />
-          <StatCard
-            label="$/hr"
-            bb={totalHrs > 0 ? `${bbPerHour.toFixed(1)} BB/hr` : '—'}
-            usd={totalHrs > 0 ? `${usdPerHour >= 0 ? '' : '-'}$${Math.abs(usdPerHour).toFixed(2)}/hr` : ''}
-            bbColor={totalHrs > 0 ? clr(bbPerHour) : 'text-text-muted'}
-            usdColor={totalHrs > 0 ? clr(usdPerHour) : 'text-text-muted'}
-            border={totalHrs > 0 ? brd(usdPerHour) : undefined}
-            detail={totalHrs > 0 ? `${totalHrs.toFixed(1)} hrs played` : undefined}
-          />
-          {hasEVData ? (
-            <StatCard
-              label="EV Won"
-              bb={fmtBB(evBB)}
-              usd={fmtUSD(evUSD)}
-              bbColor={clr(evBB)}
-              usdColor={clr(evUSD)}
-              border={brd(evBB)}
-            />
-          ) : (
-            <StatCard label="EV Won" bb="—" usd="" bbColor="text-text-muted" />
-          )}
-          {hasEVData ? (
-            <StatCard
-              label="EV Winrate"
-              bb={fmtRateBB(evRateBB)}
-              usd={fmtRateUSD(evRateUSD)}
-              bbColor={clr(evRateBB)}
-              usdColor={clr(evRateUSD)}
-              border={brd(evRateBB)}
-            />
-          ) : (
-            <StatCard label="EV Winrate" bb="—" usd="" bbColor="text-text-muted" />
-          )}
-        </div>
-      )}
+        <Card className="gap-0 py-0 overflow-hidden">
+          {/* Context strip */}
+          <div className="px-4 py-2 text-xs font-mono text-text-muted">
+            {n.toLocaleString()} hands · {handsPerHour > 0 ? `${handsPerHour}/hr · ` : ''}{totalHrs > 0 ? `${totalHrs.toFixed(0)}h played · ` : ''}{sessions.length} sessions
+          </div>
 
-      {/* Stat Cards - Row 2 */}
-      {graphLoading ? (
-        <div className="grid gap-2 grid-cols-2 lg:grid-cols-4">
-          {Array.from({ length: 4 }, (_, i) => (
-            <Card key={i} className="gap-0 py-0"><CardContent className="px-3 py-2"><Skeleton className="h-4 w-16 mb-1" /><Skeleton className="h-5 w-24" /></CardContent></Card>
-          ))}
-        </div>
-      ) : (
-        <div className="grid gap-2 grid-cols-2 lg:grid-cols-4">
-          <StatCard
-            label="Rake"
-            bb={fmtBB(rakeBB)}
-            usd={fmtUSD(rakeUSD)}
-            bbColor="text-red"
-            usdColor="text-red"
-            border="#ef4444"
-            detail={jackpotBB ? `(BBJ: ${fmtBB(jackpotBB)} / ${fmtUSD(jackpotUSD)})` : undefined}
-          />
-          <StatCard
-            label="Rake/100"
-            bb={fmtRateBB(rakePerBB)}
-            usd={fmtRateUSD(rakePerUSD)}
-            bbColor="text-red"
-            usdColor="text-red"
-            border="#ef4444"
-          />
-          <StatCard
-            label="SD Won"
-            bb={fmtBB(sdBB)}
-            usd={fmtUSD(sdUSD)}
-            bbColor={clr(sdBB)}
-            usdColor={clr(sdUSD)}
-            border={brd(sdBB)}
-          />
-          <StatCard
-            label="NSD Won"
-            bb={fmtBB(nsdBB)}
-            usd={fmtUSD(nsdUSD)}
-            bbColor={clr(nsdBB)}
-            usdColor={clr(nsdUSD)}
-            border={brd(nsdBB)}
-          />
-        </div>
-      )}
+          {/* Hero pair: Actual vs EV */}
+          <div className="grid grid-cols-2 border-t border-border">
+            {/* Actual */}
+            <div className="px-4 py-3 grid grid-cols-2 gap-x-4">
+              <div className={`text-xl font-bold font-mono ${clr(wonUSD)}`}>{fmtUSD(wonUSD)}</div>
+              <div className={`text-xl font-bold font-mono ${clr(rateBB)}`}>{rateBB.toFixed(2)}</div>
+              <div className={`text-sm font-mono ${clr(wonBB)}`}>{fmtBB(wonBB)}</div>
+              <div className="text-sm font-mono text-text-muted">bb/100</div>
+              <div className="text-[10px] text-text-muted uppercase tracking-wide">Won</div>
+              <div className="text-[10px] text-text-muted uppercase tracking-wide">Rate</div>
+            </div>
+            {/* EV */}
+            <div className="px-4 py-3 border-l border-border grid grid-cols-2 gap-x-4">
+              {hasEVData ? (
+                <>
+                  <div className={`text-xl font-bold font-mono ${clr(evUSD)}`}>{fmtUSD(evUSD)}</div>
+                  <div className={`text-xl font-bold font-mono ${clr(evRateBB)}`}>{evRateBB.toFixed(2)}</div>
+                  <div className={`text-sm font-mono ${clr(evBB)}`}>{fmtBB(evBB)}</div>
+                  <div className="text-sm font-mono text-text-muted">EV bb/100</div>
+                  <div className="text-[10px] text-text-muted uppercase tracking-wide">Won EV</div>
+                  <div className="text-[10px] text-text-muted uppercase tracking-wide">EV Rate</div>
+                </>
+              ) : (
+                <>
+                  <div className="text-xl font-bold font-mono text-text-muted">—</div>
+                  <div className="text-xl font-bold font-mono text-text-muted">—</div>
+                  <div className="text-sm font-mono text-text-muted">&nbsp;</div>
+                  <div className="text-sm font-mono text-text-muted">&nbsp;</div>
+                  <div className="text-[10px] text-text-muted uppercase tracking-wide">Won EV</div>
+                  <div className="text-[10px] text-text-muted uppercase tracking-wide">EV Rate</div>
+                </>
+              )}
+            </div>
+          </div>
 
-      {/* Variance Stats */}
-      {!graphLoading && variance && (
-        <div className="grid gap-2 grid-cols-2 lg:grid-cols-4">
-          <StatCard
-            label="Std Dev bb/100"
-            bb={variance.sd_bb100.toFixed(1)}
-            usd=""
-            bbColor="text-text"
-          />
-          <StatCard
-            label="95% CI"
-            bb={`${variance.ci_lower_bb100.toFixed(2)} to ${variance.ci_upper_bb100.toFixed(2)} bb/100`}
-            usd=""
-            bbColor={variance.ci_lower_bb100 > 0 ? 'text-green' : variance.ci_upper_bb100 < 0 ? 'text-red' : 'text-text-muted'}
-          />
-          <StatCard
-            label="Sessions"
-            bb={String(sessions.length)}
-            usd={sessions.length > 0 ? `~${Math.round(n / sessions.length)} hands/session` : ''}
-            bbColor="text-text"
-          />
-          <StatCard
-            label="Std Dev per hand"
-            bb={`${variance.sd_bb.toFixed(2)} BB`}
-            usd=""
-            bbColor="text-text"
-          />
-        </div>
+          {/* Footer: secondary stats */}
+          <div className="grid grid-cols-3 sm:grid-cols-5 gap-x-6 px-4 py-2.5 border-t border-border">
+            {/* $/hr */}
+            <div>
+              <div className={`text-sm font-bold font-mono ${totalHrs > 0 ? clr(usdPerHour) : 'text-text-muted'}`}>
+                {totalHrs > 0 ? `${usdPerHour >= 0 ? '' : '-'}$${Math.abs(usdPerHour).toFixed(2)}/hr` : '—'}
+              </div>
+              <div className="text-xs text-text-muted">$/hr {totalHrs > 0 ? <span className={`font-mono ${clr(bbPerHour)}`}>{bbPerHour.toFixed(1)} BB</span> : ''}</div>
+            </div>
+            {/* SD Won */}
+            <div>
+              <div className={`text-sm font-bold font-mono ${clr(sdUSD)}`}>{fmtUSD(sdUSD)}</div>
+              <div className="text-xs text-text-muted">Showdown <span className={`font-mono ${clr(sdBB)}`}>{fmtBB(sdBB)}</span></div>
+            </div>
+            {/* NSD Won */}
+            <div>
+              <div className={`text-sm font-bold font-mono ${clr(nsdUSD)}`}>{fmtUSD(nsdUSD)}</div>
+              <div className="text-xs text-text-muted">Non-SD <span className={`font-mono ${clr(nsdBB)}`}>{fmtBB(nsdBB)}</span></div>
+            </div>
+            {/* Rake */}
+            <div>
+              <div className="text-sm font-bold font-mono text-text-muted">{fmtUSD(rakeUSD)}</div>
+              <div className="text-xs text-text-muted">Rake <span className="font-mono">{rakePerBB.toFixed(1)}/100{jackpotBB > 0 ? ` · BBJ ${fmtUSD(jackpotUSD)}` : ''}</span></div>
+            </div>
+            {/* 95% CI */}
+            <div>
+              {variance ? (
+                <>
+                  <div className={`text-sm font-bold font-mono ${variance.ci_lower_bb100 > 0 ? 'text-green' : variance.ci_upper_bb100 < 0 ? 'text-red' : 'text-text'}`}>
+                    {variance.ci_lower_bb100.toFixed(2)} to {variance.ci_upper_bb100.toFixed(2)}
+                  </div>
+                  <div className="text-xs text-text-muted">95% CI bb/100 <span className="font-mono">σ {variance.sd_bb100.toFixed(1)}</span></div>
+                </>
+              ) : (
+                <div className="text-sm font-mono text-text-muted">—</div>
+              )}
+            </div>
+          </div>
+        </Card>
       )}
 
       {/* Breakdown Tables — independent loading */}
