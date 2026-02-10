@@ -160,7 +160,7 @@ function StatCell({
     );
   }
 
-  const tip = health.direction === 'low' ? benchmark.tipLow : benchmark.tipHigh;
+  const tip = health.direction === 'low' ? benchmark.tipLow : health.direction === 'high' ? benchmark.tipHigh : undefined;
 
   return (
     <td className="py-1 px-2 text-center font-mono text-[13px] leading-tight">
@@ -253,7 +253,7 @@ function KVGrid({
         const drift = driftKey && driftMap?.get(driftKey);
 
         const hasTooltip = benchmark && health && item.sv?.value != null && health.status !== 'neutral';
-        const tip = health?.direction === 'low' ? benchmark?.tipLow : benchmark?.tipHigh;
+        const tip = health?.direction === 'low' ? benchmark?.tipLow : health?.direction === 'high' ? benchmark?.tipHigh : undefined;
 
         const valueSpan = (
           <span className={`font-mono text-[13px] ${color}`}>
@@ -326,7 +326,7 @@ function InlineStat({ sv, statKey, position, driftMap }: {
   const drift = driftKey && driftMap?.get(driftKey);
 
   const hasTooltip = benchmark && health && sv?.value != null && health.status !== 'neutral';
-  const tip = health?.direction === 'low' ? benchmark?.tipLow : benchmark?.tipHigh;
+  const tip = health?.direction === 'low' ? benchmark?.tipLow : health?.direction === 'high' ? benchmark?.tipHigh : undefined;
 
   const inner = (
     <span className={`font-mono text-[13px] ${color}`}>
