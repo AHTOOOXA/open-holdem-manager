@@ -1,6 +1,9 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
-import { getCashDropStats, getFilterOptions } from '@/lib/api';
-import type { CashDropResponse, CashDropRangeCategory, ComboStats, FilterOptions } from '@/lib/api';
+import { useState, useMemo } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { getCashDropStats } from '@/lib/api';
+import type { CashDropRangeCategory, ComboStats } from '@/lib/api';
+import { useFilterOptions } from '@/hooks/useFilterOptions';
+import { queryKeys } from '@/lib/query-keys';
 import FilterBar from '@/components/FilterBar';
 import EmptyState from '@/components/EmptyState';
 import { Card, CardContent } from '@/components/ui/card';
@@ -104,34 +107,24 @@ function FieldHeatmap({ category }: { category: CashDropRangeCategory }) {
 // ── Main Component ───────────────────────────────────────────────────
 
 export default function CashDropPage() {
-  const [data, setData] = useState<CashDropResponse | null>(null);
-  const [filterOpts, setFilterOpts] = useState<FilterOptions | null>(null);
-  const [loading, setLoading] = useState(true);
   const [stakes, setStakes] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
 
-  useEffect(() => {
-    getFilterOptions().then(setFilterOpts).catch(() => {});
-  }, []);
+  // Shared filter options
+  const { data: filterOpts } = useFilterOptions();
 
-  const fetchData = useCallback(async () => {
-    setLoading(true);
-    try {
-      const params: Record<string, string> = {};
-      if (stakes) params.stakes = stakes;
-      if (dateFrom) params.date_from = dateFrom;
-      if (dateTo) params.date_to = dateTo;
-      const result = await getCashDropStats(params);
-      setData(result);
-    } catch {
-      setData(null);
-    } finally {
-      setLoading(false);
-    }
-  }, [stakes, dateFrom, dateTo]);
+  // Cash drop data query
+  const cashDropParams = useMemo(() => ({
+    stakes: stakes || undefined,
+    date_from: dateFrom || undefined,
+    date_to: dateTo || undefined,
+  }), [stakes, dateFrom, dateTo]);
 
-  useEffect(() => { fetchData(); }, [fetchData]);
+  const { data, isPending: loading } = useQuery({
+    queryKey: queryKeys.cashDrop(cashDropParams),
+    queryFn: () => getCashDropStats(cashDropParams),
+  });
 
   const s = data?.summary;
 
@@ -149,7 +142,7 @@ export default function CashDropPage() {
         dateTo={dateTo}
         onDateToChange={setDateTo}
         showDatePresets={false}
-        filterOptions={filterOpts}
+        filterOptions={filterOpts ?? null}
       />
 
       {loading && !data ? (

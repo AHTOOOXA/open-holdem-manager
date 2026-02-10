@@ -1,4 +1,5 @@
-import { useState, useEffect, useMemo, useCallback, useRef, startTransition } from 'react';
+import { useState, useMemo, useCallback, useRef, useEffect } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import {
   ComposedChart,
   Area,
@@ -13,19 +14,17 @@ import {
 } from 'recharts';
 import {
   getGraphData,
-  getFilterOptions,
   getResultsBreakdown,
 } from '@/lib/api';
 import type {
   GraphPoint,
-  VarianceStats,
   SessionMarker,
-  FilterOptions,
-  ResultsBreakdown,
   StakeBreakdown,
   MonthBreakdown,
   PositionBreakdown,
 } from '@/lib/api';
+import { useFilterOptions } from '@/hooks/useFilterOptions';
+import { queryKeys } from '@/lib/query-keys';
 import { getPresetDates } from '@/lib/date-presets';
 import type { DatePreset } from '@/lib/date-presets';
 import FilterBar from '@/components/FilterBar';
@@ -203,15 +202,7 @@ function formatMonth(ym: string): string {
 
 export default function GraphPage() {
   // Data
-  const [data, setData] = useState<GraphPoint[]>([]);
-  const [sessions, setSessions] = useState<SessionMarker[]>([]);
-  const [variance, setVariance] = useState<VarianceStats | null>(null);
   const [activeSession, setActiveSession] = useState<SessionMarker | null>(null);
-  const [filterOpts, setFilterOpts] = useState<FilterOptions | null>(null);
-  const [breakdown, setBreakdown] = useState<ResultsBreakdown | null>(null);
-  const [graphLoading, setGraphLoading] = useState(true);
-  const [breakdownLoading, setBreakdownLoading] = useState(true);
-  const [chartReady, setChartReady] = useState(false);
 
   // Filters
   const [stakes, setStakes] = useState<string>('');
@@ -251,35 +242,24 @@ export default function GraphPage() {
     last_n: lastNParsed && lastNParsed > 0 ? lastNParsed : undefined,
   }), [stakes, gameMode, dateFrom, dateTo, lastNParsed]);
 
-  // Load filter options once
-  useEffect(() => {
-    getFilterOptions().then(setFilterOpts);
-  }, []);
+  // Shared filter options
+  const { data: filterOpts } = useFilterOptions();
 
-  // Load graph + breakdown independently when filters change
-  const fetchData = useCallback(() => {
-    setGraphLoading(true);
-    setBreakdownLoading(true);
-    setChartReady(false);
+  // Graph data query
+  const { data: graphResp, isPending: graphLoading } = useQuery({
+    queryKey: queryKeys.graph.data(filterParams),
+    queryFn: () => getGraphData(filterParams),
+  });
 
-    getGraphData(filterParams).then((graphResp) => {
-      setData(graphResp.points);
-      setSessions(graphResp.sessions);
-      setVariance(graphResp.variance);
-      setGraphLoading(false);
-      // Defer chart mount so stat cards paint first
-      startTransition(() => setChartReady(true));
-    });
+  const data = useMemo(() => graphResp?.points ?? [], [graphResp]);
+  const sessions = useMemo(() => graphResp?.sessions ?? [], [graphResp]);
+  const variance = graphResp?.variance ?? null;
 
-    getResultsBreakdown(filterParams).then((breakdownData) => {
-      setBreakdown(breakdownData);
-      setBreakdownLoading(false);
-    });
-  }, [filterParams]);
-
-  useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+  // Breakdown query
+  const { data: breakdown, isPending: breakdownLoading } = useQuery({
+    queryKey: queryKeys.graph.breakdown(filterParams),
+    queryFn: () => getResultsBreakdown(filterParams),
+  });
 
   const handlePreset = (preset: DatePreset) => {
     setActivePreset(preset);
@@ -428,7 +408,7 @@ export default function GraphPage() {
       onDateToChange={handleDateToChange}
       activePreset={activePreset}
       onPresetChange={handlePreset}
-      filterOptions={filterOpts}
+      filterOptions={filterOpts ?? null}
     >
       {/* Last N hands */}
       <div className="flex items-center gap-1.5">
@@ -479,7 +459,7 @@ export default function GraphPage() {
       {filterBarContent}
 
       {/* Graph — skeleton while loading or chart not yet rendered */}
-      {graphLoading || !chartReady ? (
+      {graphLoading ? (
         <Card className="gap-0 py-0 p-2">
           <Skeleton className="h-[400px] w-full rounded" />
         </Card>

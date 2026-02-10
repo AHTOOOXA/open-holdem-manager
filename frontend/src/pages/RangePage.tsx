@@ -1,6 +1,9 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
-import { getRangeStats, getFilterOptions } from '@/lib/api';
-import type { ComboStats, RangeResponse, FilterOptions } from '@/lib/api';
+import { useState, useMemo } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { getRangeStats } from '@/lib/api';
+import type { ComboStats } from '@/lib/api';
+import { useFilterOptions } from '@/hooks/useFilterOptions';
+import { queryKeys } from '@/lib/query-keys';
 import FilterBar from '@/components/FilterBar';
 import EmptyState from '@/components/EmptyState';
 import { Card } from '@/components/ui/card';
@@ -95,9 +98,6 @@ const COLOR_OPTIONS: { value: ColorBy; label: string }[] = [
 ];
 
 export default function RangePage() {
-  const [data, setData] = useState<RangeResponse | null>(null);
-  const [filterOpts, setFilterOpts] = useState<FilterOptions | null>(null);
-  const [loading, setLoading] = useState(true);
   const [position, setPosition] = useState('All');
   const [stakes, setStakes] = useState('');
   const [gameMode, setGameMode] = useState('');
@@ -105,27 +105,20 @@ export default function RangePage() {
   const [hovered, setHovered] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
 
-  useEffect(() => {
-    getFilterOptions().then(setFilterOpts).catch(() => {});
-  }, []);
+  // Shared filter options
+  const { data: filterOpts } = useFilterOptions();
 
-  const fetchData = useCallback(async () => {
-    setLoading(true);
-    try {
-      const params: Record<string, string> = {};
-      if (position !== 'All') params.position = position;
-      if (stakes) params.stakes = stakes;
-      if (gameMode) params.game_mode = gameMode;
-      const result = await getRangeStats(params);
-      setData(result);
-    } catch {
-      setData(null);
-    } finally {
-      setLoading(false);
-    }
-  }, [position, stakes, gameMode]);
+  // Range data query
+  const rangeParams = useMemo(() => ({
+    position: position !== 'All' ? position : undefined,
+    stakes: stakes || undefined,
+    game_mode: gameMode || undefined,
+  }), [position, stakes, gameMode]);
 
-  useEffect(() => { fetchData(); }, [fetchData]);
+  const { data, isPending: loading } = useQuery({
+    queryKey: queryKeys.range(rangeParams),
+    queryFn: () => getRangeStats(rangeParams),
+  });
 
   // Build combo lookup map
   const comboMap = useMemo(() => {
@@ -177,7 +170,7 @@ export default function RangePage() {
         onGameModeChange={(v) => { setGameMode(v); setSelected(null); }}
         showDateRange={false}
         showDatePresets={false}
-        filterOptions={filterOpts}
+        filterOptions={filterOpts ?? null}
       >
         {/* Position */}
         <ToggleGroup type="single" value={position} onValueChange={(v) => { if (v) { setPosition(v); setSelected(null); } }}>

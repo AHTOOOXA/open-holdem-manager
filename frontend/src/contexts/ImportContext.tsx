@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useCallback, useEffect, type ReactNode } from 'react';
 import { uploadFilesStream, rebuildHands, getSettings, updateSettings, getHealth, clearDatabase } from '@/lib/api';
 import type { ImportResult, ImportProgress, Settings } from '@/lib/api';
+import { queryClient } from '@/lib/query-client';
 
 type Phase = 'idle' | 'uploading' | 'rebuilding' | 'done' | 'error';
 
@@ -79,6 +80,7 @@ function ImportProvider({ children }: { children: ReactNode }) {
       setResult(res);
       setPhase('done');
       await refreshHandCount();
+      queryClient.invalidateQueries();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Upload failed');
       setPhase('error');
@@ -99,6 +101,7 @@ function ImportProvider({ children }: { children: ReactNode }) {
       setResult(res);
       setPhase('done');
       await refreshHandCount();
+      queryClient.invalidateQueries();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Rebuild failed');
       setPhase('error');
@@ -109,6 +112,7 @@ function ImportProvider({ children }: { children: ReactNode }) {
     await clearDatabase();
     await refreshHandCount();
     setResult(null);
+    queryClient.invalidateQueries();
   }, [refreshHandCount]);
 
   const dismiss = useCallback(() => {
@@ -125,6 +129,7 @@ function ImportProvider({ children }: { children: ReactNode }) {
       hero_site: settings?.hero_site || 'GG',
     });
     setSettings(updated);
+    queryClient.invalidateQueries();
   }, [settings]);
 
   return (

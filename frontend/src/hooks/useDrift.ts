@@ -1,6 +1,8 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useMemo } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { getDrift } from '@/lib/api';
-import type { DriftStat, DriftResponse } from '@/lib/api';
+import type { DriftStat } from '@/lib/api';
+import { queryKeys } from '@/lib/query-keys';
 
 export interface UseDriftResult {
   driftMap: Map<string, DriftStat>;
@@ -16,19 +18,19 @@ export function useDrift(params: {
   enabled?: boolean;
 }): UseDriftResult {
   const { stakes, game_mode, date_from, date_to, enabled = true } = params;
-  const [data, setData] = useState<DriftResponse | null>(null);
 
-  useEffect(() => {
-    if (!enabled) return;
+  const filterParams = useMemo(() => ({
+    stakes,
+    game_mode,
+    date_from,
+    date_to,
+  }), [stakes, game_mode, date_from, date_to]);
 
-    let cancelled = false;
-
-    getDrift({ stakes, game_mode, date_from, date_to })
-      .then((resp) => { if (!cancelled) setData(resp); })
-      .catch(() => { if (!cancelled) setData(null); });
-
-    return () => { cancelled = true; };
-  }, [stakes, game_mode, date_from, date_to, enabled]);
+  const { data } = useQuery({
+    queryKey: queryKeys.drift(filterParams),
+    queryFn: () => getDrift(filterParams),
+    enabled,
+  });
 
   const driftMap = useMemo(() => {
     const map = new Map<string, DriftStat>();

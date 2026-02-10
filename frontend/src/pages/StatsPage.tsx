@@ -1,6 +1,9 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
-import { getHeroStats, getFilterOptions } from '@/lib/api';
-import type { HeroStats, PositionalStats, StatValue, FilterOptions, DriftStat } from '@/lib/api';
+import { useState, useMemo, useRef, useEffect } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { getHeroStats } from '@/lib/api';
+import type { PositionalStats, StatValue, DriftStat } from '@/lib/api';
+import { useFilterOptions } from '@/hooks/useFilterOptions';
+import { queryKeys } from '@/lib/query-keys';
 import { getPresetDates } from '@/lib/date-presets';
 import type { DatePreset } from '@/lib/date-presets';
 import FilterBar from '@/components/FilterBar';
@@ -360,10 +363,6 @@ function InlineStat({ sv, statKey, position, driftMap }: {
 // ── Main Component ───────────────────────────────────────────────────
 
 export default function StatsPage() {
-  const [stats, setStats] = useState<HeroStats | null>(null);
-  const [filterOpts, setFilterOpts] = useState<FilterOptions | null>(null);
-  const [loading, setLoading] = useState(true);
-
   // Filters
   const [stakes, setStakes] = useState<string>('');
   const [gameMode, setGameMode] = useState<string>('');
@@ -389,6 +388,15 @@ export default function StatsPage() {
     last_n: lastNParsed && lastNParsed > 0 ? lastNParsed : undefined,
   }), [stakes, gameMode, dateFrom, dateTo, lastNParsed]);
 
+  // Shared filter options
+  const { data: filterOpts } = useFilterOptions();
+
+  // Stats query
+  const { data: stats, isPending: loading } = useQuery({
+    queryKey: queryKeys.stats.hero(filterParams),
+    queryFn: () => getHeroStats(filterParams),
+  });
+
   // Drift detection
   const { driftMap, stats: driftStats, totalHands: driftTotalHands } = useDrift({
     stakes: filterParams.stakes,
@@ -397,22 +405,6 @@ export default function StatsPage() {
     date_to: filterParams.date_to,
     enabled: (stats?.hands ?? 0) >= 20000,
   });
-
-  // Load filter options once
-  useEffect(() => {
-    getFilterOptions().then(setFilterOpts);
-  }, []);
-
-  // Load stats when filters change
-  useEffect(() => {
-    let cancelled = false;
-    getHeroStats(filterParams).then(s => {
-      if (!cancelled) setStats(s);
-    }).finally(() => {
-      if (!cancelled) setLoading(false);
-    });
-    return () => { cancelled = true; };
-  }, [filterParams]);
 
   const handlePreset = (preset: DatePreset) => {
     setActivePreset(preset);
@@ -445,7 +437,7 @@ export default function StatsPage() {
       onDateToChange={handleDateToChange}
       activePreset={activePreset}
       onPresetChange={handlePreset}
-      filterOptions={filterOpts}
+      filterOptions={filterOpts ?? null}
     >
       {/* Last N hands */}
       <div className="flex items-center gap-1.5">

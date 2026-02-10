@@ -1,4 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { QueryClientProvider } from '@tanstack/react-query';
+import { queryClient } from '@/lib/query-client';
 import { SidebarProvider, SidebarInset, SidebarTrigger } from '@/components/ui/sidebar';
 import { ImportProvider } from '@/contexts/ImportContext';
 import ImportOverlay from '@/components/ImportOverlay';
@@ -11,6 +13,7 @@ import CashDropPage from './pages/CashDropPage';
 
 export default function App() {
   return (
+    <QueryClientProvider client={queryClient}>
     <BrowserRouter>
       <ImportProvider>
         <SidebarProvider>
@@ -35,5 +38,6 @@ export default function App() {
         <ImportOverlay />
       </ImportProvider>
     </BrowserRouter>
+    </QueryClientProvider>
   );
 }

@@ -1,7 +1,11 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { getHands, getTags, getFilterOptions } from '@/lib/api';
-import type { HandListResponse, TagCount, ActionItem } from '@/lib/api';
+import { useQuery } from '@tanstack/react-query';
+import { getHands, getTags } from '@/lib/api';
+import type { TagCount, ActionItem } from '@/lib/api';
+import { useFilterOptions } from '@/hooks/useFilterOptions';
+import { queryKeys } from '@/lib/query-keys';
+import { queryClient } from '@/lib/query-client';
 import EmptyState from '@/components/EmptyState';
 import HandFilters from '@/components/hands/HandFilters';
 import type { FilterState } from '@/components/hands/HandFilters';
@@ -100,8 +104,6 @@ function getDateRange(preset: string, dateFrom: string, dateTo: string): { from?
 
 export default function HandsPage() {
   const [searchParams] = useSearchParams();
-  const [data, setData] = useState<HandListResponse | null>(null);
-  const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
   const [perPage, setPerPage] = useState(50);
   const [sort, setSort] = useState<string>('played_at');
@@ -121,8 +123,6 @@ export default function HandsPage() {
     search: '',
     statFlags: initialStatFlags,
   });
-  const [distinctStakes, setDistinctStakes] = useState<string[]>([]);
-  const [allTags, setAllTags] = useState<TagCount[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showLegend, setShowLegend] = useState(false);
 
@@ -138,44 +138,38 @@ export default function HandsPage() {
     return () => { if (searchTimeout.current) clearTimeout(searchTimeout.current); };
   }, [filters.search]);
 
-  const loadTags = useCallback(async () => {
-    try { setAllTags(await getTags()); } catch { /* ignore */ }
-  }, []);
+  // Shared filter options (for distinct stakes)
+  const { data: filterOptsData } = useFilterOptions();
+  const distinctStakes = filterOptsData?.stakes ?? [];
 
-  const loadData = useCallback(async () => {
-    setLoading(true);
-    try {
-      const dateRange = getDateRange(filters.date, filters.dateFrom, filters.dateTo);
-      const resp = await getHands({
-        page,
-        per_page: perPage,
-        sort,
-        order,
-        position: filters.position.length > 0 ? filters.position.join(',') : undefined,
-        stakes: filters.stakes.length > 0 ? filters.stakes.join(',') : undefined,
-        result: filters.result || undefined,
-        tags: filters.tags.length > 0 ? filters.tags.join(',') : undefined,
-        date_from: dateRange.from,
-        date_to: dateRange.to,
-        search: debouncedSearch || undefined,
-        stat_flag: filters.statFlags.length > 0 ? filters.statFlags : undefined,
-      });
-      setData(resp);
-    } catch (err) {
-      console.error('Failed to load hands:', err);
-    } finally {
-      setLoading(false);
-    }
-  }, [page, perPage, sort, order, filters.position, filters.stakes, filters.result, filters.tags, filters.date, filters.dateFrom, filters.dateTo, debouncedSearch, filters.statFlags]);
+  // Build query params
+  const dateRange = getDateRange(filters.date, filters.dateFrom, filters.dateTo);
+  const handsQueryParams = {
+    page,
+    per_page: perPage,
+    sort,
+    order,
+    position: filters.position.length > 0 ? filters.position.join(',') : undefined,
+    stakes: filters.stakes.length > 0 ? filters.stakes.join(',') : undefined,
+    result: filters.result || undefined,
+    tags: filters.tags.length > 0 ? filters.tags.join(',') : undefined,
+    date_from: dateRange.from,
+    date_to: dateRange.to,
+    search: debouncedSearch || undefined,
+    stat_flag: filters.statFlags.length > 0 ? filters.statFlags : undefined,
+  };
 
-  useEffect(() => { loadData(); loadTags(); }, [loadData, loadTags]);
+  // Hands list query
+  const { data, isPending: loading } = useQuery({
+    queryKey: queryKeys.hands.list(handsQueryParams),
+    queryFn: () => getHands(handsQueryParams),
+  });
 
-  // Load distinct stakes on mount
-  useEffect(() => {
-    getFilterOptions().then((fo) => {
-      setDistinctStakes(fo.stakes);
-    }).catch(() => {});
-  }, []);
+  // Tags query
+  const { data: allTags = [] } = useQuery<TagCount[]>({
+    queryKey: queryKeys.hands.tags,
+    queryFn: getTags,
+  });
 
   const handleSort = (col: string) => {
     if (sort === col) {
@@ -407,7 +401,7 @@ export default function HandsPage() {
           onClose={() => setSelectedId(null)}
           onPrev={handlePrev}
           onNext={handleNext}
-          onTagsChanged={() => { loadData(); loadTags(); }}
+          onTagsChanged={() => { queryClient.invalidateQueries({ queryKey: ['hands'] }); }}
         />
       )}
     </div>
