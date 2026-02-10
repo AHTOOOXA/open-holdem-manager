@@ -1,5 +1,12 @@
 const BASE = '/api';
 
+/** Translate game_mode filter: '__reg__' → '' (empty = Regular), undefined → skip */
+function setGameModeParam(sp: URLSearchParams, gameMode: string | undefined) {
+  if (gameMode !== undefined) {
+    sp.set('game_mode', gameMode === '__reg__' ? '' : gameMode);
+  }
+}
+
 export interface ImportResult {
   imported: number;
   duplicates: number;
@@ -223,7 +230,7 @@ export async function getHeroStats(params?: {
   const sp = new URLSearchParams();
   if (params?.position) sp.set('position', params.position);
   if (params?.stakes) sp.set('stakes', params.stakes);
-  if (params?.game_mode) sp.set('game_mode', params.game_mode);
+  setGameModeParam(sp, params?.game_mode);
   if (params?.date_from) sp.set('date_from', params.date_from);
   if (params?.date_to) sp.set('date_to', params.date_to);
   const res = await fetch(`${BASE}/stats/hero?${sp}`);
@@ -240,7 +247,7 @@ export async function getGraphData(params?: {
 }): Promise<GraphResponse> {
   const sp = new URLSearchParams();
   if (params?.stakes) sp.set('stakes', params.stakes);
-  if (params?.game_mode) sp.set('game_mode', params.game_mode);
+  setGameModeParam(sp, params?.game_mode);
   if (params?.date_from) sp.set('date_from', params.date_from);
   if (params?.date_to) sp.set('date_to', params.date_to);
   if (params?.last_n) sp.set('last_n', String(params.last_n));
@@ -470,7 +477,7 @@ export async function getRangeStats(params?: {
   const sp = new URLSearchParams();
   if (params?.position) sp.set('position', params.position);
   if (params?.stakes) sp.set('stakes', params.stakes);
-  if (params?.game_mode) sp.set('game_mode', params.game_mode);
+  setGameModeParam(sp, params?.game_mode);
   if (params?.date_from) sp.set('date_from', params.date_from);
   if (params?.date_to) sp.set('date_to', params.date_to);
   const res = await fetch(`${BASE}/stats/range?${sp}`);
@@ -551,7 +558,7 @@ export async function getResultsBreakdown(params?: {
 }): Promise<ResultsBreakdown> {
   const sp = new URLSearchParams();
   if (params?.stakes) sp.set('stakes', params.stakes);
-  if (params?.game_mode) sp.set('game_mode', params.game_mode);
+  setGameModeParam(sp, params?.game_mode);
   if (params?.date_from) sp.set('date_from', params.date_from);
   if (params?.date_to) sp.set('date_to', params.date_to);
   if (params?.last_n) sp.set('last_n', String(params.last_n));
@@ -663,7 +670,7 @@ export async function getDrift(params?: {
 }): Promise<DriftResponse> {
   const sp = new URLSearchParams();
   if (params?.stakes) sp.set('stakes', params.stakes);
-  if (params?.game_mode) sp.set('game_mode', params.game_mode);
+  setGameModeParam(sp, params?.game_mode);
   if (params?.date_from) sp.set('date_from', params.date_from);
   if (params?.date_to) sp.set('date_to', params.date_to);
   const res = await fetch(`${BASE}/reports/drift?${sp}`);

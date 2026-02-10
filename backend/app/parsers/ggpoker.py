@@ -304,9 +304,9 @@ def parse_hand_history(hand_text: str) -> ParsedHand:
 
     # Detect game mode from hand ID prefix and table name
     if hand_id.startswith("RC") or table_name.startswith("RushAndCash"):
-        game_mode = "Rush & Cash"
+        game_mode = "Fast Fold"
     else:
-        game_mode = "Regular"
+        game_mode = ""
 
     # ── Parse seats ──
     seats = []  # list of {seat, username, stack}

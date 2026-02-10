@@ -11,6 +11,11 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 
+const GAME_MODE_LABELS: Record<string, string> = {
+  '': 'Regular',
+  'Fast Fold': 'Fast Fold',
+};
+
 interface FilterBarProps {
   stakes?: string;
   onStakesChange?: (v: string) => void;
@@ -60,6 +65,12 @@ export default function FilterBar({
     </Button>
   );
 
+  const hasMultipleModes = filterOptions?.game_modes && filterOptions.game_modes.length > 1;
+
+  // "__all__" means no filter; gameMode prop is "" when not filtering,
+  // but "" is also a valid game_mode value (Regular). We use "__all__" as the sentinel.
+  const gameModeValue = gameMode === undefined || gameMode === '' ? '__all__' : gameMode;
+
   return (
     <Card className="gap-0 py-0">
       <CardContent className="px-3 py-2 flex flex-wrap items-center gap-3">
@@ -80,21 +91,28 @@ export default function FilterBar({
           </Select>
         )}
 
-        {showGameMode && filterOptions && filterOptions.game_modes && filterOptions.game_modes.length > 1 && (
-          <Select
-            value={gameMode || '__all__'}
-            onValueChange={(v) => onGameModeChange?.(v === '__all__' ? '' : v)}
-          >
-            <SelectTrigger className="w-[150px] h-8 text-sm">
-              <SelectValue placeholder="All Modes" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__all__">All Modes</SelectItem>
-              {filterOptions.game_modes.map((m) => (
-                <SelectItem key={m} value={m}>{m}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+        {showGameMode && hasMultipleModes && (
+          <div className="flex gap-1">
+            <Button
+              variant={gameModeValue === '__all__' ? 'default' : 'outline'}
+              size="sm"
+              className="h-7 text-xs"
+              onClick={() => onGameModeChange?.('')}
+            >
+              All
+            </Button>
+            {filterOptions!.game_modes.map((m) => (
+              <Button
+                key={m || '__reg__'}
+                variant={gameModeValue === (m || '__reg__') ? 'default' : 'outline'}
+                size="sm"
+                className="h-7 text-xs"
+                onClick={() => onGameModeChange?.(m || '__reg__')}
+              >
+                {GAME_MODE_LABELS[m] || m}
+              </Button>
+            ))}
+          </div>
         )}
 
         {showDateRange && (

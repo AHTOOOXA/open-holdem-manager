@@ -88,7 +88,7 @@ def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
             site_id INTEGER REFERENCES sites(id),
             played_at TIMESTAMP NOT NULL,
             game_type VARCHAR NOT NULL,
-            game_mode VARCHAR NOT NULL DEFAULT 'Rush & Cash',
+            game_mode VARCHAR NOT NULL DEFAULT '',
             stakes VARCHAR NOT NULL,
             sb_amount DECIMAL NOT NULL,
             bb_amount DECIMAL NOT NULL,
@@ -299,12 +299,25 @@ def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
     # Migrations for hands table
     for col, default in [
         ("cash_drop_received", "DECIMAL DEFAULT 0"),
-        ("game_mode", "VARCHAR DEFAULT 'Rush & Cash'"),
+        ("game_mode", "VARCHAR DEFAULT ''"),
     ]:
         try:
             conn.execute(f"ALTER TABLE hands ADD COLUMN {col} {default}")
         except duckdb.CatalogException:
             pass
+
+    # Backfill game_mode: RC* hands → Fast Fold, everything else → ''
+    try:
+        conn.execute("""
+            UPDATE hands SET game_mode = 'Fast Fold'
+            WHERE game_mode != 'Fast Fold' AND id LIKE 'RC%'
+        """)
+        conn.execute("""
+            UPDATE hands SET game_mode = ''
+            WHERE game_mode NOT IN ('', 'Fast Fold')
+        """)
+    except Exception:
+        pass
 
     # Indexes
     conn.execute("CREATE INDEX IF NOT EXISTS idx_hands_played_at ON hands(played_at)")

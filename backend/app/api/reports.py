@@ -51,7 +51,7 @@ def get_graph(
     if stakes:
         query += " AND h.stakes = ?"
         params.append(stakes)
-    if game_mode:
+    if game_mode is not None:
         query += " AND h.game_mode = ?"
         params.append(game_mode)
     if date_from:
@@ -249,7 +249,7 @@ def get_breakdown(
     if stakes:
         where += " AND h.stakes = ?"
         params.append(stakes)
-    if game_mode:
+    if game_mode is not None:
         where += " AND h.game_mode = ?"
         params.append(game_mode)
     if date_from:
@@ -494,7 +494,7 @@ def get_drift(
     if stakes:
         where += " AND h.stakes = ?"
         params.append(stakes)
-    if game_mode:
+    if game_mode is not None:
         where += " AND h.game_mode = ?"
         params.append(game_mode)
     if date_from:

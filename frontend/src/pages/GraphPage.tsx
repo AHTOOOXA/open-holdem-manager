@@ -466,7 +466,7 @@ export default function GraphPage() {
         {filterBarContent}
         <EmptyState
           variant={hasFilters ? 'no-match' : 'no-data'}
-          onClearFilters={hasFilters ? () => { setStakes(''); setDateFrom(''); setDateTo(''); setLastN(''); handlePreset('all'); } : undefined}
+          onClearFilters={hasFilters ? () => { setStakes(''); setGameMode(''); setDateFrom(''); setDateTo(''); setLastN(''); handlePreset('all'); } : undefined}
         />
       </div>
     );
@@ -933,8 +933,7 @@ function colorVal(v: number): string {
 
 const stakeColumns: Column<StakeBreakdown>[] = [
   { key: 'stakes', label: 'Stakes', render: (r) => {
-    const mode = r.game_mode === 'Rush & Cash' ? 'R&C' : r.game_mode === 'Regular' ? 'Reg' : '';
-    return <span className="text-text">{r.stakes}{mode ? <span className="text-text-muted ml-1.5 text-xs">{mode}</span> : ''}</span>;
+    return <span className="text-text">{r.stakes}{r.game_mode ? <span className="text-text-muted ml-1.5 text-xs">{r.game_mode}</span> : ''}</span>;
   }},
   { key: 'hands', label: 'Hands', align: 'right', render: (r) => <span className="text-text">{r.hands.toLocaleString()}</span> },
   {

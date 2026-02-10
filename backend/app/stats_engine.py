@@ -189,7 +189,7 @@ def compute_hero_stats(
     if stakes:
         where += " AND h.stakes = ?"
         params.append(stakes)
-    if game_mode:
+    if game_mode is not None:
         where += " AND h.game_mode = ?"
         params.append(game_mode)
     if date_from:

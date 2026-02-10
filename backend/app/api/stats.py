@@ -81,7 +81,7 @@ def get_range_stats(
     if stakes:
         query += " AND h.stakes = ?"
         params.append(stakes)
-    if game_mode:
+    if game_mode is not None:
         query += " AND h.game_mode = ?"
         params.append(game_mode)
     if date_from:
@@ -106,7 +106,7 @@ def get_range_stats(
     if stakes:
         total_query += " AND h.stakes = ?"
         total_params.append(stakes)
-    if game_mode:
+    if game_mode is not None:
         total_query += " AND h.game_mode = ?"
         total_params.append(game_mode)
     if date_from:
