@@ -643,6 +643,57 @@ export async function getCashDropStats(params?: {
   return res.json();
 }
 
+// ── Stat Detail Types ────────────────────────────────────────────────
+
+export interface StatDetailHand {
+  hand_id: string;
+  played_at: string;
+  position: string;
+  card1: string | null;
+  card2: string | null;
+  action_taken: boolean;
+  won_bb: number;
+  stakes: string;
+}
+
+export interface StatDetailHandsResponse {
+  stat_key: string;
+  stat_name: string;
+  action_count: number;
+  opportunity_count: number;
+  hands: StatDetailHand[];
+  total: number;
+  page: number;
+  per_page: number;
+  total_pages: number;
+}
+
+export async function getStatDetailHands(
+  statKey: string,
+  params?: {
+    position?: string;
+    stakes?: string;
+    game_mode?: string;
+    date_from?: string;
+    date_to?: string;
+    page?: number;
+    per_page?: number;
+  },
+  signal?: AbortSignal,
+): Promise<StatDetailHandsResponse> {
+  const sp = new URLSearchParams();
+  if (params?.position) sp.set('position', params.position);
+  if (params?.stakes) sp.set('stakes', params.stakes);
+  setGameModeParam(sp, params?.game_mode);
+  if (params?.date_from) sp.set('date_from', params.date_from);
+  if (params?.date_to) sp.set('date_to', params.date_to);
+  if (params?.page) sp.set('page', String(params.page));
+  if (params?.per_page) sp.set('per_page', String(params.per_page));
+  const res = await fetch(`${BASE}/stats/detail/${encodeURIComponent(statKey)}/hands?${sp}`, { signal });
+  if (!res.ok) throw new Error(`Stat detail failed: ${res.statusText}`);
+  return res.json();
+}
+
 // ── Drift Detection Types ────────────────────────────────────────────
 
 export interface DriftStat {

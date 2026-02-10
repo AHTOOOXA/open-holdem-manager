@@ -1,7 +1,11 @@
-from fastapi import APIRouter, Query
+import math
+from typing import Optional
+
+from fastapi import APIRouter, Query, HTTPException, Path
 from app.db import get_read_cursor
-from app.models import HeroStats, ComboStats, RangeResponse
+from app.models import HeroStats, ComboStats, RangeResponse, StatDetailHand, StatDetailHandsResponse
 from app.stats_engine import compute_hero_stats
+from app.stat_registry import STAT_REGISTRY
 
 router = APIRouter()
 
@@ -168,3 +172,151 @@ def get_range_stats(
         ))
 
     return RangeResponse(combos=combos, total_hands=total_hands)
+
+
+# ── Hero player lookup (reused from hands.py pattern) ────────────
+
+def _get_hero_player_id(db) -> Optional[int]:
+    row = db.execute(
+        "SELECT value FROM settings WHERE key = 'hero_username'"
+    ).fetchone()
+    if not row:
+        return None
+    hero_username = row[0]
+
+    row = db.execute(
+        "SELECT value FROM settings WHERE key = 'hero_site'"
+    ).fetchone()
+    hero_site = row[0] if row else "GG"
+
+    row = db.execute(
+        "SELECT p.id FROM players p JOIN sites s ON p.site_id = s.id "
+        "WHERE p.username = ? AND s.code = ?",
+        [hero_username, hero_site],
+    ).fetchone()
+    return row[0] if row else None
+
+
+@router.get("/stats/detail/{stat_key}/hands", response_model=StatDetailHandsResponse)
+def get_stat_detail_hands(
+    stat_key: str = Path(...),
+    position: str | None = Query(None),
+    stakes: str | None = Query(None),
+    game_mode: str | None = Query(None),
+    date_from: str | None = Query(None),
+    date_to: str | None = Query(None),
+    page: int = Query(1, ge=1),
+    per_page: int = Query(25, ge=1, le=100),
+):
+    entry = STAT_REGISTRY.get(stat_key)
+    if not entry:
+        raise HTTPException(status_code=404, detail=f"Unknown stat key: {stat_key}")
+
+    db = get_read_cursor()
+    player_id = _get_hero_player_id(db)
+    if not player_id:
+        return StatDetailHandsResponse(
+            stat_key=stat_key, stat_name=entry["name"],
+            action_count=0, opportunity_count=0,
+            hands=[], total=0, page=page, per_page=per_page, total_pages=0,
+        )
+
+    action_flag = entry.get("action_flag")
+    action_sql = entry.get("action_sql")  # raw SQL expression overrides action_flag
+    opp_flag = entry.get("opp_flag")
+    opp_sql = entry.get("opp_sql")  # raw SQL expression overrides opp_flag
+    opp_is_not_null = entry.get("opp_is_not_null", False)
+    extra_where = entry.get("extra_where")
+
+    # Build the action expression for SELECT and SUM
+    if action_sql:
+        action_expr = action_sql
+    else:
+        action_expr = f"hp.{action_flag} = TRUE"
+
+    # Build WHERE clauses
+    where_parts = ["hp.player_id = ?"]
+    params: list = [player_id]
+
+    # Opportunity filter: which hands are eligible for this stat
+    if opp_sql:
+        where_parts.append(f"({opp_sql})")
+    elif opp_flag:
+        if opp_is_not_null:
+            where_parts.append(f"hp.{opp_flag} IS NOT NULL")
+        else:
+            where_parts.append(f"hp.{opp_flag} = TRUE")
+
+    if extra_where:
+        where_parts.append(extra_where)
+
+    if position:
+        where_parts.append("hp.position = ?")
+        params.append(position.upper())
+    if stakes:
+        where_parts.append("h.stakes = ?")
+        params.append(stakes)
+    if game_mode is not None:
+        where_parts.append("h.game_mode = ?")
+        params.append(game_mode)
+    if date_from:
+        where_parts.append("h.played_at >= ?")
+        params.append(date_from)
+    if date_to:
+        where_parts.append("h.played_at <= ?")
+        params.append(date_to)
+
+    where_sql = " AND ".join(where_parts)
+
+    # Count totals: opportunity count + action count
+    count_query = f"""
+        SELECT COUNT(*),
+               SUM(CASE WHEN {action_expr} THEN 1 ELSE 0 END)
+        FROM hand_players hp
+        JOIN hands h ON hp.hand_id = h.id
+        WHERE {where_sql}
+    """
+    row = db.execute(count_query, params).fetchone()
+    total = int(row[0])
+    action_count = int(row[1] or 0)
+
+    total_pages = max(1, math.ceil(total / per_page))
+    offset = (page - 1) * per_page
+
+    # Fetch hands page
+    hands_query = f"""
+        SELECT h.id, h.played_at, hp.position, hp.card1, hp.card2,
+               ({action_expr}) AS action_taken, hp.won_bb, h.stakes
+        FROM hand_players hp
+        JOIN hands h ON hp.hand_id = h.id
+        WHERE {where_sql}
+        ORDER BY h.played_at DESC
+        LIMIT ? OFFSET ?
+    """
+    rows = db.execute(hands_query, params + [per_page, offset]).fetchall()
+
+    hands = [
+        StatDetailHand(
+            hand_id=r[0],
+            played_at=r[1],
+            position=r[2],
+            card1=r[3],
+            card2=r[4],
+            action_taken=bool(r[5]),
+            won_bb=float(r[6] or 0),
+            stakes=r[7],
+        )
+        for r in rows
+    ]
+
+    return StatDetailHandsResponse(
+        stat_key=stat_key,
+        stat_name=entry["name"],
+        action_count=action_count,
+        opportunity_count=total,
+        hands=hands,
+        total=total,
+        page=page,
+        per_page=per_page,
+        total_pages=total_pages,
+    )

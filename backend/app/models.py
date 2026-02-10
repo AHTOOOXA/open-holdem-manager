@@ -399,3 +399,28 @@ class CashDropResponse(BaseModel):
     field: CashDropFieldStats | None = None
     by_type: list[CashDropTypeBreakdown]
     ranges: list[CashDropRangeCategory]
+
+
+# ── Stat Detail Models ─────────────────────────────────────────────
+
+class StatDetailHand(BaseModel):
+    hand_id: str
+    played_at: datetime
+    position: str
+    card1: Optional[str] = None
+    card2: Optional[str] = None
+    action_taken: bool
+    won_bb: float
+    stakes: str
+
+
+class StatDetailHandsResponse(BaseModel):
+    stat_key: str
+    stat_name: str
+    action_count: int
+    opportunity_count: int
+    hands: list[StatDetailHand]
+    total: int
+    page: int
+    per_page: int
+    total_pages: int
