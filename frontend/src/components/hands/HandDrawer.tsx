@@ -5,6 +5,7 @@ import { CardPair } from './CardDisplay';
 import HandActionsDisplay from './HandActions';
 import TagPill from './TagPill';
 import TagPicker from './TagPicker';
+import { formatStakes } from '@/lib/utils';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -17,10 +18,6 @@ import {
   TableRow,
 } from '@/components/ui/table';
 
-function formatStakes(bbAmount: number): string {
-  const nl = Math.round(bbAmount * 100);
-  return `NL${nl}`;
-}
 
 export default function HandDrawer({
   handId,
@@ -143,8 +140,7 @@ export default function HandDrawer({
               {/* Meta */}
               <div className="mb-3">
                 <div className="text-[14px] font-semibold text-text">
-                  {formatStakes(hand.bb_amount)}{' '}
-                  <span className="text-text-muted font-normal">({hand.stakes})</span>
+                  {formatStakes(hand.stakes)}
                 </div>
                 <div className="text-[12px] text-text-muted">
                   {new Date(hand.played_at).toLocaleString()}

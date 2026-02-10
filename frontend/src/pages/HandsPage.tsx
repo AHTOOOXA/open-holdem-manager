@@ -6,6 +6,7 @@ import type { TagCount, ActionItem } from '@/lib/api';
 import { useFilterOptions } from '@/hooks/useFilterOptions';
 import { queryKeys } from '@/lib/query-keys';
 import { queryClient } from '@/lib/query-client';
+import { formatStakes } from '@/lib/utils';
 import EmptyState from '@/components/EmptyState';
 import HandFilters from '@/components/hands/HandFilters';
 import type { FilterState } from '@/components/hands/HandFilters';
@@ -58,10 +59,7 @@ function Actions({ items, trimFolds }: { items: ActionItem[]; trimFolds?: boolea
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
-function formatStakes(bbAmount: number): string {
-  const nl = Math.round(bbAmount * 100);
-  return `NL${nl}`;
-}
+
 
 function formatDate(iso: string): string {
   const now = new Date();
@@ -343,7 +341,7 @@ export default function HandsPage() {
                       </TableCell>
                       {/* Stakes */}
                       <TableCell className="py-1.5 pl-4 pr-2 font-mono text-[15px] text-text-muted">
-                        {formatStakes(h.bb_amount)}
+                        {formatStakes(h.stakes)}
                       </TableCell>
                       {/* Won (USD) */}
                       <TableCell className={`py-1.5 px-2 text-right font-mono text-[15px] font-semibold ${

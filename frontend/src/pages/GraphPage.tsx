@@ -27,6 +27,7 @@ import { useFilterOptions } from '@/hooks/useFilterOptions';
 import { queryKeys } from '@/lib/query-keys';
 import { getPresetDates } from '@/lib/date-presets';
 import type { DatePreset } from '@/lib/date-presets';
+import { formatStakes } from '@/lib/utils';
 import FilterBar from '@/components/FilterBar';
 import EmptyState from '@/components/EmptyState';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
@@ -301,7 +302,7 @@ export default function GraphPage() {
   const clr = (v: number) => v >= 0 ? 'text-green' : 'text-red';
   const fmtBB = (v: number) => `${v.toFixed(1)} BB`;
   const fmtUSD = (v: number) => `${v >= 0 ? '' : '-'}$${Math.abs(v).toFixed(2)}`;
-  const fmtRateBB = (v: number) => `${v.toFixed(2)} bb/100`;
+
 
   // Toggle button helper
   const toggleBtn = (key: LineToggle, label: string, color: string, show = true) =>
@@ -393,7 +394,7 @@ export default function GraphPage() {
   );
 
   const displayToolbar = (
-    <div className="flex items-center gap-1.5 px-1">
+    <div className="flex items-center gap-2.5 px-2 py-1">
       <ToggleGroup type="single" value={unit} onValueChange={(v) => { if (v) setUnit(v as 'bb' | 'usd'); }}>
         <ToggleGroupItem value="bb" className="h-7 text-xs px-3">BB</ToggleGroupItem>
         <ToggleGroupItem value="usd" className="h-7 text-xs px-3">$</ToggleGroupItem>
@@ -432,7 +433,7 @@ export default function GraphPage() {
       ) : data.length > 0 && (
         <Card className="gap-0 py-0 p-2">
           {displayToolbar}
-          <div className="flex gap-4 mb-0.5 ml-12 text-xs text-text-muted">
+          <div className="flex justify-center gap-4 mt-1.5 mb-1 text-xs text-text-muted">
             <span className="flex items-center gap-1.5">
               <span className="inline-block w-4 h-0.5 rounded" style={{ background: LINE_COLORS.main }} />
               Actual
@@ -717,13 +718,12 @@ export default function GraphPage() {
       ) : (
         <>
           {/* Breakdown by Stakes */}
-          {breakdown && breakdown.by_stakes.length > 1 && !stakes && (
+          {breakdown && breakdown.by_stakes.length > 0 && (
             <BreakdownTable
               title="Breakdown by Stakes"
               columns={stakeColumns}
               rows={breakdown.by_stakes}
               rowKey={(r: StakeBreakdown) => `${r.game_mode}:${r.stakes}`}
-              unit={unit}
             />
           )}
 
@@ -734,7 +734,6 @@ export default function GraphPage() {
               columns={positionColumns}
               rows={breakdown.by_position}
               rowKey={(r: PositionBreakdown) => r.position}
-              unit={unit}
             />
           )}
 
@@ -745,7 +744,6 @@ export default function GraphPage() {
               columns={monthColumns}
               rows={breakdown.by_month}
               rowKey={(r: MonthBreakdown) => r.month}
-              unit={unit}
             />
           )}
         </>
@@ -760,7 +758,8 @@ interface Column<T> {
   key: string;
   label: string;
   align?: 'left' | 'right';
-  render: (row: T, unit: 'bb' | 'usd') => React.ReactNode;
+  width?: string;
+  render: (row: T) => React.ReactNode;
 }
 
 function BreakdownTable<T>({
@@ -768,13 +767,11 @@ function BreakdownTable<T>({
   columns,
   rows,
   rowKey,
-  unit,
 }: {
   title: string;
   columns: Column<T>[];
   rows: T[];
   rowKey: (row: T) => string;
-  unit: 'bb' | 'usd';
 }) {
   return (
     <Card className="overflow-hidden gap-0 py-0">
@@ -782,7 +779,12 @@ function BreakdownTable<T>({
         <h2 className="text-xs font-semibold text-text">{title}</h2>
       </CardHeader>
       <div className="overflow-x-auto">
-        <Table>
+        <Table style={{ tableLayout: 'fixed', width: '100%' }}>
+          <colgroup>
+            {columns.map(col => (
+              <col key={col.key} style={col.width ? { width: col.width } : undefined} />
+            ))}
+          </colgroup>
           <TableHeader>
             <TableRow>
               {columns.map(col => (
@@ -805,7 +807,7 @@ function BreakdownTable<T>({
                     key={col.key}
                     className={`px-3 py-1.5 font-mono ${col.align === 'right' ? 'text-right' : 'text-left'}`}
                   >
-                    {col.render(row, unit)}
+                    {col.render(row)}
                   </TableCell>
                 ))}
               </TableRow>
@@ -817,10 +819,8 @@ function BreakdownTable<T>({
   );
 }
 
-function renderRake(r: { rake_bb: number; rake_usd: number }, u: 'bb' | 'usd') {
-  const v = u === 'bb' ? r.rake_bb : r.rake_usd;
-  const fmt = u === 'bb' ? `${v.toFixed(1)} BB` : `$${v.toFixed(2)}`;
-  return <span className="text-red">{fmt}</span>;
+function renderRake(r: { rake_usd: number }) {
+  return <span className="text-red">${r.rake_usd.toFixed(2)}</span>;
 }
 
 function colorVal(v: number): string {
@@ -829,103 +829,114 @@ function colorVal(v: number): string {
   return 'text-text-muted';
 }
 
+const COL_WIDTHS = { label: '22%', hands: '16%', won: '18%', bb100: '16%', ev_bb100: '16%', rake: '12%' };
+
 const stakeColumns: Column<StakeBreakdown>[] = [
-  { key: 'stakes', label: 'Stakes', render: (r) => {
-    return <span className="text-text">{r.stakes}{r.game_mode ? <span className="text-text-muted ml-1.5 text-xs">{r.game_mode}</span> : ''}</span>;
+  { key: 'stakes', label: 'Stakes', width: COL_WIDTHS.label, render: (r) => {
+    return <span className="text-text">{formatStakes(r.stakes)}{r.game_mode ? <span className="text-text-muted ml-1.5 text-xs">{r.game_mode}</span> : ''}</span>;
   }},
-  { key: 'hands', label: 'Hands', align: 'right', render: (r) => <span className="text-text">{r.hands.toLocaleString()}</span> },
+  { key: 'hands', label: 'Hands', align: 'right', width: COL_WIDTHS.hands, render: (r) => <span className="text-text">{r.hands.toLocaleString()}</span> },
   {
     key: 'won',
     label: 'Won',
     align: 'right',
-    render: (r, u) => {
-      const v = u === 'bb' ? r.won_bb : r.won_usd;
-      const fmt = u === 'bb' ? `${v.toFixed(1)} BB` : `${v >= 0 ? '' : '-'}$${Math.abs(v).toFixed(2)}`;
-      return <span className={colorVal(v)}>{fmt}</span>;
+    width: COL_WIDTHS.won,
+    render: (r) => {
+      const v = r.won_usd;
+      return <span className={colorVal(v)}>{`${v >= 0 ? '' : '-'}$${Math.abs(v).toFixed(2)}`}</span>;
     },
   },
   {
     key: 'bb100',
     label: 'bb/100',
     align: 'right',
+    width: COL_WIDTHS.bb100,
     render: (r) => <span className={colorVal(r.bb_per_100)}>{r.bb_per_100.toFixed(2)}</span>,
   },
   {
     key: 'ev_bb100',
     label: 'EV bb/100',
     align: 'right',
+    width: COL_WIDTHS.ev_bb100,
     render: (r) => <span className={colorVal(r.ev_bb_per_100)}>{r.ev_bb_per_100.toFixed(2)}</span>,
   },
   {
     key: 'rake',
     label: 'Rake',
     align: 'right',
-    render: (r, u) => renderRake(r, u),
+    width: COL_WIDTHS.rake,
+    render: (r) => renderRake(r),
   },
 ];
 
 const positionColumns: Column<PositionBreakdown>[] = [
-  { key: 'position', label: 'Position', render: (r) => <span className="text-text font-semibold">{r.position}</span> },
-  { key: 'hands', label: 'Hands', align: 'right', render: (r) => <span className="text-text">{r.hands.toLocaleString()}</span> },
+  { key: 'position', label: 'Position', width: COL_WIDTHS.label, render: (r) => <span className="text-text font-semibold">{r.position}</span> },
+  { key: 'hands', label: 'Hands', align: 'right', width: COL_WIDTHS.hands, render: (r) => <span className="text-text">{r.hands.toLocaleString()}</span> },
   {
     key: 'won',
     label: 'Won',
     align: 'right',
-    render: (r, u) => {
-      const v = u === 'bb' ? r.won_bb : r.won_usd;
-      const fmt = u === 'bb' ? `${v.toFixed(1)} BB` : `${v >= 0 ? '' : '-'}$${Math.abs(v).toFixed(2)}`;
-      return <span className={colorVal(v)}>{fmt}</span>;
+    width: COL_WIDTHS.won,
+    render: (r) => {
+      const v = r.won_usd;
+      return <span className={colorVal(v)}>{`${v >= 0 ? '' : '-'}$${Math.abs(v).toFixed(2)}`}</span>;
     },
   },
   {
     key: 'bb100',
     label: 'bb/100',
     align: 'right',
+    width: COL_WIDTHS.bb100,
     render: (r) => <span className={colorVal(r.bb_per_100)}>{r.bb_per_100.toFixed(2)}</span>,
   },
   {
     key: 'ev_bb100',
     label: 'EV bb/100',
     align: 'right',
+    width: COL_WIDTHS.ev_bb100,
     render: (r) => <span className={colorVal(r.ev_bb_per_100)}>{r.ev_bb_per_100.toFixed(2)}</span>,
   },
   {
     key: 'rake',
     label: 'Rake',
     align: 'right',
-    render: (r, u) => renderRake(r, u),
+    width: COL_WIDTHS.rake,
+    render: (r) => renderRake(r),
   },
 ];
 
 const monthColumns: Column<MonthBreakdown>[] = [
-  { key: 'month', label: 'Month', render: (r) => <span className="text-text">{formatMonth(r.month)}</span> },
-  { key: 'hands', label: 'Hands', align: 'right', render: (r) => <span className="text-text">{r.hands.toLocaleString()}</span> },
+  { key: 'month', label: 'Month', width: COL_WIDTHS.label, render: (r) => <span className="text-text">{formatMonth(r.month)}</span> },
+  { key: 'hands', label: 'Hands', align: 'right', width: COL_WIDTHS.hands, render: (r) => <span className="text-text">{r.hands.toLocaleString()}</span> },
   {
     key: 'won',
     label: 'Won',
     align: 'right',
-    render: (r, u) => {
-      const v = u === 'bb' ? r.won_bb : r.won_usd;
-      const fmt = u === 'bb' ? `${v.toFixed(1)} BB` : `${v >= 0 ? '' : '-'}$${Math.abs(v).toFixed(2)}`;
-      return <span className={colorVal(v)}>{fmt}</span>;
+    width: COL_WIDTHS.won,
+    render: (r) => {
+      const v = r.won_usd;
+      return <span className={colorVal(v)}>{`${v >= 0 ? '' : '-'}$${Math.abs(v).toFixed(2)}`}</span>;
     },
   },
   {
     key: 'bb100',
     label: 'bb/100',
     align: 'right',
+    width: COL_WIDTHS.bb100,
     render: (r) => <span className={colorVal(r.bb_per_100)}>{r.bb_per_100.toFixed(2)}</span>,
   },
   {
     key: 'ev_bb100',
     label: 'EV bb/100',
     align: 'right',
+    width: COL_WIDTHS.ev_bb100,
     render: (r) => <span className={colorVal(r.ev_bb_per_100)}>{r.ev_bb_per_100.toFixed(2)}</span>,
   },
   {
     key: 'rake',
     label: 'Rake',
     align: 'right',
-    render: (r, u) => renderRake(r, u),
+    width: COL_WIDTHS.rake,
+    render: (r) => renderRake(r),
   },
 ];

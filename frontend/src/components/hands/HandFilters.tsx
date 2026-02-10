@@ -1,4 +1,5 @@
 import type { TagCount } from '@/lib/api';
+import { formatStakes } from '@/lib/utils';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -124,7 +125,7 @@ export default function HandFilters({
           {distinctStakes.map((s) => (
             <CheckboxOption
               key={s}
-              label={s}
+              label={formatStakes(s)}
               checked={filters.stakes.includes(s)}
               onChange={(c) => {
                 const next = c ? [...filters.stakes, s] : filters.stakes.filter((x) => x !== s);

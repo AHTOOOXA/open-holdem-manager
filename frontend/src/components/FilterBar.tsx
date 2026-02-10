@@ -1,5 +1,6 @@
 import type { DatePreset } from '@/lib/date-presets';
 import type { FilterOptions } from '@/lib/api';
+import { formatStakes } from '@/lib/utils';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { DatePicker } from '@/components/ui/date-picker';
@@ -85,7 +86,7 @@ export default function FilterBar({
             <SelectContent>
               <SelectItem value="__all__">All Stakes</SelectItem>
               {filterOptions.stakes.map((s) => (
-                <SelectItem key={s} value={s}>{s}</SelectItem>
+                <SelectItem key={s} value={s}>{formatStakes(s)}</SelectItem>
               ))}
             </SelectContent>
           </Select>
