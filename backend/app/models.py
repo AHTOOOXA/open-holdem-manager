@@ -163,6 +163,7 @@ class HandSummary(BaseModel):
     id: str
     played_at: datetime
     stakes: str
+    game_mode: str = ""
     bb_amount: float
     position: str
     card1: Optional[str] = None
@@ -241,11 +242,13 @@ class TagCount(BaseModel):
 
 class FilterOptions(BaseModel):
     stakes: list[str] = []
+    game_modes: list[str] = []
     date_range: dict[str, str | None] = {}
 
 
 class StakeBreakdown(BaseModel):
     stakes: str
+    game_mode: str = ""
     bb_amount: float
     hands: int
     won_bb: float

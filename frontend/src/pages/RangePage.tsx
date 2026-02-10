@@ -100,6 +100,7 @@ export default function RangePage() {
   const [loading, setLoading] = useState(true);
   const [position, setPosition] = useState('All');
   const [stakes, setStakes] = useState('');
+  const [gameMode, setGameMode] = useState('');
   const [colorBy, setColorBy] = useState<ColorBy>('bb100');
   const [hovered, setHovered] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
@@ -114,6 +115,7 @@ export default function RangePage() {
       const params: Record<string, string> = {};
       if (position !== 'All') params.position = position;
       if (stakes) params.stakes = stakes;
+      if (gameMode) params.game_mode = gameMode;
       const result = await getRangeStats(params);
       setData(result);
     } catch {
@@ -121,7 +123,7 @@ export default function RangePage() {
     } finally {
       setLoading(false);
     }
-  }, [position, stakes]);
+  }, [position, stakes, gameMode]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -171,6 +173,8 @@ export default function RangePage() {
       <FilterBar
         stakes={stakes}
         onStakesChange={(v) => { setStakes(v); setSelected(null); }}
+        gameMode={gameMode}
+        onGameModeChange={(v) => { setGameMode(v); setSelected(null); }}
         showDateRange={false}
         showDatePresets={false}
         filterOptions={filterOpts}

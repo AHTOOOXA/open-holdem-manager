@@ -26,6 +26,7 @@ def _normalize_combo(card1: str, card2: str) -> str:
 def get_hero_stats(
     position: str | None = Query(None),
     stakes: str | None = Query(None),
+    game_mode: str | None = Query(None),
     date_from: str | None = Query(None),
     date_to: str | None = Query(None),
 ):
@@ -36,13 +37,14 @@ def get_hero_stats(
     hero_username = row[0] if row else "Hero"
 
     return compute_hero_stats(db, hero_username, position=position, stakes=stakes,
-                              date_from=date_from, date_to=date_to)
+                              game_mode=game_mode, date_from=date_from, date_to=date_to)
 
 
 @router.get("/stats/range", response_model=RangeResponse)
 def get_range_stats(
     position: str | None = Query(None),
     stakes: str | None = Query(None),
+    game_mode: str | None = Query(None),
     date_from: str | None = Query(None),
     date_to: str | None = Query(None),
 ):
@@ -79,6 +81,9 @@ def get_range_stats(
     if stakes:
         query += " AND h.stakes = ?"
         params.append(stakes)
+    if game_mode:
+        query += " AND h.game_mode = ?"
+        params.append(game_mode)
     if date_from:
         query += " AND h.played_at >= ?"
         params.append(date_from)
@@ -101,6 +106,9 @@ def get_range_stats(
     if stakes:
         total_query += " AND h.stakes = ?"
         total_params.append(stakes)
+    if game_mode:
+        total_query += " AND h.game_mode = ?"
+        total_params.append(game_mode)
     if date_from:
         total_query += " AND h.played_at >= ?"
         total_params.append(date_from)

@@ -20,6 +20,7 @@ class ParsedHand:
     site_id: int
     played_at: datetime
     game_type: str
+    game_mode: str  # "Rush & Cash" or "Regular"
     stakes: str
     sb_amount: Decimal
     bb_amount: Decimal
@@ -300,6 +301,12 @@ def parse_hand_history(hand_text: str) -> ParsedHand:
     table_name = m.group(1)
     table_size = int(m.group(2))
     button_seat = int(m.group(3))
+
+    # Detect game mode from hand ID prefix and table name
+    if hand_id.startswith("RC") or table_name.startswith("RushAndCash"):
+        game_mode = "Rush & Cash"
+    else:
+        game_mode = "Regular"
 
     # ── Parse seats ──
     seats = []  # list of {seat, username, stack}
@@ -614,6 +621,7 @@ def parse_hand_history(hand_text: str) -> ParsedHand:
         site_id=SITE_ID,
         played_at=played_at,
         game_type=game_type,
+        game_mode=game_mode,
         stakes=stakes,
         sb_amount=sb_amount,
         bb_amount=bb_amount,

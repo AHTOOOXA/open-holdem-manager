@@ -365,18 +365,21 @@ export default function StatsPage() {
 
   // Filters
   const [stakes, setStakes] = useState<string>('');
+  const [gameMode, setGameMode] = useState<string>('');
   const [dateFrom, setDateFrom] = useState<string>('');
   const [dateTo, setDateTo] = useState<string>('');
   const [activePreset, setActivePreset] = useState<DatePreset>('all');
   const filterParams = useMemo(() => ({
     stakes: stakes || undefined,
+    game_mode: gameMode || undefined,
     date_from: dateFrom || undefined,
     date_to: dateTo || undefined,
-  }), [stakes, dateFrom, dateTo]);
+  }), [stakes, gameMode, dateFrom, dateTo]);
 
   // Drift detection
   const { driftMap, stats: driftStats, totalHands: driftTotalHands } = useDrift({
     stakes: filterParams.stakes,
+    game_mode: filterParams.game_mode,
     date_from: filterParams.date_from,
     date_to: filterParams.date_to,
     enabled: (stats?.hands ?? 0) >= 20000,
@@ -415,12 +418,14 @@ export default function StatsPage() {
     setActivePreset('all');
   };
 
-  const hasFilters = !!(stakes || dateFrom || dateTo);
+  const hasFilters = !!(stakes || gameMode || dateFrom || dateTo);
 
   const filterBarContent = (
     <FilterBar
       stakes={stakes}
       onStakesChange={setStakes}
+      gameMode={gameMode}
+      onGameModeChange={setGameMode}
       dateFrom={dateFrom}
       onDateFromChange={handleDateFromChange}
       dateTo={dateTo}

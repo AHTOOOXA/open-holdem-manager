@@ -34,7 +34,7 @@ BATCH_SIZE = 500
 
 # ── Column keys for column-oriented PyArrow inserts ──
 _HANDS_COLS = (
-    "id", "site_id", "played_at", "game_type", "stakes",
+    "id", "site_id", "played_at", "game_type", "game_mode", "stakes",
     "sb_amount", "bb_amount", "table_name", "table_size", "button_seat", "raw_text",
     "cash_drop_received",
 )
@@ -265,6 +265,7 @@ def _flush_batch(
         hands_cols["site_id"].append(parsed.site_id)
         hands_cols["played_at"].append(parsed.played_at)
         hands_cols["game_type"].append(parsed.game_type)
+        hands_cols["game_mode"].append(parsed.game_mode)
         hands_cols["stakes"].append(parsed.stakes)
         hands_cols["sb_amount"].append(float(parsed.sb_amount))
         hands_cols["bb_amount"].append(bb_f)

@@ -143,6 +143,7 @@ export default function CashDropPage() {
       <FilterBar
         stakes={stakes}
         onStakesChange={setStakes}
+        showGameMode={false}
         dateFrom={dateFrom}
         onDateFromChange={setDateFrom}
         dateTo={dateTo}

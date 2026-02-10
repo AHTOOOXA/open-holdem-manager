@@ -167,6 +167,7 @@ def compute_hero_stats(
     hero_username: str,
     position: str | None = None,
     stakes: str | None = None,
+    game_mode: str | None = None,
     date_from: str | None = None,
     date_to: str | None = None,
 ) -> HeroStats:
@@ -188,6 +189,9 @@ def compute_hero_stats(
     if stakes:
         where += " AND h.stakes = ?"
         params.append(stakes)
+    if game_mode:
+        where += " AND h.game_mode = ?"
+        params.append(game_mode)
     if date_from:
         where += " AND h.played_at >= ?"
         params.append(date_from)

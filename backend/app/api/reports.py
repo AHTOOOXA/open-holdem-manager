@@ -13,6 +13,7 @@ SESSION_GAP = timedelta(minutes=10)
 @router.get("/reports/graph", response_model=GraphResponse)
 def get_graph(
     stakes: str | None = Query(None),
+    game_mode: str | None = Query(None),
     date_from: str | None = Query(None),
     date_to: str | None = Query(None),
     last_n: int | None = Query(None, gt=0),
@@ -50,6 +51,9 @@ def get_graph(
     if stakes:
         query += " AND h.stakes = ?"
         params.append(stakes)
+    if game_mode:
+        query += " AND h.game_mode = ?"
+        params.append(game_mode)
     if date_from:
         query += " AND h.played_at >= ?"
         params.append(date_from)
@@ -196,6 +200,17 @@ def get_filter_options():
         [player_id],
     ).fetchall()
 
+    game_mode_rows = db.execute(
+        """
+        SELECT DISTINCT h.game_mode
+        FROM hand_players hp
+        JOIN hands h ON hp.hand_id = h.id
+        WHERE hp.player_id = ?
+        ORDER BY h.game_mode
+        """,
+        [player_id],
+    ).fetchall()
+
     date_row = db.execute(
         """
         SELECT MIN(h.played_at), MAX(h.played_at)
@@ -207,17 +222,19 @@ def get_filter_options():
     ).fetchone()
 
     stakes = [r[0] for r in stakes_rows]
+    game_modes = [r[0] for r in game_mode_rows]
     date_range = {}
     if date_row and date_row[0]:
         date_range["min"] = str(date_row[0])[:10]
         date_range["max"] = str(date_row[1])[:10]
 
-    return FilterOptions(stakes=stakes, date_range=date_range)
+    return FilterOptions(stakes=stakes, game_modes=game_modes, date_range=date_range)
 
 
 @router.get("/reports/breakdown", response_model=ResultsBreakdown)
 def get_breakdown(
     stakes: str | None = Query(None),
+    game_mode: str | None = Query(None),
     date_from: str | None = Query(None),
     date_to: str | None = Query(None),
     last_n: int | None = Query(None, gt=0),
@@ -232,6 +249,9 @@ def get_breakdown(
     if stakes:
         where += " AND h.stakes = ?"
         params.append(stakes)
+    if game_mode:
+        where += " AND h.game_mode = ?"
+        params.append(game_mode)
     if date_from:
         where += " AND h.played_at >= ?"
         params.append(date_from)
@@ -256,10 +276,10 @@ def get_breakdown(
         # params are used twice: once in CTE, once in main query
         params = last_n_params + params
 
-    # By stakes
+    # By stakes (grouped by game_mode + stakes)
     stakes_rows = db.execute(
         f"""{last_n_cte}
-        SELECT h.stakes, h.bb_amount,
+        SELECT h.game_mode, h.stakes, h.bb_amount,
                COUNT(*) as hands,
                SUM(COALESCE(hp.won_bb, 0)) as won_bb,
                SUM(COALESCE(hp.won, 0)) as won_usd,
@@ -271,28 +291,29 @@ def get_breakdown(
         FROM hand_players hp
         JOIN hands h ON hp.hand_id = h.id
         WHERE {where}
-        GROUP BY h.stakes, h.bb_amount
-        ORDER BY h.bb_amount ASC
+        GROUP BY h.game_mode, h.stakes, h.bb_amount
+        ORDER BY h.bb_amount ASC, h.game_mode ASC
         """,
         params,
     ).fetchall()
 
     by_stakes = []
     for r in stakes_rows:
-        hands_count = int(r[2])
-        won_bb_val = float(r[3])
-        ev_bb_val = float(r[5])
+        hands_count = int(r[3])
+        won_bb_val = float(r[4])
+        ev_bb_val = float(r[6])
         by_stakes.append(StakeBreakdown(
-            stakes=r[0],
-            bb_amount=float(r[1]),
+            game_mode=r[0],
+            stakes=r[1],
+            bb_amount=float(r[2]),
             hands=hands_count,
             won_bb=round(won_bb_val, 2),
-            won_usd=round(float(r[4]), 2),
+            won_usd=round(float(r[5]), 2),
             ev_bb=round(ev_bb_val, 2),
-            rake_bb=round(float(r[6]), 2),
-            rake_usd=round(float(r[7]), 2),
-            jackpot_bb=round(float(r[8]), 2),
-            jackpot_usd=round(float(r[9]), 2),
+            rake_bb=round(float(r[7]), 2),
+            rake_usd=round(float(r[8]), 2),
+            jackpot_bb=round(float(r[9]), 2),
+            jackpot_usd=round(float(r[10]), 2),
             bb_per_100=round((won_bb_val / hands_count) * 100, 2) if hands_count else 0,
             ev_bb_per_100=round((ev_bb_val / hands_count) * 100, 2) if hands_count else 0,
         ))
@@ -458,6 +479,7 @@ def _check_drift(
 @router.get("/reports/drift", response_model=DriftResponse)
 def get_drift(
     stakes: str | None = Query(None),
+    game_mode: str | None = Query(None),
     date_from: str | None = Query(None),
     date_to: str | None = Query(None),
 ):
@@ -472,6 +494,9 @@ def get_drift(
     if stakes:
         where += " AND h.stakes = ?"
         params.append(stakes)
+    if game_mode:
+        where += " AND h.game_mode = ?"
+        params.append(game_mode)
     if date_from:
         where += " AND h.played_at >= ?"
         params.append(date_from)

@@ -14,6 +14,8 @@ import {
 interface FilterBarProps {
   stakes?: string;
   onStakesChange?: (v: string) => void;
+  gameMode?: string;
+  onGameModeChange?: (v: string) => void;
   dateFrom?: string;
   onDateFromChange?: (v: string) => void;
   dateTo?: string;
@@ -21,6 +23,7 @@ interface FilterBarProps {
   activePreset?: DatePreset;
   onPresetChange?: (preset: DatePreset) => void;
   showStakes?: boolean;
+  showGameMode?: boolean;
   showDateRange?: boolean;
   showDatePresets?: boolean;
   filterOptions: FilterOptions | null;
@@ -30,6 +33,8 @@ interface FilterBarProps {
 export default function FilterBar({
   stakes,
   onStakesChange,
+  gameMode,
+  onGameModeChange,
   dateFrom,
   onDateFromChange,
   dateTo,
@@ -37,6 +42,7 @@ export default function FilterBar({
   activePreset,
   onPresetChange,
   showStakes = true,
+  showGameMode = true,
   showDateRange = true,
   showDatePresets = true,
   filterOptions,
@@ -69,6 +75,23 @@ export default function FilterBar({
               <SelectItem value="__all__">All Stakes</SelectItem>
               {filterOptions.stakes.map((s) => (
                 <SelectItem key={s} value={s}>{s}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
+
+        {showGameMode && filterOptions && filterOptions.game_modes && filterOptions.game_modes.length > 1 && (
+          <Select
+            value={gameMode || '__all__'}
+            onValueChange={(v) => onGameModeChange?.(v === '__all__' ? '' : v)}
+          >
+            <SelectTrigger className="w-[150px] h-8 text-sm">
+              <SelectValue placeholder="All Modes" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__all__">All Modes</SelectItem>
+              {filterOptions.game_modes.map((m) => (
+                <SelectItem key={m} value={m}>{m}</SelectItem>
               ))}
             </SelectContent>
           </Select>

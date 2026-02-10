@@ -212,6 +212,7 @@ export default function GraphPage() {
 
   // Filters
   const [stakes, setStakes] = useState<string>('');
+  const [gameMode, setGameMode] = useState<string>('');
   const [dateFrom, setDateFrom] = useState<string>('');
   const [dateTo, setDateTo] = useState<string>('');
   const [activePreset, setActivePreset] = useState<DatePreset>('all');
@@ -241,10 +242,11 @@ export default function GraphPage() {
   const lastNParsed = debouncedLastN ? parseInt(debouncedLastN, 10) : undefined;
   const filterParams = useMemo(() => ({
     stakes: stakes || undefined,
+    game_mode: gameMode || undefined,
     date_from: dateFrom || undefined,
     date_to: dateTo || undefined,
     last_n: lastNParsed && lastNParsed > 0 ? lastNParsed : undefined,
-  }), [stakes, dateFrom, dateTo, lastNParsed]);
+  }), [stakes, gameMode, dateFrom, dateTo, lastNParsed]);
 
   // Load filter options once
   useEffect(() => {
@@ -357,7 +359,7 @@ export default function GraphPage() {
       </Toggle>
     );
 
-  const hasFilters = !!(stakes || dateFrom || dateTo || lastN);
+  const hasFilters = !!(stakes || gameMode || dateFrom || dateTo || lastN);
 
   // Empty state
   if (!loading && data.length === 0 && !breakdown?.by_stakes.length) {
@@ -421,6 +423,8 @@ export default function GraphPage() {
     <FilterBar
       stakes={stakes}
       onStakesChange={setStakes}
+      gameMode={gameMode}
+      onGameModeChange={setGameMode}
       dateFrom={dateFrom}
       onDateFromChange={handleDateFromChange}
       dateTo={dateTo}
@@ -784,7 +788,7 @@ export default function GraphPage() {
               title="Breakdown by Stakes"
               columns={stakeColumns}
               rows={breakdown.by_stakes}
-              rowKey={(r: StakeBreakdown) => r.stakes}
+              rowKey={(r: StakeBreakdown) => `${r.game_mode}:${r.stakes}`}
               unit={unit}
             />
           )}
@@ -892,7 +896,10 @@ function colorVal(v: number): string {
 }
 
 const stakeColumns: Column<StakeBreakdown>[] = [
-  { key: 'stakes', label: 'Stakes', render: (r) => <span className="text-text">{r.stakes}</span> },
+  { key: 'stakes', label: 'Stakes', render: (r) => {
+    const mode = r.game_mode === 'Rush & Cash' ? 'R&C' : r.game_mode === 'Regular' ? 'Reg' : '';
+    return <span className="text-text">{r.stakes}{mode ? <span className="text-text-muted ml-1.5 text-xs">{mode}</span> : ''}</span>;
+  }},
   { key: 'hands', label: 'Hands', align: 'right', render: (r) => <span className="text-text">{r.hands.toLocaleString()}</span> },
   {
     key: 'won',

@@ -88,6 +88,7 @@ def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
             site_id INTEGER REFERENCES sites(id),
             played_at TIMESTAMP NOT NULL,
             game_type VARCHAR NOT NULL,
+            game_mode VARCHAR NOT NULL DEFAULT 'Rush & Cash',
             stakes VARCHAR NOT NULL,
             sb_amount DECIMAL NOT NULL,
             bb_amount DECIMAL NOT NULL,
@@ -298,6 +299,7 @@ def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
     # Migrations for hands table
     for col, default in [
         ("cash_drop_received", "DECIMAL DEFAULT 0"),
+        ("game_mode", "VARCHAR NOT NULL DEFAULT 'Rush & Cash'"),
     ]:
         try:
             conn.execute(f"ALTER TABLE hands ADD COLUMN {col} {default}")
@@ -307,6 +309,7 @@ def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
     # Indexes
     conn.execute("CREATE INDEX IF NOT EXISTS idx_hands_played_at ON hands(played_at)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_hands_stakes ON hands(stakes)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_hands_game_mode ON hands(game_mode)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_hp_hand_id ON hand_players(hand_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_hp_player_id ON hand_players(player_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_hp_position ON hand_players(position)")

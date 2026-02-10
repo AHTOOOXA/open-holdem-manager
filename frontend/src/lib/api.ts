@@ -216,12 +216,14 @@ export async function uploadFilesStream(
 export async function getHeroStats(params?: {
   position?: string;
   stakes?: string;
+  game_mode?: string;
   date_from?: string;
   date_to?: string;
 }): Promise<HeroStats> {
   const sp = new URLSearchParams();
   if (params?.position) sp.set('position', params.position);
   if (params?.stakes) sp.set('stakes', params.stakes);
+  if (params?.game_mode) sp.set('game_mode', params.game_mode);
   if (params?.date_from) sp.set('date_from', params.date_from);
   if (params?.date_to) sp.set('date_to', params.date_to);
   const res = await fetch(`${BASE}/stats/hero?${sp}`);
@@ -231,12 +233,14 @@ export async function getHeroStats(params?: {
 
 export async function getGraphData(params?: {
   stakes?: string;
+  game_mode?: string;
   date_from?: string;
   date_to?: string;
   last_n?: number;
 }): Promise<GraphResponse> {
   const sp = new URLSearchParams();
   if (params?.stakes) sp.set('stakes', params.stakes);
+  if (params?.game_mode) sp.set('game_mode', params.game_mode);
   if (params?.date_from) sp.set('date_from', params.date_from);
   if (params?.date_to) sp.set('date_to', params.date_to);
   if (params?.last_n) sp.set('last_n', String(params.last_n));
@@ -459,12 +463,14 @@ export interface RangeResponse {
 export async function getRangeStats(params?: {
   position?: string;
   stakes?: string;
+  game_mode?: string;
   date_from?: string;
   date_to?: string;
 }): Promise<RangeResponse> {
   const sp = new URLSearchParams();
   if (params?.position) sp.set('position', params.position);
   if (params?.stakes) sp.set('stakes', params.stakes);
+  if (params?.game_mode) sp.set('game_mode', params.game_mode);
   if (params?.date_from) sp.set('date_from', params.date_from);
   if (params?.date_to) sp.set('date_to', params.date_to);
   const res = await fetch(`${BASE}/stats/range?${sp}`);
@@ -476,11 +482,13 @@ export async function getRangeStats(params?: {
 
 export interface FilterOptions {
   stakes: string[];
+  game_modes: string[];
   date_range: { min?: string; max?: string };
 }
 
 export interface StakeBreakdown {
   stakes: string;
+  game_mode: string;
   bb_amount: number;
   hands: number;
   won_bb: number;
@@ -536,12 +544,14 @@ export async function getFilterOptions(): Promise<FilterOptions> {
 
 export async function getResultsBreakdown(params?: {
   stakes?: string;
+  game_mode?: string;
   date_from?: string;
   date_to?: string;
   last_n?: number;
 }): Promise<ResultsBreakdown> {
   const sp = new URLSearchParams();
   if (params?.stakes) sp.set('stakes', params.stakes);
+  if (params?.game_mode) sp.set('game_mode', params.game_mode);
   if (params?.date_from) sp.set('date_from', params.date_from);
   if (params?.date_to) sp.set('date_to', params.date_to);
   if (params?.last_n) sp.set('last_n', String(params.last_n));
@@ -647,11 +657,13 @@ export interface DriftResponse {
 
 export async function getDrift(params?: {
   stakes?: string;
+  game_mode?: string;
   date_from?: string;
   date_to?: string;
 }): Promise<DriftResponse> {
   const sp = new URLSearchParams();
   if (params?.stakes) sp.set('stakes', params.stakes);
+  if (params?.game_mode) sp.set('game_mode', params.game_mode);
   if (params?.date_from) sp.set('date_from', params.date_from);
   if (params?.date_to) sp.set('date_to', params.date_to);
   const res = await fetch(`${BASE}/reports/drift?${sp}`);
