@@ -3,6 +3,164 @@ from app.models import HeroStats, PositionalStats, StatValue
 
 POSITIONS = ["EP", "MP", "CO", "BTN", "SB", "BB"]
 
+# SQL aggregation query — computes all needed counts in one pass, grouped by position.
+# Returns ~6 rows instead of fetching 13k+ rows into Python.
+_AGG_SQL = """
+SELECT
+    hp.position,
+    COUNT(*) as hands,
+    SUM(CAST(COALESCE(hp.won_bb, 0) AS DOUBLE)) as total_won_bb,
+    SUM(CAST(COALESCE(hp.all_in_ev_bb, hp.won_bb, 0) AS DOUBLE)) as total_ev_bb,
+
+    -- VPIP / PFR / Limp
+    SUM(CASE WHEN hp.vpip THEN 1 ELSE 0 END) as vpip,
+    SUM(CASE WHEN hp.pfr THEN 1 ELSE 0 END) as pfr,
+    SUM(CASE WHEN hp.limp THEN 1 ELSE 0 END) as limp,
+    SUM(CASE WHEN hp.limp AND hp.limp_fold THEN 1 ELSE 0 END) as limp_fold,
+
+    -- Open Raise
+    SUM(CASE WHEN hp.open_raise THEN 1 ELSE 0 END) as open_raise,
+    SUM(CASE WHEN hp.open_raise_opp THEN 1 ELSE 0 END) as open_raise_opp,
+    SUM(CASE WHEN hp.call_open_raise THEN 1 ELSE 0 END) as call_open_raise,
+    SUM(CASE WHEN hp.call_open_raise_opp THEN 1 ELSE 0 END) as call_open_raise_opp,
+
+    -- 3-Bet
+    SUM(CASE WHEN hp.three_bet THEN 1 ELSE 0 END) as three_bet,
+    SUM(CASE WHEN hp.three_bet_opp THEN 1 ELSE 0 END) as three_bet_opp,
+    -- 3-Bet IP
+    SUM(CASE WHEN hp.three_bet_opp AND hp.three_bet_opp_ip = true THEN 1 ELSE 0 END) as three_bet_opp_ip,
+    SUM(CASE WHEN hp.three_bet_opp AND hp.three_bet_opp_ip = true AND hp.three_bet THEN 1 ELSE 0 END) as three_bet_ip,
+    -- 3-Bet OOP
+    SUM(CASE WHEN hp.three_bet_opp AND hp.three_bet_opp_ip = false THEN 1 ELSE 0 END) as three_bet_opp_oop,
+    SUM(CASE WHEN hp.three_bet_opp AND hp.three_bet_opp_ip = false AND hp.three_bet THEN 1 ELSE 0 END) as three_bet_oop,
+
+    -- 4-Bet
+    SUM(CASE WHEN hp.four_bet THEN 1 ELSE 0 END) as four_bet,
+    SUM(CASE WHEN hp.four_bet_opp THEN 1 ELSE 0 END) as four_bet_opp,
+
+    -- Fold to 3-Bet (opportunity = fold_to_3bet IS NOT NULL)
+    SUM(CASE WHEN hp.fold_to_3bet IS NOT NULL THEN 1 ELSE 0 END) as fold_to_3bet_opp,
+    SUM(CASE WHEN hp.fold_to_3bet THEN 1 ELSE 0 END) as fold_to_3bet,
+    -- Fold to 4-Bet
+    SUM(CASE WHEN hp.fold_to_4bet IS NOT NULL THEN 1 ELSE 0 END) as fold_to_4bet_opp,
+    SUM(CASE WHEN hp.fold_to_4bet THEN 1 ELSE 0 END) as fold_to_4bet,
+
+    -- 5-Bet / Squeeze
+    SUM(CASE WHEN hp.five_bet_opp THEN 1 ELSE 0 END) as five_bet_opp,
+    SUM(CASE WHEN hp.five_bet THEN 1 ELSE 0 END) as five_bet,
+    SUM(CASE WHEN hp.squeeze_opp THEN 1 ELSE 0 END) as squeeze_opp,
+    SUM(CASE WHEN hp.squeeze THEN 1 ELSE 0 END) as squeeze,
+
+    -- 4-Bet-Fold
+    SUM(CASE WHEN hp.four_bet_fold IS NOT NULL THEN 1 ELSE 0 END) as four_bet_fold_opp,
+    SUM(CASE WHEN hp.four_bet_fold THEN 1 ELSE 0 END) as four_bet_fold,
+    -- Call 4-Bet
+    SUM(CASE WHEN hp.five_bet_opp AND hp.call_4bet THEN 1 ELSE 0 END) as call_4bet,
+
+    -- Steal
+    SUM(CASE WHEN hp.steal_opp THEN 1 ELSE 0 END) as steal_opp,
+    SUM(CASE WHEN hp.steal_attempted THEN 1 ELSE 0 END) as steal,
+    -- Steal sub-stats
+    SUM(CASE WHEN hp.steal_attempted AND hp.fold_to_3bet IS NOT NULL THEN 1 ELSE 0 END) as steal_faced_3bet,
+    SUM(CASE WHEN hp.steal_attempted AND hp.fold_to_3bet THEN 1 ELSE 0 END) as steal_fold_to_3bet,
+    SUM(CASE WHEN hp.steal_attempted AND hp.fold_to_3bet IS NOT NULL AND hp.four_bet THEN 1 ELSE 0 END) as steal_four_bet,
+    SUM(CASE WHEN hp.steal_attempted AND hp.four_bet_fold IS NOT NULL THEN 1 ELSE 0 END) as steal_4bet_fold_opp,
+    SUM(CASE WHEN hp.steal_attempted AND hp.four_bet_fold THEN 1 ELSE 0 END) as steal_4bet_fold,
+
+    -- vs Steal
+    SUM(CASE WHEN hp.faced_steal THEN 1 ELSE 0 END) as faced_steal,
+    SUM(CASE WHEN hp.faced_steal AND hp.fold_to_steal THEN 1 ELSE 0 END) as fold_to_steal,
+    SUM(CASE WHEN hp.faced_steal AND hp.call_steal THEN 1 ELSE 0 END) as call_steal,
+    SUM(CASE WHEN hp.faced_steal AND hp.three_bet_vs_steal THEN 1 ELSE 0 END) as three_bet_vs_steal,
+
+    -- CBet
+    SUM(CASE WHEN hp.cbet_flop_opp THEN 1 ELSE 0 END) as cbet_flop_opp,
+    SUM(CASE WHEN hp.cbet_flop THEN 1 ELSE 0 END) as cbet_flop,
+    SUM(CASE WHEN hp.cbet_turn_opp THEN 1 ELSE 0 END) as cbet_turn_opp,
+    SUM(CASE WHEN hp.cbet_turn THEN 1 ELSE 0 END) as cbet_turn,
+    SUM(CASE WHEN hp.cbet_river_opp THEN 1 ELSE 0 END) as cbet_river_opp,
+    SUM(CASE WHEN hp.cbet_river THEN 1 ELSE 0 END) as cbet_river,
+
+    -- Fold to CBet
+    SUM(CASE WHEN hp.fold_to_cbet_flop IS NOT NULL THEN 1 ELSE 0 END) as ftcb_flop_opp,
+    SUM(CASE WHEN hp.fold_to_cbet_flop THEN 1 ELSE 0 END) as ftcb_flop,
+    SUM(CASE WHEN hp.fold_to_cbet_turn IS NOT NULL THEN 1 ELSE 0 END) as ftcb_turn_opp,
+    SUM(CASE WHEN hp.fold_to_cbet_turn THEN 1 ELSE 0 END) as ftcb_turn,
+    SUM(CASE WHEN hp.fold_to_cbet_river IS NOT NULL THEN 1 ELSE 0 END) as ftcb_river_opp,
+    SUM(CASE WHEN hp.fold_to_cbet_river THEN 1 ELSE 0 END) as ftcb_river,
+
+    -- vs CBet Flop by pot type
+    SUM(CASE WHEN hp.fold_to_cbet_flop IS NOT NULL AND NOT COALESCE(hp.is_3bet_pot, false) THEN 1 ELSE 0 END) as faced_cbet_raised,
+    SUM(CASE WHEN hp.fold_to_cbet_flop IS NOT NULL AND NOT COALESCE(hp.is_3bet_pot, false) AND hp.fold_to_cbet_flop THEN 1 ELSE 0 END) as fold_cbet_raised,
+    SUM(CASE WHEN hp.fold_to_cbet_flop IS NOT NULL AND NOT COALESCE(hp.is_3bet_pot, false) AND hp.call_cbet_flop THEN 1 ELSE 0 END) as call_cbet_raised,
+    SUM(CASE WHEN hp.fold_to_cbet_flop IS NOT NULL AND NOT COALESCE(hp.is_3bet_pot, false) AND hp.raise_cbet_flop THEN 1 ELSE 0 END) as raise_cbet_raised,
+    SUM(CASE WHEN hp.fold_to_cbet_flop IS NOT NULL AND hp.is_3bet_pot THEN 1 ELSE 0 END) as faced_cbet_3bet,
+    SUM(CASE WHEN hp.fold_to_cbet_flop IS NOT NULL AND hp.is_3bet_pot AND hp.fold_to_cbet_flop THEN 1 ELSE 0 END) as fold_cbet_3bet,
+    SUM(CASE WHEN hp.fold_to_cbet_flop IS NOT NULL AND hp.is_3bet_pot AND hp.call_cbet_flop THEN 1 ELSE 0 END) as call_cbet_3bet,
+    SUM(CASE WHEN hp.fold_to_cbet_flop IS NOT NULL AND hp.is_3bet_pot AND hp.raise_cbet_flop THEN 1 ELSE 0 END) as raise_cbet_3bet,
+
+    -- Donk bets
+    SUM(CASE WHEN hp.donk_bet_flop_opp THEN 1 ELSE 0 END) as donk_flop_opp,
+    SUM(CASE WHEN hp.donk_bet_flop THEN 1 ELSE 0 END) as donk_flop,
+    SUM(CASE WHEN hp.donk_bet_turn_opp THEN 1 ELSE 0 END) as donk_turn_opp,
+    SUM(CASE WHEN hp.donk_bet_turn THEN 1 ELSE 0 END) as donk_turn,
+    SUM(CASE WHEN hp.donk_bet_river_opp THEN 1 ELSE 0 END) as donk_river_opp,
+    SUM(CASE WHEN hp.donk_bet_river THEN 1 ELSE 0 END) as donk_river,
+
+    -- Missed CBet
+    SUM(CASE WHEN hp.cbet_flop_opp AND hp.missed_cbet_flop THEN 1 ELSE 0 END) as missed_cbet_flop,
+    SUM(CASE WHEN hp.cbet_flop_opp AND hp.postflop_ip = true THEN 1 ELSE 0 END) as cbet_opp_ip,
+    SUM(CASE WHEN hp.cbet_flop_opp AND hp.postflop_ip = true AND hp.missed_cbet_flop THEN 1 ELSE 0 END) as missed_cbet_ip,
+    SUM(CASE WHEN hp.cbet_flop_opp AND hp.postflop_ip = false THEN 1 ELSE 0 END) as cbet_opp_oop,
+    SUM(CASE WHEN hp.cbet_flop_opp AND hp.postflop_ip = false AND hp.missed_cbet_flop THEN 1 ELSE 0 END) as missed_cbet_oop,
+    SUM(CASE WHEN hp.cbet_turn_opp AND hp.missed_cbet_turn THEN 1 ELSE 0 END) as missed_cbet_turn,
+
+    -- Missed CBet Fold
+    SUM(CASE WHEN hp.missed_cbet_flop AND hp.postflop_ip = true THEN 1 ELSE 0 END) as mc_ip_total,
+    SUM(CASE WHEN hp.missed_cbet_flop AND hp.postflop_ip = true AND COALESCE(hp.turn_folds, 0) > 0 THEN 1 ELSE 0 END) as mc_fold_ip,
+    SUM(CASE WHEN hp.missed_cbet_flop AND hp.postflop_ip = false THEN 1 ELSE 0 END) as mc_oop_total,
+    SUM(CASE WHEN hp.missed_cbet_flop AND hp.postflop_ip = false AND (COALESCE(hp.flop_folds, 0) > 0 OR COALESCE(hp.turn_folds, 0) > 0) THEN 1 ELSE 0 END) as mc_fold_oop,
+
+    -- vs Missed CBet
+    SUM(CASE WHEN hp.vs_missed_cbet_flop_opp THEN 1 ELSE 0 END) as vs_mc,
+    SUM(CASE WHEN hp.vs_missed_cbet_flop_opp AND hp.postflop_ip = true THEN 1 ELSE 0 END) as vs_mc_ip,
+    SUM(CASE WHEN hp.vs_missed_cbet_flop_opp AND hp.postflop_ip = true AND COALESCE(hp.flop_bets, 0) > 0 THEN 1 ELSE 0 END) as vs_mc_ip_bet,
+    SUM(CASE WHEN hp.vs_missed_cbet_flop_opp AND hp.postflop_ip = true AND COALESCE(hp.flop_bets, 0) = 0 THEN 1 ELSE 0 END) as vs_mc_ip_no_bet,
+    SUM(CASE WHEN hp.vs_missed_cbet_flop_opp AND hp.postflop_ip = true AND COALESCE(hp.flop_bets, 0) = 0 AND COALESCE(hp.turn_folds, 0) > 0 THEN 1 ELSE 0 END) as vs_mc_ip_cf,
+    SUM(CASE WHEN hp.vs_missed_cbet_flop_opp AND hp.postflop_ip = false THEN 1 ELSE 0 END) as vs_mc_oop,
+    SUM(CASE WHEN hp.vs_missed_cbet_flop_opp AND hp.postflop_ip = false AND COALESCE(hp.turn_bets, 0) > 0 THEN 1 ELSE 0 END) as vs_mc_oop_bet,
+    SUM(CASE WHEN hp.vs_missed_cbet_flop_opp AND hp.postflop_ip = false AND COALESCE(hp.turn_bets, 0) = 0 THEN 1 ELSE 0 END) as vs_mc_oop_no_bet,
+    SUM(CASE WHEN hp.vs_missed_cbet_flop_opp AND hp.postflop_ip = false AND COALESCE(hp.turn_bets, 0) = 0 AND COALESCE(hp.turn_checks, 0) > 0 AND COALESCE(hp.turn_folds, 0) > 0 THEN 1 ELSE 0 END) as vs_mc_oop_cf,
+
+    -- Aggression counts
+    SUM(COALESCE(hp.flop_bets, 0)) as flop_bets,
+    SUM(COALESCE(hp.flop_raises, 0)) as flop_raises,
+    SUM(COALESCE(hp.flop_calls, 0)) as flop_calls,
+    SUM(COALESCE(hp.flop_checks, 0)) as flop_checks,
+    SUM(COALESCE(hp.flop_folds, 0)) as flop_folds,
+    SUM(COALESCE(hp.turn_bets, 0)) as turn_bets,
+    SUM(COALESCE(hp.turn_raises, 0)) as turn_raises,
+    SUM(COALESCE(hp.turn_calls, 0)) as turn_calls,
+    SUM(COALESCE(hp.turn_checks, 0)) as turn_checks,
+    SUM(COALESCE(hp.turn_folds, 0)) as turn_folds,
+    SUM(COALESCE(hp.river_bets, 0)) as river_bets,
+    SUM(COALESCE(hp.river_raises, 0)) as river_raises,
+    SUM(COALESCE(hp.river_calls, 0)) as river_calls,
+    SUM(COALESCE(hp.river_checks, 0)) as river_checks,
+    SUM(COALESCE(hp.river_folds, 0)) as river_folds,
+
+    -- Showdown
+    SUM(CASE WHEN hp.saw_flop THEN 1 ELSE 0 END) as saw_flop,
+    SUM(CASE WHEN hp.went_to_showdown THEN 1 ELSE 0 END) as went_sd,
+    SUM(CASE WHEN hp.went_to_showdown AND hp.won_at_showdown THEN 1 ELSE 0 END) as won_sd,
+    SUM(CASE WHEN hp.saw_flop AND CAST(COALESCE(hp.won_bb, 0) AS DOUBLE) > 0 THEN 1 ELSE 0 END) as wwsf
+
+FROM hand_players hp
+JOIN hands h ON hp.hand_id = h.id
+WHERE {where}
+GROUP BY hp.position
+"""
+
 
 def compute_hero_stats(
     db: duckdb.DuckDBPyConnection,
@@ -37,344 +195,220 @@ def compute_hero_stats(
         where += " AND h.played_at <= ?"
         params.append(date_to)
 
-    rows = db.execute(f"""
-        SELECT hp.* FROM hand_players hp
-        JOIN hands h ON hp.hand_id = h.id
-        WHERE {where}
-    """, params).fetchall()
-
-    columns = [desc[0] for desc in db.description]
-
+    rows = db.execute(_AGG_SQL.format(where=where), params).fetchall()
     if not rows:
         return HeroStats()
 
-    data = [dict(zip(columns, row)) for row in rows]
+    columns = [desc[0] for desc in db.description]
+
+    # Build per-position dict and totals
+    by_pos: dict[str, dict] = {}
+    tot: dict[str, int | float] = {}
+    for row in rows:
+        d = dict(zip(columns, row))
+        pos = d["position"]
+        by_pos[pos] = d
+        for k, v in d.items():
+            if k == "position":
+                continue
+            tot[k] = tot.get(k, 0) + (int(v) if isinstance(v, (int, bool)) else float(v or 0))
+
+    total_hands = int(tot.get("hands", 0))
+    if total_hands == 0:
+        return HeroStats()
 
     stats = HeroStats()
-    stats.hands = len(data)
+    stats.hands = total_hands
 
-    total_won_bb = sum(float(r["won_bb"] or 0) for r in data)
-    stats.win_rate_bb100 = round((total_won_bb / len(data)) * 100, 2) if data else None
+    # Win rates
+    stats.win_rate_bb100 = round((tot["total_won_bb"] / total_hands) * 100, 2)
+    stats.win_rate_ev_bb100 = round((tot["total_ev_bb"] / total_hands) * 100, 2)
 
-    total_ev_bb = sum(float(r["all_in_ev_bb"] or 0) for r in data)
-    stats.win_rate_ev_bb100 = round((total_ev_bb / len(data)) * 100, 2) if data else None
+    # Helper: build PositionalStats from count/opp keys
+    def _pos_stat(count_key: str, opp_key: str | None) -> PositionalStats:
+        ps = PositionalStats()
+        t_count = int(tot.get(count_key, 0))
+        t_opp = int(tot.get(opp_key, 0)) if opp_key else total_hands
+        ps.total = StatValue(
+            value=round(t_count / t_opp * 100, 1) if t_opp > 0 else None,
+            sample=t_opp,
+        )
+        for pos in POSITIONS:
+            pd = by_pos.get(pos)
+            if not pd:
+                continue
+            p_count = int(pd.get(count_key, 0))
+            p_opp = int(pd.get(opp_key, 0)) if opp_key else int(pd["hands"])
+            setattr(ps, pos.lower(), StatValue(
+                value=round(p_count / p_opp * 100, 1) if p_opp > 0 else None,
+                sample=p_opp,
+            ))
+        return ps
 
-    # Positional stats
-    stats.vpip = _positional_pct(data, "vpip", None)
-    stats.pfr = _positional_pct(data, "pfr", None)
-    stats.open_raise = _positional_pct(data, "open_raise", "open_raise_opp")
-    stats.three_bet = _positional_pct(data, "three_bet", "three_bet_opp")
-    stats.four_bet = _positional_pct(data, "four_bet", "four_bet_opp")
-    stats.fold_to_3bet = _positional_pct(data, "fold_to_3bet", "three_bet_opp",
-                                          flag_when_opp=True, flag_is_response=True)
-    stats.fold_to_4bet = _positional_pct(data, "fold_to_4bet", "four_bet_opp",
-                                          flag_when_opp=True, flag_is_response=True)
-    stats.call_open_raise = _positional_pct(data, "call_open_raise", "call_open_raise_opp")
-    stats.limp = _positional_pct(data, "limp", None)
+    def _sv(count_key: str, opp_key: str) -> StatValue:
+        c = int(tot.get(count_key, 0))
+        o = int(tot.get(opp_key, 0))
+        return StatValue(value=round(c / o * 100, 1) if o > 0 else None, sample=o)
 
-    # 3-bet IP/OOP with positional breakdown (relative to raiser position)
-    ip_3b = [r for r in data if r["three_bet_opp"] and r.get("three_bet_opp_ip") is True]
-    stats.three_bet_ip = PositionalStats(total=_simple_pct(ip_3b, "three_bet"))
-    for pos in POSITIONS:
-        pos_data = [r for r in ip_3b if r["position"] == pos]
-        setattr(stats.three_bet_ip, pos.lower(), _simple_pct(pos_data, "three_bet"))
+    def _pos_steal(count_key: str, opp_key: str, positions: list[str]) -> PositionalStats:
+        ps = PositionalStats()
+        t_c = int(tot.get(count_key, 0))
+        t_o = int(tot.get(opp_key, 0))
+        ps.total = StatValue(value=round(t_c / t_o * 100, 1) if t_o > 0 else None, sample=t_o)
+        for pos in positions:
+            pd = by_pos.get(pos)
+            if not pd:
+                continue
+            p_c = int(pd.get(count_key, 0))
+            p_o = int(pd.get(opp_key, 0))
+            setattr(ps, pos.lower(), StatValue(
+                value=round(p_c / p_o * 100, 1) if p_o > 0 else None, sample=p_o,
+            ))
+        return ps
 
-    oop_3b = [r for r in data if r["three_bet_opp"] and r.get("three_bet_opp_ip") is False]
-    stats.three_bet_oop = PositionalStats(total=_simple_pct(oop_3b, "three_bet"))
-    for pos in POSITIONS:
-        pos_data = [r for r in oop_3b if r["position"] == pos]
-        setattr(stats.three_bet_oop, pos.lower(), _simple_pct(pos_data, "three_bet"))
+    # Pre-flop
+    stats.vpip = _pos_stat("vpip", None)
+    stats.pfr = _pos_stat("pfr", None)
+    stats.open_raise = _pos_stat("open_raise", "open_raise_opp")
+    stats.three_bet = _pos_stat("three_bet", "three_bet_opp")
+    stats.four_bet = _pos_stat("four_bet", "four_bet_opp")
+    stats.fold_to_3bet = _pos_stat("fold_to_3bet", "fold_to_3bet_opp")
+    stats.fold_to_4bet = _pos_stat("fold_to_4bet", "fold_to_4bet_opp")
+    stats.call_open_raise = _pos_stat("call_open_raise", "call_open_raise_opp")
+    stats.limp = _pos_stat("limp", None)
 
-    stats.five_bet = _simple_pct([r for r in data if r.get("five_bet_opp")], "five_bet")
-    stats.squeeze = _simple_pct([r for r in data if r.get("squeeze_opp")], "squeeze")
+    # 3-Bet IP/OOP
+    stats.three_bet_ip = _pos_stat("three_bet_ip", "three_bet_opp_ip")
+    stats.three_bet_oop = _pos_stat("three_bet_oop", "three_bet_opp_oop")
 
-    # 4-Bet Range: 4bet hands / total hands
-    four_bet_count = sum(1 for r in data if r.get("four_bet"))
+    # Misc pre-flop
+    stats.five_bet = _sv("five_bet", "five_bet_opp")
+    stats.squeeze = _sv("squeeze", "squeeze_opp")
     stats.four_bet_range = StatValue(
-        value=round(four_bet_count / len(data) * 100, 1) if data else None,
-        sample=len(data),
+        value=round(int(tot.get("four_bet", 0)) / total_hands * 100, 1),
+        sample=total_hands,
     )
-
-    # Limp-Fold: of limp hands, what % folded
-    limp_hands = [r for r in data if r.get("limp")]
-    stats.limp_fold = _simple_pct(limp_hands, "limp_fold")
-
-    # 4-Bet-Fold: of 4bet hands where faced 5bet, what % folded
-    four_bet_faced_5bet = [r for r in data if r.get("four_bet_fold") is not None]
-    stats.four_bet_fold = _simple_pct(four_bet_faced_5bet, "four_bet_fold")
-
-    # Call 4-Bet: of hands where faced 4bet (five_bet_opp), what % called
-    faced_4bet = [r for r in data if r.get("five_bet_opp")]
-    stats.call_4bet = _simple_pct(faced_4bet, "call_4bet")
+    stats.limp_fold = _sv("limp_fold", "limp")
+    stats.four_bet_fold = _sv("four_bet_fold", "four_bet_fold_opp")
+    stats.call_4bet = _sv("call_4bet", "five_bet_opp")
 
     # Steal
-    stats.steal = _positional_pct(data, "steal_attempted", "steal_opp",
-                                   positions=["CO", "BTN", "SB"])
+    stats.steal = _pos_steal("steal", "steal_opp", ["CO", "BTN", "SB"])
+    stats.fold_to_3bet_steal = _pos_steal("steal_fold_to_3bet", "steal_faced_3bet", ["BTN", "SB"])
+    stats.four_bet_steal = _pos_steal("steal_four_bet", "steal_faced_3bet", ["BTN", "SB"])
+    stats.four_bet_fold_steal = _pos_steal("steal_4bet_fold", "steal_4bet_fold_opp", ["BTN", "SB"])
 
-    # Positional steal stats (BTN, SB)
-    steal_hands = [r for r in data if r["steal_attempted"]]
-    steal_faced_3bet = [r for r in steal_hands if r.get("fold_to_3bet") is not None]
-    stats.fold_to_3bet_steal = _positional_steal_stat(steal_faced_3bet, "fold_to_3bet", ["BTN", "SB"])
-    stats.four_bet_steal = _positional_steal_stat(steal_faced_3bet, "four_bet", ["BTN", "SB"])
+    # vs Steal
+    stats.vs_steal_fold = _pos_steal("fold_to_steal", "faced_steal", ["SB", "BB"])
+    stats.vs_steal_call = _pos_steal("call_steal", "faced_steal", ["SB", "BB"])
+    stats.vs_steal_3bet = _pos_steal("three_bet_vs_steal", "faced_steal", ["SB", "BB"])
 
-    # 4-Bet-Fold in steal context: of steal 4-bet hands where faced 5-bet, what % folded
-    steal_4bet_faced_5bet = [r for r in steal_hands if r.get("four_bet_fold") is not None]
-    stats.four_bet_fold_steal = _positional_steal_stat(steal_4bet_faced_5bet, "four_bet_fold", ["BTN", "SB"])
+    # Postflop CBets
+    stats.cbet_flop = _pos_stat("cbet_flop", "cbet_flop_opp")
+    stats.cbet_turn = _pos_stat("cbet_turn", "cbet_turn_opp")
+    stats.cbet_river = _pos_stat("cbet_river", "cbet_river_opp")
+    stats.fold_to_cbet_flop = _pos_stat("ftcb_flop", "ftcb_flop_opp")
+    stats.fold_to_cbet_turn = _pos_stat("ftcb_turn", "ftcb_turn_opp")
+    stats.fold_to_cbet_river = _pos_stat("ftcb_river", "ftcb_river_opp")
 
-    # vs Steal positional (SB, BB)
-    faced_steal = [r for r in data if r["faced_steal"]]
-    stats.vs_steal_fold = _positional_steal_stat(faced_steal, "fold_to_steal", ["SB", "BB"])
-    stats.vs_steal_call = _positional_steal_stat(faced_steal, "call_steal", ["SB", "BB"])
-    stats.vs_steal_3bet = _positional_steal_stat(faced_steal, "three_bet_vs_steal", ["SB", "BB"])
+    # vs CBet Flop by pot type
+    stats.fold_cbet_flop_raised = _sv("fold_cbet_raised", "faced_cbet_raised")
+    stats.call_cbet_flop_raised = _sv("call_cbet_raised", "faced_cbet_raised")
+    stats.raise_cbet_flop_raised = _sv("raise_cbet_raised", "faced_cbet_raised")
+    stats.fold_cbet_flop_3bet = _sv("fold_cbet_3bet", "faced_cbet_3bet")
+    stats.call_cbet_flop_3bet = _sv("call_cbet_3bet", "faced_cbet_3bet")
+    stats.raise_cbet_flop_3bet = _sv("raise_cbet_3bet", "faced_cbet_3bet")
 
-    # Postflop
-    stats.cbet_flop = _positional_pct(data, "cbet_flop", "cbet_flop_opp")
-    stats.cbet_turn = _positional_pct(data, "cbet_turn", "cbet_turn_opp")
-    stats.cbet_river = _positional_pct(data, "cbet_river", "cbet_river_opp")
-    stats.fold_to_cbet_flop = _positional_pct(data, "fold_to_cbet_flop", None,
-                                               filter_fn=lambda r: r.get("fold_to_cbet_flop") is not None)
-    stats.fold_to_cbet_turn = _positional_pct(data, "fold_to_cbet_turn", None,
-                                               filter_fn=lambda r: r.get("fold_to_cbet_turn") is not None)
-    stats.fold_to_cbet_river = _positional_pct(data, "fold_to_cbet_river", None,
-                                                filter_fn=lambda r: r.get("fold_to_cbet_river") is not None)
+    # Donk bets
+    stats.donk_bet_flop = _sv("donk_flop", "donk_flop_opp")
+    stats.donk_bet_turn = _sv("donk_turn", "donk_turn_opp")
+    stats.donk_bet_river = _sv("donk_river", "donk_river_opp")
 
-    # vs CBet Flop by pot type (raised pot = single raise, 3-bet pot = 3-bet+)
-    faced_cbet_flop = [r for r in data if r.get("fold_to_cbet_flop") is not None]
-    faced_cbet_raised = [r for r in faced_cbet_flop if not r.get("is_3bet_pot")]
-    faced_cbet_3bet = [r for r in faced_cbet_flop if r.get("is_3bet_pot")]
+    # Missed CBet
+    stats.missed_cbet_flop = _sv("missed_cbet_flop", "cbet_flop_opp")
+    stats.missed_cbet_flop_ip = _sv("missed_cbet_ip", "cbet_opp_ip")
+    stats.missed_cbet_flop_oop = _sv("missed_cbet_oop", "cbet_opp_oop")
+    stats.missed_cbet_turn = _sv("missed_cbet_turn", "cbet_turn_opp")
 
-    stats.fold_cbet_flop_raised = _simple_pct(faced_cbet_raised, "fold_to_cbet_flop")
-    stats.call_cbet_flop_raised = _simple_pct(faced_cbet_raised, "call_cbet_flop")
-    stats.raise_cbet_flop_raised = _simple_pct(faced_cbet_raised, "raise_cbet_flop")
-    stats.fold_cbet_flop_3bet = _simple_pct(faced_cbet_3bet, "fold_to_cbet_flop")
-    stats.call_cbet_flop_3bet = _simple_pct(faced_cbet_3bet, "call_cbet_flop")
-    stats.raise_cbet_flop_3bet = _simple_pct(faced_cbet_3bet, "raise_cbet_flop")
-
-    stats.donk_bet_flop = _simple_pct(
-        [r for r in data if r.get("donk_bet_flop_opp")], "donk_bet_flop"
-    )
-    stats.donk_bet_turn = _simple_pct(
-        [r for r in data if r.get("donk_bet_turn_opp")], "donk_bet_turn"
-    )
-    stats.donk_bet_river = _simple_pct(
-        [r for r in data if r.get("donk_bet_river_opp")], "donk_bet_river"
-    )
-
-    stats.missed_cbet_flop = _simple_pct(
-        [r for r in data if r["cbet_flop_opp"]], "missed_cbet_flop"
-    )
-    # Missed cbet flop by position (IP vs OOP relative to remaining players)
-    ip_cbet_opp = [r for r in data if r["cbet_flop_opp"] and r.get("postflop_ip")]
-    stats.missed_cbet_flop_ip = _simple_pct(ip_cbet_opp, "missed_cbet_flop")
-    oop_cbet_opp = [r for r in data if r["cbet_flop_opp"] and r.get("postflop_ip") is False]
-    stats.missed_cbet_flop_oop = _simple_pct(oop_cbet_opp, "missed_cbet_flop")
-
-    stats.missed_cbet_turn = _simple_pct(
-        [r for r in data if r["cbet_turn_opp"]], "missed_cbet_turn"
-    )
-
-    # Missed cbet fold: after missing cbet, hero folded
-    # IP: checked behind on flop, folded on turn
-    ip_missed = [r for r in data if r["missed_cbet_flop"] and r.get("postflop_ip")]
-    ip_missed_fold = sum(1 for r in ip_missed if (r.get("turn_folds") or 0) > 0)
+    # Missed CBet Fold
+    mc_ip_t = int(tot.get("mc_ip_total", 0))
+    mc_fold_ip = int(tot.get("mc_fold_ip", 0))
     stats.missed_cbet_fold_ip = StatValue(
-        value=round(ip_missed_fold / len(ip_missed) * 100, 1) if ip_missed else None,
-        sample=len(ip_missed),
+        value=round(mc_fold_ip / mc_ip_t * 100, 1) if mc_ip_t > 0 else None,
+        sample=mc_ip_t,
     )
-    # OOP: checked on flop, folded on flop or turn
-    oop_missed = [r for r in data if r["missed_cbet_flop"] and r.get("postflop_ip") is False]
-    oop_missed_fold = sum(
-        1 for r in oop_missed
-        if (r.get("flop_folds") or 0) > 0 or (r.get("turn_folds") or 0) > 0
-    )
+    mc_oop_t = int(tot.get("mc_oop_total", 0))
+    mc_fold_oop = int(tot.get("mc_fold_oop", 0))
     stats.missed_cbet_fold_oop = StatValue(
-        value=round(oop_missed_fold / len(oop_missed) * 100, 1) if oop_missed else None,
-        sample=len(oop_missed),
+        value=round(mc_fold_oop / mc_oop_t * 100, 1) if mc_oop_t > 0 else None,
+        sample=mc_oop_t,
     )
 
-    # vs Missed cbet: opponent missed cbet, what did hero do
-    vs_mc = [r for r in data if r.get("vs_missed_cbet_flop_opp")]
-    vs_mc_ip = [r for r in vs_mc if r.get("postflop_ip")]
-    vs_mc_oop = [r for r in vs_mc if r.get("postflop_ip") is False]
-
-    # Total: hero bet (IP: flop bet, OOP: turn bet)
-    vs_mc_bet_total = (
-        sum(1 for r in vs_mc_ip if (r.get("flop_bets") or 0) > 0) +
-        sum(1 for r in vs_mc_oop if (r.get("turn_bets") or 0) > 0)
-    )
+    # vs Missed CBet
+    vs_mc_t = int(tot.get("vs_mc", 0))
+    vs_mc_ip_bet = int(tot.get("vs_mc_ip_bet", 0))
+    vs_mc_oop_bet = int(tot.get("vs_mc_oop_bet", 0))
     stats.vs_missed_cbet = StatValue(
-        value=round(vs_mc_bet_total / len(vs_mc) * 100, 1) if vs_mc else None,
-        sample=len(vs_mc),
+        value=round((vs_mc_ip_bet + vs_mc_oop_bet) / vs_mc_t * 100, 1) if vs_mc_t > 0 else None,
+        sample=vs_mc_t,
     )
-
-    # Bet IP: hero is IP, bet on flop into missed cbet
+    vs_mc_ip_t = int(tot.get("vs_mc_ip", 0))
     stats.vs_missed_cbet_bet_ip = StatValue(
-        value=round(
-            sum(1 for r in vs_mc_ip if (r.get("flop_bets") or 0) > 0) / len(vs_mc_ip) * 100, 1
-        ) if vs_mc_ip else None,
-        sample=len(vs_mc_ip),
+        value=round(vs_mc_ip_bet / vs_mc_ip_t * 100, 1) if vs_mc_ip_t > 0 else None,
+        sample=vs_mc_ip_t,
     )
-    # Check | Fold IP: hero is IP, didn't bet flop, folded on turn
-    ip_no_bet = [r for r in vs_mc_ip if (r.get("flop_bets") or 0) == 0]
+    vs_mc_ip_nb = int(tot.get("vs_mc_ip_no_bet", 0))
+    vs_mc_ip_cf = int(tot.get("vs_mc_ip_cf", 0))
     stats.vs_missed_cbet_check_fold_ip = StatValue(
-        value=round(
-            sum(1 for r in ip_no_bet if (r.get("turn_folds") or 0) > 0) / len(ip_no_bet) * 100, 1
-        ) if ip_no_bet else None,
-        sample=len(ip_no_bet),
+        value=round(vs_mc_ip_cf / vs_mc_ip_nb * 100, 1) if vs_mc_ip_nb > 0 else None,
+        sample=vs_mc_ip_nb,
     )
-    # Bet OOP Turn: hero is OOP, bet on turn after opponent missed cbet
+    vs_mc_oop_t = int(tot.get("vs_mc_oop", 0))
     stats.vs_missed_cbet_bet_oop_turn = StatValue(
-        value=round(
-            sum(1 for r in vs_mc_oop if (r.get("turn_bets") or 0) > 0) / len(vs_mc_oop) * 100, 1
-        ) if vs_mc_oop else None,
-        sample=len(vs_mc_oop),
+        value=round(vs_mc_oop_bet / vs_mc_oop_t * 100, 1) if vs_mc_oop_t > 0 else None,
+        sample=vs_mc_oop_t,
     )
-    # Check-Fold OOP: hero is OOP, checked and folded on turn
-    oop_no_bet = [r for r in vs_mc_oop if (r.get("turn_bets") or 0) == 0]
+    vs_mc_oop_nb = int(tot.get("vs_mc_oop_no_bet", 0))
+    vs_mc_oop_cf = int(tot.get("vs_mc_oop_cf", 0))
     stats.vs_missed_cbet_check_fold_oop = StatValue(
-        value=round(
-            sum(1 for r in oop_no_bet
-                if (r.get("turn_checks") or 0) > 0 and (r.get("turn_folds") or 0) > 0
-            ) / len(oop_no_bet) * 100, 1
-        ) if oop_no_bet else None,
-        sample=len(oop_no_bet),
+        value=round(vs_mc_oop_cf / vs_mc_oop_nb * 100, 1) if vs_mc_oop_nb > 0 else None,
+        sample=vs_mc_oop_nb,
     )
 
     # Aggression
-    stats.af_flop = _aggression_factor(data, "flop")
-    stats.af_turn = _aggression_factor(data, "turn")
-    stats.af_river = _aggression_factor(data, "river")
-    stats.afq_flop = _aggression_freq(data, "flop")
-    stats.afq_turn = _aggression_freq(data, "turn")
-    stats.afq_river = _aggression_freq(data, "river")
+    def _af(street: str) -> StatValue:
+        b = int(tot.get(f"{street}_bets", 0))
+        r = int(tot.get(f"{street}_raises", 0))
+        c = int(tot.get(f"{street}_calls", 0))
+        if c == 0:
+            return StatValue(value=None, sample=b + r)
+        return StatValue(value=round((b + r) / c, 2), sample=b + r + c)
+
+    def _afq(street: str) -> StatValue:
+        b = int(tot.get(f"{street}_bets", 0))
+        r = int(tot.get(f"{street}_raises", 0))
+        c = int(tot.get(f"{street}_calls", 0))
+        x = int(tot.get(f"{street}_checks", 0))
+        f = int(tot.get(f"{street}_folds", 0))
+        t = b + r + c + x + f
+        if t == 0:
+            return StatValue(value=None, sample=0)
+        return StatValue(value=round((b + r) / t * 100, 1), sample=t)
+
+    stats.af_flop = _af("flop")
+    stats.af_turn = _af("turn")
+    stats.af_river = _af("river")
+    stats.afq_flop = _afq("flop")
+    stats.afq_turn = _afq("turn")
+    stats.afq_river = _afq("river")
 
     # Showdown
-    flop_hands = [r for r in data if r["saw_flop"]]
-    sd_hands = [r for r in data if r["went_to_showdown"]]
-    stats.wtsd = StatValue(
-        value=round(len(sd_hands) / len(flop_hands) * 100, 1) if flop_hands else None,
-        sample=len(flop_hands),
-    )
-    stats.wsd = StatValue(
-        value=round(
-            sum(1 for r in sd_hands if r["won_at_showdown"]) / len(sd_hands) * 100, 1
-        ) if sd_hands else None,
-        sample=len(sd_hands),
-    )
-    stats.wwsf = StatValue(
-        value=round(
-            sum(1 for r in flop_hands if float(r["won_bb"] or 0) > 0) / len(flop_hands) * 100, 1
-        ) if flop_hands else None,
-        sample=len(flop_hands),
-    )
+    sf = int(tot.get("saw_flop", 0))
+    sd = int(tot.get("went_sd", 0))
+    wsd = int(tot.get("won_sd", 0))
+    wwsf = int(tot.get("wwsf", 0))
+    stats.wtsd = StatValue(value=round(sd / sf * 100, 1) if sf > 0 else None, sample=sf)
+    stats.wsd = StatValue(value=round(wsd / sd * 100, 1) if sd > 0 else None, sample=sd)
+    stats.wwsf = StatValue(value=round(wwsf / sf * 100, 1) if sf > 0 else None, sample=sf)
 
     return stats
-
-
-def _positional_pct(
-    data: list[dict],
-    flag: str,
-    opp_flag: str | None,
-    positions: list[str] | None = None,
-    flag_when_opp: bool = False,
-    flag_is_response: bool = False,
-    filter_fn=None,
-) -> PositionalStats:
-    ps = PositionalStats()
-    all_pos = positions or POSITIONS
-
-    def calc_for(subset: list[dict]) -> StatValue:
-        if filter_fn:
-            subset = [r for r in subset if filter_fn(r)]
-            total = len(subset)
-            hits = sum(1 for r in subset if r.get(flag))
-        elif opp_flag and not flag_is_response:
-            opps = [r for r in subset if r.get(opp_flag)]
-            total = len(opps)
-            hits = sum(1 for r in opps if r.get(flag))
-        elif flag_is_response and opp_flag:
-            # fold_to_3bet: opportunity is when someone else 3bet us (we had open_raise)
-            opps = [r for r in subset if r.get(flag) is not None]
-            total = len(opps)
-            hits = sum(1 for r in opps if r.get(flag))
-        else:
-            total = len(subset)
-            hits = sum(1 for r in subset if r.get(flag))
-
-        return StatValue(
-            value=round(hits / total * 100, 1) if total > 0 else None,
-            sample=total,
-        )
-
-    ps.total = calc_for(data)
-    for pos in POSITIONS:
-        pos_data = [r for r in data if r["position"] == pos]
-        if pos in all_pos:
-            setattr(ps, pos.lower(), calc_for(pos_data))
-
-    return ps
-
-
-def _simple_pct(data: list[dict], flag: str) -> StatValue:
-    total = len(data)
-    if not total:
-        return StatValue()
-    hits = sum(1 for r in data if r.get(flag))
-    return StatValue(
-        value=round(hits / total * 100, 1),
-        sample=total,
-    )
-
-
-def _positional_steal_stat(
-    data: list[dict], flag: str, positions: list[str]
-) -> PositionalStats:
-    """Compute a stat for steal/vs-steal with specific positional columns."""
-    ps = PositionalStats()
-
-    # Total across all data
-    total = len(data)
-    hits = sum(1 for r in data if r.get(flag))
-    ps.total = StatValue(
-        value=round(hits / total * 100, 1) if total > 0 else None,
-        sample=total,
-    )
-
-    # Per position
-    for pos in positions:
-        pos_data = [r for r in data if r["position"] == pos]
-        pos_total = len(pos_data)
-        pos_hits = sum(1 for r in pos_data if r.get(flag))
-        setattr(ps, pos.lower(), StatValue(
-            value=round(pos_hits / pos_total * 100, 1) if pos_total > 0 else None,
-            sample=pos_total,
-        ))
-
-    return ps
-
-
-def _aggression_factor(data: list[dict], street: str) -> StatValue:
-    bets = sum(r.get(f"{street}_bets", 0) or 0 for r in data)
-    raises = sum(r.get(f"{street}_raises", 0) or 0 for r in data)
-    calls = sum(r.get(f"{street}_calls", 0) or 0 for r in data)
-    if calls == 0:
-        return StatValue(value=None, sample=bets + raises)
-    return StatValue(
-        value=round((bets + raises) / calls, 2),
-        sample=bets + raises + calls,
-    )
-
-
-def _aggression_freq(data: list[dict], street: str) -> StatValue:
-    bets = sum(r.get(f"{street}_bets", 0) or 0 for r in data)
-    raises = sum(r.get(f"{street}_raises", 0) or 0 for r in data)
-    calls = sum(r.get(f"{street}_calls", 0) or 0 for r in data)
-    checks = sum(r.get(f"{street}_checks", 0) or 0 for r in data)
-    folds = sum(r.get(f"{street}_folds", 0) or 0 for r in data)
-    total = bets + raises + calls + checks + folds
-    if total == 0:
-        return StatValue(value=None, sample=0)
-    return StatValue(
-        value=round((bets + raises) / total * 100, 1),
-        sample=total,
-    )
