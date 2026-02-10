@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef, startTransition } from 'react';
 import {
   ComposedChart,
   Area,
@@ -42,6 +42,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { Skeleton } from '@/components/ui/skeleton';
 
 function formatXTick(value: number) {
   if (value >= 1000) return `${(value / 1000).toFixed(value % 1000 === 0 ? 0 : 1)}k`;
@@ -208,7 +209,9 @@ export default function GraphPage() {
   const [activeSession, setActiveSession] = useState<SessionMarker | null>(null);
   const [filterOpts, setFilterOpts] = useState<FilterOptions | null>(null);
   const [breakdown, setBreakdown] = useState<ResultsBreakdown | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [graphLoading, setGraphLoading] = useState(true);
+  const [breakdownLoading, setBreakdownLoading] = useState(true);
+  const [chartReady, setChartReady] = useState(false);
 
   // Filters
   const [stakes, setStakes] = useState<string>('');
@@ -253,18 +256,25 @@ export default function GraphPage() {
     getFilterOptions().then(setFilterOpts);
   }, []);
 
-  // Load graph + breakdown when filters change
+  // Load graph + breakdown independently when filters change
   const fetchData = useCallback(() => {
-    setLoading(true);
-    Promise.all([
-      getGraphData(filterParams),
-      getResultsBreakdown(filterParams),
-    ]).then(([graphResp, breakdownData]) => {
+    setGraphLoading(true);
+    setBreakdownLoading(true);
+    setChartReady(false);
+
+    getGraphData(filterParams).then((graphResp) => {
       setData(graphResp.points);
       setSessions(graphResp.sessions);
       setVariance(graphResp.variance);
+      setGraphLoading(false);
+      // Defer chart mount so stat cards paint first
+      startTransition(() => setChartReady(true));
+    });
+
+    getResultsBreakdown(filterParams).then((breakdownData) => {
       setBreakdown(breakdownData);
-    }).finally(() => setLoading(false));
+      setBreakdownLoading(false);
+    });
   }, [filterParams]);
 
   useEffect(() => {
@@ -361,19 +371,6 @@ export default function GraphPage() {
 
   const hasFilters = !!(stakes || gameMode || dateFrom || dateTo || lastN);
 
-  // Empty state
-  if (!loading && data.length === 0 && !breakdown?.by_stakes.length) {
-    return (
-      <div className="max-w-6xl mx-auto space-y-1.5">
-        {filterBarContent}
-        <EmptyState
-          variant={hasFilters ? 'no-match' : 'no-data'}
-          onClearFilters={hasFilters ? () => { setStakes(''); setDateFrom(''); setDateTo(''); setLastN(''); handlePreset('all'); } : undefined}
-        />
-      </div>
-    );
-  }
-
   // Stat card data from last graph point
   const last = data.length > 0 ? data[data.length - 1] : null;
   const n = data.length;
@@ -462,326 +459,365 @@ export default function GraphPage() {
     </FilterBar>
   );
 
+  // Empty state
+  if (!graphLoading && !breakdownLoading && data.length === 0 && !breakdown?.by_stakes.length) {
+    return (
+      <div className="max-w-6xl mx-auto space-y-1.5">
+        {filterBarContent}
+        <EmptyState
+          variant={hasFilters ? 'no-match' : 'no-data'}
+          onClearFilters={hasFilters ? () => { setStakes(''); setDateFrom(''); setDateTo(''); setLastN(''); handlePreset('all'); } : undefined}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="max-w-6xl mx-auto space-y-1.5">
       {/* Filter Bar */}
       {filterBarContent}
 
-      {loading ? (
-        <p className="text-text-muted py-8 text-center">Loading...</p>
+      {/* Graph — skeleton while loading or chart not yet rendered */}
+      {graphLoading || !chartReady ? (
+        <Card className="gap-0 py-0 p-2">
+          <Skeleton className="h-[400px] w-full rounded" />
+        </Card>
+      ) : data.length > 0 && (
+        <Card className="gap-0 py-0 p-2">
+          <div className="flex gap-4 mb-0.5 ml-12 text-xs text-text-muted">
+            <span className="flex items-center gap-1.5">
+              <span className="inline-block w-4 h-0.5 rounded" style={{ background: LINE_COLORS.main }} />
+              Actual
+            </span>
+            {lines.has('ev') && hasEVData && (
+              <span className="flex items-center gap-1.5">
+                <span className="inline-block w-4 h-0.5 rounded" style={{ background: LINE_COLORS.ev, opacity: 0.8 }} />
+                All-in EV
+              </span>
+            )}
+            {lines.has('showdown') && (
+              <>
+                <span className="flex items-center gap-1.5">
+                  <span className="inline-block w-4 h-0.5 rounded" style={{ background: LINE_COLORS.showdown }} />
+                  Showdown
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="inline-block w-4 h-0.5 rounded" style={{ background: LINE_COLORS.nonshowdown }} />
+                  Non-Showdown
+                </span>
+              </>
+            )}
+            {lines.has('rake') && (
+              <span className="flex items-center gap-1.5">
+                <span className="inline-block w-4 h-0.5 rounded" style={{ background: LINE_COLORS.rake }} />
+                Rake
+              </span>
+            )}
+            {lines.has('ci') && variance && (
+              <span className="flex items-center gap-1.5">
+                <span className="inline-block w-4 h-2 rounded opacity-30" style={{ background: LINE_COLORS.ci }} />
+                95% CI
+              </span>
+            )}
+            {lines.has('sessions') && sessions.length > 1 && (
+              <span className="flex items-center gap-1.5">
+                <span className="inline-block w-4 h-0.5 rounded" style={{ background: LINE_COLORS.session, borderTop: '1px dashed oklch(0.553 0.013 58.071)' }} />
+                Sessions
+              </span>
+            )}
+          </div>
+          <ResponsiveContainer width="100%" height={400}>
+            <ComposedChart data={chartDataEnriched} margin={{ top: 4, right: 16, bottom: 4, left: 8 }} onMouseMove={handleChartMouseMove} onMouseLeave={handleChartMouseLeave}>
+              <defs>
+                <linearGradient id="gradientMain" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor={LINE_COLORS.main} stopOpacity={0.25} />
+                  <stop offset="100%" stopColor={LINE_COLORS.main} stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid vertical={false} stroke="oklch(0.268 0.007 34.298)" strokeDasharray="none" />
+              <XAxis
+                dataKey="hand_number"
+                type="number"
+                domain={[0, 'dataMax']}
+                ticks={niceXTicks(data.length)}
+                stroke="oklch(0.553 0.013 58.071)"
+                tick={{ fontSize: 11, fill: 'oklch(0.553 0.013 58.071)' }}
+                tickFormatter={formatXTick}
+                axisLine={false}
+                tickLine={false}
+              />
+              <YAxis
+                stroke="oklch(0.553 0.013 58.071)"
+                tick={{ fontSize: 11, fill: 'oklch(0.553 0.013 58.071)' }}
+                axisLine={false}
+                tickLine={false}
+                width={50}
+                tickFormatter={(v: number) => unit === 'usd' ? `$${v}` : String(v)}
+              />
+              <Tooltip
+                content={<CustomTooltip unit={unit} tooltipNames={tooltipNames} activeSession={activeSession} />}
+              />
+              <ReferenceLine y={0} stroke="oklch(0.553 0.013 58.071 / 50%)" strokeDasharray="4 4" />
+              {lines.has('sessions') && activeSession && (
+                <ReferenceArea
+                  x1={activeSession.start_hand}
+                  x2={activeSession.end_hand}
+                  fill="oklch(0.77 0.16 70)"
+                  fillOpacity={0.06}
+                  strokeOpacity={0}
+                />
+              )}
+              {lines.has('sessions') && sessions.slice(1).map(s => (
+                <ReferenceLine
+                  key={`session-${s.start_hand}`}
+                  x={s.start_hand}
+                  stroke={LINE_COLORS.session}
+                  strokeDasharray="4 4"
+                  strokeWidth={1}
+                  label={{
+                    value: formatTime(s.start_time),
+                    position: 'top',
+                    fill: 'oklch(0.553 0.013 58.071)',
+                    fontSize: 9,
+                  }}
+                />
+              ))}
+              {lines.has('ci') && variance && (
+                <Area
+                  type="monotone"
+                  dataKey="ci_range"
+                  name="ci_range"
+                  stroke={LINE_COLORS.ci}
+                  strokeWidth={0.5}
+                  strokeOpacity={0.3}
+                  fill={LINE_COLORS.ci}
+                  fillOpacity={0.08}
+                  dot={false}
+                  isAnimationActive={false}
+                  connectNulls
+                />
+              )}
+              <Area
+                type="monotone"
+                dataKey={mainKey}
+                name={mainKey}
+                fill="url(#gradientMain)"
+                stroke={LINE_COLORS.main}
+                strokeWidth={2}
+                dot={false}
+                connectNulls
+                isAnimationActive={false}
+                baseValue={0}
+              />
+              {lines.has('ev') && hasEVData && (
+                <Line
+                  type="monotone"
+                  dataKey={evKey}
+                  name={evKey}
+                  stroke={LINE_COLORS.ev}
+                  strokeWidth={1.5}
+                  dot={false}
+                  connectNulls
+                  strokeDasharray="6 3"
+                  opacity={0.8}
+                  isAnimationActive={false}
+                />
+              )}
+              {lines.has('showdown') && (
+                <Line
+                  type="monotone"
+                  dataKey={sdKey}
+                  name={sdKey}
+                  stroke={LINE_COLORS.showdown}
+                  strokeWidth={1.5}
+                  dot={false}
+                  connectNulls
+                  isAnimationActive={false}
+                />
+              )}
+              {lines.has('showdown') && (
+                <Line
+                  type="monotone"
+                  dataKey={nsdKey}
+                  name={nsdKey}
+                  stroke={LINE_COLORS.nonshowdown}
+                  strokeWidth={1.5}
+                  dot={false}
+                  connectNulls
+                  isAnimationActive={false}
+                />
+              )}
+              {lines.has('rake') && (
+                <Line
+                  type="monotone"
+                  dataKey={negRakeKey}
+                  name={negRakeKey}
+                  stroke={LINE_COLORS.rake}
+                  strokeWidth={1.5}
+                  dot={false}
+                  connectNulls
+                  strokeDasharray="4 2"
+                  isAnimationActive={false}
+                />
+              )}
+            </ComposedChart>
+          </ResponsiveContainer>
+        </Card>
+      )}
+
+      {/* Stat Cards - Row 1 */}
+      {graphLoading ? (
+        <div className="grid gap-2 grid-cols-2 sm:grid-cols-3 lg:grid-cols-6">
+          {Array.from({ length: 6 }, (_, i) => (
+            <Card key={i} className="gap-0 py-0"><CardContent className="px-3 py-2"><Skeleton className="h-4 w-16 mb-1" /><Skeleton className="h-5 w-24" /></CardContent></Card>
+          ))}
+        </div>
+      ) : (
+        <div className="grid gap-2 grid-cols-2 sm:grid-cols-3 lg:grid-cols-6">
+          <StatCard
+            label="Hands"
+            bb={n.toLocaleString()}
+            usd=""
+            bbColor="text-text"
+            detail={handsPerHour > 0 ? `${handsPerHour} hands/hr` : undefined}
+          />
+          <StatCard
+            label="Won"
+            bb={fmtBB(wonBB)}
+            usd={fmtUSD(wonUSD)}
+            bbColor={clr(wonBB)}
+            usdColor={clr(wonUSD)}
+            border={brd(wonBB)}
+          />
+          <StatCard
+            label="Winrate"
+            bb={fmtRateBB(rateBB)}
+            usd={fmtRateUSD(rateUSD)}
+            bbColor={clr(rateBB)}
+            usdColor={clr(rateUSD)}
+            border={brd(rateBB)}
+          />
+          <StatCard
+            label="$/hr"
+            bb={totalHrs > 0 ? `${bbPerHour.toFixed(1)} BB/hr` : '—'}
+            usd={totalHrs > 0 ? `${usdPerHour >= 0 ? '' : '-'}$${Math.abs(usdPerHour).toFixed(2)}/hr` : ''}
+            bbColor={totalHrs > 0 ? clr(bbPerHour) : 'text-text-muted'}
+            usdColor={totalHrs > 0 ? clr(usdPerHour) : 'text-text-muted'}
+            border={totalHrs > 0 ? brd(usdPerHour) : undefined}
+            detail={totalHrs > 0 ? `${totalHrs.toFixed(1)} hrs played` : undefined}
+          />
+          {hasEVData ? (
+            <StatCard
+              label="EV Won"
+              bb={fmtBB(evBB)}
+              usd={fmtUSD(evUSD)}
+              bbColor={clr(evBB)}
+              usdColor={clr(evUSD)}
+              border={brd(evBB)}
+            />
+          ) : (
+            <StatCard label="EV Won" bb="—" usd="" bbColor="text-text-muted" />
+          )}
+          {hasEVData ? (
+            <StatCard
+              label="EV Winrate"
+              bb={fmtRateBB(evRateBB)}
+              usd={fmtRateUSD(evRateUSD)}
+              bbColor={clr(evRateBB)}
+              usdColor={clr(evRateUSD)}
+              border={brd(evRateBB)}
+            />
+          ) : (
+            <StatCard label="EV Winrate" bb="—" usd="" bbColor="text-text-muted" />
+          )}
+        </div>
+      )}
+
+      {/* Stat Cards - Row 2 */}
+      {graphLoading ? (
+        <div className="grid gap-2 grid-cols-2 lg:grid-cols-4">
+          {Array.from({ length: 4 }, (_, i) => (
+            <Card key={i} className="gap-0 py-0"><CardContent className="px-3 py-2"><Skeleton className="h-4 w-16 mb-1" /><Skeleton className="h-5 w-24" /></CardContent></Card>
+          ))}
+        </div>
+      ) : (
+        <div className="grid gap-2 grid-cols-2 lg:grid-cols-4">
+          <StatCard
+            label="Rake"
+            bb={fmtBB(rakeBB)}
+            usd={fmtUSD(rakeUSD)}
+            bbColor="text-red"
+            usdColor="text-red"
+            border="#ef4444"
+            detail={jackpotBB ? `(BBJ: ${fmtBB(jackpotBB)} / ${fmtUSD(jackpotUSD)})` : undefined}
+          />
+          <StatCard
+            label="Rake/100"
+            bb={fmtRateBB(rakePerBB)}
+            usd={fmtRateUSD(rakePerUSD)}
+            bbColor="text-red"
+            usdColor="text-red"
+            border="#ef4444"
+          />
+          <StatCard
+            label="SD Won"
+            bb={fmtBB(sdBB)}
+            usd={fmtUSD(sdUSD)}
+            bbColor={clr(sdBB)}
+            usdColor={clr(sdUSD)}
+            border={brd(sdBB)}
+          />
+          <StatCard
+            label="NSD Won"
+            bb={fmtBB(nsdBB)}
+            usd={fmtUSD(nsdUSD)}
+            bbColor={clr(nsdBB)}
+            usdColor={clr(nsdUSD)}
+            border={brd(nsdBB)}
+          />
+        </div>
+      )}
+
+      {/* Variance Stats */}
+      {!graphLoading && variance && (
+        <div className="grid gap-2 grid-cols-2 lg:grid-cols-4">
+          <StatCard
+            label="Std Dev bb/100"
+            bb={variance.sd_bb100.toFixed(1)}
+            usd=""
+            bbColor="text-text"
+          />
+          <StatCard
+            label="95% CI"
+            bb={`${variance.ci_lower_bb100.toFixed(2)} to ${variance.ci_upper_bb100.toFixed(2)} bb/100`}
+            usd=""
+            bbColor={variance.ci_lower_bb100 > 0 ? 'text-green' : variance.ci_upper_bb100 < 0 ? 'text-red' : 'text-text-muted'}
+          />
+          <StatCard
+            label="Sessions"
+            bb={String(sessions.length)}
+            usd={sessions.length > 0 ? `~${Math.round(n / sessions.length)} hands/session` : ''}
+            bbColor="text-text"
+          />
+          <StatCard
+            label="Std Dev per hand"
+            bb={`${variance.sd_bb.toFixed(2)} BB`}
+            usd=""
+            bbColor="text-text"
+          />
+        </div>
+      )}
+
+      {/* Breakdown Tables — independent loading */}
+      {breakdownLoading ? (
+        <Card className="gap-0 py-0">
+          <CardContent className="px-3 py-3 space-y-2">
+            <Skeleton className="h-4 w-32" />
+            <Skeleton className="h-24 w-full" />
+          </CardContent>
+        </Card>
       ) : (
         <>
-          {/* Graph */}
-          {data.length > 0 && (
-            <Card className="gap-0 py-0 p-2">
-              <div className="flex gap-4 mb-0.5 ml-12 text-xs text-text-muted">
-                <span className="flex items-center gap-1.5">
-                  <span className="inline-block w-4 h-0.5 rounded" style={{ background: LINE_COLORS.main }} />
-                  Actual
-                </span>
-                {lines.has('ev') && hasEVData && (
-                  <span className="flex items-center gap-1.5">
-                    <span className="inline-block w-4 h-0.5 rounded" style={{ background: LINE_COLORS.ev, opacity: 0.8 }} />
-                    All-in EV
-                  </span>
-                )}
-                {lines.has('showdown') && (
-                  <>
-                    <span className="flex items-center gap-1.5">
-                      <span className="inline-block w-4 h-0.5 rounded" style={{ background: LINE_COLORS.showdown }} />
-                      Showdown
-                    </span>
-                    <span className="flex items-center gap-1.5">
-                      <span className="inline-block w-4 h-0.5 rounded" style={{ background: LINE_COLORS.nonshowdown }} />
-                      Non-Showdown
-                    </span>
-                  </>
-                )}
-                {lines.has('rake') && (
-                  <span className="flex items-center gap-1.5">
-                    <span className="inline-block w-4 h-0.5 rounded" style={{ background: LINE_COLORS.rake }} />
-                    Rake
-                  </span>
-                )}
-                {lines.has('ci') && variance && (
-                  <span className="flex items-center gap-1.5">
-                    <span className="inline-block w-4 h-2 rounded opacity-30" style={{ background: LINE_COLORS.ci }} />
-                    95% CI
-                  </span>
-                )}
-                {lines.has('sessions') && sessions.length > 1 && (
-                  <span className="flex items-center gap-1.5">
-                    <span className="inline-block w-4 h-0.5 rounded" style={{ background: LINE_COLORS.session, borderTop: '1px dashed oklch(0.553 0.013 58.071)' }} />
-                    Sessions
-                  </span>
-                )}
-              </div>
-              <ResponsiveContainer width="100%" height={400}>
-                <ComposedChart data={chartDataEnriched} margin={{ top: 4, right: 16, bottom: 4, left: 8 }} onMouseMove={handleChartMouseMove} onMouseLeave={handleChartMouseLeave}>
-                  <defs>
-                    <linearGradient id="gradientMain" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor={LINE_COLORS.main} stopOpacity={0.25} />
-                      <stop offset="100%" stopColor={LINE_COLORS.main} stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid vertical={false} stroke="oklch(0.268 0.007 34.298)" strokeDasharray="none" />
-                  <XAxis
-                    dataKey="hand_number"
-                    type="number"
-                    domain={[0, 'dataMax']}
-                    ticks={niceXTicks(data.length)}
-                    stroke="oklch(0.553 0.013 58.071)"
-                    tick={{ fontSize: 11, fill: 'oklch(0.553 0.013 58.071)' }}
-                    tickFormatter={formatXTick}
-                    axisLine={false}
-                    tickLine={false}
-                  />
-                  <YAxis
-                    stroke="oklch(0.553 0.013 58.071)"
-                    tick={{ fontSize: 11, fill: 'oklch(0.553 0.013 58.071)' }}
-                    axisLine={false}
-                    tickLine={false}
-                    width={50}
-                    tickFormatter={(v: number) => unit === 'usd' ? `$${v}` : String(v)}
-                  />
-                  <Tooltip
-                    content={<CustomTooltip unit={unit} tooltipNames={tooltipNames} activeSession={activeSession} />}
-                  />
-                  <ReferenceLine y={0} stroke="oklch(0.553 0.013 58.071 / 50%)" strokeDasharray="4 4" />
-                  {lines.has('sessions') && activeSession && (
-                    <ReferenceArea
-                      x1={activeSession.start_hand}
-                      x2={activeSession.end_hand}
-                      fill="oklch(0.77 0.16 70)"
-                      fillOpacity={0.06}
-                      strokeOpacity={0}
-                    />
-                  )}
-                  {lines.has('sessions') && sessions.slice(1).map(s => (
-                    <ReferenceLine
-                      key={`session-${s.start_hand}`}
-                      x={s.start_hand}
-                      stroke={LINE_COLORS.session}
-                      strokeDasharray="4 4"
-                      strokeWidth={1}
-                      label={{
-                        value: formatTime(s.start_time),
-                        position: 'top',
-                        fill: 'oklch(0.553 0.013 58.071)',
-                        fontSize: 9,
-                      }}
-                    />
-                  ))}
-                  {lines.has('ci') && variance && (
-                    <Area
-                      type="monotone"
-                      dataKey="ci_range"
-                      name="ci_range"
-                      stroke={LINE_COLORS.ci}
-                      strokeWidth={0.5}
-                      strokeOpacity={0.3}
-                      fill={LINE_COLORS.ci}
-                      fillOpacity={0.08}
-                      dot={false}
-                      isAnimationActive={false}
-                      connectNulls
-                    />
-                  )}
-                  <Area
-                    type="monotone"
-                    dataKey={mainKey}
-                    name={mainKey}
-                    fill="url(#gradientMain)"
-                    stroke={LINE_COLORS.main}
-                    strokeWidth={2}
-                    dot={false}
-                    connectNulls
-                    isAnimationActive={false}
-                    baseValue={0}
-                  />
-                  {lines.has('ev') && hasEVData && (
-                    <Line
-                      type="monotone"
-                      dataKey={evKey}
-                      name={evKey}
-                      stroke={LINE_COLORS.ev}
-                      strokeWidth={1.5}
-                      dot={false}
-                      connectNulls
-                      strokeDasharray="6 3"
-                      opacity={0.8}
-                      isAnimationActive={false}
-                    />
-                  )}
-                  {lines.has('showdown') && (
-                    <Line
-                      type="monotone"
-                      dataKey={sdKey}
-                      name={sdKey}
-                      stroke={LINE_COLORS.showdown}
-                      strokeWidth={1.5}
-                      dot={false}
-                      connectNulls
-                      isAnimationActive={false}
-                    />
-                  )}
-                  {lines.has('showdown') && (
-                    <Line
-                      type="monotone"
-                      dataKey={nsdKey}
-                      name={nsdKey}
-                      stroke={LINE_COLORS.nonshowdown}
-                      strokeWidth={1.5}
-                      dot={false}
-                      connectNulls
-                      isAnimationActive={false}
-                    />
-                  )}
-                  {lines.has('rake') && (
-                    <Line
-                      type="monotone"
-                      dataKey={negRakeKey}
-                      name={negRakeKey}
-                      stroke={LINE_COLORS.rake}
-                      strokeWidth={1.5}
-                      dot={false}
-                      connectNulls
-                      strokeDasharray="4 2"
-                      isAnimationActive={false}
-                    />
-                  )}
-                </ComposedChart>
-              </ResponsiveContainer>
-            </Card>
-          )}
-
-          {/* Stat Cards - Row 1 */}
-          <div className="grid gap-2 grid-cols-2 sm:grid-cols-3 lg:grid-cols-6">
-            <StatCard
-              label="Hands"
-              bb={n.toLocaleString()}
-              usd=""
-              bbColor="text-text"
-              detail={handsPerHour > 0 ? `${handsPerHour} hands/hr` : undefined}
-            />
-            <StatCard
-              label="Won"
-              bb={fmtBB(wonBB)}
-              usd={fmtUSD(wonUSD)}
-              bbColor={clr(wonBB)}
-              usdColor={clr(wonUSD)}
-              border={brd(wonBB)}
-            />
-            <StatCard
-              label="Winrate"
-              bb={fmtRateBB(rateBB)}
-              usd={fmtRateUSD(rateUSD)}
-              bbColor={clr(rateBB)}
-              usdColor={clr(rateUSD)}
-              border={brd(rateBB)}
-            />
-            <StatCard
-              label="$/hr"
-              bb={totalHrs > 0 ? `${bbPerHour.toFixed(1)} BB/hr` : '—'}
-              usd={totalHrs > 0 ? `${usdPerHour >= 0 ? '' : '-'}$${Math.abs(usdPerHour).toFixed(2)}/hr` : ''}
-              bbColor={totalHrs > 0 ? clr(bbPerHour) : 'text-text-muted'}
-              usdColor={totalHrs > 0 ? clr(usdPerHour) : 'text-text-muted'}
-              border={totalHrs > 0 ? brd(usdPerHour) : undefined}
-              detail={totalHrs > 0 ? `${totalHrs.toFixed(1)} hrs played` : undefined}
-            />
-            {hasEVData ? (
-              <StatCard
-                label="EV Won"
-                bb={fmtBB(evBB)}
-                usd={fmtUSD(evUSD)}
-                bbColor={clr(evBB)}
-                usdColor={clr(evUSD)}
-                border={brd(evBB)}
-              />
-            ) : (
-              <StatCard label="EV Won" bb="—" usd="" bbColor="text-text-muted" />
-            )}
-            {hasEVData ? (
-              <StatCard
-                label="EV Winrate"
-                bb={fmtRateBB(evRateBB)}
-                usd={fmtRateUSD(evRateUSD)}
-                bbColor={clr(evRateBB)}
-                usdColor={clr(evRateUSD)}
-                border={brd(evRateBB)}
-              />
-            ) : (
-              <StatCard label="EV Winrate" bb="—" usd="" bbColor="text-text-muted" />
-            )}
-          </div>
-
-          {/* Stat Cards - Row 2 */}
-          <div className="grid gap-2 grid-cols-2 lg:grid-cols-4">
-            <StatCard
-              label="Rake"
-              bb={fmtBB(rakeBB)}
-              usd={fmtUSD(rakeUSD)}
-              bbColor="text-red"
-              usdColor="text-red"
-              border="#ef4444"
-              detail={jackpotBB ? `(BBJ: ${fmtBB(jackpotBB)} / ${fmtUSD(jackpotUSD)})` : undefined}
-            />
-            <StatCard
-              label="Rake/100"
-              bb={fmtRateBB(rakePerBB)}
-              usd={fmtRateUSD(rakePerUSD)}
-              bbColor="text-red"
-              usdColor="text-red"
-              border="#ef4444"
-            />
-            <StatCard
-              label="SD Won"
-              bb={fmtBB(sdBB)}
-              usd={fmtUSD(sdUSD)}
-              bbColor={clr(sdBB)}
-              usdColor={clr(sdUSD)}
-              border={brd(sdBB)}
-            />
-            <StatCard
-              label="NSD Won"
-              bb={fmtBB(nsdBB)}
-              usd={fmtUSD(nsdUSD)}
-              bbColor={clr(nsdBB)}
-              usdColor={clr(nsdUSD)}
-              border={brd(nsdBB)}
-            />
-          </div>
-
-          {/* Variance Stats */}
-          {variance && (
-            <div className="grid gap-2 grid-cols-2 lg:grid-cols-4">
-              <StatCard
-                label="Std Dev bb/100"
-                bb={variance.sd_bb100.toFixed(1)}
-                usd=""
-                bbColor="text-text"
-              />
-              <StatCard
-                label="95% CI"
-                bb={`${variance.ci_lower_bb100.toFixed(2)} to ${variance.ci_upper_bb100.toFixed(2)} bb/100`}
-                usd=""
-                bbColor={variance.ci_lower_bb100 > 0 ? 'text-green' : variance.ci_upper_bb100 < 0 ? 'text-red' : 'text-text-muted'}
-              />
-              <StatCard
-                label="Sessions"
-                bb={String(sessions.length)}
-                usd={sessions.length > 0 ? `~${Math.round(n / sessions.length)} hands/session` : ''}
-                bbColor="text-text"
-              />
-              <StatCard
-                label="Std Dev per hand"
-                bb={`${variance.sd_bb.toFixed(2)} BB`}
-                usd=""
-                bbColor="text-text"
-              />
-            </div>
-          )}
-
           {/* Breakdown by Stakes */}
           {breakdown && breakdown.by_stakes.length > 1 && !stakes && (
             <BreakdownTable

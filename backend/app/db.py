@@ -299,7 +299,7 @@ def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
     # Migrations for hands table
     for col, default in [
         ("cash_drop_received", "DECIMAL DEFAULT 0"),
-        ("game_mode", "VARCHAR NOT NULL DEFAULT 'Rush & Cash'"),
+        ("game_mode", "VARCHAR DEFAULT 'Rush & Cash'"),
     ]:
         try:
             conn.execute(f"ALTER TABLE hands ADD COLUMN {col} {default}")
