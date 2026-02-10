@@ -1,10 +1,11 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { getHeroStats, getFilterOptions } from '@/lib/api';
 import type { HeroStats, PositionalStats, StatValue, FilterOptions, DriftStat } from '@/lib/api';
 import { getPresetDates } from '@/lib/date-presets';
 import type { DatePreset } from '@/lib/date-presets';
 import FilterBar from '@/components/FilterBar';
 import EmptyState from '@/components/EmptyState';
+import { Input } from '@/components/ui/input';
 import LeakSummaryPanel from '@/components/LeakSummaryPanel';
 import DriftPanel from '@/components/DriftPanel';
 import { useDrift } from '@/hooks/useDrift';
@@ -369,12 +370,24 @@ export default function StatsPage() {
   const [dateFrom, setDateFrom] = useState<string>('');
   const [dateTo, setDateTo] = useState<string>('');
   const [activePreset, setActivePreset] = useState<DatePreset>('all');
+  const [lastN, setLastN] = useState<string>('');
+
+  // Debounce lastN
+  const [debouncedLastN, setDebouncedLastN] = useState<string>('');
+  const lastNTimer = useRef<ReturnType<typeof setTimeout>>();
+  useEffect(() => {
+    lastNTimer.current = setTimeout(() => setDebouncedLastN(lastN), 500);
+    return () => clearTimeout(lastNTimer.current);
+  }, [lastN]);
+
+  const lastNParsed = debouncedLastN ? parseInt(debouncedLastN, 10) : undefined;
   const filterParams = useMemo(() => ({
     stakes: stakes || undefined,
     game_mode: gameMode || undefined,
     date_from: dateFrom || undefined,
     date_to: dateTo || undefined,
-  }), [stakes, gameMode, dateFrom, dateTo]);
+    last_n: lastNParsed && lastNParsed > 0 ? lastNParsed : undefined,
+  }), [stakes, gameMode, dateFrom, dateTo, lastNParsed]);
 
   // Drift detection
   const { driftMap, stats: driftStats, totalHands: driftTotalHands } = useDrift({
@@ -418,7 +431,7 @@ export default function StatsPage() {
     setActivePreset('all');
   };
 
-  const hasFilters = !!(stakes || gameMode || dateFrom || dateTo);
+  const hasFilters = !!(stakes || gameMode || dateFrom || dateTo || lastN);
 
   const filterBarContent = (
     <FilterBar
@@ -434,6 +447,20 @@ export default function StatsPage() {
       onPresetChange={handlePreset}
       filterOptions={filterOpts}
     >
+      {/* Last N hands */}
+      <div className="flex items-center gap-1.5">
+        <span className="text-xs text-text-muted">Last</span>
+        <Input
+          type="number"
+          value={lastN}
+          onChange={(e) => setLastN(e.target.value)}
+          placeholder="All"
+          min={1}
+          className="w-20 h-8 text-sm [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+        />
+        <span className="text-xs text-text-muted">hands</span>
+      </div>
+
       {/* Summary stats */}
       {stats && stats.hands > 0 && (() => {
         const wr = stats.win_rate_bb100;
@@ -467,7 +494,7 @@ export default function StatsPage() {
         {filterBarContent}
         <EmptyState
           variant={hasFilters ? 'no-match' : 'no-data'}
-          onClearFilters={hasFilters ? () => { setStakes(''); setDateFrom(''); setDateTo(''); handlePreset('all'); } : undefined}
+          onClearFilters={hasFilters ? () => { setStakes(''); setGameMode(''); setDateFrom(''); setDateTo(''); setLastN(''); handlePreset('all'); } : undefined}
         />
       </div>
     );

@@ -443,20 +443,21 @@ export default function GraphPage() {
         />
         <span className="text-xs text-text-muted">hands</span>
       </div>
-
-      {/* Unit toggle + line toggles */}
-      <div className="flex gap-1.5 items-center">
-        <ToggleGroup type="single" value={unit} onValueChange={(v) => { if (v) setUnit(v as 'bb' | 'usd'); }}>
-          <ToggleGroupItem value="bb" className="h-7 text-xs px-3">BB</ToggleGroupItem>
-          <ToggleGroupItem value="usd" className="h-7 text-xs px-3">$</ToggleGroupItem>
-        </ToggleGroup>
-        {toggleBtn('ev', 'EV', LINE_COLORS.ev, hasEVData)}
-        {toggleBtn('showdown', 'SD', LINE_COLORS.showdown)}
-        {toggleBtn('rake', 'Rake', LINE_COLORS.rake)}
-        {toggleBtn('ci', 'CI', LINE_COLORS.ci, !!variance)}
-        {toggleBtn('sessions', 'Sessions', LINE_COLORS.session, sessions.length > 1)}
-      </div>
     </FilterBar>
+  );
+
+  const displayToolbar = (
+    <div className="flex items-center gap-1.5 px-1">
+      <ToggleGroup type="single" value={unit} onValueChange={(v) => { if (v) setUnit(v as 'bb' | 'usd'); }}>
+        <ToggleGroupItem value="bb" className="h-7 text-xs px-3">BB</ToggleGroupItem>
+        <ToggleGroupItem value="usd" className="h-7 text-xs px-3">$</ToggleGroupItem>
+      </ToggleGroup>
+      {toggleBtn('ev', 'EV', LINE_COLORS.ev, hasEVData)}
+      {toggleBtn('showdown', 'SD', LINE_COLORS.showdown)}
+      {toggleBtn('rake', 'Rake', LINE_COLORS.rake)}
+      {toggleBtn('ci', 'CI', LINE_COLORS.ci, !!variance)}
+      {toggleBtn('sessions', 'Sessions', LINE_COLORS.session, sessions.length > 1)}
+    </div>
   );
 
   // Empty state
@@ -484,6 +485,7 @@ export default function GraphPage() {
         </Card>
       ) : data.length > 0 && (
         <Card className="gap-0 py-0 p-2">
+          {displayToolbar}
           <div className="flex gap-4 mb-0.5 ml-12 text-xs text-text-muted">
             <span className="flex items-center gap-1.5">
               <span className="inline-block w-4 h-0.5 rounded" style={{ background: LINE_COLORS.main }} />

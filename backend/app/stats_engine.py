@@ -170,6 +170,7 @@ def compute_hero_stats(
     game_mode: str | None = None,
     date_from: str | None = None,
     date_to: str | None = None,
+    last_n: int | None = None,
 ) -> HeroStats:
     player = db.execute(
         "SELECT id FROM players WHERE username = ? AND site_id = 1",
@@ -199,7 +200,25 @@ def compute_hero_stats(
         where += " AND h.played_at <= ?"
         params.append(date_to)
 
-    rows = db.execute(_AGG_SQL.format(where=where), params).fetchall()
+    if last_n:
+        # Restrict to most recent N hands using a CTE
+        cte_where = where
+        cte_params = list(params)
+        cte = f"""WITH recent_hands AS (
+            SELECT h.id FROM hand_players hp
+            JOIN hands h ON hp.hand_id = h.id
+            WHERE {cte_where}
+            ORDER BY h.played_at DESC, h.id DESC
+            LIMIT {int(last_n)}
+        )
+        """
+        where += " AND h.id IN (SELECT id FROM recent_hands)"
+        params = cte_params + params
+        sql = cte + _AGG_SQL.format(where=where)
+    else:
+        sql = _AGG_SQL.format(where=where)
+
+    rows = db.execute(sql, params).fetchall()
     if not rows:
         return HeroStats()
 

@@ -92,27 +92,22 @@ export default function FilterBar({
         )}
 
         {showGameMode && hasMultipleModes && (
-          <div className="flex gap-1">
-            <Button
-              variant={gameModeValue === '__all__' ? 'default' : 'outline'}
-              size="sm"
-              className="h-7 text-xs"
-              onClick={() => onGameModeChange?.('')}
-            >
-              All
-            </Button>
-            {filterOptions!.game_modes.map((m) => (
-              <Button
-                key={m || '__reg__'}
-                variant={gameModeValue === (m || '__reg__') ? 'default' : 'outline'}
-                size="sm"
-                className="h-7 text-xs"
-                onClick={() => onGameModeChange?.(m || '__reg__')}
-              >
-                {GAME_MODE_LABELS[m] || m}
-              </Button>
-            ))}
-          </div>
+          <Select
+            value={gameModeValue}
+            onValueChange={(v) => onGameModeChange?.(v === '__all__' ? '' : v)}
+          >
+            <SelectTrigger className="w-[130px] h-8 text-sm">
+              <SelectValue placeholder="All Modes" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__all__">All Modes</SelectItem>
+              {filterOptions!.game_modes.map((m) => (
+                <SelectItem key={m || '__reg__'} value={m || '__reg__'}>
+                  {GAME_MODE_LABELS[m] || m}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         )}
 
         {showDateRange && (

@@ -226,6 +226,7 @@ export async function getHeroStats(params?: {
   game_mode?: string;
   date_from?: string;
   date_to?: string;
+  last_n?: number;
 }): Promise<HeroStats> {
   const sp = new URLSearchParams();
   if (params?.position) sp.set('position', params.position);
@@ -233,6 +234,7 @@ export async function getHeroStats(params?: {
   setGameModeParam(sp, params?.game_mode);
   if (params?.date_from) sp.set('date_from', params.date_from);
   if (params?.date_to) sp.set('date_to', params.date_to);
+  if (params?.last_n) sp.set('last_n', String(params.last_n));
   const res = await fetch(`${BASE}/stats/hero?${sp}`);
   if (!res.ok) throw new Error(`Stats failed: ${res.statusText}`);
   return res.json();

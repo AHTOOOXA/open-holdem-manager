@@ -29,6 +29,7 @@ def get_hero_stats(
     game_mode: str | None = Query(None),
     date_from: str | None = Query(None),
     date_to: str | None = Query(None),
+    last_n: int | None = Query(None, gt=0),
 ):
     db = get_read_cursor()
     row = db.execute(
@@ -37,7 +38,8 @@ def get_hero_stats(
     hero_username = row[0] if row else "Hero"
 
     return compute_hero_stats(db, hero_username, position=position, stakes=stakes,
-                              game_mode=game_mode, date_from=date_from, date_to=date_to)
+                              game_mode=game_mode, date_from=date_from, date_to=date_to,
+                              last_n=last_n)
 
 
 @router.get("/stats/range", response_model=RangeResponse)
