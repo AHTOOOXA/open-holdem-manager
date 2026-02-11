@@ -24,4 +24,9 @@ export const queryKeys = {
   cashDrop: (filters: Record<string, unknown>) => ['cash-drop', filters] as const,
 
   drift: (filters: Record<string, unknown>) => ['drift', filters] as const,
+
+  sessions: {
+    list: ['sessions', 'list'] as const,
+    detail: (index: number) => ['sessions', 'detail', index] as const,
+  },
 };

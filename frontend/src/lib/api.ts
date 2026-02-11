@@ -645,6 +645,85 @@ export async function getCashDropStats(params?: {
   return res.json();
 }
 
+// ── Session Types ────────────────────────────────────────────────────
+
+export interface SessionSummary {
+  session_index: number;
+  start_time: string;
+  end_time: string;
+  hands: number;
+  duration_minutes: number;
+  stakes: string[];
+  won_bb: number;
+  won_usd: number;
+  ev_bb: number;
+  ev_usd: number;
+  rake_bb: number;
+  rake_usd: number;
+  bb_per_100: number;
+  ev_bb_per_100: number;
+}
+
+export interface SessionListResponse {
+  sessions: SessionSummary[];
+  total: number;
+}
+
+export interface SessionGraphPoint {
+  hand_number: number;
+  played_at: string;
+  cumulative_bb: number;
+  cumulative_ev_bb: number;
+  cumulative_usd: number;
+  cumulative_ev_usd: number;
+}
+
+export interface SessionStats extends SessionSummary {
+  hands_per_hour: number;
+  usd_per_hour: number;
+  bb_per_hour: number;
+  vpip_pct: number | null;
+  pfr_pct: number | null;
+  three_bet_pct: number | null;
+  cbet_flop_pct: number | null;
+  wtsd_pct: number | null;
+  wsd_pct: number | null;
+  wwsf_pct: number | null;
+  steal_pct: number | null;
+  afq_flop_pct: number | null;
+}
+
+export interface SessionBigHand {
+  hand_id: string;
+  played_at: string;
+  won_bb: number;
+  won_usd: number;
+  position: string;
+  card1: string | null;
+  card2: string | null;
+  stakes: string;
+}
+
+export interface SessionDetailResponse {
+  session_index: number;
+  stats: SessionStats;
+  graph: SessionGraphPoint[];
+  biggest_wins: SessionBigHand[];
+  biggest_losses: SessionBigHand[];
+}
+
+export async function getSessions(): Promise<SessionListResponse> {
+  const res = await fetch(`${BASE}/sessions`);
+  if (!res.ok) throw new Error(`Sessions failed: ${res.statusText}`);
+  return res.json();
+}
+
+export async function getSessionDetail(index: number): Promise<SessionDetailResponse> {
+  const res = await fetch(`${BASE}/sessions/${index}`);
+  if (!res.ok) throw new Error(`Session detail failed: ${res.statusText}`);
+  return res.json();
+}
+
 // ── Stat Detail Types ────────────────────────────────────────────────
 
 export interface StatDetailHand {

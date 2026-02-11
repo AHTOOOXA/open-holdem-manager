@@ -434,6 +434,87 @@ class StatAnalysisResponse(BaseModel):
 
 # ── Stat Detail Models ─────────────────────────────────────────────
 
+# ── Session Models ─────────────────────────────────────────────────
+
+class SessionSummary(BaseModel):
+    session_index: int
+    start_time: str
+    end_time: str
+    hands: int
+    duration_minutes: float
+    stakes: list[str] = []
+    won_bb: float
+    won_usd: float
+    ev_bb: float
+    ev_usd: float
+    rake_bb: float
+    rake_usd: float
+    bb_per_100: float
+    ev_bb_per_100: float
+
+
+class SessionListResponse(BaseModel):
+    sessions: list[SessionSummary]
+    total: int
+
+
+class SessionGraphPoint(BaseModel):
+    hand_number: int
+    played_at: str
+    cumulative_bb: float
+    cumulative_ev_bb: float
+    cumulative_usd: float
+    cumulative_ev_usd: float
+
+
+class SessionStats(BaseModel):
+    session_index: int
+    start_time: str
+    end_time: str
+    hands: int
+    duration_minutes: float
+    stakes: list[str] = []
+    won_bb: float
+    won_usd: float
+    ev_bb: float
+    ev_usd: float
+    rake_bb: float
+    rake_usd: float
+    bb_per_100: float
+    ev_bb_per_100: float
+    hands_per_hour: float
+    usd_per_hour: float
+    bb_per_hour: float
+    vpip_pct: float | None = None
+    pfr_pct: float | None = None
+    three_bet_pct: float | None = None
+    cbet_flop_pct: float | None = None
+    wtsd_pct: float | None = None
+    wsd_pct: float | None = None
+    wwsf_pct: float | None = None
+    steal_pct: float | None = None
+    afq_flop_pct: float | None = None
+
+
+class SessionBigHand(BaseModel):
+    hand_id: str
+    played_at: str
+    won_bb: float
+    won_usd: float
+    position: str
+    card1: Optional[str] = None
+    card2: Optional[str] = None
+    stakes: str
+
+
+class SessionDetailResponse(BaseModel):
+    session_index: int
+    stats: SessionStats
+    graph: list[SessionGraphPoint] = []
+    biggest_wins: list[SessionBigHand] = []
+    biggest_losses: list[SessionBigHand] = []
+
+
 class StatDetailHand(BaseModel):
     hand_id: str
     played_at: datetime

@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.formparsers import MultiPartParser
 
 from app.db import get_db, close_db, get_read_cursor
-from app.api import import_hands, stats, reports, settings, hands, cash_drop
+from app.api import import_hands, stats, reports, settings, hands, cash_drop, sessions
 
 MultiPartParser.max_part_size = 50 * 1024 * 1024  # 50MB
 
@@ -23,6 +23,7 @@ app.include_router(reports.router, prefix="/api")
 app.include_router(settings.router, prefix="/api")
 app.include_router(hands.router, prefix="/api")
 app.include_router(cash_drop.router, prefix="/api")
+app.include_router(sessions.router, prefix="/api")
 
 
 @app.on_event("startup")
