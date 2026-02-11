@@ -14,6 +14,7 @@ import {
 import { ImportProvider } from '@/contexts/ImportContext';
 import ImportOverlay from '@/components/ImportOverlay';
 import AppSidebar from '@/components/AppSidebar';
+import { getStatDisplayName } from '@/lib/stat-registry';
 import StatsPage from './pages/StatsPage';
 import GraphPage from './pages/GraphPage';
 import HandsPage from './pages/HandsPage';
@@ -42,11 +43,14 @@ function AppBreadcrumb() {
 
   if (!topLabel) return null;
 
-  // Check if we have a sub-page (e.g., /sessions/123)
+  // Check if we have a sub-page (e.g., /sessions/123 or /stats/vpip)
   const parts = pathname.split('/').filter(Boolean);
   if (parts.length > 1 && topPath === '/sessions') {
     segments.push({ label: topLabel, href: topPath });
     segments.push({ label: `Session #${parts[1]}` });
+  } else if (parts.length > 1 && topPath === '/stats') {
+    segments.push({ label: topLabel, href: topPath });
+    segments.push({ label: getStatDisplayName(parts[1]) });
   } else {
     segments.push({ label: topLabel });
   }
@@ -91,6 +95,7 @@ export default function App() {
               <Routes>
                 <Route path="/" element={<Navigate to="/graph" replace />} />
                 <Route path="/stats" element={<StatsPage />} />
+                <Route path="/stats/:statKey" element={<StatsPage />} />
                 <Route path="/graph" element={<GraphPage />} />
                 <Route path="/range" element={<RangePage />} />
                 <Route path="/hands" element={<HandsPage />} />

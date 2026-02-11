@@ -1,10 +1,9 @@
 import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { useSearchParams } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { getHeroStats } from '@/lib/api';
 import type { PositionalStats, StatValue, DriftStat } from '@/lib/api';
 import { useFilterOptions } from '@/hooks/useFilterOptions';
-import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { queryKeys } from '@/lib/query-keys';
 import { getPresetDates } from '@/lib/date-presets';
 import type { DatePreset } from '@/lib/date-presets';
@@ -15,7 +14,6 @@ import { Input } from '@/components/ui/input';
 import LeakSummaryPanel from '@/components/LeakSummaryPanel';
 import DriftPanel from '@/components/DriftPanel';
 import StatDetailPanel from '@/components/stats/StatDetailPanel';
-import StatDetailEmpty from '@/components/stats/StatDetailEmpty';
 import { useDrift } from '@/hooks/useDrift';
 import {
   getBenchmarkForPosition,
@@ -29,13 +27,6 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
-import {
-  Sheet,
-  SheetContent,
-  SheetTitle,
-  SheetDescription,
-} from '@/components/ui/sheet';
-import * as VisuallyHidden from '@radix-ui/react-visually-hidden';
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -117,13 +108,6 @@ const STAT_TO_DRIFT_KEY: Record<string, string> = {
   vs_steal_fold: 'fold_to_steal',
 };
 
-// ── Selected stat type ──────────────────────────────────────────────
-
-interface SelectedStat {
-  key: string;
-  position?: string;
-}
-
 // ── Drift Arrow ──────────────────────────────────────────────────────
 
 function DriftArrow({ drift, statKey }: { drift: DriftStat; statKey?: string }) {
@@ -172,11 +156,9 @@ function StatCell({
   decimals = 0,
   colorFn,
   driftMap,
-  selectedStat,
   onStatClick,
 }: CellDef & {
   driftMap?: Map<string, DriftStat>;
-  selectedStat?: SelectedStat | null;
   onStatClick?: (key: string, position?: string) => void;
 }) {
   const { text, color, sub, health, benchmark } = fmtStat(sv, statKey, position, decimals, colorFn);
@@ -186,11 +168,8 @@ function StatCell({
 
   const effectiveDrillKey = drillKey ?? statKey;
   const clickable = isDrillable(effectiveDrillKey) && sv?.sample != null && sv.sample > 0;
-  const isSelected = clickable && selectedStat?.key === effectiveDrillKey &&
-    (selectedStat?.position ?? 'total') === (position ?? 'total');
 
-  // Suppress benchmark tooltip on clickable stats — detail panel replaces it
-  const hasTooltip = !clickable && benchmark && health && sv?.value != null && health.status !== 'neutral';
+  const hasTooltip = benchmark && health && sv?.value != null && health.status !== 'neutral';
   const displayName = statKey ? (STAT_DISPLAY_NAMES[statKey] || statKey) : '';
 
   const handleClick = () => {
@@ -210,7 +189,6 @@ function StatCell({
   const cellClass = [
     'py-1 px-1.5 text-center font-mono text-[13px] leading-tight',
     clickable ? 'cursor-pointer hover:bg-primary/10 transition-colors' : '',
-    isSelected ? 'bg-primary/15 ring-1 ring-primary/40 ring-inset' : '',
   ].join(' ');
 
   if (!hasTooltip) {
@@ -257,13 +235,11 @@ function PosTable({
   headers,
   rows,
   driftMap,
-  selectedStat,
   onStatClick,
 }: {
   headers: string[];
   rows: { label: string; cells: CellDef[] }[];
   driftMap?: Map<string, DriftStat>;
-  selectedStat?: SelectedStat | null;
   onStatClick?: (key: string, position?: string) => void;
 }) {
   return (
@@ -289,7 +265,6 @@ function PosTable({
                 key={i}
                 {...cell}
                 driftMap={driftMap}
-                selectedStat={selectedStat}
                 onStatClick={onStatClick}
               />
             ))}
@@ -304,12 +279,10 @@ function PosTable({
 function KVGrid({
   items,
   driftMap,
-  selectedStat,
   onStatClick,
 }: {
   items: (CellDef & { label: string })[];
   driftMap?: Map<string, DriftStat>;
-  selectedStat?: SelectedStat | null;
   onStatClick?: (key: string, position?: string) => void;
 }) {
   return (
@@ -325,10 +298,8 @@ function KVGrid({
         const effectiveDrillKey = item.drillKey ?? item.statKey;
         const clickable = isDrillable(effectiveDrillKey) && item.sv?.sample != null && item.sv.sample > 0;
 
-        // Suppress benchmark tooltip on clickable stats
-        const hasTooltip = !clickable && benchmark && health && item.sv?.value != null && health.status !== 'neutral';
+        const hasTooltip = benchmark && health && item.sv?.value != null && health.status !== 'neutral';
         const tip = health?.direction === 'low' ? benchmark?.tipLow : health?.direction === 'high' ? benchmark?.tipHigh : undefined;
-        const isSelected = clickable && selectedStat?.key === effectiveDrillKey;
 
         const handleClick = () => {
           if (clickable && effectiveDrillKey && onStatClick) {
@@ -350,7 +321,6 @@ function KVGrid({
             className={[
               'flex items-baseline justify-between py-0.5 px-1 rounded-sm',
               clickable ? 'cursor-pointer hover:bg-primary/10 transition-colors' : '',
-              isSelected ? 'bg-primary/15 ring-1 ring-primary/40' : '',
             ].join(' ')}
             onClick={handleClick}
           >
@@ -398,13 +368,12 @@ function posRow(
 }
 
 /** Inline stat value for the missed-cbet / showdown sections */
-function InlineStat({ sv, statKey, drillKey, position, driftMap, selectedStat, onStatClick }: {
+function InlineStat({ sv, statKey, drillKey, position, driftMap, onStatClick }: {
   sv: StatValue | undefined;
   statKey?: string;
   drillKey?: string;
   position?: string;
   driftMap?: Map<string, DriftStat>;
-  selectedStat?: SelectedStat | null;
   onStatClick?: (key: string, position?: string) => void;
 }) {
   const { text, color, sub, health, benchmark } = fmtStat(sv, statKey, position);
@@ -415,10 +384,8 @@ function InlineStat({ sv, statKey, drillKey, position, driftMap, selectedStat, o
 
   const effectiveDrillKey = drillKey ?? statKey;
   const clickable = isDrillable(effectiveDrillKey) && sv?.sample != null && sv.sample > 0;
-  const isSelected = clickable && selectedStat?.key === effectiveDrillKey;
 
-  // Suppress benchmark tooltip on clickable stats
-  const hasTooltip = !clickable && benchmark && health && sv?.value != null && health.status !== 'neutral';
+  const hasTooltip = benchmark && health && sv?.value != null && health.status !== 'neutral';
   const tip = health?.direction === 'low' ? benchmark?.tipLow : health?.direction === 'high' ? benchmark?.tipHigh : undefined;
 
   const handleClick = () => {
@@ -438,7 +405,6 @@ function InlineStat({ sv, statKey, drillKey, position, driftMap, selectedStat, o
   const wrapperClass = [
     'inline-block px-1 rounded-sm',
     clickable ? 'cursor-pointer hover:bg-primary/10 transition-colors' : '',
-    isSelected ? 'bg-primary/15 ring-1 ring-primary/40' : '',
   ].join(' ');
 
   if (!hasTooltip) {
@@ -464,49 +430,33 @@ function InlineStat({ sv, statKey, drillKey, position, driftMap, selectedStat, o
   );
 }
 
-// ── Main Component ───────────────────────────────────────────────────
+// ── Detail View ─────────────────────────────────────────────────────
 
-export default function StatsPage() {
+function StatsDetailView({ statKey }: { statKey: string }) {
   const [searchParams, setSearchParams] = useSearchParams();
-  const isWide = useMediaQuery('(min-width: 1280px)');
+  const [page, setPage] = useState(1);
+  const [perPage, setPerPage] = useState(25);
 
-  // Filters
-  const [stakes, setStakes] = useState<string>('');
-  const [gameMode, setGameMode] = useState<string>('');
-  const [dateFrom, setDateFrom] = useState<string>('');
-  const [dateTo, setDateTo] = useState<string>('');
-  const [activePreset, setActivePreset] = useState<DatePreset>('all');
-  const [lastN, setLastN] = useState<string>('');
+  const position = searchParams.get('pos') ?? undefined;
 
-  // Detail panel state
-  const detailKey = searchParams.get('detail') ?? null;
-  const detailPos = searchParams.get('pos') ?? undefined;
-  const [detailPage, setDetailPage] = useState(1);
-  const [detailPerPage, setDetailPerPage] = useState(25);
+  const filterParams = useMemo(() => ({
+    stakes: searchParams.get('stakes') ?? undefined,
+    game_mode: searchParams.get('game_mode') ?? undefined,
+    date_from: searchParams.get('date_from') ?? undefined,
+    date_to: searchParams.get('date_to') ?? undefined,
+  }), [searchParams]);
 
-  const selectedStat: SelectedStat | null = detailKey ? { key: detailKey, position: detailPos } : null;
+  const statsQueryParams = useMemo(() => ({
+    ...filterParams,
+    last_n: searchParams.get('last_n') ? parseInt(searchParams.get('last_n')!, 10) : undefined,
+  }), [filterParams, searchParams]);
 
-  const handleStatClick = useCallback((key: string, position?: string) => {
-    setSearchParams((prev) => {
-      const next = new URLSearchParams(prev);
-      if (next.get('detail') === key && (next.get('pos') ?? undefined) === position) {
-        // Clicking same stat deselects
-        next.delete('detail');
-        next.delete('pos');
-      } else {
-        next.set('detail', key);
-        if (position) {
-          next.set('pos', position);
-        } else {
-          next.delete('pos');
-        }
-      }
-      return next;
-    }, { replace: true });
-    setDetailPage(1);
-  }, [setSearchParams]);
+  const { data: heroStats } = useQuery({
+    queryKey: queryKeys.stats.hero(statsQueryParams),
+    queryFn: () => getHeroStats(statsQueryParams),
+  });
 
-  const handleDetailPositionChange = useCallback((pos: string | undefined) => {
+  const handlePositionChange = useCallback((pos: string | undefined) => {
     setSearchParams((prev) => {
       const next = new URLSearchParams(prev);
       if (pos) {
@@ -516,16 +466,38 @@ export default function StatsPage() {
       }
       return next;
     }, { replace: true });
+    setPage(1);
   }, [setSearchParams]);
 
-  const handleDetailClose = useCallback(() => {
-    setSearchParams((prev) => {
-      const next = new URLSearchParams(prev);
-      next.delete('detail');
-      next.delete('pos');
-      return next;
-    }, { replace: true });
-  }, [setSearchParams]);
+  return (
+    <div className="h-[calc(100vh-6rem)]">
+      <StatDetailPanel
+        statKey={statKey}
+        position={position}
+        onPositionChange={handlePositionChange}
+        filterParams={filterParams}
+        heroStats={heroStats}
+        page={page}
+        perPage={perPage}
+        onPageChange={setPage}
+        onPerPageChange={setPerPage}
+      />
+    </div>
+  );
+}
+
+// ── List View ───────────────────────────────────────────────────────
+
+function StatsListView() {
+  const navigate = useNavigate();
+
+  // Filters
+  const [stakes, setStakes] = useState<string>('');
+  const [gameMode, setGameMode] = useState<string>('');
+  const [dateFrom, setDateFrom] = useState<string>('');
+  const [dateTo, setDateTo] = useState<string>('');
+  const [activePreset, setActivePreset] = useState<DatePreset>('all');
+  const [lastN, setLastN] = useState<string>('');
 
   // Debounce lastN
   const [debouncedLastN, setDebouncedLastN] = useState<string>('');
@@ -561,6 +533,18 @@ export default function StatsPage() {
     date_to: filterParams.date_to,
     enabled: (stats?.hands ?? 0) >= 20000,
   });
+
+  const handleStatClick = useCallback((key: string, position?: string) => {
+    const params = new URLSearchParams();
+    if (position) params.set('pos', position);
+    if (stakes) params.set('stakes', stakes);
+    if (gameMode) params.set('game_mode', gameMode);
+    if (dateFrom) params.set('date_from', dateFrom);
+    if (dateTo) params.set('date_to', dateTo);
+    if (debouncedLastN) params.set('last_n', debouncedLastN);
+    const qs = params.toString();
+    navigate(`/stats/${key}${qs ? `?${qs}` : ''}`);
+  }, [navigate, stakes, gameMode, dateFrom, dateTo, debouncedLastN]);
 
   const handlePreset = (preset: DatePreset) => {
     setActivePreset(preset);
@@ -654,379 +638,319 @@ export default function StatsPage() {
   const fullPosHeaders = ['Tot', 'EP', 'MP', 'CO', 'BTN', 'SB', 'BB'];
   const fullPosKeys: ('total' | 'ep' | 'mp' | 'co' | 'btn' | 'sb' | 'bb')[] = ['total', 'ep', 'mp', 'co', 'btn', 'sb', 'bb'];
 
-  const detailFilterParams = {
-    stakes: filterParams.stakes,
-    game_mode: filterParams.game_mode,
-    date_from: filterParams.date_from,
-    date_to: filterParams.date_to,
-  };
-
-  // The stat tables (left panel content)
-  const statTables = (
-    <>
-      {/* ── Filter Bar ── */}
-      <div className="mb-3">{filterBarContent}</div>
-
-      {/* ── Leak Summary Panel ── */}
-      {stats.hands >= 200 && <LeakSummaryPanel stats={stats} />}
-
-      {/* ── Drift Panel ── */}
-      <DriftPanel stats={driftStats} totalHands={driftTotalHands} />
-
-      {/* ── PRE-FLOP ── */}
-      <SectionTitle>Pre-Flop</SectionTitle>
-      <div className="flex flex-col lg:flex-row gap-0 border-x border-b border-border">
-        {/* Left: Positional table */}
-        <div className="flex-1 min-w-0 overflow-x-auto lg:border-r border-border">
-          <PosTable
-            headers={fullPosHeaders}
-            driftMap={driftMap}
-            selectedStat={selectedStat}
-            onStatClick={handleStatClick}
-            rows={[
-              posRow('Open Raise', stats.open_raise, 'open_raise', fullPosKeys),
-              posRow('Fold to 3Bet', stats.fold_to_3bet, 'fold_to_3bet', fullPosKeys),
-              posRow('Call Open', stats.call_open_raise, undefined, fullPosKeys, 'call_open_raise'),
-              posRow('3-Bet', stats.three_bet, 'three_bet', fullPosKeys),
-              posRow('3-Bet IP', stats.three_bet_ip, 'three_bet', fullPosKeys, 'three_bet_ip'),
-              posRow('3-Bet OOP', stats.three_bet_oop, 'three_bet', fullPosKeys, 'three_bet_oop'),
-            ]}
-          />
-        </div>
-
-        {/* Right: KV grid */}
-        <div className="w-full lg:w-64 lg:shrink-0">
-          <KVGrid
-            driftMap={driftMap}
-            selectedStat={selectedStat}
-            onStatClick={handleStatClick}
-            items={[
-              { label: 'VPIP', sv: stats.vpip.total, statKey: 'vpip' },
-              { label: 'PFR', sv: stats.pfr.total, statKey: 'pfr' },
-              { label: '4-Bet', sv: stats.four_bet.total, statKey: 'four_bet' },
-              { label: 'Limp', sv: stats.limp.total, drillKey: 'limp' },
-              { label: '4-Bet Range', sv: stats.four_bet_range, decimals: 1, drillKey: 'four_bet_range' },
-              { label: 'Limp-Fold', sv: stats.limp_fold, drillKey: 'limp_fold' },
-              { label: 'Squeeze', sv: stats.squeeze, drillKey: 'squeeze' },
-              { label: '4-Bet-Fold', sv: stats.four_bet_fold, drillKey: 'four_bet_fold' },
-              { label: 'Fold to 4-Bet', sv: stats.fold_to_4bet.total, statKey: 'fold_to_4bet' },
-              { label: 'Win Rate', sv: wr !== null ? { value: wr, sample: stats.hands } : undefined, colorFn: (v: number) => v >= 0 ? 'text-green' : 'text-red', decimals: 2 },
-              { label: 'Win Rate EV', sv: wrEv !== null ? { value: wrEv, sample: stats.hands } : undefined, colorFn: (v: number) => v >= 0 ? 'text-green' : 'text-red', decimals: 2 },
-              { label: 'Call 4-Bet', sv: stats.call_4bet, drillKey: 'call_4bet' },
-              { label: 'Hands', sv: { value: stats.hands, sample: stats.hands } },
-              { label: '5-Bet', sv: stats.five_bet, drillKey: 'five_bet' },
-            ]}
-          />
-        </div>
-      </div>
-
-      {/* ── STEAL ── */}
-      <SectionTitle>Steal</SectionTitle>
-      <div className="flex gap-0 border-x border-b border-border">
-        {/* Left: Steal table (Total, BTN, SB) */}
-        <div className="flex-1 min-w-0 overflow-x-auto border-r border-border">
-          <PosTable
-            headers={['Tot', 'BTN', 'SB']}
-            driftMap={driftMap}
-            selectedStat={selectedStat}
-            onStatClick={handleStatClick}
-            rows={[
-              {
-                label: 'Steal',
-                cells: [
-                  { sv: stats.steal.total, statKey: 'steal', drillKey: 'steal', position: 'total' },
-                  { sv: stats.steal.btn, statKey: 'steal', drillKey: 'steal', position: 'btn' },
-                  { sv: stats.steal.sb, statKey: 'steal', drillKey: 'steal', position: 'sb' },
-                ],
-              },
-              {
-                label: 'Fold to 3Bet',
-                cells: [
-                  { sv: stats.fold_to_3bet_steal.total, statKey: 'fold_to_3bet', drillKey: 'fold_to_3bet', position: 'total' },
-                  { sv: stats.fold_to_3bet_steal.btn, statKey: 'fold_to_3bet', drillKey: 'fold_to_3bet', position: 'btn' },
-                  { sv: stats.fold_to_3bet_steal.sb, statKey: 'fold_to_3bet', drillKey: 'fold_to_3bet', position: 'sb' },
-                ],
-              },
-              {
-                label: '4-Bet',
-                cells: [
-                  { sv: stats.four_bet_steal.total, statKey: 'four_bet', drillKey: 'four_bet', position: 'total' },
-                  { sv: stats.four_bet_steal.btn, statKey: 'four_bet', drillKey: 'four_bet', position: 'btn' },
-                  { sv: stats.four_bet_steal.sb, statKey: 'four_bet', drillKey: 'four_bet', position: 'sb' },
-                ],
-              },
-              {
-                label: '4-Bet-Fold',
-                cells: [
-                  { sv: stats.four_bet_fold_steal.total, drillKey: 'four_bet_fold_steal', position: 'total' },
-                  { sv: stats.four_bet_fold_steal.btn, drillKey: 'four_bet_fold_steal', position: 'btn' },
-                  { sv: stats.four_bet_fold_steal.sb, drillKey: 'four_bet_fold_steal', position: 'sb' },
-                ],
-              },
-            ]}
-          />
-        </div>
-
-        {/* Right: vs Steal (SB, BB) */}
-        <div className="flex-1 min-w-0 overflow-x-auto">
-          <PosTable
-            headers={['SB', 'BB']}
-            driftMap={driftMap}
-            selectedStat={selectedStat}
-            onStatClick={handleStatClick}
-            rows={[
-              {
-                label: 'Fold',
-                cells: [
-                  { sv: stats.vs_steal_fold.sb, statKey: 'vs_steal_fold', drillKey: 'fold_to_steal', position: 'sb' },
-                  { sv: stats.vs_steal_fold.bb, statKey: 'vs_steal_fold', drillKey: 'fold_to_steal', position: 'bb' },
-                ],
-              },
-              {
-                label: 'Call',
-                cells: [
-                  { sv: stats.vs_steal_call.sb, drillKey: 'call_steal', position: 'sb' },
-                  { sv: stats.vs_steal_call.bb, drillKey: 'call_steal', position: 'bb' },
-                ],
-              },
-              {
-                label: '3-Bet',
-                cells: [
-                  { sv: stats.vs_steal_3bet.sb, drillKey: 'three_bet_vs_steal', position: 'sb' },
-                  { sv: stats.vs_steal_3bet.bb, drillKey: 'three_bet_vs_steal', position: 'bb' },
-                ],
-              },
-            ]}
-          />
-          <div className="px-2 py-0.5 text-[10px] text-text-muted uppercase tracking-wide border-t border-border/30">
-            vs. Steal
-          </div>
-        </div>
-      </div>
-
-      {/* ── POSTFLOP ── */}
-      <SectionTitle>Postflop</SectionTitle>
-      <div className="flex gap-0 border-x border-b border-border">
-        {/* Left: Postflop stats by street */}
-        <div className="flex-1 min-w-0 overflow-x-auto border-r border-border">
-          <PosTable
-            headers={['Flop', 'Turn', 'River']}
-            driftMap={driftMap}
-            selectedStat={selectedStat}
-            onStatClick={handleStatClick}
-            rows={[
-              {
-                label: 'C-Bet',
-                cells: [
-                  { sv: stats.cbet_flop.total, statKey: 'cbet_flop', drillKey: 'cbet_flop', position: 'total' },
-                  { sv: stats.cbet_turn.total, statKey: 'cbet_turn', drillKey: 'cbet_turn', position: 'total' },
-                  { sv: stats.cbet_river.total, statKey: 'cbet_river', drillKey: 'cbet_river', position: 'total' },
-                ],
-              },
-              {
-                label: 'Fold to CBet',
-                cells: [
-                  { sv: stats.fold_to_cbet_flop.total, statKey: 'fold_to_cbet_flop', drillKey: 'fold_to_cbet_flop', position: 'total' },
-                  { sv: stats.fold_to_cbet_turn.total, statKey: 'fold_to_cbet_turn', drillKey: 'fold_to_cbet_turn', position: 'total' },
-                  { sv: stats.fold_to_cbet_river.total, drillKey: 'fold_to_cbet_river', position: 'total' },
-                ],
-              },
-              {
-                label: 'Aggression',
-                cells: [
-                  { sv: stats.af_flop, statKey: 'af_flop', drillKey: 'af_flop', decimals: 1 },
-                  { sv: stats.af_turn, statKey: 'af_turn', drillKey: 'af_turn', decimals: 1 },
-                  { sv: stats.af_river, statKey: 'af_river', drillKey: 'af_river', decimals: 1 },
-                ],
-              },
-              {
-                label: 'Agg Freq',
-                cells: [
-                  { sv: stats.afq_flop, drillKey: 'afq_flop' },
-                  { sv: stats.afq_turn, drillKey: 'afq_turn' },
-                  { sv: stats.afq_river, drillKey: 'afq_river' },
-                ],
-              },
-              {
-                label: 'Donk Bet',
-                cells: [
-                  { sv: stats.donk_bet_flop, drillKey: 'donk_bet_flop' },
-                  { sv: stats.donk_bet_turn, drillKey: 'donk_bet_turn' },
-                  { sv: stats.donk_bet_river, drillKey: 'donk_bet_river' },
-                ],
-              },
-            ]}
-          />
-        </div>
-
-        {/* Right: vs CBet Flop (Fold/Call/Raise) */}
-        <div className="flex-1 min-w-0 overflow-x-auto">
-          <PosTable
-            headers={['Fold', 'Call', 'Raise']}
-            driftMap={driftMap}
-            selectedStat={selectedStat}
-            onStatClick={handleStatClick}
-            rows={[
-              {
-                label: 'Raised Pot',
-                cells: [
-                  { sv: stats.fold_cbet_flop_raised, drillKey: 'fold_cbet_flop_raised' },
-                  { sv: stats.call_cbet_flop_raised, drillKey: 'call_cbet_flop_raised' },
-                  { sv: stats.raise_cbet_flop_raised, drillKey: 'raise_cbet_flop_raised' },
-                ],
-              },
-              {
-                label: '3-Bet Pot',
-                cells: [
-                  { sv: stats.fold_cbet_flop_3bet, drillKey: 'fold_cbet_flop_3bet' },
-                  { sv: stats.call_cbet_flop_3bet, drillKey: 'call_cbet_flop_3bet' },
-                  { sv: stats.raise_cbet_flop_3bet, drillKey: 'raise_cbet_flop_3bet' },
-                ],
-              },
-            ]}
-          />
-          <div className="px-2 py-0.5 text-[10px] text-text-muted uppercase tracking-wide border-t border-border/30">
-            vs. C-Bet Flop
-          </div>
-        </div>
-      </div>
-
-      {/* ── MISSED C-BET ── */}
-      <SectionTitle>Missed C-Bet</SectionTitle>
-      <div className="flex gap-0 border-x border-b border-border">
-        {/* Left: Missed CBet breakdown */}
-        <div className="flex-1 min-w-0 p-2 border-r border-border">
-          <div className="space-y-2">
-            <div className="flex items-baseline justify-between">
-              <span className="text-[13px] text-text-muted">Missed C-Bet</span>
-              <InlineStat sv={stats.missed_cbet_flop} drillKey="missed_cbet_flop" driftMap={driftMap} selectedStat={selectedStat} onStatClick={handleStatClick} />
-            </div>
-            <div className="pl-3 space-y-1">
-              <div className="flex items-baseline justify-between">
-                <span className="text-[12px] text-text-muted">In Position</span>
-                <InlineStat sv={stats.missed_cbet_flop_ip} drillKey="missed_cbet_flop_ip" driftMap={driftMap} selectedStat={selectedStat} onStatClick={handleStatClick} />
-              </div>
-              <div className="flex items-baseline justify-between">
-                <span className="text-[12px] text-text-muted">&rarr; Fold</span>
-                <InlineStat sv={stats.missed_cbet_fold_ip} drillKey="missed_cbet_fold_ip" driftMap={driftMap} selectedStat={selectedStat} onStatClick={handleStatClick} />
-              </div>
-              <div className="flex items-baseline justify-between">
-                <span className="text-[12px] text-text-muted">Out of Position</span>
-                <InlineStat sv={stats.missed_cbet_flop_oop} drillKey="missed_cbet_flop_oop" driftMap={driftMap} selectedStat={selectedStat} onStatClick={handleStatClick} />
-              </div>
-              <div className="flex items-baseline justify-between">
-                <span className="text-[12px] text-text-muted">&rarr; Fold</span>
-                <InlineStat sv={stats.missed_cbet_fold_oop} drillKey="missed_cbet_fold_oop" driftMap={driftMap} selectedStat={selectedStat} onStatClick={handleStatClick} />
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Right: vs Missed CBet */}
-        <div className="flex-1 min-w-0 p-2">
-          <div className="space-y-2">
-            <div className="flex items-baseline justify-between">
-              <span className="text-[13px] text-text-muted">vs. Missed C-Bet</span>
-              <InlineStat sv={stats.vs_missed_cbet} drillKey="vs_missed_cbet" driftMap={driftMap} selectedStat={selectedStat} onStatClick={handleStatClick} />
-            </div>
-            <div className="pl-3 space-y-1">
-              <div className="flex items-baseline justify-between">
-                <span className="text-[12px] text-text-muted">Bet In Position</span>
-                <InlineStat sv={stats.vs_missed_cbet_bet_ip} drillKey="vs_missed_cbet_bet_ip" driftMap={driftMap} selectedStat={selectedStat} onStatClick={handleStatClick} />
-              </div>
-              <div className="flex items-baseline justify-between">
-                <span className="text-[12px] text-text-muted">Check | Fold</span>
-                <InlineStat sv={stats.vs_missed_cbet_check_fold_ip} drillKey="vs_missed_cbet_check_fold_ip" driftMap={driftMap} selectedStat={selectedStat} onStatClick={handleStatClick} />
-              </div>
-              <div className="flex items-baseline justify-between">
-                <span className="text-[12px] text-text-muted">Bet OOP Turn</span>
-                <InlineStat sv={stats.vs_missed_cbet_bet_oop_turn} drillKey="vs_missed_cbet_bet_oop_turn" driftMap={driftMap} selectedStat={selectedStat} onStatClick={handleStatClick} />
-              </div>
-              <div className="flex items-baseline justify-between">
-                <span className="text-[12px] text-text-muted">Check-Fold</span>
-                <InlineStat sv={stats.vs_missed_cbet_check_fold_oop} drillKey="vs_missed_cbet_check_fold_oop" driftMap={driftMap} selectedStat={selectedStat} onStatClick={handleStatClick} />
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* ── SHOWDOWN ── */}
-      <SectionTitle>Showdown</SectionTitle>
-      <div className="border-x border-b border-border p-2">
-        <div className="flex gap-6">
-          <div className="flex items-baseline gap-2">
-            <span className="text-[12px] text-text-muted">WTSD</span>
-            <InlineStat sv={stats.wtsd} statKey="wtsd" drillKey="went_to_showdown" driftMap={driftMap} selectedStat={selectedStat} onStatClick={handleStatClick} />
-          </div>
-          <div className="flex items-baseline gap-2">
-            <span className="text-[12px] text-text-muted">W$SD</span>
-            <InlineStat sv={stats.wsd} statKey="wsd" drillKey="won_at_showdown" driftMap={driftMap} selectedStat={selectedStat} onStatClick={handleStatClick} />
-          </div>
-          <div className="flex items-baseline gap-2">
-            <span className="text-[12px] text-text-muted">WWSF</span>
-            <InlineStat sv={stats.wwsf} statKey="wwsf" drillKey="wwsf" driftMap={driftMap} selectedStat={selectedStat} onStatClick={handleStatClick} />
-          </div>
-        </div>
-      </div>
-
-      <div className="h-4" />
-    </>
-  );
-
-  // Detail panel content
-  const detailContent = detailKey ? (
-    <StatDetailPanel
-      statKey={detailKey}
-      position={detailPos}
-      onPositionChange={handleDetailPositionChange}
-      filterParams={detailFilterParams}
-      heroStats={stats}
-      page={detailPage}
-      perPage={detailPerPage}
-      onPageChange={setDetailPage}
-      onPerPageChange={setDetailPerPage}
-    />
-  ) : (
-    <StatDetailEmpty />
-  );
-
-  // ── Render ──
-
   return (
     <TooltipProvider delayDuration={200}>
-      {isWide ? (
-        /* Wide: side-by-side layout */
-        <div className="flex h-[calc(100vh-6rem)] gap-0 px-2">
-          {/* Left panel: stat tables */}
-          <div className="w-[42%] shrink-0 overflow-y-auto pr-2">
-            {statTables}
+      <div className="mx-auto px-2">
+        {/* ── Filter Bar ── */}
+        <div className="mb-3">{filterBarContent}</div>
+
+        {/* ── Leak Summary Panel ── */}
+        {stats.hands >= 200 && <LeakSummaryPanel stats={stats} />}
+
+        {/* ── Drift Panel ── */}
+        <DriftPanel stats={driftStats} totalHands={driftTotalHands} />
+
+        {/* ── PRE-FLOP ── */}
+        <SectionTitle>Pre-Flop</SectionTitle>
+        <div className="flex flex-col lg:flex-row gap-0 border-x border-b border-border">
+          {/* Left: Positional table */}
+          <div className="flex-1 min-w-0 overflow-x-auto lg:border-r border-border">
+            <PosTable
+              headers={fullPosHeaders}
+              driftMap={driftMap}
+              onStatClick={handleStatClick}
+              rows={[
+                posRow('Open Raise', stats.open_raise, 'open_raise', fullPosKeys),
+                posRow('Fold to 3Bet', stats.fold_to_3bet, 'fold_to_3bet', fullPosKeys),
+                posRow('Call Open', stats.call_open_raise, undefined, fullPosKeys, 'call_open_raise'),
+                posRow('3-Bet', stats.three_bet, 'three_bet', fullPosKeys),
+                posRow('3-Bet IP', stats.three_bet_ip, 'three_bet', fullPosKeys, 'three_bet_ip'),
+                posRow('3-Bet OOP', stats.three_bet_oop, 'three_bet', fullPosKeys, 'three_bet_oop'),
+              ]}
+            />
           </div>
 
-          {/* Right panel: detail */}
-          <div className="flex-1 min-w-0 border-l border-border overflow-hidden">
-            {detailContent}
+          {/* Right: KV grid */}
+          <div className="w-full lg:w-64 lg:shrink-0">
+            <KVGrid
+              driftMap={driftMap}
+              onStatClick={handleStatClick}
+              items={[
+                { label: 'VPIP', sv: stats.vpip.total, statKey: 'vpip' },
+                { label: 'PFR', sv: stats.pfr.total, statKey: 'pfr' },
+                { label: '4-Bet', sv: stats.four_bet.total, statKey: 'four_bet' },
+                { label: 'Limp', sv: stats.limp.total, drillKey: 'limp' },
+                { label: '4-Bet Range', sv: stats.four_bet_range, decimals: 1, drillKey: 'four_bet_range' },
+                { label: 'Limp-Fold', sv: stats.limp_fold, drillKey: 'limp_fold' },
+                { label: 'Squeeze', sv: stats.squeeze, drillKey: 'squeeze' },
+                { label: '4-Bet-Fold', sv: stats.four_bet_fold, drillKey: 'four_bet_fold' },
+                { label: 'Fold to 4-Bet', sv: stats.fold_to_4bet.total, statKey: 'fold_to_4bet' },
+                { label: 'Win Rate', sv: wr !== null ? { value: wr, sample: stats.hands } : undefined, colorFn: (v: number) => v >= 0 ? 'text-green' : 'text-red', decimals: 2 },
+                { label: 'Win Rate EV', sv: wrEv !== null ? { value: wrEv, sample: stats.hands } : undefined, colorFn: (v: number) => v >= 0 ? 'text-green' : 'text-red', decimals: 2 },
+                { label: 'Call 4-Bet', sv: stats.call_4bet, drillKey: 'call_4bet' },
+                { label: 'Hands', sv: { value: stats.hands, sample: stats.hands } },
+                { label: '5-Bet', sv: stats.five_bet, drillKey: 'five_bet' },
+              ]}
+            />
           </div>
         </div>
-      ) : (
-        /* Narrow: full-width stats + Sheet slide-over for detail */
-        <div className="mx-auto px-2">
-          {statTables}
 
-          <Sheet
-            open={!!detailKey}
-            onOpenChange={(open) => { if (!open) handleDetailClose(); }}
-          >
-            <SheetContent side="right" className="w-[90vw] sm:max-w-[500px] p-0">
-              <VisuallyHidden.Root>
-                <SheetTitle>Stat Detail</SheetTitle>
-                <SheetDescription>Detailed hand list for selected stat</SheetDescription>
-              </VisuallyHidden.Root>
-              {detailContent}
-            </SheetContent>
-          </Sheet>
+        {/* ── STEAL ── */}
+        <SectionTitle>Steal</SectionTitle>
+        <div className="flex flex-col lg:flex-row gap-0 border-x border-b border-border">
+          {/* Left: Steal table (Total, BTN, SB) */}
+          <div className="flex-1 min-w-0 overflow-x-auto lg:border-r border-border">
+            <PosTable
+              headers={['Tot', 'BTN', 'SB']}
+              driftMap={driftMap}
+              onStatClick={handleStatClick}
+              rows={[
+                {
+                  label: 'Steal',
+                  cells: [
+                    { sv: stats.steal.total, statKey: 'steal', drillKey: 'steal', position: 'total' },
+                    { sv: stats.steal.btn, statKey: 'steal', drillKey: 'steal', position: 'btn' },
+                    { sv: stats.steal.sb, statKey: 'steal', drillKey: 'steal', position: 'sb' },
+                  ],
+                },
+                {
+                  label: 'Fold to 3Bet',
+                  cells: [
+                    { sv: stats.fold_to_3bet_steal.total, statKey: 'fold_to_3bet', drillKey: 'fold_to_3bet', position: 'total' },
+                    { sv: stats.fold_to_3bet_steal.btn, statKey: 'fold_to_3bet', drillKey: 'fold_to_3bet', position: 'btn' },
+                    { sv: stats.fold_to_3bet_steal.sb, statKey: 'fold_to_3bet', drillKey: 'fold_to_3bet', position: 'sb' },
+                  ],
+                },
+                {
+                  label: '4-Bet',
+                  cells: [
+                    { sv: stats.four_bet_steal.total, statKey: 'four_bet', drillKey: 'four_bet', position: 'total' },
+                    { sv: stats.four_bet_steal.btn, statKey: 'four_bet', drillKey: 'four_bet', position: 'btn' },
+                    { sv: stats.four_bet_steal.sb, statKey: 'four_bet', drillKey: 'four_bet', position: 'sb' },
+                  ],
+                },
+                {
+                  label: '4-Bet-Fold',
+                  cells: [
+                    { sv: stats.four_bet_fold_steal.total, drillKey: 'four_bet_fold_steal', position: 'total' },
+                    { sv: stats.four_bet_fold_steal.btn, drillKey: 'four_bet_fold_steal', position: 'btn' },
+                    { sv: stats.four_bet_fold_steal.sb, drillKey: 'four_bet_fold_steal', position: 'sb' },
+                  ],
+                },
+              ]}
+            />
+          </div>
+
+          {/* Right: vs Steal (SB, BB) */}
+          <div className="flex-1 min-w-0 overflow-x-auto">
+            <PosTable
+              headers={['SB', 'BB']}
+              driftMap={driftMap}
+              onStatClick={handleStatClick}
+              rows={[
+                {
+                  label: 'Fold',
+                  cells: [
+                    { sv: stats.vs_steal_fold.sb, statKey: 'vs_steal_fold', drillKey: 'fold_to_steal', position: 'sb' },
+                    { sv: stats.vs_steal_fold.bb, statKey: 'vs_steal_fold', drillKey: 'fold_to_steal', position: 'bb' },
+                  ],
+                },
+                {
+                  label: 'Call',
+                  cells: [
+                    { sv: stats.vs_steal_call.sb, drillKey: 'call_steal', position: 'sb' },
+                    { sv: stats.vs_steal_call.bb, drillKey: 'call_steal', position: 'bb' },
+                  ],
+                },
+                {
+                  label: '3-Bet',
+                  cells: [
+                    { sv: stats.vs_steal_3bet.sb, drillKey: 'three_bet_vs_steal', position: 'sb' },
+                    { sv: stats.vs_steal_3bet.bb, drillKey: 'three_bet_vs_steal', position: 'bb' },
+                  ],
+                },
+              ]}
+            />
+            <div className="px-2 py-0.5 text-[10px] text-text-muted uppercase tracking-wide border-t border-border/30">
+              vs. Steal
+            </div>
+          </div>
         </div>
-      )}
+
+        {/* ── POSTFLOP ── */}
+        <SectionTitle>Postflop</SectionTitle>
+        <div className="flex flex-col lg:flex-row gap-0 border-x border-b border-border">
+          {/* Left: Postflop stats by street */}
+          <div className="flex-1 min-w-0 overflow-x-auto lg:border-r border-border">
+            <PosTable
+              headers={['Flop', 'Turn', 'River']}
+              driftMap={driftMap}
+              onStatClick={handleStatClick}
+              rows={[
+                {
+                  label: 'C-Bet',
+                  cells: [
+                    { sv: stats.cbet_flop.total, statKey: 'cbet_flop', drillKey: 'cbet_flop', position: 'total' },
+                    { sv: stats.cbet_turn.total, statKey: 'cbet_turn', drillKey: 'cbet_turn', position: 'total' },
+                    { sv: stats.cbet_river.total, statKey: 'cbet_river', drillKey: 'cbet_river', position: 'total' },
+                  ],
+                },
+                {
+                  label: 'Fold to CBet',
+                  cells: [
+                    { sv: stats.fold_to_cbet_flop.total, statKey: 'fold_to_cbet_flop', drillKey: 'fold_to_cbet_flop', position: 'total' },
+                    { sv: stats.fold_to_cbet_turn.total, statKey: 'fold_to_cbet_turn', drillKey: 'fold_to_cbet_turn', position: 'total' },
+                    { sv: stats.fold_to_cbet_river.total, drillKey: 'fold_to_cbet_river', position: 'total' },
+                  ],
+                },
+                {
+                  label: 'Aggression',
+                  cells: [
+                    { sv: stats.af_flop, statKey: 'af_flop', drillKey: 'af_flop', decimals: 1 },
+                    { sv: stats.af_turn, statKey: 'af_turn', drillKey: 'af_turn', decimals: 1 },
+                    { sv: stats.af_river, statKey: 'af_river', drillKey: 'af_river', decimals: 1 },
+                  ],
+                },
+                {
+                  label: 'Agg Freq',
+                  cells: [
+                    { sv: stats.afq_flop, drillKey: 'afq_flop' },
+                    { sv: stats.afq_turn, drillKey: 'afq_turn' },
+                    { sv: stats.afq_river, drillKey: 'afq_river' },
+                  ],
+                },
+                {
+                  label: 'Donk Bet',
+                  cells: [
+                    { sv: stats.donk_bet_flop, drillKey: 'donk_bet_flop' },
+                    { sv: stats.donk_bet_turn, drillKey: 'donk_bet_turn' },
+                    { sv: stats.donk_bet_river, drillKey: 'donk_bet_river' },
+                  ],
+                },
+              ]}
+            />
+          </div>
+
+          {/* Right: vs CBet Flop (Fold/Call/Raise) */}
+          <div className="flex-1 min-w-0 overflow-x-auto">
+            <PosTable
+              headers={['Fold', 'Call', 'Raise']}
+              driftMap={driftMap}
+              onStatClick={handleStatClick}
+              rows={[
+                {
+                  label: 'Raised Pot',
+                  cells: [
+                    { sv: stats.fold_cbet_flop_raised, drillKey: 'fold_cbet_flop_raised' },
+                    { sv: stats.call_cbet_flop_raised, drillKey: 'call_cbet_flop_raised' },
+                    { sv: stats.raise_cbet_flop_raised, drillKey: 'raise_cbet_flop_raised' },
+                  ],
+                },
+                {
+                  label: '3-Bet Pot',
+                  cells: [
+                    { sv: stats.fold_cbet_flop_3bet, drillKey: 'fold_cbet_flop_3bet' },
+                    { sv: stats.call_cbet_flop_3bet, drillKey: 'call_cbet_flop_3bet' },
+                    { sv: stats.raise_cbet_flop_3bet, drillKey: 'raise_cbet_flop_3bet' },
+                  ],
+                },
+              ]}
+            />
+            <div className="px-2 py-0.5 text-[10px] text-text-muted uppercase tracking-wide border-t border-border/30">
+              vs. C-Bet Flop
+            </div>
+          </div>
+        </div>
+
+        {/* ── MISSED C-BET ── */}
+        <SectionTitle>Missed C-Bet</SectionTitle>
+        <div className="flex gap-0 border-x border-b border-border">
+          {/* Left: Missed CBet breakdown */}
+          <div className="flex-1 min-w-0 p-2 border-r border-border">
+            <div className="space-y-2">
+              <div className="flex items-baseline justify-between">
+                <span className="text-[13px] text-text-muted">Missed C-Bet</span>
+                <InlineStat sv={stats.missed_cbet_flop} drillKey="missed_cbet_flop" driftMap={driftMap} onStatClick={handleStatClick} />
+              </div>
+              <div className="pl-3 space-y-1">
+                <div className="flex items-baseline justify-between">
+                  <span className="text-[12px] text-text-muted">In Position</span>
+                  <InlineStat sv={stats.missed_cbet_flop_ip} drillKey="missed_cbet_flop_ip" driftMap={driftMap} onStatClick={handleStatClick} />
+                </div>
+                <div className="flex items-baseline justify-between">
+                  <span className="text-[12px] text-text-muted">&rarr; Fold</span>
+                  <InlineStat sv={stats.missed_cbet_fold_ip} drillKey="missed_cbet_fold_ip" driftMap={driftMap} onStatClick={handleStatClick} />
+                </div>
+                <div className="flex items-baseline justify-between">
+                  <span className="text-[12px] text-text-muted">Out of Position</span>
+                  <InlineStat sv={stats.missed_cbet_flop_oop} drillKey="missed_cbet_flop_oop" driftMap={driftMap} onStatClick={handleStatClick} />
+                </div>
+                <div className="flex items-baseline justify-between">
+                  <span className="text-[12px] text-text-muted">&rarr; Fold</span>
+                  <InlineStat sv={stats.missed_cbet_fold_oop} drillKey="missed_cbet_fold_oop" driftMap={driftMap} onStatClick={handleStatClick} />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Right: vs Missed CBet */}
+          <div className="flex-1 min-w-0 p-2">
+            <div className="space-y-2">
+              <div className="flex items-baseline justify-between">
+                <span className="text-[13px] text-text-muted">vs. Missed C-Bet</span>
+                <InlineStat sv={stats.vs_missed_cbet} drillKey="vs_missed_cbet" driftMap={driftMap} onStatClick={handleStatClick} />
+              </div>
+              <div className="pl-3 space-y-1">
+                <div className="flex items-baseline justify-between">
+                  <span className="text-[12px] text-text-muted">Bet In Position</span>
+                  <InlineStat sv={stats.vs_missed_cbet_bet_ip} drillKey="vs_missed_cbet_bet_ip" driftMap={driftMap} onStatClick={handleStatClick} />
+                </div>
+                <div className="flex items-baseline justify-between">
+                  <span className="text-[12px] text-text-muted">Check | Fold</span>
+                  <InlineStat sv={stats.vs_missed_cbet_check_fold_ip} drillKey="vs_missed_cbet_check_fold_ip" driftMap={driftMap} onStatClick={handleStatClick} />
+                </div>
+                <div className="flex items-baseline justify-between">
+                  <span className="text-[12px] text-text-muted">Bet OOP Turn</span>
+                  <InlineStat sv={stats.vs_missed_cbet_bet_oop_turn} drillKey="vs_missed_cbet_bet_oop_turn" driftMap={driftMap} onStatClick={handleStatClick} />
+                </div>
+                <div className="flex items-baseline justify-between">
+                  <span className="text-[12px] text-text-muted">Check-Fold</span>
+                  <InlineStat sv={stats.vs_missed_cbet_check_fold_oop} drillKey="vs_missed_cbet_check_fold_oop" driftMap={driftMap} onStatClick={handleStatClick} />
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* ── SHOWDOWN ── */}
+        <SectionTitle>Showdown</SectionTitle>
+        <div className="border-x border-b border-border p-2">
+          <div className="flex gap-6">
+            <div className="flex items-baseline gap-2">
+              <span className="text-[12px] text-text-muted">WTSD</span>
+              <InlineStat sv={stats.wtsd} statKey="wtsd" drillKey="went_to_showdown" driftMap={driftMap} onStatClick={handleStatClick} />
+            </div>
+            <div className="flex items-baseline gap-2">
+              <span className="text-[12px] text-text-muted">W$SD</span>
+              <InlineStat sv={stats.wsd} statKey="wsd" drillKey="won_at_showdown" driftMap={driftMap} onStatClick={handleStatClick} />
+            </div>
+            <div className="flex items-baseline gap-2">
+              <span className="text-[12px] text-text-muted">WWSF</span>
+              <InlineStat sv={stats.wwsf} statKey="wwsf" drillKey="wwsf" driftMap={driftMap} onStatClick={handleStatClick} />
+            </div>
+          </div>
+        </div>
+
+        <div className="h-4" />
+      </div>
     </TooltipProvider>
   );
+}
+
+// ── Router ───────────────────────────────────────────────────────────
+
+export default function StatsPage() {
+  const { statKey } = useParams<{ statKey?: string }>();
+  if (statKey) return <StatsDetailView statKey={statKey} />;
+  return <StatsListView />;
 }
