@@ -91,4 +91,5 @@ export function CardBoxRow({ cards }: { cards: string[] }) {
   );
 }
 
+export { SingleCard };
 export default SingleCard;

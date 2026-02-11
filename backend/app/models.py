@@ -412,6 +412,13 @@ class StatDetailHand(BaseModel):
     action_taken: bool
     won_bb: float
     stakes: str
+    all_in_ev_bb: float = 0.0
+    bb_amount: float = 0.0
+    board_flop: list[str] = []
+    board_turn: Optional[str] = None
+    board_river: Optional[str] = None
+    preflop_actions: list[ActionItem] = []
+    key_street_actions: list[ActionItem] = []
 
 
 class StatDetailHandsResponse(BaseModel):
@@ -419,6 +426,7 @@ class StatDetailHandsResponse(BaseModel):
     stat_name: str
     action_count: int
     opportunity_count: int
+    key_street: Optional[str] = None
     hands: list[StatDetailHand]
     total: int
     page: int

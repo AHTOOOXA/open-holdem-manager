@@ -2,147 +2,16 @@ from fastapi import APIRouter, Query, HTTPException
 from pydantic import BaseModel
 from typing import Optional
 import math
-import re
 
 from app.db import get_db, db_lock, get_read_cursor
 from app.models import (
     HandSummary, HandListResponse, HandDetail, HandPlayerDetail,
     HandAction, BoardCards, TagCount, ActionItem,
 )
+from app.action_parser import parse_actions_from_raw
+from app.stat_registry import STAT_REGISTRY
 
 router = APIRouter()
-
-VALID_STAT_FLAGS: frozenset[str] = frozenset({
-    "vpip", "pfr", "three_bet", "three_bet_opp", "four_bet", "four_bet_opp",
-    "five_bet", "five_bet_opp", "fold_to_3bet", "fold_to_4bet",
-    "open_raise", "open_raise_opp", "call_open_raise", "limp", "squeeze", "squeeze_opp",
-    "steal_attempted", "steal_opp", "faced_steal", "fold_to_steal", "call_steal",
-    "three_bet_vs_steal", "saw_flop", "saw_turn", "saw_river",
-    "went_to_showdown", "won_at_showdown",
-    "cbet_flop", "cbet_flop_opp", "cbet_turn", "cbet_turn_opp",
-    "cbet_river", "cbet_river_opp",
-    "fold_to_cbet_flop", "fold_to_cbet_turn", "fold_to_cbet_river",
-    "donk_bet_flop", "donk_bet_flop_opp", "donk_bet_turn", "donk_bet_turn_opp",
-    "donk_bet_river", "donk_bet_river_opp",
-})
-
-# ── Raw-text action parser ───────────────────────────────────────────
-
-_RE_FOLD = re.compile(r"^(.+?): folds")
-_RE_CHECK = re.compile(r"^(.+?): checks")
-_RE_CALL = re.compile(r"^(.+?): calls \$([0-9.]+)")
-_RE_BET = re.compile(r"^(.+?): bets \$([0-9.]+)")
-_RE_RAISE = re.compile(r"^(.+?): raises \$[0-9.]+ to \$([0-9.]+)")
-_RE_BLIND = re.compile(r"^(.+?): posts (?:small blind|big blind|ante) \$([0-9.]+)")
-_RE_STREET = re.compile(r"^\*\*\* (HOLE CARDS|FLOP|TURN|RIVER|FIRST FLOP|SHOWDOWN|SUMMARY) \*\*\*")
-
-_STREET_MAP = {
-    "HOLE CARDS": "preflop",
-    "FLOP": "flop",
-    "FIRST FLOP": "flop",
-    "TURN": "turn",
-    "RIVER": "river",
-}
-
-
-def _parse_actions_from_raw(raw_text: str, hero_username: str, bb_amount: float):
-    """Parse raw hand history text and return per-street action summaries + pot sizes."""
-    streets = {
-        "preflop": {"actions": [], "pot": 0},
-        "flop": {"actions": [], "pot": 0},
-        "turn": {"actions": [], "pot": 0},
-        "river": {"actions": [], "pot": 0},
-    }
-
-    current_street = None
-    running_pot = 0.0
-    street_investments: dict[str, float] = {}  # player -> total invested this street
-
-    for line in raw_text.split("\n"):
-        line = line.strip()
-        if not line:
-            continue
-
-        # Street markers
-        sm = _RE_STREET.match(line)
-        if sm:
-            street_name = _STREET_MAP.get(sm.group(1))
-            if street_name:
-                current_street = street_name
-                street_investments = {}
-                streets[current_street]["pot"] = round(running_pot / bb_amount) if bb_amount > 0 else 0
-            elif sm.group(1) in ("SHOWDOWN", "SUMMARY"):
-                current_street = None
-            continue
-
-        if current_street is None:
-            # Check for blinds before HOLE CARDS
-            m = _RE_BLIND.match(line)
-            if m:
-                amt = float(m.group(2))
-                running_pot += amt
-            continue
-
-        if current_street not in streets:
-            continue
-
-        is_hero = False
-        action_item = None
-
-        m = _RE_RAISE.match(line)
-        if m:
-            player, to_amt_str = m.group(1), m.group(2)
-            is_hero = player == hero_username
-            to_amt = float(to_amt_str)
-            prev = street_investments.get(player, 0)
-            running_pot += to_amt - prev
-            street_investments[player] = to_amt
-            v = round(to_amt / bb_amount) if bb_amount > 0 else 0
-            action_item = ActionItem(a="R", v=v, h=is_hero)
-        else:
-            m = _RE_BET.match(line)
-            if m:
-                player, amt_str = m.group(1), m.group(2)
-                is_hero = player == hero_username
-                amt = float(amt_str)
-                running_pot += amt
-                street_investments[player] = amt
-                v = round(amt / bb_amount) if bb_amount > 0 else 0
-                action_item = ActionItem(a="B", v=v, h=is_hero)
-            else:
-                m = _RE_CALL.match(line)
-                if m:
-                    player, amt_str = m.group(1), m.group(2)
-                    is_hero = player == hero_username
-                    amt = float(amt_str)
-                    running_pot += amt
-                    street_investments[player] = street_investments.get(player, 0) + amt
-                    v = round(amt / bb_amount) if bb_amount > 0 else 0
-                    action_item = ActionItem(a="C", v=v, h=is_hero)
-                else:
-                    m = _RE_CHECK.match(line)
-                    if m:
-                        is_hero = m.group(1) == hero_username
-                        action_item = ActionItem(a="X", h=is_hero)
-                    else:
-                        m = _RE_FOLD.match(line)
-                        if m:
-                            is_hero = m.group(1) == hero_username
-                            action_item = ActionItem(a="F", h=is_hero)
-                        else:
-                            m = _RE_BLIND.match(line)
-                            if m:
-                                amt = float(m.group(2))
-                                player = m.group(1)
-                                running_pot += amt
-                                street_investments[player] = street_investments.get(player, 0) + amt
-                                continue
-
-        if action_item:
-            streets[current_street]["actions"].append(action_item)
-
-    return streets
-
 
 # ── Hero username helper ─────────────────────────────────────────────
 
@@ -190,6 +59,7 @@ def list_hands(
     date_to: Optional[str] = None,
     search: Optional[str] = None,
     stat_flag: list[str] | None = Query(None),
+    stat_key: Optional[str] = Query(None),
 ):
     db = get_read_cursor()
     hero_id = _get_hero_player_id(db)
@@ -251,9 +121,24 @@ def list_hands(
 
     if stat_flag:
         for flag in stat_flag:
-            if flag not in VALID_STAT_FLAGS:
-                raise HTTPException(status_code=400, detail=f"Invalid stat flag: {flag}")
             where_clauses.append(f"hp.{flag} = true")
+
+    if stat_key:
+        entry = STAT_REGISTRY.get(stat_key)
+        if entry:
+            opp_flag = entry.get("opp_flag")
+            opp_sql = entry.get("opp_sql")
+            opp_is_not_null = entry.get("opp_is_not_null", False)
+            extra_where = entry.get("extra_where")
+            if opp_sql:
+                where_clauses.append(f"({opp_sql})")
+            elif opp_flag:
+                if opp_is_not_null:
+                    where_clauses.append(f"hp.{opp_flag} IS NOT NULL")
+                else:
+                    where_clauses.append(f"hp.{opp_flag} = TRUE")
+            if extra_where:
+                where_clauses.append(extra_where)
 
     where_sql = (" AND " + " AND ".join(where_clauses)) if where_clauses else ""
 
@@ -322,7 +207,7 @@ def list_hands(
         board = board_map.get(hid, {"flop": [], "turn": [], "river": []})
 
         # Parse actions from raw text
-        ss = _parse_actions_from_raw(raw_text, hero_username, bb_amount)
+        ss = parse_actions_from_raw(raw_text, hero_username, bb_amount)
         pf = ss["preflop"]
         fl = ss["flop"]
         tu = ss["turn"]
@@ -420,7 +305,7 @@ def get_hand(hand_id: str):
             board.river.append(card)
 
     # Parse actions from raw text for the detail view
-    ss = _parse_actions_from_raw(raw_text, hero_username, bb_amount)
+    ss = parse_actions_from_raw(raw_text, hero_username, bb_amount)
     actions: list[HandAction] = []
     for street_name in ["preflop", "flop", "turn", "river"]:
         for ai in ss[street_name]["actions"]:

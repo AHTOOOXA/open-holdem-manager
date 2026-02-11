@@ -1,13 +1,38 @@
+import { useState, useEffect, useCallback, useMemo } from 'react';
+import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { getStatDetailHands } from '@/lib/api';
 import { queryKeys } from '@/lib/query-keys';
+import { queryClient } from '@/lib/query-client';
 import { getStatDisplayName, getStatEntry } from '@/lib/stat-registry';
-import { CardPair } from '@/components/hands/CardDisplay';
+import { formatRelativeDate } from '@/lib/utils';
+import { CardBoxPair, CardBoxRow, CardBox } from '@/components/hands/CardDisplay';
+import Actions from '@/components/hands/Actions';
+import HandDrawer from '@/components/hands/HandDrawer';
 import Pagination from '@/components/hands/Pagination';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
 
 const POSITIONS = ['All', 'EP', 'MP', 'CO', 'BTN', 'SB', 'BB'] as const;
+
+function keyStreetLabel(ks: string | null | undefined): string {
+  if (!ks) return 'Key Actions';
+  const labels: Record<string, string> = {
+    preflop: 'PF Actions',
+    flop: 'Flop Actions',
+    turn: 'Turn Actions',
+    river: 'River Actions',
+  };
+  return labels[ks] || 'Key Actions';
+}
 
 interface StatDetailPanelProps {
   statKey: string;
@@ -59,17 +84,94 @@ export default function StatDetailPanel({
     ? ((data.action_count / data.opportunity_count) * 100).toFixed(1)
     : null;
 
+  // Use a reset key to force re-mount of selection state when context changes
+  const resetKey = `${statKey}-${position ?? ''}-${page}`;
+  const [selectionKey, setSelectionKey] = useState(resetKey);
+  const [selectedHandId, setSelectedHandId] = useState<string | null>(null);
+  const [selectedIndex, setSelectedIndex] = useState(-1);
+
+  if (selectionKey !== resetKey) {
+    setSelectionKey(resetKey);
+    setSelectedHandId(null);
+    setSelectedIndex(-1);
+  }
+
+  const hands = useMemo(() => data?.hands ?? [], [data?.hands]);
+
+  const openDrawer = useCallback((idx: number) => {
+    if (idx >= 0 && idx < hands.length) {
+      setSelectedIndex(idx);
+      setSelectedHandId(hands[idx].hand_id);
+    }
+  }, [hands]);
+
+  const closeDrawer = useCallback(() => {
+    setSelectedHandId(null);
+  }, []);
+
+  // Keyboard navigation
+  useEffect(() => {
+    if (selectedHandId) return; // Let HandDrawer handle keys when open
+
+    function handleKey(e: KeyboardEvent) {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (!hands.length) return;
+
+      if (e.key === 'ArrowDown' || e.key === 'j') {
+        e.preventDefault();
+        setSelectedIndex((prev) => Math.min(prev + 1, hands.length - 1));
+      } else if (e.key === 'ArrowUp' || e.key === 'k') {
+        e.preventDefault();
+        setSelectedIndex((prev) => Math.max(prev - 1, 0));
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        if (selectedIndex >= 0 && selectedIndex < hands.length) {
+          openDrawer(selectedIndex);
+        }
+      }
+    }
+    document.addEventListener('keydown', handleKey);
+    return () => document.removeEventListener('keydown', handleKey);
+  }, [selectedHandId, hands, selectedIndex, openDrawer]);
+
+  const handleDrawerPrev = useCallback(() => {
+    if (selectedIndex > 0) {
+      const newIdx = selectedIndex - 1;
+      setSelectedIndex(newIdx);
+      setSelectedHandId(hands[newIdx].hand_id);
+    }
+  }, [selectedIndex, hands]);
+
+  const handleDrawerNext = useCallback(() => {
+    if (selectedIndex < hands.length - 1) {
+      const newIdx = selectedIndex + 1;
+      setSelectedIndex(newIdx);
+      setSelectedHandId(hands[newIdx].hand_id);
+    }
+  }, [selectedIndex, hands]);
+
+  // Build "Open in Hand Explorer" link
+  const handExplorerUrl = `/hands?stat_key=${statKey}${position ? `&position=${position.toUpperCase()}` : ''}`;
+
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
       <div className="px-3 py-2 border-b border-border shrink-0">
-        <div className="flex items-baseline gap-2">
-          <h3 className="text-sm font-semibold text-text">{displayName}</h3>
-          {pct !== null && (
-            <span className="text-xs text-text-muted font-mono">
-              {pct}% ({data!.action_count}/{data!.opportunity_count})
-            </span>
-          )}
+        <div className="flex items-baseline justify-between gap-2">
+          <div className="flex items-baseline gap-2">
+            <h3 className="text-sm font-semibold text-text">{displayName}</h3>
+            {pct !== null && (
+              <span className="text-xs text-text-muted font-mono">
+                {pct}% ({data!.action_count}/{data!.opportunity_count})
+              </span>
+            )}
+          </div>
+          <Link
+            to={handExplorerUrl}
+            className="text-[11px] text-primary hover:text-primary/80 whitespace-nowrap"
+          >
+            Open in Hand Explorer &rarr;
+          </Link>
         </div>
 
         {/* Position tabs */}
@@ -104,50 +206,81 @@ export default function StatDetailPanel({
         {isPending && !data ? (
           <div className="p-3 space-y-2">
             {Array.from({ length: 8 }).map((_, i) => (
-              <Skeleton key={i} className="h-6 w-full" />
+              <Skeleton key={i} className="h-8 w-full" />
             ))}
           </div>
         ) : data && data.hands.length > 0 ? (
-          <table className="w-full">
-            <thead className="sticky top-0 bg-background z-10">
-              <tr className="border-b border-border">
-                <th className="py-1 px-2 text-left text-[10px] font-medium text-text-muted uppercase">Hand</th>
-                <th className="py-1 px-2 text-center text-[10px] font-medium text-text-muted uppercase">Pos</th>
-                <th className="py-1 px-2 text-center text-[10px] font-medium text-text-muted uppercase">Cards</th>
-                <th className="py-1 px-2 text-center text-[10px] font-medium text-text-muted uppercase">Action</th>
-                <th className="py-1 px-2 text-right text-[10px] font-medium text-text-muted uppercase">Result</th>
-                <th className="py-1 px-2 text-right text-[10px] font-medium text-text-muted uppercase">Stakes</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.hands.map((hand) => (
-                <tr key={hand.hand_id} className="border-b border-border/30 hover:bg-surface-hover">
-                  <td className="py-1 px-2 text-[11px] text-text-muted font-mono">
-                    {hand.hand_id.replace(/^RC/, '')}
-                  </td>
-                  <td className="py-1 px-2 text-center text-[11px] text-text-muted">
-                    {hand.position}
-                  </td>
-                  <td className="py-1 px-2 text-center text-[12px]">
-                    <CardPair card1={hand.card1} card2={hand.card2} />
-                  </td>
-                  <td className="py-1 px-2 text-center">
-                    {hand.action_taken ? (
-                      <span className="text-green text-[12px] font-bold">&check;</span>
-                    ) : (
-                      <span className="text-text-muted text-[12px]">&times;</span>
-                    )}
-                  </td>
-                  <td className={`py-1 px-2 text-right text-[12px] font-mono ${hand.won_bb >= 0 ? 'text-green' : 'text-red'}`}>
-                    {hand.won_bb >= 0 ? '+' : ''}{hand.won_bb.toFixed(1)}
-                  </td>
-                  <td className="py-1 px-2 text-right text-[11px] text-text-muted">
-                    {hand.stakes}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow className="text-[13px] uppercase tracking-wide">
+                  <TableHead className="py-2 px-2 h-auto">Preflop</TableHead>
+                  <TableHead className="py-2 px-2 h-auto">Actions</TableHead>
+                  <TableHead className="py-2 pl-4 pr-2 h-auto">Board</TableHead>
+                  <TableHead className="py-2 px-2 h-auto">{keyStreetLabel(data.key_street)}</TableHead>
+                  <TableHead className="py-2 px-2 h-auto text-center w-6">Act</TableHead>
+                  <TableHead className="py-2 px-2 h-auto text-right">Won</TableHead>
+                  <TableHead className="py-2 px-2 h-auto text-right">Date</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {data.hands.map((hand, idx) => (
+                  <TableRow
+                    key={hand.hand_id}
+                    onClick={() => openDrawer(idx)}
+                    className={`cursor-pointer transition-colors text-[15px] ${
+                      idx === selectedIndex
+                        ? 'bg-primary/10'
+                        : 'hover:bg-surface-hover'
+                    }`}
+                  >
+                    {/* Hole cards */}
+                    <TableCell className="py-1.5 px-2">
+                      <CardBoxPair card1={hand.card1} card2={hand.card2} />
+                    </TableCell>
+                    {/* Preflop actions */}
+                    <TableCell className="py-1.5 px-2">
+                      <Actions items={hand.preflop_actions} trimFolds />
+                    </TableCell>
+                    {/* Board cards */}
+                    <TableCell className="py-1.5 pl-4 pr-2">
+                      {hand.board_flop.length > 0 && (
+                        <span className="inline-flex items-center gap-[6px]">
+                          <CardBoxRow cards={hand.board_flop} />
+                          {hand.board_turn && <CardBox card={hand.board_turn} />}
+                          {hand.board_river && <CardBox card={hand.board_river} />}
+                        </span>
+                      )}
+                    </TableCell>
+                    {/* Key street actions */}
+                    <TableCell className="py-1.5 px-2">
+                      <Actions items={hand.key_street_actions} />
+                    </TableCell>
+                    {/* Action taken */}
+                    <TableCell className="py-1.5 px-2 text-center">
+                      {hand.action_taken ? (
+                        <span className="text-green text-[15px] font-bold">&#10003;</span>
+                      ) : (
+                        <span className="text-text-muted text-[15px]">&times;</span>
+                      )}
+                    </TableCell>
+                    {/* Result */}
+                    <TableCell className={`py-1.5 px-2 text-right font-mono text-[15px] font-semibold ${
+                      hand.won_bb > 0.005 ? 'text-green' : hand.won_bb < -0.005 ? 'text-red' : 'text-text-muted'
+                    }`}>
+                      {Math.abs(hand.won_bb) < 0.005
+                        ? '\u2014'
+                        : `${hand.won_bb < 0 ? '' : '+'}${hand.won_bb.toFixed(1)}`}
+                    </TableCell>
+                    {/* Date */}
+                    <TableCell className="py-1.5 px-2 text-right text-[14px] text-text-muted whitespace-nowrap">
+                      {formatRelativeDate(hand.played_at)}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
         ) : (
           <div className="p-4 text-center text-text-muted text-sm">
             No hands match this filter
@@ -169,6 +302,17 @@ export default function StatDetailPanel({
             }}
           />
         </div>
+      )}
+
+      {/* Hand Drawer */}
+      {selectedHandId && (
+        <HandDrawer
+          handId={selectedHandId}
+          onClose={closeDrawer}
+          onPrev={handleDrawerPrev}
+          onNext={handleDrawerNext}
+          onTagsChanged={() => { queryClient.invalidateQueries({ queryKey: ['hands'] }); }}
+        />
       )}
     </div>
   );

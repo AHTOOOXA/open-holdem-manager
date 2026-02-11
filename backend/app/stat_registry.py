@@ -322,3 +322,19 @@ STAT_REGISTRY: dict[str, dict] = {
         "opp_flag": "saw_flop",
     },
 }
+
+
+def get_key_street(stat_key: str) -> str | None:
+    """Return the key street for a stat (preflop/flop/turn/river), or None for showdown stats."""
+    if stat_key in ("saw_flop", "went_to_showdown", "won_at_showdown", "wwsf"):
+        return None
+    if "flop" in stat_key or stat_key in (
+        "vs_missed_cbet", "vs_missed_cbet_bet_ip",
+        "vs_missed_cbet_check_fold_ip", "vs_missed_cbet_check_fold_oop",
+    ):
+        return "flop"
+    if "turn" in stat_key:
+        return "turn"
+    if "river" in stat_key:
+        return "river"
+    return "preflop"

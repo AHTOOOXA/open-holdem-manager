@@ -5,7 +5,8 @@ from fastapi import APIRouter, Query, HTTPException, Path
 from app.db import get_read_cursor
 from app.models import HeroStats, ComboStats, RangeResponse, StatDetailHand, StatDetailHandsResponse
 from app.stats_engine import compute_hero_stats
-from app.stat_registry import STAT_REGISTRY
+from app.stat_registry import STAT_REGISTRY, get_key_street
+from app.action_parser import parse_actions_from_raw
 
 router = APIRouter()
 
@@ -283,10 +284,20 @@ def get_stat_detail_hands(
     total_pages = max(1, math.ceil(total / per_page))
     offset = (page - 1) * per_page
 
-    # Fetch hands page
+    # Get hero username for action parsing
+    hero_row = db.execute(
+        "SELECT value FROM settings WHERE key = 'hero_username'"
+    ).fetchone()
+    hero_username = hero_row[0] if hero_row else "Hero"
+
+    # Compute key street for this stat
+    key_street = get_key_street(stat_key)
+
+    # Fetch hands page (include raw_text, bb_amount, all_in_ev_bb)
     hands_query = f"""
         SELECT h.id, h.played_at, hp.position, hp.card1, hp.card2,
-               ({action_expr}) AS action_taken, hp.won_bb, h.stakes
+               ({action_expr}) AS action_taken, hp.won_bb, h.stakes,
+               hp.all_in_ev_bb, h.bb_amount, h.raw_text
         FROM hand_players hp
         JOIN hands h ON hp.hand_id = h.id
         WHERE {where_sql}
@@ -295,9 +306,50 @@ def get_stat_detail_hands(
     """
     rows = db.execute(hands_query, params + [per_page, offset]).fetchall()
 
-    hands = [
-        StatDetailHand(
-            hand_id=r[0],
+    if not rows:
+        return StatDetailHandsResponse(
+            stat_key=stat_key, stat_name=entry["name"],
+            action_count=action_count, opportunity_count=total,
+            key_street=key_street,
+            hands=[], total=total, page=page, per_page=per_page, total_pages=total_pages,
+        )
+
+    # Batch-fetch board cards for all hand IDs on this page
+    hand_ids = [r[0] for r in rows]
+    ph = ",".join("?" for _ in hand_ids)
+    board_rows = db.execute(
+        f"SELECT hand_id, street, card FROM board_cards WHERE hand_id IN ({ph}) ORDER BY hand_id, card_order",
+        hand_ids,
+    ).fetchall()
+    board_map: dict[str, dict[str, list[str]]] = {}
+    for hid, street, card in board_rows:
+        board_map.setdefault(hid, {"flop": [], "turn": [], "river": []})
+        board_map[hid][street].append(card)
+
+    hands = []
+    for r in rows:
+        hid = r[0]
+        bb_amount = float(r[9]) if r[9] else 0.0
+        raw_text = r[10] or ""
+        board = board_map.get(hid, {"flop": [], "turn": [], "river": []})
+
+        # Parse actions from raw text
+        ss = parse_actions_from_raw(raw_text, hero_username, bb_amount)
+        preflop_actions = ss["preflop"]["actions"]
+
+        # Determine key street actions
+        if key_street and key_street in ss:
+            key_street_actions = ss[key_street]["actions"]
+        else:
+            # For showdown stats (key_street is None), use last non-empty street
+            key_street_actions = []
+            for st in ("river", "turn", "flop"):
+                if ss[st]["actions"]:
+                    key_street_actions = ss[st]["actions"]
+                    break
+
+        hands.append(StatDetailHand(
+            hand_id=hid,
             played_at=r[1],
             position=r[2],
             card1=r[3],
@@ -305,15 +357,21 @@ def get_stat_detail_hands(
             action_taken=bool(r[5]),
             won_bb=float(r[6] or 0),
             stakes=r[7],
-        )
-        for r in rows
-    ]
+            all_in_ev_bb=float(r[8]) if r[8] is not None else float(r[6] or 0),
+            bb_amount=bb_amount,
+            board_flop=board["flop"],
+            board_turn=board["turn"][0] if board["turn"] else None,
+            board_river=board["river"][0] if board["river"] else None,
+            preflop_actions=preflop_actions,
+            key_street_actions=key_street_actions,
+        ))
 
     return StatDetailHandsResponse(
         stat_key=stat_key,
         stat_name=entry["name"],
         action_count=action_count,
         opportunity_count=total,
+        key_street=key_street,
         hands=hands,
         total=total,
         page=page,

@@ -2,15 +2,16 @@ import { useState, useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { getHands, getTags } from '@/lib/api';
-import type { TagCount, ActionItem } from '@/lib/api';
+import type { TagCount } from '@/lib/api';
 import { useFilterOptions } from '@/hooks/useFilterOptions';
 import { queryKeys } from '@/lib/query-keys';
 import { queryClient } from '@/lib/query-client';
-import { formatStakes } from '@/lib/utils';
+import { formatStakes, formatRelativeDate } from '@/lib/utils';
 import EmptyState from '@/components/EmptyState';
 import HandFilters from '@/components/hands/HandFilters';
 import type { FilterState } from '@/components/hands/HandFilters';
 import { CardBoxPair, CardBoxRow, CardBox } from '@/components/hands/CardDisplay';
+import Actions from '@/components/hands/Actions';
 import TagPill from '@/components/hands/TagPill';
 import Pagination from '@/components/hands/Pagination';
 import HandDrawer from '@/components/hands/HandDrawer';
@@ -22,61 +23,6 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-
-// ── Action display (H2N style) ──────────────────────────────────────
-
-const ACTION_COLORS: Record<string, string> = {
-  R: 'text-yellow',
-  B: 'text-blue',
-  C: 'text-text',
-  X: 'text-text-muted',
-  F: 'text-text-muted',
-};
-
-function Actions({ items, trimFolds }: { items: ActionItem[]; trimFolds?: boolean }) {
-  if (!items || items.length === 0) return null;
-  let display = items;
-  if (trimFolds) {
-    const firstNonFold = items.findIndex((a) => a.a !== 'F');
-    if (firstNonFold > 0) display = items.slice(firstNonFold);
-  }
-  if (display.length === 0) return null;
-  return (
-    <span className="font-mono text-[15px] whitespace-nowrap">
-      {display.map((a, i) => (
-        <span key={i}>
-          {i > 0 && ' '}
-          <span
-            className={`${ACTION_COLORS[a.a] || 'text-text'} ${a.h ? 'border-b-2 border-dashed border-current pb-[1px]' : ''}`}
-          >
-            {a.a}{a.v != null ? a.v : ''}
-          </span>
-        </span>
-      ))}
-    </span>
-  );
-}
-
-// ── Helpers ──────────────────────────────────────────────────────────
-
-
-
-function formatDate(iso: string): string {
-  const now = new Date();
-  const d = new Date(iso);
-  const diffMs = now.getTime() - d.getTime();
-  const mins = Math.floor(diffMs / 60000);
-  if (mins < 60) return `${mins}m ago`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
-
-  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  const sameYear = d.getFullYear() === now.getFullYear();
-  if (sameYear) {
-    return `${months[d.getMonth()]} ${d.getDate()}`;
-  }
-  return `${months[d.getMonth()]} ${d.getDate()} '${String(d.getFullYear()).slice(-2)}`;
-}
 
 function getDateRange(preset: string, dateFrom: string, dateTo: string): { from?: string; to?: string } {
   const today = new Date();
@@ -107,11 +53,13 @@ export default function HandsPage() {
   const [sort, setSort] = useState<string>('played_at');
   const [order, setOrder] = useState<string>('desc');
 
-  // Read stat_flag from URL on mount
+  // Read stat_flag and stat_key from URL on mount
   const initialStatFlags = searchParams.getAll('stat_flag');
+  const urlStatKey = searchParams.get('stat_key') || undefined;
+  const urlPosition = searchParams.get('position')?.toUpperCase();
 
   const [filters, setFilters] = useState<FilterState>({
-    position: [],
+    position: urlPosition ? [urlPosition] : [],
     stakes: [],
     result: '',
     tags: [],
@@ -155,6 +103,7 @@ export default function HandsPage() {
     date_to: dateRange.to,
     search: debouncedSearch || undefined,
     stat_flag: filters.statFlags.length > 0 ? filters.statFlags : undefined,
+    stat_key: urlStatKey,
   };
 
   // Hands list query
@@ -362,7 +311,7 @@ export default function HandsPage() {
                       </TableCell>
                       {/* Date */}
                       <TableCell className="py-1.5 px-2 text-right text-[14px] text-text-muted whitespace-nowrap">
-                        {formatDate(h.played_at)}
+                        {formatRelativeDate(h.played_at)}
                       </TableCell>
                       {/* Tags */}
                       <TableCell className="py-1.5 px-2">

@@ -379,6 +379,7 @@ export interface HandListParams {
   date_to?: string;
   search?: string;
   stat_flag?: string[];
+  stat_key?: string;
 }
 
 export async function getHands(params?: HandListParams): Promise<HandListResponse> {
@@ -397,6 +398,7 @@ export async function getHands(params?: HandListParams): Promise<HandListRespons
   if (params?.stat_flag) {
     for (const flag of params.stat_flag) sp.append('stat_flag', flag);
   }
+  if (params?.stat_key) sp.set('stat_key', params.stat_key);
   const res = await fetch(`${BASE}/hands?${sp}`);
   if (!res.ok) throw new Error(`Hands failed: ${res.statusText}`);
   return res.json();
@@ -654,6 +656,13 @@ export interface StatDetailHand {
   action_taken: boolean;
   won_bb: number;
   stakes: string;
+  all_in_ev_bb: number;
+  bb_amount: number;
+  board_flop: string[];
+  board_turn: string | null;
+  board_river: string | null;
+  preflop_actions: ActionItem[];
+  key_street_actions: ActionItem[];
 }
 
 export interface StatDetailHandsResponse {
@@ -661,6 +670,7 @@ export interface StatDetailHandsResponse {
   stat_name: string;
   action_count: number;
   opportunity_count: number;
+  key_street: string | null;
   hands: StatDetailHand[];
   total: number;
   page: number;
