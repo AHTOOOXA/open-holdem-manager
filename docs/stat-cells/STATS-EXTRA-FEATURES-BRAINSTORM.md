@@ -1,5 +1,12 @@
 # Stat Cells — Extra Features Brainstorm
 
+> **Status:** Actionable items from this brainstorm have been merged into the per-stat widget files (`01-preflop.md` through `05-showdown.md`). This file is kept as a historical reference for the original coaching review. See the per-stat files for the current source of truth.
+>
+> **What was merged:**
+> - Cut/Merge: 3-Bet IP/OOP flagged for future simplification, `four_bet_range` merged into `four_bet`, `call_4bet`/`five_bet`/`four_bet_fold` simplified
+> - Add: BB Defense Rate, Isolation Raise, Fold to Squeeze — all added to `01-preflop.md`
+> - Consider: 3-bet pot postflop bridge added to `three_bet`, multiway pot frequency added to `vpip` widget #2, sizing profile promoted via M5.3 phase tags
+
 Review of stat cell specs from a professional poker coach perspective.
 Goal: cut noise, fill real gaps, maximize coaching value per click.
 
