@@ -4,6 +4,8 @@ export const queryKeys = {
   stats: {
     hero: (filters: Record<string, unknown>) => ['stats', 'hero', filters] as const,
     detail: (statKey: string, filters: Record<string, unknown>) => ['stats', 'detail', statKey, filters] as const,
+    trend: (statKey: string, filters: Record<string, unknown>) => ['stats', 'trend', statKey, filters] as const,
+    analysis: (statKey: string, filters: Record<string, unknown>) => ['stats', 'analysis', statKey, filters] as const,
   },
 
   graph: {

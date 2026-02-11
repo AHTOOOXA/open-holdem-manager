@@ -403,6 +403,37 @@ class CashDropResponse(BaseModel):
 
 # ── Stat Detail Models ─────────────────────────────────────────────
 
+# ── Stat Trend / Analysis Models ──────────────────────────────────────
+
+class TrendPoint(BaseModel):
+    hand_number: int
+    rolling_pct: float
+    sample: int
+
+
+class StatTrendResponse(BaseModel):
+    stat_key: str
+    overall_pct: float
+    points: list[TrendPoint]
+
+
+class ResponseDistribution(BaseModel):
+    fold_count: int
+    call_count: int
+    raise_count: int
+    fold_pct: float
+    call_pct: float
+    raise_pct: float
+    total: int
+
+
+class StatAnalysisResponse(BaseModel):
+    stat_key: str
+    response_distribution: ResponseDistribution | None = None
+
+
+# ── Stat Detail Models ─────────────────────────────────────────────
+
 class StatDetailHand(BaseModel):
     hand_id: str
     played_at: datetime

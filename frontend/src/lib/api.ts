@@ -704,6 +704,81 @@ export async function getStatDetailHands(
   return res.json();
 }
 
+// ── Stat Trend / Analysis Types ──────────────────────────────────────
+
+export interface TrendPoint {
+  hand_number: number;
+  rolling_pct: number;
+  sample: number;
+}
+
+export interface StatTrendResponse {
+  stat_key: string;
+  overall_pct: number;
+  points: TrendPoint[];
+}
+
+export interface ResponseDistributionData {
+  fold_count: number;
+  call_count: number;
+  raise_count: number;
+  fold_pct: number;
+  call_pct: number;
+  raise_pct: number;
+  total: number;
+}
+
+export interface StatAnalysisResponse {
+  stat_key: string;
+  response_distribution: ResponseDistributionData | null;
+}
+
+export async function getStatTrend(
+  statKey: string,
+  params?: {
+    position?: string;
+    stakes?: string;
+    game_mode?: string;
+    date_from?: string;
+    date_to?: string;
+    bucket_size?: number;
+  },
+  signal?: AbortSignal,
+): Promise<StatTrendResponse> {
+  const sp = new URLSearchParams();
+  if (params?.position) sp.set('position', params.position);
+  if (params?.stakes) sp.set('stakes', params.stakes);
+  if (params?.game_mode !== undefined) sp.set('game_mode', params.game_mode === '__reg__' ? '' : params.game_mode);
+  if (params?.date_from) sp.set('date_from', params.date_from);
+  if (params?.date_to) sp.set('date_to', params.date_to);
+  if (params?.bucket_size) sp.set('bucket_size', String(params.bucket_size));
+  const res = await fetch(`${BASE}/stats/detail/${encodeURIComponent(statKey)}/trend?${sp}`, { signal });
+  if (!res.ok) throw new Error(`Trend failed: ${res.statusText}`);
+  return res.json();
+}
+
+export async function getStatAnalysis(
+  statKey: string,
+  params?: {
+    position?: string;
+    stakes?: string;
+    game_mode?: string;
+    date_from?: string;
+    date_to?: string;
+  },
+  signal?: AbortSignal,
+): Promise<StatAnalysisResponse> {
+  const sp = new URLSearchParams();
+  if (params?.position) sp.set('position', params.position);
+  if (params?.stakes) sp.set('stakes', params.stakes);
+  if (params?.game_mode !== undefined) sp.set('game_mode', params.game_mode === '__reg__' ? '' : params.game_mode);
+  if (params?.date_from) sp.set('date_from', params.date_from);
+  if (params?.date_to) sp.set('date_to', params.date_to);
+  const res = await fetch(`${BASE}/stats/detail/${encodeURIComponent(statKey)}/analysis?${sp}`, { signal });
+  if (!res.ok) throw new Error(`Analysis failed: ${res.statusText}`);
+  return res.json();
+}
+
 // ── Drift Detection Types ────────────────────────────────────────────
 
 export interface DriftStat {

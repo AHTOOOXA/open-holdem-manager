@@ -231,9 +231,11 @@ def compute_stat_flags(parsed: ParsedHand) -> dict[str, dict]:
             raise_count += 1
 
             if raise_count == 1:
-                # Open raise (2-bet)
-                player_stats[uname]["open_raise"] = True
                 first_raiser = uname
+
+                # Open raise (RFI) — only when no limpers before
+                if player_stats[uname]["open_raise_opp"]:
+                    player_stats[uname]["open_raise"] = True
 
                 # Check if steal attempt (open raise from CO, BTN, or SB with no limpers)
                 if player_stats[uname]["steal_opp"]:
@@ -246,12 +248,6 @@ def compute_stat_flags(parsed: ParsedHand) -> dict[str, dict]:
                     if position in ("CO", "BTN"):
                         if sb_player and sb_player not in folded_preflop:
                             player_stats[sb_player]["faced_steal"] = True
-
-                # If there were limpers before, everyone after who raises
-                # still gets open_raise = True since it's the first raise.
-                # But if there was a limp + raise, the raise is still an open raise.
-                # Squeeze: raise when there was already a raise AND at least one caller
-                # This is actually the first raise, so no squeeze here.
 
             elif raise_count == 2:
                 # 3-bet

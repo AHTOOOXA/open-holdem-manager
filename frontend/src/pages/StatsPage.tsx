@@ -981,6 +981,7 @@ export default function StatsPage() {
       position={detailPos}
       onPositionChange={handleDetailPositionChange}
       filterParams={detailFilterParams}
+      heroStats={stats}
       page={detailPage}
       perPage={detailPerPage}
       onPageChange={setDetailPage}

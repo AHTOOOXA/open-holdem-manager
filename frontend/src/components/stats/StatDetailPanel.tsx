@@ -2,10 +2,12 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { getStatDetailHands } from '@/lib/api';
+import type { HeroStats } from '@/lib/api';
 import { queryKeys } from '@/lib/query-keys';
 import { queryClient } from '@/lib/query-client';
 import { getStatDisplayName, getStatEntry } from '@/lib/stat-registry';
 import { formatRelativeDate } from '@/lib/utils';
+import AnalysisWidgets from '@/components/stats/widgets/AnalysisWidgets';
 import { CardBoxPair, CardBoxRow, CardBox } from '@/components/hands/CardDisplay';
 import Actions from '@/components/hands/Actions';
 import HandDrawer from '@/components/hands/HandDrawer';
@@ -44,6 +46,7 @@ interface StatDetailPanelProps {
     date_from?: string;
     date_to?: string;
   };
+  heroStats?: HeroStats;
   page: number;
   perPage: number;
   onPageChange: (p: number) => void;
@@ -55,6 +58,7 @@ export default function StatDetailPanel({
   position,
   onPositionChange,
   filterParams,
+  heroStats,
   page,
   perPage,
   onPageChange,
@@ -200,6 +204,15 @@ export default function StatDetailPanel({
           </div>
         )}
       </div>
+
+      {/* Analysis Widgets */}
+      <AnalysisWidgets
+        statKey={statKey}
+        heroStats={heroStats}
+        filterParams={filterParams}
+        position={position}
+        onPositionChange={onPositionChange}
+      />
 
       {/* Hand list */}
       <div className="flex-1 overflow-y-auto min-h-0">

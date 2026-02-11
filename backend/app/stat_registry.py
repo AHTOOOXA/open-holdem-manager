@@ -41,14 +41,12 @@ STAT_REGISTRY: dict[str, dict] = {
     "three_bet_ip": {
         "name": "3-Bet IP",
         "action_flag": "three_bet",
-        "opp_flag": "three_bet_opp",
-        "extra_where": "hp.position IN ('CO', 'BTN')",
+        "opp_sql": "hp.three_bet_opp = TRUE AND hp.three_bet_opp_ip = TRUE",
     },
     "three_bet_oop": {
         "name": "3-Bet OOP",
         "action_flag": "three_bet",
-        "opp_flag": "three_bet_opp",
-        "extra_where": "hp.position IN ('SB', 'BB', 'EP', 'MP')",
+        "opp_sql": "hp.three_bet_opp = TRUE AND hp.three_bet_opp_ip = FALSE",
     },
     "four_bet": {
         "name": "4-Bet",
@@ -320,6 +318,63 @@ STAT_REGISTRY: dict[str, dict] = {
         "name": "Won When Saw Flop",
         "action_flag": "won",
         "opp_flag": "saw_flop",
+    },
+}
+
+
+# ── Response Decomposition for defensive stats ──────────────────────
+# Maps fold_to_* stat keys to SQL for fold/call/raise breakdown
+
+RESPONSE_DECOMPOSITION: dict[str, dict[str, str]] = {
+    "fold_to_3bet": {
+        "opp_sql": "hp.fold_to_3bet IS NOT NULL",
+        "fold_sql": "hp.fold_to_3bet = TRUE",
+        "raise_sql": "hp.four_bet = TRUE",
+    },
+    "fold_to_4bet": {
+        "opp_sql": "hp.fold_to_4bet IS NOT NULL",
+        "fold_sql": "hp.fold_to_4bet = TRUE",
+        "raise_sql": "hp.five_bet = TRUE",
+    },
+    "fold_to_cbet_flop": {
+        "opp_sql": "hp.fold_to_cbet_flop IS NOT NULL",
+        "fold_sql": "hp.fold_to_cbet_flop = TRUE",
+        "raise_sql": "hp.raise_cbet_flop = TRUE",
+    },
+    "fold_to_cbet_turn": {
+        "opp_sql": "hp.fold_to_cbet_turn IS NOT NULL",
+        "fold_sql": "hp.fold_to_cbet_turn = TRUE",
+        "raise_sql": "hp.turn_raises > 0",
+    },
+    "fold_to_cbet_river": {
+        "opp_sql": "hp.fold_to_cbet_river IS NOT NULL",
+        "fold_sql": "hp.fold_to_cbet_river = TRUE",
+        "raise_sql": "hp.river_raises > 0",
+    },
+    "fold_to_steal": {
+        "opp_sql": "hp.faced_steal = TRUE",
+        "fold_sql": "hp.fold_to_steal = TRUE",
+        "raise_sql": "hp.three_bet_vs_steal = TRUE",
+    },
+    "call_steal": {
+        "opp_sql": "hp.faced_steal = TRUE",
+        "fold_sql": "hp.fold_to_steal = TRUE",
+        "raise_sql": "hp.three_bet_vs_steal = TRUE",
+    },
+    "three_bet_vs_steal": {
+        "opp_sql": "hp.faced_steal = TRUE",
+        "fold_sql": "hp.fold_to_steal = TRUE",
+        "raise_sql": "hp.three_bet_vs_steal = TRUE",
+    },
+    "fold_cbet_flop_raised": {
+        "opp_sql": "hp.fold_to_cbet_flop IS NOT NULL AND NOT COALESCE(hp.is_3bet_pot, false)",
+        "fold_sql": "hp.fold_to_cbet_flop = TRUE",
+        "raise_sql": "hp.raise_cbet_flop = TRUE",
+    },
+    "fold_cbet_flop_3bet": {
+        "opp_sql": "hp.fold_to_cbet_flop IS NOT NULL AND hp.is_3bet_pot = TRUE",
+        "fold_sql": "hp.fold_to_cbet_flop = TRUE",
+        "raise_sql": "hp.raise_cbet_flop = TRUE",
     },
 }
 

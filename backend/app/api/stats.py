@@ -3,9 +3,12 @@ from typing import Optional
 
 from fastapi import APIRouter, Query, HTTPException, Path
 from app.db import get_read_cursor
-from app.models import HeroStats, ComboStats, RangeResponse, StatDetailHand, StatDetailHandsResponse
+from app.models import (
+    HeroStats, ComboStats, RangeResponse, StatDetailHand, StatDetailHandsResponse,
+    TrendPoint, StatTrendResponse, ResponseDistribution, StatAnalysisResponse,
+)
 from app.stats_engine import compute_hero_stats
-from app.stat_registry import STAT_REGISTRY, get_key_street
+from app.stat_registry import STAT_REGISTRY, get_key_street, RESPONSE_DECOMPOSITION
 from app.action_parser import parse_actions_from_raw
 
 router = APIRouter()
@@ -377,4 +380,229 @@ def get_stat_detail_hands(
         page=page,
         per_page=per_page,
         total_pages=total_pages,
+    )
+
+
+# ── Trend endpoint ───────────────────────────────────────────────────
+
+@router.get("/stats/detail/{stat_key}/trend", response_model=StatTrendResponse)
+def get_stat_trend(
+    stat_key: str = Path(...),
+    position: str | None = Query(None),
+    stakes: str | None = Query(None),
+    game_mode: str | None = Query(None),
+    date_from: str | None = Query(None),
+    date_to: str | None = Query(None),
+    bucket_size: int | None = Query(None, ge=10, le=5000),
+):
+    entry = STAT_REGISTRY.get(stat_key)
+    if not entry:
+        raise HTTPException(status_code=404, detail=f"Unknown stat key: {stat_key}")
+
+    db = get_read_cursor()
+    player_id = _get_hero_player_id(db)
+    if not player_id:
+        return StatTrendResponse(stat_key=stat_key, overall_pct=0, points=[])
+
+    # Build action expression
+    action_sql = entry.get("action_sql")
+    action_flag = entry.get("action_flag")
+    if action_sql:
+        action_expr = action_sql
+    else:
+        action_expr = f"hp.{action_flag} = TRUE"
+
+    # Build WHERE
+    where_parts = ["hp.player_id = ?"]
+    params: list = [player_id]
+
+    opp_flag = entry.get("opp_flag")
+    opp_sql = entry.get("opp_sql")
+    opp_is_not_null = entry.get("opp_is_not_null", False)
+    extra_where = entry.get("extra_where")
+
+    if opp_sql:
+        where_parts.append(f"({opp_sql})")
+    elif opp_flag:
+        if opp_is_not_null:
+            where_parts.append(f"hp.{opp_flag} IS NOT NULL")
+        else:
+            where_parts.append(f"hp.{opp_flag} = TRUE")
+
+    if extra_where:
+        where_parts.append(extra_where)
+    if position:
+        where_parts.append("hp.position = ?")
+        params.append(position.upper())
+    if stakes:
+        where_parts.append("h.stakes = ?")
+        params.append(stakes)
+    if game_mode is not None:
+        where_parts.append("h.game_mode = ?")
+        params.append(game_mode)
+    if date_from:
+        where_parts.append("h.played_at >= ?")
+        params.append(date_from)
+    if date_to:
+        where_parts.append("h.played_at <= ?")
+        params.append(date_to)
+
+    where_sql = " AND ".join(where_parts)
+
+    # Step 1: Get overall rate to compute adaptive bucket size
+    count_query = f"""
+        SELECT COUNT(*), SUM(CASE WHEN {action_expr} THEN 1 ELSE 0 END)
+        FROM hand_players hp JOIN hands h ON hp.hand_id = h.id
+        WHERE {where_sql}
+    """
+    cnt_row = db.execute(count_query, params).fetchone()
+    total_opps = int(cnt_row[0])
+    action_count = int(cnt_row[1] or 0)
+
+    if total_opps == 0:
+        return StatTrendResponse(stat_key=stat_key, overall_pct=0, points=[])
+
+    overall_pct = action_count / total_opps * 100
+
+    # Step 2: Adaptive bucket using same CI framework as drift detection
+    # Target: 95% CI half-width of rolling avg ≤ 20% of stat value
+    # 1.96 * sqrt(p*(1-p)/N) ≤ 0.20 * p  →  N ≥ (1.96/0.20)² * (1-p)/p
+    if bucket_size is None:
+        p = max(action_count / total_opps, 0.005)  # floor to avoid div by zero
+        z = 1.96
+        target_relative_ci = 0.20
+        adaptive = math.ceil((z / target_relative_ci) ** 2 * (1 - p) / p)
+        bucket_size = max(100, min(2000, adaptive))
+
+    # Step 3: Rolling average via window function
+    query = f"""
+        WITH eligible AS (
+            SELECT
+                ROW_NUMBER() OVER (ORDER BY h.played_at ASC, h.id ASC) AS rn,
+                CASE WHEN {action_expr} THEN 1.0 ELSE 0.0 END AS action_taken
+            FROM hand_players hp
+            JOIN hands h ON hp.hand_id = h.id
+            WHERE {where_sql}
+        ),
+        rolled AS (
+            SELECT
+                rn,
+                AVG(action_taken) OVER (
+                    ORDER BY rn ROWS BETWEEN {bucket_size - 1} PRECEDING AND CURRENT ROW
+                ) AS rolling_avg,
+                LEAST(rn, {bucket_size}) AS sample_size
+            FROM eligible
+        )
+        SELECT rn, rolling_avg * 100.0, sample_size FROM rolled
+    """
+    rows = db.execute(query, params).fetchall()
+
+    if not rows:
+        return StatTrendResponse(stat_key=stat_key, overall_pct=0, points=[])
+
+    # Sample down to ~100 points
+    total_rows = len(rows)
+    max_points = 100
+    if total_rows <= max_points:
+        points = [
+            TrendPoint(hand_number=int(r[0]), rolling_pct=round(float(r[1]), 2), sample=int(r[2]))
+            for r in rows
+        ]
+    else:
+        step = total_rows / max_points
+        points = []
+        for i in range(max_points):
+            idx = int(i * step)
+            r = rows[idx]
+            points.append(TrendPoint(
+                hand_number=int(r[0]),
+                rolling_pct=round(float(r[1]), 2),
+                sample=int(r[2]),
+            ))
+        # Always include last point
+        last = rows[-1]
+        if points[-1].hand_number != int(last[0]):
+            points.append(TrendPoint(
+                hand_number=int(last[0]),
+                rolling_pct=round(float(last[1]), 2),
+                sample=int(last[2]),
+            ))
+
+    return StatTrendResponse(
+        stat_key=stat_key,
+        overall_pct=round(overall_pct, 2),
+        points=points,
+    )
+
+
+# ── Analysis endpoint (response distribution) ────────────────────────
+
+@router.get("/stats/detail/{stat_key}/analysis", response_model=StatAnalysisResponse)
+def get_stat_analysis(
+    stat_key: str = Path(...),
+    position: str | None = Query(None),
+    stakes: str | None = Query(None),
+    game_mode: str | None = Query(None),
+    date_from: str | None = Query(None),
+    date_to: str | None = Query(None),
+):
+    decomp = RESPONSE_DECOMPOSITION.get(stat_key)
+    if not decomp:
+        return StatAnalysisResponse(stat_key=stat_key)
+
+    db = get_read_cursor()
+    player_id = _get_hero_player_id(db)
+    if not player_id:
+        return StatAnalysisResponse(stat_key=stat_key)
+
+    where_parts = ["hp.player_id = ?", f"({decomp['opp_sql']})"]
+    params: list = [player_id]
+
+    if position:
+        where_parts.append("hp.position = ?")
+        params.append(position.upper())
+    if stakes:
+        where_parts.append("h.stakes = ?")
+        params.append(stakes)
+    if game_mode is not None:
+        where_parts.append("h.game_mode = ?")
+        params.append(game_mode)
+    if date_from:
+        where_parts.append("h.played_at >= ?")
+        params.append(date_from)
+    if date_to:
+        where_parts.append("h.played_at <= ?")
+        params.append(date_to)
+
+    where_sql = " AND ".join(where_parts)
+
+    query = f"""
+        SELECT
+            SUM(CASE WHEN {decomp['fold_sql']} THEN 1 ELSE 0 END) AS fold_count,
+            SUM(CASE WHEN {decomp['raise_sql']} THEN 1 ELSE 0 END) AS raise_count,
+            COUNT(*) AS total
+        FROM hand_players hp
+        JOIN hands h ON hp.hand_id = h.id
+        WHERE {where_sql}
+    """
+    row = db.execute(query, params).fetchone()
+    total = int(row[2])
+    if total == 0:
+        return StatAnalysisResponse(stat_key=stat_key)
+
+    fold_count = int(row[0] or 0)
+    raise_count = int(row[1] or 0)
+    call_count = total - fold_count - raise_count
+
+    return StatAnalysisResponse(
+        stat_key=stat_key,
+        response_distribution=ResponseDistribution(
+            fold_count=fold_count,
+            call_count=call_count,
+            raise_count=raise_count,
+            fold_pct=round(fold_count / total * 100, 1),
+            call_pct=round(call_count / total * 100, 1),
+            raise_pct=round(raise_count / total * 100, 1),
+            total=total,
+        ),
     )
