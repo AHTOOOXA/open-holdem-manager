@@ -18,16 +18,59 @@ interface FilterState {
   dateTo: string;
   search: string;
   statFlags: string[];
+  quickFilters: string[];
 }
+
+// ── Quick filter definitions ─────────────────────────────────────────
+
+interface QuickFilterDef {
+  key: string;
+  label: string;
+  category: 'preflop' | 'postflop' | 'general';
+  /** stat_flag values to send to backend (prefix ! for negation) */
+  flags: string[];
+}
+
+const QUICK_FILTERS: QuickFilterDef[] = [
+  // Preflop
+  { key: 'vpip', label: 'Did VPIP', category: 'preflop', flags: ['vpip'] },
+  { key: 'rfi', label: 'Raise 1st', category: 'preflop', flags: ['open_raise'] },
+  { key: 'call_open', label: 'Call Open Raise', category: 'preflop', flags: ['call_open_raise'] },
+  { key: '3bet', label: '3-Bet', category: 'preflop', flags: ['three_bet'] },
+  { key: '4bet', label: '4-Bet', category: 'preflop', flags: ['four_bet'] },
+  { key: 'squeeze', label: 'Squeeze', category: 'preflop', flags: ['squeeze'] },
+  { key: 'steal', label: 'Steal', category: 'preflop', flags: ['steal_attempted'] },
+  { key: 'limp', label: 'Limp', category: 'preflop', flags: ['limp'] },
+
+  // Postflop
+  { key: 'cbet_flop', label: 'Cbet Flop', category: 'postflop', flags: ['cbet_flop'] },
+  { key: '2barrel', label: '2nd Barrel', category: 'postflop', flags: ['cbet_turn'] },
+  { key: '3barrel', label: '3rd Barrel', category: 'postflop', flags: ['cbet_river'] },
+  { key: 'missed_cbet', label: 'Missed Cbet Flop', category: 'postflop', flags: ['missed_cbet_flop'] },
+  { key: 'fold_to_cbet', label: 'Fold to Cbet Flop', category: 'postflop', flags: ['fold_to_cbet_flop'] },
+  { key: 'donk_flop', label: 'Donk Bet Flop', category: 'postflop', flags: ['donk_bet_flop'] },
+
+  // General
+  { key: 'saw_flop', label: 'Saw Flop', category: 'general', flags: ['saw_flop'] },
+  { key: 'showdown', label: 'Went to Showdown', category: 'general', flags: ['went_to_showdown'] },
+  { key: 'fold_before_sd', label: 'Fold Before SD', category: 'general', flags: ['saw_flop', '!went_to_showdown'] },
+  { key: 'won_sd', label: 'Won at Showdown', category: 'general', flags: ['won_at_showdown'] },
+];
+
+const QUICK_FILTERS_MAP = Object.fromEntries(QUICK_FILTERS.map((q) => [q.key, q]));
+
+// ── Shared components ────────────────────────────────────────────────
 
 function FilterDropdown({
   label,
   children,
   active,
+  wide,
 }: {
   label: string;
   children: React.ReactNode;
   active: boolean;
+  wide?: boolean;
 }) {
   return (
     <Popover>
@@ -40,7 +83,7 @@ function FilterDropdown({
           {label} &#9662;
         </Button>
       </PopoverTrigger>
-      <PopoverContent align="start" className="w-auto min-w-[160px] p-2">
+      <PopoverContent align="start" className={`${wide ? 'w-auto min-w-[420px]' : 'w-auto min-w-[160px]'} p-2`}>
         {children}
       </PopoverContent>
     </Popover>
@@ -89,11 +132,13 @@ export default function HandFilters({
   onChange,
   distinctStakes,
   allTags,
+  lockedStatFlags,
 }: {
   filters: FilterState;
   onChange: (f: FilterState) => void;
   distinctStakes: string[];
   allTags: TagCount[];
+  lockedStatFlags?: string[];
 }) {
   const hasFilters =
     filters.position.length > 0 ||
@@ -102,7 +147,8 @@ export default function HandFilters({
     filters.tags.length > 0 ||
     filters.date !== '' ||
     filters.search !== '' ||
-    filters.statFlags.length > 0;
+    filters.statFlags.length > 0 ||
+    filters.quickFilters.length > 0;
 
   const clearAll = () =>
     onChange({
@@ -115,11 +161,58 @@ export default function HandFilters({
       dateTo: '',
       search: '',
       statFlags: [],
+      quickFilters: [],
     });
+
+  const toggleQuickFilter = (key: string, checked: boolean) => {
+    const next = checked
+      ? [...filters.quickFilters, key]
+      : filters.quickFilters.filter((k) => k !== key);
+    onChange({ ...filters, quickFilters: next });
+  };
 
   return (
     <Card className="gap-0 py-0">
       <CardContent className="px-3 py-2 flex items-center gap-2 flex-wrap">
+        {/* Quick Filters */}
+        <FilterDropdown label="Quick Filters" active={filters.quickFilters.length > 0} wide>
+          <div className="flex gap-5">
+            <div className="min-w-[120px]">
+              <div className="text-[11px] uppercase tracking-wide text-text-muted mb-1.5 font-medium">Preflop</div>
+              {QUICK_FILTERS.filter((q) => q.category === 'preflop').map((q) => (
+                <CheckboxOption
+                  key={q.key}
+                  label={q.label}
+                  checked={filters.quickFilters.includes(q.key)}
+                  onChange={(c) => toggleQuickFilter(q.key, c)}
+                />
+              ))}
+            </div>
+            <div className="min-w-[130px]">
+              <div className="text-[11px] uppercase tracking-wide text-text-muted mb-1.5 font-medium">Postflop</div>
+              {QUICK_FILTERS.filter((q) => q.category === 'postflop').map((q) => (
+                <CheckboxOption
+                  key={q.key}
+                  label={q.label}
+                  checked={filters.quickFilters.includes(q.key)}
+                  onChange={(c) => toggleQuickFilter(q.key, c)}
+                />
+              ))}
+            </div>
+            <div className="min-w-[120px]">
+              <div className="text-[11px] uppercase tracking-wide text-text-muted mb-1.5 font-medium">General</div>
+              {QUICK_FILTERS.filter((q) => q.category === 'general').map((q) => (
+                <CheckboxOption
+                  key={q.key}
+                  label={q.label}
+                  checked={filters.quickFilters.includes(q.key)}
+                  onChange={(c) => toggleQuickFilter(q.key, c)}
+                />
+              ))}
+            </div>
+          </div>
+        </FilterDropdown>
+
         {/* Stakes */}
         <FilterDropdown label="Stakes" active={filters.stakes.length > 0}>
           {distinctStakes.map((s) => (
@@ -237,6 +330,16 @@ export default function HandFilters({
           className="h-7 text-xs w-40"
         />
 
+        {/* Locked stat flag badges (non-removable) */}
+        {lockedStatFlags?.map((flag) => (
+          <span
+            key={`locked-${flag}`}
+            className="inline-flex items-center gap-1 h-7 px-2 text-xs bg-primary/10 text-primary border border-primary/30 rounded"
+          >
+            {flag.replace(/_/g, ' ')}
+          </span>
+        ))}
+
         {/* Stat flag badges */}
         {filters.statFlags.map((flag) => (
           <span
@@ -253,6 +356,26 @@ export default function HandFilters({
           </span>
         ))}
 
+        {/* Quick filter badges */}
+        {filters.quickFilters.map((key) => {
+          const def = QUICK_FILTERS_MAP[key];
+          if (!def) return null;
+          return (
+            <span
+              key={`qf-${key}`}
+              className="inline-flex items-center gap-1 h-7 px-2 text-xs bg-primary/10 text-primary border border-primary/30 rounded"
+            >
+              {def.label}
+              <button
+                className="ml-0.5 text-primary/60 hover:text-primary"
+                onClick={() => onChange({ ...filters, quickFilters: filters.quickFilters.filter((k) => k !== key) })}
+              >
+                &times;
+              </button>
+            </span>
+          );
+        })}
+
         {hasFilters && (
           <Button
             variant="ghost"
@@ -268,4 +391,5 @@ export default function HandFilters({
   );
 }
 
-export type { FilterState };
+export { QUICK_FILTERS, QUICK_FILTERS_MAP };
+export type { FilterState, QuickFilterDef };

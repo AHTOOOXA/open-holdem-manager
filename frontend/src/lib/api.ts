@@ -7,6 +7,11 @@ function setGameModeParam(sp: URLSearchParams, gameMode: string | undefined) {
   }
 }
 
+/** Set position param, normalizing to uppercase (DB stores EP/MP/CO/BTN/SB/BB) */
+function setPositionParam(sp: URLSearchParams, position: string | undefined) {
+  if (position) sp.set('position', position.toUpperCase());
+}
+
 export interface ImportResult {
   imported: number;
   duplicates: number;
@@ -232,7 +237,7 @@ export async function getHeroStats(params?: {
   last_n?: number;
 }): Promise<HeroStats> {
   const sp = new URLSearchParams();
-  if (params?.position) sp.set('position', params.position);
+  setPositionParam(sp, params?.position);
   if (params?.stakes) sp.set('stakes', params.stakes);
   setGameModeParam(sp, params?.game_mode);
   if (params?.date_from) sp.set('date_from', params.date_from);
@@ -391,7 +396,7 @@ export async function getHands(params?: HandListParams): Promise<HandListRespons
   if (params?.per_page) sp.set('per_page', String(params.per_page));
   if (params?.sort) sp.set('sort', params.sort);
   if (params?.order) sp.set('order', params.order);
-  if (params?.position) sp.set('position', params.position);
+  setPositionParam(sp, params?.position);
   if (params?.stakes) sp.set('stakes', params.stakes);
   if (params?.result) sp.set('result', params.result);
   if (params?.tags) sp.set('tags', params.tags);
@@ -482,7 +487,7 @@ export async function getRangeStats(params?: {
   date_to?: string;
 }): Promise<RangeResponse> {
   const sp = new URLSearchParams();
-  if (params?.position) sp.set('position', params.position);
+  setPositionParam(sp, params?.position);
   if (params?.stakes) sp.set('stakes', params.stakes);
   setGameModeParam(sp, params?.game_mode);
   if (params?.date_from) sp.set('date_from', params.date_from);
@@ -780,7 +785,7 @@ export async function getStatDetailHands(
   signal?: AbortSignal,
 ): Promise<StatDetailHandsResponse> {
   const sp = new URLSearchParams();
-  if (params?.position) sp.set('position', params.position);
+  setPositionParam(sp, params?.position);
   if (params?.stakes) sp.set('stakes', params.stakes);
   setGameModeParam(sp, params?.game_mode);
   if (params?.date_from) sp.set('date_from', params.date_from);
@@ -834,7 +839,7 @@ export async function getStatTrend(
   signal?: AbortSignal,
 ): Promise<StatTrendResponse> {
   const sp = new URLSearchParams();
-  if (params?.position) sp.set('position', params.position);
+  setPositionParam(sp, params?.position);
   if (params?.stakes) sp.set('stakes', params.stakes);
   if (params?.game_mode !== undefined) sp.set('game_mode', params.game_mode === '__reg__' ? '' : params.game_mode);
   if (params?.date_from) sp.set('date_from', params.date_from);
@@ -857,7 +862,7 @@ export async function getStatAnalysis(
   signal?: AbortSignal,
 ): Promise<StatAnalysisResponse> {
   const sp = new URLSearchParams();
-  if (params?.position) sp.set('position', params.position);
+  setPositionParam(sp, params?.position);
   if (params?.stakes) sp.set('stakes', params.stakes);
   if (params?.game_mode !== undefined) sp.set('game_mode', params.game_mode === '__reg__' ? '' : params.game_mode);
   if (params?.date_from) sp.set('date_from', params.date_from);
@@ -1068,7 +1073,7 @@ type StatFilterParams = {
 
 function _buildStatParams(params?: StatFilterParams): URLSearchParams {
   const sp = new URLSearchParams();
-  if (params?.position) sp.set('position', params.position);
+  setPositionParam(sp, params?.position);
   if (params?.stakes) sp.set('stakes', params.stakes);
   if (params?.game_mode !== undefined) sp.set('game_mode', params.game_mode === '__reg__' ? '' : params.game_mode);
   if (params?.date_from) sp.set('date_from', params.date_from);

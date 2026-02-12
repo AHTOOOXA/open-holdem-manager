@@ -71,7 +71,7 @@ def list_hands(
     where_clauses: list[str] = []
 
     if position:
-        positions = [p.strip() for p in position.split(",") if p.strip()]
+        positions = [p.strip().upper() for p in position.split(",") if p.strip()]
         if positions:
             ph = ",".join("?" for _ in positions)
             where_clauses.append(f"hp.position IN ({ph})")
@@ -120,8 +120,16 @@ def list_hands(
         params.append(f"%{search.strip()}%")
 
     if stat_flag:
+        import re
         for flag in stat_flag:
-            where_clauses.append(f"hp.{flag} = true")
+            negate = flag.startswith('!')
+            real_flag = flag[1:] if negate else flag
+            if not re.match(r'^[a-z_]+$', real_flag):
+                continue
+            if negate:
+                where_clauses.append(f"hp.{real_flag} IS NOT TRUE")
+            else:
+                where_clauses.append(f"hp.{real_flag} = true")
 
     if stat_key:
         entry = STAT_REGISTRY.get(stat_key)
@@ -154,6 +162,7 @@ def list_hands(
     allowed_sorts = {
         "played_at": "h.played_at",
         "won_bb": "hp.won_bb",
+        "won_usd": "hp.won_bb * h.bb_amount",
         "stakes": "h.bb_amount",
     }
     sort_col = allowed_sorts.get(sort, "h.played_at")
