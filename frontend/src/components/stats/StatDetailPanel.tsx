@@ -25,17 +25,6 @@ import {
 
 const POSITIONS = ['All', 'EP', 'MP', 'CO', 'BTN', 'SB', 'BB'] as const;
 
-function keyStreetLabel(ks: string | null | undefined): string {
-  if (!ks) return 'Key Actions';
-  const labels: Record<string, string> = {
-    preflop: 'PF Actions',
-    flop: 'Flop Actions',
-    turn: 'Turn Actions',
-    river: 'River Actions',
-  };
-  return labels[ks] || 'Key Actions';
-}
-
 interface StatDetailPanelProps {
   statKey: string;
   position?: string;
@@ -229,8 +218,15 @@ export default function StatDetailPanel({
                 <TableRow className="text-[13px] uppercase tracking-wide">
                   <TableHead className="py-2 px-2 h-auto">Preflop</TableHead>
                   <TableHead className="py-2 px-2 h-auto">Actions</TableHead>
-                  <TableHead className="py-2 pl-4 pr-2 h-auto">Board</TableHead>
-                  <TableHead className="py-2 px-2 h-auto">{keyStreetLabel(data.key_street)}</TableHead>
+                  <TableHead className="py-2 pl-4 pr-2 h-auto">Flop</TableHead>
+                  <TableHead className="py-2 px-1 h-auto text-center">Pot</TableHead>
+                  <TableHead className="py-2 px-2 h-auto">Actions</TableHead>
+                  <TableHead className="py-2 pl-4 pr-2 h-auto">Turn</TableHead>
+                  <TableHead className="py-2 px-1 h-auto text-center">Pot</TableHead>
+                  <TableHead className="py-2 px-2 h-auto">Actions</TableHead>
+                  <TableHead className="py-2 pl-4 pr-2 h-auto">River</TableHead>
+                  <TableHead className="py-2 px-1 h-auto text-center">Pot</TableHead>
+                  <TableHead className="py-2 px-2 h-auto">Actions</TableHead>
                   <TableHead className="py-2 px-2 h-auto text-center w-6">Act</TableHead>
                   <TableHead className="py-2 px-2 h-auto text-right">Won</TableHead>
                   <TableHead className="py-2 px-2 h-auto text-right">Date</TableHead>
@@ -255,19 +251,41 @@ export default function StatDetailPanel({
                     <TableCell className="py-1.5 px-2">
                       <Actions items={hand.preflop_actions} trimFolds />
                     </TableCell>
-                    {/* Board cards */}
+                    {/* Flop cards */}
                     <TableCell className="py-1.5 pl-4 pr-2">
-                      {hand.board_flop.length > 0 && (
-                        <span className="inline-flex items-center gap-[6px]">
-                          <CardBoxRow cards={hand.board_flop} />
-                          {hand.board_turn && <CardBox card={hand.board_turn} />}
-                          {hand.board_river && <CardBox card={hand.board_river} />}
-                        </span>
-                      )}
+                      <CardBoxRow cards={hand.board_flop} />
                     </TableCell>
-                    {/* Key street actions */}
+                    {/* Flop pot */}
+                    <TableCell className="py-1.5 px-1 text-center font-mono text-[14px] text-text-muted">
+                      {hand.board_flop.length > 0 ? hand.flop_pot : ''}
+                    </TableCell>
+                    {/* Flop actions */}
                     <TableCell className="py-1.5 px-2">
-                      <Actions items={hand.key_street_actions} />
+                      <Actions items={hand.flop_actions} />
+                    </TableCell>
+                    {/* Turn card */}
+                    <TableCell className="py-1.5 pl-4 pr-2">
+                      {hand.board_turn && <CardBox card={hand.board_turn} />}
+                    </TableCell>
+                    {/* Turn pot */}
+                    <TableCell className="py-1.5 px-1 text-center font-mono text-[14px] text-text-muted">
+                      {hand.board_turn ? hand.turn_pot : ''}
+                    </TableCell>
+                    {/* Turn actions */}
+                    <TableCell className="py-1.5 px-2">
+                      <Actions items={hand.turn_actions} />
+                    </TableCell>
+                    {/* River card */}
+                    <TableCell className="py-1.5 pl-4 pr-2">
+                      {hand.board_river && <CardBox card={hand.board_river} />}
+                    </TableCell>
+                    {/* River pot */}
+                    <TableCell className="py-1.5 px-1 text-center font-mono text-[14px] text-text-muted">
+                      {hand.board_river ? hand.river_pot : ''}
+                    </TableCell>
+                    {/* River actions */}
+                    <TableCell className="py-1.5 px-2">
+                      <Actions items={hand.river_actions} />
                     </TableCell>
                     {/* Action taken */}
                     <TableCell className="py-1.5 px-2 text-center">

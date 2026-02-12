@@ -149,6 +149,15 @@ SELECT
     SUM(COALESCE(hp.river_checks, 0)) as river_checks,
     SUM(COALESCE(hp.river_folds, 0)) as river_folds,
 
+    -- BB Defense / Iso Raise / Fold to Squeeze
+    SUM(CASE WHEN hp.bb_defense_opp THEN 1 ELSE 0 END) as bb_defense_opp,
+    SUM(CASE WHEN hp.bb_defense THEN 1 ELSE 0 END) as bb_defense,
+    SUM(CASE WHEN hp.iso_raise_opp THEN 1 ELSE 0 END) as iso_raise_opp,
+    SUM(CASE WHEN hp.iso_raise THEN 1 ELSE 0 END) as iso_raise,
+    SUM(CASE WHEN hp.faced_squeeze THEN 1 ELSE 0 END) as faced_squeeze,
+    SUM(CASE WHEN hp.fold_to_squeeze IS NOT NULL THEN 1 ELSE 0 END) as fold_to_squeeze_opp,
+    SUM(CASE WHEN hp.fold_to_squeeze THEN 1 ELSE 0 END) as fold_to_squeeze,
+
     -- Showdown
     SUM(CASE WHEN hp.saw_flop THEN 1 ELSE 0 END) as saw_flop,
     SUM(CASE WHEN hp.went_to_showdown THEN 1 ELSE 0 END) as went_sd,
@@ -314,6 +323,9 @@ def compute_hero_stats(
     stats.limp_fold = _sv("limp_fold", "limp")
     stats.four_bet_fold = _sv("four_bet_fold", "four_bet_fold_opp")
     stats.call_4bet = _sv("call_4bet", "five_bet_opp")
+    stats.bb_defense = _sv("bb_defense", "bb_defense_opp")
+    stats.iso_raise = _sv("iso_raise", "iso_raise_opp")
+    stats.fold_to_squeeze = _sv("fold_to_squeeze", "fold_to_squeeze_opp")
 
     # Steal
     stats.steal = _pos_steal("steal", "steal_opp", ["CO", "BTN", "SB"])

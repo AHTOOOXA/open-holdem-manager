@@ -6,6 +6,15 @@ export const queryKeys = {
     detail: (statKey: string, filters: Record<string, unknown>) => ['stats', 'detail', statKey, filters] as const,
     trend: (statKey: string, filters: Record<string, unknown>) => ['stats', 'trend', statKey, filters] as const,
     analysis: (statKey: string, filters: Record<string, unknown>) => ['stats', 'analysis', statKey, filters] as const,
+    evBreakdown: (statKey: string, filters: Record<string, unknown>) => ['stats', 'ev-breakdown', statKey, filters] as const,
+    sizing: (statKey: string, filters: Record<string, unknown>) => ['stats', 'sizing', statKey, filters] as const,
+    foldEquity: (statKey: string, filters: Record<string, unknown>) => ['stats', 'fold-equity', statKey, filters] as const,
+    byContext: (statKey: string, filters: Record<string, unknown>) => ['stats', 'by-context', statKey, filters] as const,
+    composition: (statKey: string, filters: Record<string, unknown>) => ['stats', 'composition', statKey, filters] as const,
+    money: (statKey: string, filters: Record<string, unknown>) => ['stats', 'money', statKey, filters] as const,
+    postflopBridge: (statKey: string, filters: Record<string, unknown>) => ['stats', 'postflop-bridge', statKey, filters] as const,
+    continuingRange: (statKey: string, filters: Record<string, unknown>) => ['stats', 'continuing-range', statKey, filters] as const,
+    statRange: (statKey: string, filters: Record<string, unknown>) => ['stats', 'stat-range', statKey, filters] as const,
   },
 
   graph: {

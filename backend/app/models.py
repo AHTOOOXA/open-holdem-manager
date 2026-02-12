@@ -93,6 +93,9 @@ class HeroStats(BaseModel):
     four_bet_range: StatValue = StatValue()
     four_bet_fold: StatValue = StatValue()
     call_4bet: StatValue = StatValue()
+    bb_defense: StatValue = StatValue()
+    iso_raise: StatValue = StatValue()
+    fold_to_squeeze: StatValue = StatValue()
 
     # Steal
     steal: PositionalStats = PositionalStats()
@@ -515,6 +518,96 @@ class SessionDetailResponse(BaseModel):
     biggest_losses: list[SessionBigHand] = []
 
 
+# ── Widget API Response Models ────────────────────────────────────────
+
+class EvScenario(BaseModel):
+    label: str
+    bb_per_100: float
+    hands: int
+    total_won_bb: float
+
+class EvBreakdownResponse(BaseModel):
+    stat_key: str
+    scenarios: list[EvScenario]
+    overall_bb_per_100: float
+    overall_hands: int
+
+class SizingBucket(BaseModel):
+    size_bb: float
+    count: int
+    pct: float
+
+class SizingResponse(BaseModel):
+    buckets: list[SizingBucket]
+    avg_size_bb: float | None
+    median_size_bb: float | None
+    total: int
+
+class FoldEquityResponse(BaseModel):
+    fold_pct: float
+    fold_count: int
+    total: int
+
+class ContextBucket(BaseModel):
+    label: str
+    actions: int
+    opportunities: int
+    pct: float | None
+
+class ByContextResponse(BaseModel):
+    dimension: str
+    buckets: list[ContextBucket]
+
+class CompositionSlice(BaseModel):
+    label: str
+    count: int
+    pct: float
+
+class CompositionResponse(BaseModel):
+    slices: list[CompositionSlice]
+    total: int
+
+class MoneyResponse(BaseModel):
+    total_bb: float
+    hands: int
+    bb_per_100: float
+
+class PostflopBridgeResponse(BaseModel):
+    cbet_pct: float | None
+    cbet_count: int
+    cbet_opp: int
+    avg_spr: float | None
+
+class ContinuingCombo(BaseModel):
+    combo: str
+    fold: int
+    call: int
+    raise_count: int  # 'raise' is reserved
+    total: int
+
+class ContinuingRangeResponse(BaseModel):
+    combos: list[ContinuingCombo]
+    total_hands: int
+
+
+class StatRangeCombo(BaseModel):
+    combo: str
+    hands: int            # opportunity count for this combo
+    actions: int          # action count
+    won_bb: float         # total won_bb when action taken
+    ev_bb: float          # total ev_bb when action taken
+    bb_per_100: float     # bb/100 when action taken
+    ev_bb_per_100: float  # ev bb/100 when action taken
+    total_won_bb: float   # total won_bb across ALL hands (action + no-action)
+    total_bb_per_100: float  # overall bb/100 for this combo
+
+
+class StatRangeResponse(BaseModel):
+    combos: list[StatRangeCombo] = []
+    total_hands: int = 0
+    total_actions: int = 0
+
+
 class StatDetailHand(BaseModel):
     hand_id: str
     played_at: datetime
@@ -530,6 +623,12 @@ class StatDetailHand(BaseModel):
     board_turn: Optional[str] = None
     board_river: Optional[str] = None
     preflop_actions: list[ActionItem] = []
+    flop_actions: list[ActionItem] = []
+    flop_pot: int = 0
+    turn_actions: list[ActionItem] = []
+    turn_pot: int = 0
+    river_actions: list[ActionItem] = []
+    river_pot: int = 0
     key_street_actions: list[ActionItem] = []
 
 

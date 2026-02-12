@@ -100,6 +100,22 @@ STAT_REGISTRY: dict[str, dict] = {
         "action_flag": "four_bet",
         "opp_flag": None,
     },
+    "bb_defense": {
+        "name": "BB Defense",
+        "action_flag": "bb_defense",
+        "opp_flag": "bb_defense_opp",
+    },
+    "iso_raise": {
+        "name": "Iso Raise",
+        "action_flag": "iso_raise",
+        "opp_flag": "iso_raise_opp",
+    },
+    "fold_to_squeeze": {
+        "name": "Fold to Squeeze",
+        "action_flag": "fold_to_squeeze",
+        "opp_flag": "fold_to_squeeze",
+        "opp_is_not_null": True,
+    },
     # ── Steal ──
     "steal": {
         "name": "Steal",
@@ -376,6 +392,235 @@ RESPONSE_DECOMPOSITION: dict[str, dict[str, str]] = {
         "fold_sql": "hp.fold_to_cbet_flop = TRUE",
         "raise_sql": "hp.raise_cbet_flop = TRUE",
     },
+    "bb_defense": {
+        "opp_sql": "hp.bb_defense_opp = TRUE",
+        "fold_sql": "hp.bb_defense IS NOT TRUE",
+        "raise_sql": "hp.three_bet = TRUE",
+    },
+    "fold_to_squeeze": {
+        "opp_sql": "hp.fold_to_squeeze IS NOT NULL",
+        "fold_sql": "hp.fold_to_squeeze = TRUE",
+        "raise_sql": "hp.four_bet = TRUE",
+    },
+}
+
+
+# ── EV Breakdown Scenarios ────────────────────────────────────────────
+# Maps stat_key → list of (label, SQL filter on hero's hand_players row)
+EV_BREAKDOWN_CONFIG: dict[str, list[tuple[str, str]]] = {
+    "open_raise": [
+        ("Fold-through", "hp.open_raise = TRUE AND hp.saw_flop IS NOT TRUE"),
+        ("Called", "hp.open_raise = TRUE AND hp.saw_flop = TRUE AND hp.is_3bet_pot IS NOT TRUE"),
+        ("3-Bet faced", "hp.open_raise = TRUE AND hp.fold_to_3bet IS NOT NULL"),
+    ],
+    "fold_to_3bet": [
+        ("Fold", "hp.fold_to_3bet = TRUE"),
+        ("Call", "hp.fold_to_3bet = FALSE AND hp.four_bet IS NOT TRUE"),
+        ("4-Bet", "hp.four_bet = TRUE"),
+    ],
+    "fold_to_4bet": [
+        ("Fold", "hp.fold_to_4bet = TRUE"),
+        ("Call", "hp.fold_to_4bet = FALSE AND hp.five_bet IS NOT TRUE"),
+        ("5-Bet", "hp.five_bet = TRUE"),
+    ],
+    "three_bet": [
+        ("Fold equity win", "hp.three_bet = TRUE AND hp.saw_flop IS NOT TRUE"),
+        ("Called", "hp.three_bet = TRUE AND hp.saw_flop = TRUE"),
+        ("4-Bet faced", "hp.three_bet = TRUE AND hp.fold_to_4bet IS NOT NULL"),
+    ],
+    "vpip": [
+        ("Open raise", "hp.open_raise = TRUE"),
+        ("Cold call", "hp.call_open_raise = TRUE"),
+        ("3-Bet", "hp.three_bet = TRUE"),
+        ("Limp", "hp.limp = TRUE"),
+        ("Squeeze", "hp.squeeze = TRUE"),
+    ],
+    "pfr": [
+        ("Open raise", "hp.open_raise = TRUE"),
+        ("3-Bet", "hp.three_bet = TRUE"),
+        ("4-Bet", "hp.four_bet = TRUE"),
+        ("Squeeze", "hp.squeeze = TRUE"),
+    ],
+    "call_open_raise": [
+        ("All cold-call pots", "hp.call_open_raise = TRUE"),
+    ],
+    "limp": [
+        ("All limped pots", "hp.limp = TRUE"),
+    ],
+    "four_bet": [
+        ("All 4-bet pots", "hp.four_bet = TRUE"),
+    ],
+    "five_bet": [
+        ("All 5-bet pots", "hp.five_bet = TRUE"),
+    ],
+    "call_4bet": [
+        ("All flat-4bet pots", "hp.call_4bet = TRUE"),
+    ],
+    "squeeze": [
+        ("All squeeze pots", "hp.squeeze = TRUE"),
+    ],
+    "bb_defense": [
+        ("Fold", "hp.bb_defense_opp = TRUE AND hp.bb_defense IS NOT TRUE"),
+        ("Call", "hp.bb_defense = TRUE AND hp.three_bet IS NOT TRUE"),
+        ("3-Bet", "hp.bb_defense_opp = TRUE AND hp.three_bet = TRUE"),
+    ],
+    "iso_raise": [
+        ("Iso-raised pots", "hp.iso_raise = TRUE"),
+        ("Limped-along pots", "hp.limp = TRUE"),
+    ],
+    "fold_to_squeeze": [
+        ("Fold", "hp.fold_to_squeeze = TRUE"),
+        ("Call", "hp.fold_to_squeeze = FALSE AND hp.four_bet IS NOT TRUE"),
+        ("4-Bet", "hp.faced_squeeze = TRUE AND hp.four_bet = TRUE"),
+    ],
+    "limp_fold": [
+        ("All limp-fold pots", "hp.limp_fold = TRUE"),
+    ],
+    "four_bet_fold": [
+        ("All 4-bet-fold pots", "hp.four_bet_fold = TRUE"),
+    ],
+    "three_bet_ip": [
+        ("Fold equity win", "hp.three_bet = TRUE AND hp.three_bet_opp_ip = TRUE AND hp.saw_flop IS NOT TRUE"),
+        ("Called", "hp.three_bet = TRUE AND hp.three_bet_opp_ip = TRUE AND hp.saw_flop = TRUE"),
+    ],
+    "three_bet_oop": [
+        ("Fold equity win", "hp.three_bet = TRUE AND hp.three_bet_opp_ip = FALSE AND hp.saw_flop IS NOT TRUE"),
+        ("Called", "hp.three_bet = TRUE AND hp.three_bet_opp_ip = FALSE AND hp.saw_flop = TRUE"),
+    ],
+}
+
+
+# ── Sizing Config ─────────────────────────────────────────────────────
+# Maps stat_key → (flag_filter_on_hp, action_type_filter)
+SIZING_CONFIG: dict[str, tuple[str, str]] = {
+    "open_raise": ("hp.open_raise = TRUE", "a.action_type = 'raise'"),
+    "iso_raise": ("hp.iso_raise = TRUE", "a.action_type = 'raise'"),
+}
+
+
+# ── Fold Equity Config ───────────────────────────────────────────────
+# Maps stat_key → SQL filter for "hero did action"
+FOLD_EQUITY_CONFIG: dict[str, str] = {
+    "three_bet": "hp.three_bet = TRUE",
+    "three_bet_ip": "hp.three_bet = TRUE AND hp.three_bet_opp_ip = TRUE",
+    "three_bet_oop": "hp.three_bet = TRUE AND hp.three_bet_opp_ip = FALSE",
+    "four_bet": "hp.four_bet = TRUE",
+    "squeeze": "hp.squeeze = TRUE",
+}
+
+
+# ── By-Context Config ────────────────────────────────────────────────
+# Maps stat_key → (dimension_label, action_sql, opp_sql, join_clause, group_expr)
+BY_CONTEXT_CONFIG: dict[str, dict] = {
+    "fold_to_3bet": {
+        "dimension": "villain_position",
+        "action_sql": "hp.fold_to_3bet = TRUE",
+        "opp_sql": "hp.fold_to_3bet IS NOT NULL",
+        "join": "JOIN hand_players v ON v.hand_id = hp.hand_id AND v.three_bet = TRUE AND v.player_id != hp.player_id",
+        "group_expr": "v.position",
+    },
+    "call_open_raise": {
+        "dimension": "opener_position",
+        "action_sql": "hp.call_open_raise = TRUE",
+        "opp_sql": "hp.call_open_raise_opp = TRUE",
+        "join": "JOIN hand_players v ON v.hand_id = hp.hand_id AND v.open_raise = TRUE AND v.player_id != hp.player_id",
+        "group_expr": "v.position",
+    },
+    "three_bet_ip": {
+        "dimension": "villain_position",
+        "action_sql": "hp.three_bet = TRUE",
+        "opp_sql": "hp.three_bet_opp = TRUE AND hp.three_bet_opp_ip = TRUE",
+        "join": "JOIN hand_players v ON v.hand_id = hp.hand_id AND v.open_raise = TRUE AND v.player_id != hp.player_id",
+        "group_expr": "v.position",
+    },
+    "bb_defense": {
+        "dimension": "raiser_position",
+        "action_sql": "hp.bb_defense = TRUE",
+        "opp_sql": "hp.bb_defense_opp = TRUE",
+        "join": "JOIN hand_players v ON v.hand_id = hp.hand_id AND v.open_raise = TRUE AND v.player_id != hp.player_id",
+        "group_expr": "v.position",
+    },
+    "fold_to_4bet": {
+        "dimension": "hero_position",
+        "action_sql": "hp.fold_to_4bet = TRUE",
+        "opp_sql": "hp.fold_to_4bet IS NOT NULL",
+        "join": "",
+        "group_expr": "hp.position",
+    },
+    "squeeze": {
+        "dimension": "callers",
+        "action_sql": "hp.squeeze = TRUE",
+        "opp_sql": "hp.squeeze_opp = TRUE",
+        "join": "",
+        "group_expr": "CASE WHEN (SELECT COUNT(*) FROM hand_players v WHERE v.hand_id = hp.hand_id AND v.call_open_raise = TRUE) >= 2 THEN '2+' ELSE '1' END",
+    },
+    "iso_raise": {
+        "dimension": "limpers",
+        "action_sql": "hp.iso_raise = TRUE",
+        "opp_sql": "hp.iso_raise_opp = TRUE",
+        "join": "",
+        "group_expr": "CASE WHEN (SELECT COUNT(*) FROM hand_players v WHERE v.hand_id = hp.hand_id AND v.limp = TRUE) >= 2 THEN '2+' ELSE '1' END",
+    },
+    "fold_to_squeeze": {
+        "dimension": "squeezer_position",
+        "action_sql": "hp.fold_to_squeeze = TRUE",
+        "opp_sql": "hp.fold_to_squeeze IS NOT NULL",
+        "join": "JOIN hand_players v ON v.hand_id = hp.hand_id AND v.squeeze = TRUE AND v.player_id != hp.player_id",
+        "group_expr": "v.position",
+    },
+    "vpip": {
+        "dimension": "position",
+        "action_sql": "hp.vpip = TRUE",
+        "opp_sql": "1=1",
+        "join": "",
+        "group_expr": "hp.position",
+    },
+    "pfr": {
+        "dimension": "position",
+        "action_sql": "hp.pfr = TRUE",
+        "opp_sql": "1=1",
+        "join": "",
+        "group_expr": "hp.position",
+    },
+    "limp_fold": {
+        "dimension": "position",
+        "action_sql": "hp.limp_fold = TRUE",
+        "opp_sql": "hp.limp = TRUE",
+        "join": "",
+        "group_expr": "hp.position",
+    },
+}
+
+
+# ── Composition Config ───────────────────────────────────────────────
+COMPOSITION_CONFIG: dict[str, list[tuple[str, str]]] = {
+    "vpip": [
+        ("Open Raise", "hp.open_raise = TRUE"),
+        ("Cold Call", "hp.call_open_raise = TRUE"),
+        ("3-Bet", "hp.three_bet = TRUE"),
+        ("Limp", "hp.limp = TRUE"),
+        ("Squeeze", "hp.squeeze = TRUE"),
+    ],
+    "pfr": [
+        ("Open Raise", "hp.open_raise = TRUE"),
+        ("3-Bet", "hp.three_bet = TRUE"),
+        ("4-Bet", "hp.four_bet = TRUE"),
+        ("Squeeze", "hp.squeeze = TRUE"),
+    ],
+}
+
+
+# ── Money Config ─────────────────────────────────────────────────────
+MONEY_CONFIG: dict[str, str] = {
+    "limp": "hp.limp = TRUE",
+    "limp_fold": "hp.limp_fold = TRUE",
+    "four_bet_fold": "hp.four_bet_fold = TRUE",
+}
+
+
+# ── Postflop Bridge Config ──────────────────────────────────────────
+POSTFLOP_BRIDGE_CONFIG: dict[str, str] = {
+    "three_bet": "hp.three_bet = TRUE AND hp.saw_flop = TRUE",
 }
 
 

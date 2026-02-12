@@ -116,6 +116,12 @@ def compute_stat_flags(parsed: ParsedHand) -> dict[str, dict]:
             "preflop_allin_raise": False,
             "preflop_allin_call": False,
             "postflop_ip": None,
+            "bb_defense": None,
+            "bb_defense_opp": False,
+            "iso_raise": False,
+            "iso_raise_opp": False,
+            "faced_squeeze": False,
+            "fold_to_squeeze": None,
         }
 
     # ── Preflop stat computation ──
@@ -162,6 +168,14 @@ def compute_stat_flags(parsed: ParsedHand) -> dict[str, dict]:
         if raise_count == 1 and uname not in already_invested:
             player_stats[uname]["call_open_raise_opp"] = True
 
+        # BB defense opportunity: BB facing a single raise
+        if raise_count == 1 and uname == bb_player:
+            player_stats[uname]["bb_defense_opp"] = True
+
+        # Iso-raise opportunity: there are limpers and no raise yet (for non-limpers)
+        if raise_count == 0 and has_limper and uname not in already_invested:
+            player_stats[uname]["iso_raise_opp"] = True
+
         if action == "fold":
             folded_preflop.add(uname)
 
@@ -177,6 +191,14 @@ def compute_stat_flags(parsed: ParsedHand) -> dict[str, dict]:
             if raise_count >= 4 and uname == third_raiser:
                 player_stats[uname]["four_bet_fold"] = True
 
+            # BB defense: folded to raise
+            if player_stats[uname]["bb_defense_opp"] and raise_count == 1:
+                player_stats[uname]["bb_defense"] = False
+
+            # Fold to squeeze: first raiser folds to squeeze (3bet with callers)
+            if player_stats[uname]["faced_squeeze"]:
+                player_stats[uname]["fold_to_squeeze"] = True
+
             # Check fold to steal (only if steal is still the last raise)
             if player_stats[uname]["faced_steal"] and raise_count == 1:
                 player_stats[uname]["fold_to_steal"] = True
@@ -189,6 +211,10 @@ def compute_stat_flags(parsed: ParsedHand) -> dict[str, dict]:
             player_stats[uname]["vpip"] = True
             if a["is_all_in"]:
                 player_stats[uname]["preflop_allin_call"] = True
+
+            # BB defense: called a raise
+            if player_stats[uname]["bb_defense_opp"] and raise_count >= 1:
+                player_stats[uname]["bb_defense"] = True
 
             if raise_count == 0:
                 # Calling the big blind = limp
@@ -215,6 +241,9 @@ def compute_stat_flags(parsed: ParsedHand) -> dict[str, dict]:
                 # Calling a 3bet — if this was the original raiser, not a fold_to_3bet
                 if uname == first_raiser:
                     player_stats[uname]["fold_to_3bet"] = False
+                # Call a squeeze: first raiser calls instead of folding
+                if player_stats[uname]["faced_squeeze"]:
+                    player_stats[uname]["fold_to_squeeze"] = False
             elif raise_count == 3:
                 if uname == second_raiser:
                     player_stats[uname]["fold_to_4bet"] = False
@@ -236,6 +265,10 @@ def compute_stat_flags(parsed: ParsedHand) -> dict[str, dict]:
                 # Open raise (RFI) — only when no limpers before
                 if player_stats[uname]["open_raise_opp"]:
                     player_stats[uname]["open_raise"] = True
+
+                # Iso-raise: raised over limpers
+                if player_stats[uname]["iso_raise_opp"]:
+                    player_stats[uname]["iso_raise"] = True
 
                 # Check if steal attempt (open raise from CO, BTN, or SB with no limpers)
                 if player_stats[uname]["steal_opp"]:
@@ -261,6 +294,13 @@ def compute_stat_flags(parsed: ParsedHand) -> dict[str, dict]:
                 # Check if this is a squeeze (3bet when there are callers of the open)
                 if players_who_called:
                     player_stats[uname]["squeeze"] = True
+                    # First raiser now faces a squeeze
+                    if first_raiser and first_raiser != uname:
+                        player_stats[first_raiser]["faced_squeeze"] = True
+
+                # BB defense via 3-bet
+                if player_stats[uname]["bb_defense_opp"]:
+                    player_stats[uname]["bb_defense"] = True
 
                 # Check 3bet vs steal
                 if is_steal and player_stats[uname]["faced_steal"]:
@@ -279,6 +319,9 @@ def compute_stat_flags(parsed: ParsedHand) -> dict[str, dict]:
                 # Opener didn't fold to 3-bet (they 4-bet or action was superseded)
                 if uname == first_raiser:
                     player_stats[uname]["fold_to_3bet"] = False
+                    # Also didn't fold to squeeze
+                    if player_stats[uname]["faced_squeeze"]:
+                        player_stats[uname]["fold_to_squeeze"] = False
                 elif first_raiser:
                     player_stats[first_raiser]["fold_to_3bet"] = False
 

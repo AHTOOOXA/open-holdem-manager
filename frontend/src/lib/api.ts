@@ -99,6 +99,9 @@ export interface HeroStats {
   four_bet_range: StatValue;
   four_bet_fold: StatValue;
   call_4bet: StatValue;
+  bb_defense: StatValue;
+  iso_raise: StatValue;
+  fold_to_squeeze: StatValue;
   steal: PositionalStats;
   fold_to_3bet_steal: PositionalStats;
   four_bet_steal: PositionalStats;
@@ -741,6 +744,12 @@ export interface StatDetailHand {
   board_turn: string | null;
   board_river: string | null;
   preflop_actions: ActionItem[];
+  flop_actions: ActionItem[];
+  flop_pot: number;
+  turn_actions: ActionItem[];
+  turn_pot: number;
+  river_actions: ActionItem[];
+  river_pot: number;
   key_street_actions: ActionItem[];
 }
 
@@ -943,4 +952,189 @@ export async function rebuildHands(
   }
 
   return finalResult ?? { imported: 0, duplicates: 0, errors: 0, error_details: [] };
+}
+
+// ── Widget API Types ──────────────────────────────────────────────────
+
+export interface EvScenario {
+  label: string;
+  bb_per_100: number;
+  hands: number;
+  total_won_bb: number;
+}
+
+export interface EvBreakdownResponse {
+  stat_key: string;
+  scenarios: EvScenario[];
+  overall_bb_per_100: number;
+  overall_hands: number;
+}
+
+export interface SizingBucket {
+  size_bb: number;
+  count: number;
+  pct: number;
+}
+
+export interface SizingResponse {
+  buckets: SizingBucket[];
+  avg_size_bb: number | null;
+  median_size_bb: number | null;
+  total: number;
+}
+
+export interface FoldEquityResponse {
+  fold_pct: number;
+  fold_count: number;
+  total: number;
+}
+
+export interface ContextBucket {
+  label: string;
+  actions: number;
+  opportunities: number;
+  pct: number | null;
+}
+
+export interface ByContextResponse {
+  dimension: string;
+  buckets: ContextBucket[];
+}
+
+export interface CompositionSlice {
+  label: string;
+  count: number;
+  pct: number;
+}
+
+export interface CompositionResponse {
+  slices: CompositionSlice[];
+  total: number;
+}
+
+export interface MoneyResponse {
+  total_bb: number;
+  hands: number;
+  bb_per_100: number;
+}
+
+export interface PostflopBridgeResponse {
+  cbet_pct: number | null;
+  cbet_count: number;
+  cbet_opp: number;
+  avg_spr: number | null;
+}
+
+export interface ContinuingCombo {
+  combo: string;
+  fold: number;
+  call: number;
+  raise_count: number;
+  total: number;
+}
+
+export interface ContinuingRangeResponse {
+  combos: ContinuingCombo[];
+  total_hands: number;
+}
+
+export interface StatRangeCombo {
+  combo: string;
+  hands: number;
+  actions: number;
+  won_bb: number;
+  ev_bb: number;
+  bb_per_100: number;
+  ev_bb_per_100: number;
+  total_won_bb: number;
+  total_bb_per_100: number;
+}
+
+export interface StatRangeResponse {
+  combos: StatRangeCombo[];
+  total_hands: number;
+  total_actions: number;
+}
+
+// ── Widget API Fetch Functions ────────────────────────────────────────
+
+type StatFilterParams = {
+  position?: string;
+  stakes?: string;
+  game_mode?: string;
+  date_from?: string;
+  date_to?: string;
+};
+
+function _buildStatParams(params?: StatFilterParams): URLSearchParams {
+  const sp = new URLSearchParams();
+  if (params?.position) sp.set('position', params.position);
+  if (params?.stakes) sp.set('stakes', params.stakes);
+  if (params?.game_mode !== undefined) sp.set('game_mode', params.game_mode === '__reg__' ? '' : params.game_mode);
+  if (params?.date_from) sp.set('date_from', params.date_from);
+  if (params?.date_to) sp.set('date_to', params.date_to);
+  return sp;
+}
+
+export async function getEvBreakdown(statKey: string, params?: StatFilterParams, signal?: AbortSignal): Promise<EvBreakdownResponse> {
+  const sp = _buildStatParams(params);
+  const res = await fetch(`${BASE}/stats/detail/${encodeURIComponent(statKey)}/ev-breakdown?${sp}`, { signal });
+  if (!res.ok) throw new Error(`EV breakdown failed: ${res.statusText}`);
+  return res.json();
+}
+
+export async function getSizing(statKey: string, params?: StatFilterParams, signal?: AbortSignal): Promise<SizingResponse> {
+  const sp = _buildStatParams(params);
+  const res = await fetch(`${BASE}/stats/detail/${encodeURIComponent(statKey)}/sizing?${sp}`, { signal });
+  if (!res.ok) throw new Error(`Sizing failed: ${res.statusText}`);
+  return res.json();
+}
+
+export async function getFoldEquity(statKey: string, params?: StatFilterParams, signal?: AbortSignal): Promise<FoldEquityResponse> {
+  const sp = _buildStatParams(params);
+  const res = await fetch(`${BASE}/stats/detail/${encodeURIComponent(statKey)}/fold-equity?${sp}`, { signal });
+  if (!res.ok) throw new Error(`Fold equity failed: ${res.statusText}`);
+  return res.json();
+}
+
+export async function getByContext(statKey: string, params?: StatFilterParams, signal?: AbortSignal): Promise<ByContextResponse> {
+  const sp = _buildStatParams(params);
+  const res = await fetch(`${BASE}/stats/detail/${encodeURIComponent(statKey)}/by-context?${sp}`, { signal });
+  if (!res.ok) throw new Error(`By context failed: ${res.statusText}`);
+  return res.json();
+}
+
+export async function getComposition(statKey: string, params?: StatFilterParams, signal?: AbortSignal): Promise<CompositionResponse> {
+  const sp = _buildStatParams(params);
+  const res = await fetch(`${BASE}/stats/detail/${encodeURIComponent(statKey)}/composition?${sp}`, { signal });
+  if (!res.ok) throw new Error(`Composition failed: ${res.statusText}`);
+  return res.json();
+}
+
+export async function getMoney(statKey: string, params?: StatFilterParams, signal?: AbortSignal): Promise<MoneyResponse> {
+  const sp = _buildStatParams(params);
+  const res = await fetch(`${BASE}/stats/detail/${encodeURIComponent(statKey)}/money?${sp}`, { signal });
+  if (!res.ok) throw new Error(`Money failed: ${res.statusText}`);
+  return res.json();
+}
+
+export async function getPostflopBridge(statKey: string, params?: StatFilterParams, signal?: AbortSignal): Promise<PostflopBridgeResponse> {
+  const sp = _buildStatParams(params);
+  const res = await fetch(`${BASE}/stats/detail/${encodeURIComponent(statKey)}/postflop-bridge?${sp}`, { signal });
+  if (!res.ok) throw new Error(`Postflop bridge failed: ${res.statusText}`);
+  return res.json();
+}
+
+export async function getContinuingRange(statKey: string, params?: StatFilterParams, signal?: AbortSignal): Promise<ContinuingRangeResponse> {
+  const sp = _buildStatParams(params);
+  const res = await fetch(`${BASE}/stats/detail/${encodeURIComponent(statKey)}/continuing-range?${sp}`, { signal });
+  if (!res.ok) throw new Error(`Continuing range failed: ${res.statusText}`);
+  return res.json();
+}
+
+export async function getStatRange(statKey: string, params?: StatFilterParams, signal?: AbortSignal): Promise<StatRangeResponse> {
+  const sp = _buildStatParams(params);
+  const res = await fetch(`${BASE}/stats/detail/${encodeURIComponent(statKey)}/range?${sp}`, { signal });
+  if (!res.ok) throw new Error(`Stat range failed: ${res.statusText}`);
+  return res.json();
 }
