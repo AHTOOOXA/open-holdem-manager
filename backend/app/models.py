@@ -466,8 +466,12 @@ class SessionGraphPoint(BaseModel):
     played_at: str
     cumulative_bb: float
     cumulative_ev_bb: float
+    cumulative_showdown_bb: float
+    cumulative_nonshowdown_bb: float
     cumulative_usd: float
     cumulative_ev_usd: float
+    cumulative_showdown_usd: float
+    cumulative_nonshowdown_usd: float
 
 
 class SessionStats(BaseModel):

@@ -341,6 +341,8 @@ export default function GraphPage() {
   const rateBB = n > 0 ? (wonBB / n) * 100 : 0;
   const evRateBB = n > 0 ? (evBB / n) * 100 : 0;
   const rakePerBB = n > 0 ? (rakeBB / n) * 100 : 0;
+  const sdRateBB = n > 0 ? (sdBB / n) * 100 : 0;
+  const nsdRateBB = n > 0 ? (nsdBB / n) * 100 : 0;
 
   const totalHrs = totalSessionHours(sessions);
   const handsPerHour = totalHrs > 0 ? Math.round(n / totalHrs) : 0;
@@ -678,12 +680,12 @@ export default function GraphPage() {
             {/* SD Won */}
             <div>
               <div className={`text-sm font-bold font-mono ${clr(sdUSD)}`}>{fmtUSD(sdUSD)}</div>
-              <div className="text-xs text-text-muted">Showdown <span className={`font-mono ${clr(sdBB)}`}>{fmtBB(sdBB)}</span></div>
+              <div className="text-xs text-text-muted">Showdown <span className={`font-mono ${clr(sdRateBB)}`}>{sdRateBB.toFixed(1)}/100</span></div>
             </div>
             {/* NSD Won */}
             <div>
               <div className={`text-sm font-bold font-mono ${clr(nsdUSD)}`}>{fmtUSD(nsdUSD)}</div>
-              <div className="text-xs text-text-muted">Non-SD <span className={`font-mono ${clr(nsdBB)}`}>{fmtBB(nsdBB)}</span></div>
+              <div className="text-xs text-text-muted">Non-SD <span className={`font-mono ${clr(nsdRateBB)}`}>{nsdRateBB.toFixed(1)}/100</span></div>
             </div>
             {/* Rake */}
             <div>

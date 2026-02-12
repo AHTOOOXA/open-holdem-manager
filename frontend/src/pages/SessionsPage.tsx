@@ -220,6 +220,17 @@ function SessionDetail({ index }: { index: number }) {
 
   const mainKey = unit === 'bb' ? 'cumulative_bb' : 'cumulative_usd';
   const evKey = unit === 'bb' ? 'cumulative_ev_bb' : 'cumulative_ev_usd';
+  const sdKey = unit === 'bb' ? 'cumulative_showdown_bb' : 'cumulative_showdown_usd';
+  const nsdKey = unit === 'bb' ? 'cumulative_nonshowdown_bb' : 'cumulative_nonshowdown_usd';
+
+  const last = graph[graph.length - 1];
+  const sdBB = last?.cumulative_showdown_bb ?? 0;
+  const sdUSD = last?.cumulative_showdown_usd ?? 0;
+  const nsdBB = last?.cumulative_nonshowdown_bb ?? 0;
+  const nsdUSD = last?.cumulative_nonshowdown_usd ?? 0;
+  const n0 = graph.length;
+  const sdRateBB = n0 > 0 ? (sdBB / n0) * 100 : 0;
+  const nsdRateBB = n0 > 0 ? (nsdBB / n0) * 100 : 0;
 
   if (isPending) {
     return (
@@ -278,6 +289,14 @@ function SessionDetail({ index }: { index: number }) {
                 All-in EV
               </span>
             )}
+            <span className="flex items-center gap-1.5">
+              <span className="inline-block w-4 h-0.5 rounded" style={{ background: '#22c55e' }} />
+              Showdown
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="inline-block w-4 h-0.5 rounded" style={{ background: '#ef4444' }} />
+              Non-Showdown
+            </span>
           </div>
           <ResponsiveContainer width="100%" height={300}>
             <ComposedChart data={graph} margin={{ top: 4, right: 16, bottom: 4, left: 8 }}>
@@ -335,6 +354,26 @@ function SessionDetail({ index }: { index: number }) {
                   isAnimationActive={false}
                 />
               )}
+              <Line
+                type="monotone"
+                dataKey={sdKey}
+                name={sdKey}
+                stroke="#22c55e"
+                strokeWidth={1.5}
+                dot={false}
+                connectNulls
+                isAnimationActive={false}
+              />
+              <Line
+                type="monotone"
+                dataKey={nsdKey}
+                name={nsdKey}
+                stroke="#ef4444"
+                strokeWidth={1.5}
+                dot={false}
+                connectNulls
+                isAnimationActive={false}
+              />
             </ComposedChart>
           </ResponsiveContainer>
         </Card>
@@ -376,7 +415,7 @@ function SessionDetail({ index }: { index: number }) {
             )}
           </div>
         </div>
-        <div className="grid grid-cols-3 gap-x-6 px-4 py-2.5 border-t border-border">
+        <div className="grid grid-cols-5 gap-x-6 px-4 py-2.5 border-t border-border">
           <div>
             <div className={`text-sm font-bold font-mono ${durationHrs > 0 ? clr(stats.usd_per_hour) : 'text-text-muted'}`}>
               {durationHrs > 0 ? `${stats.usd_per_hour >= 0 ? '' : '-'}$${Math.abs(stats.usd_per_hour).toFixed(2)}/hr` : '\u2014'}
@@ -384,6 +423,14 @@ function SessionDetail({ index }: { index: number }) {
             <div className="text-xs text-text-muted">
               $/hr {durationHrs > 0 && <span className={`font-mono ${clr(stats.bb_per_hour)}`}>{stats.bb_per_hour.toFixed(1)} BB</span>}
             </div>
+          </div>
+          <div>
+            <div className={`text-sm font-bold font-mono ${clr(sdUSD)}`}>{fmtUSD(sdUSD)}</div>
+            <div className="text-xs text-text-muted">Showdown <span className={`font-mono ${clr(sdRateBB)}`}>{sdRateBB.toFixed(1)}/100</span></div>
+          </div>
+          <div>
+            <div className={`text-sm font-bold font-mono ${clr(nsdUSD)}`}>{fmtUSD(nsdUSD)}</div>
+            <div className="text-xs text-text-muted">Non-SD <span className={`font-mono ${clr(nsdRateBB)}`}>{nsdRateBB.toFixed(1)}/100</span></div>
           </div>
           <div>
             <div className="text-sm font-bold font-mono text-text-muted">{fmtUSD(stats.rake_usd)}</div>
@@ -667,6 +714,16 @@ function LatestSessionRow({
                         strokeDasharray="6 3" opacity={0.8} isAnimationActive={false}
                       />
                     )}
+                    <Line
+                      type="monotone" dataKey="cumulative_showdown_bb" name="cumulative_showdown_bb"
+                      stroke="#22c55e" strokeWidth={1.5} dot={false} connectNulls
+                      isAnimationActive={false}
+                    />
+                    <Line
+                      type="monotone" dataKey="cumulative_nonshowdown_bb" name="cumulative_nonshowdown_bb"
+                      stroke="#ef4444" strokeWidth={1.5} dot={false} connectNulls
+                      isAnimationActive={false}
+                    />
                   </ComposedChart>
                 </ResponsiveContainer>
               ) : (
@@ -799,8 +856,12 @@ function SessionTooltip({ active, payload, label, unit }: SessionTooltipProps) {
   const names: Record<string, string> = {
     cumulative_bb: 'Actual',
     cumulative_ev_bb: 'All-in EV',
+    cumulative_showdown_bb: 'Showdown',
+    cumulative_nonshowdown_bb: 'Non-Showdown',
     cumulative_usd: 'Actual',
     cumulative_ev_usd: 'All-in EV',
+    cumulative_showdown_usd: 'Showdown',
+    cumulative_nonshowdown_usd: 'Non-Showdown',
   };
   return (
     <div style={{

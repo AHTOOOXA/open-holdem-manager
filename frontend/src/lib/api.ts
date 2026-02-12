@@ -682,8 +682,12 @@ export interface SessionGraphPoint {
   played_at: string;
   cumulative_bb: number;
   cumulative_ev_bb: number;
+  cumulative_showdown_bb: number;
+  cumulative_nonshowdown_bb: number;
   cumulative_usd: number;
   cumulative_ev_usd: number;
+  cumulative_showdown_usd: number;
+  cumulative_nonshowdown_usd: number;
 }
 
 export interface SessionStats extends SessionSummary {

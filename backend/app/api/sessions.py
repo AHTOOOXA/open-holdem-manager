@@ -194,17 +194,28 @@ def get_session_detail(session_index: int):
     graph = []
     cum_bb = 0.0
     cum_ev_bb = 0.0
+    cum_sd_bb = 0.0
+    cum_nsd_bb = 0.0
     cum_usd = 0.0
     cum_ev_usd = 0.0
+    cum_sd_usd = 0.0
+    cum_nsd_usd = 0.0
     for i, h in enumerate(hands):
         won_bb = float(h[4] or 0)
         ev_bb_val = float(h[6] or h[4] or 0)
         won_usd = float(h[5] or 0)
         ev_usd_val = ev_bb_val * float(h[3])
+        went_sd = bool(h[16])
         cum_bb += won_bb
         cum_ev_bb += ev_bb_val
         cum_usd += won_usd
         cum_ev_usd += ev_usd_val
+        if went_sd:
+            cum_sd_bb += won_bb
+            cum_sd_usd += won_usd
+        else:
+            cum_nsd_bb += won_bb
+            cum_nsd_usd += won_usd
         played_at = h[1]
         if isinstance(played_at, datetime):
             played_at = played_at.isoformat()
@@ -213,8 +224,12 @@ def get_session_detail(session_index: int):
             played_at=str(played_at),
             cumulative_bb=round(cum_bb, 2),
             cumulative_ev_bb=round(cum_ev_bb, 2),
+            cumulative_showdown_bb=round(cum_sd_bb, 2),
+            cumulative_nonshowdown_bb=round(cum_nsd_bb, 2),
             cumulative_usd=round(cum_usd, 2),
             cumulative_ev_usd=round(cum_ev_usd, 2),
+            cumulative_showdown_usd=round(cum_sd_usd, 2),
+            cumulative_nonshowdown_usd=round(cum_nsd_usd, 2),
         ))
 
     # Biggest wins/losses
