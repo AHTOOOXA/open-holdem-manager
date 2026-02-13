@@ -30,10 +30,7 @@ mac:
   target:
     - dmg
     - zip
-  # Uncomment and configure for code signing:
-  # identity: "Developer ID Application: Your Name (TEAM_ID)"
-  # notarize:
-  #   teamId: TEAM_ID
+  identity: null  # Ad-hoc sign (no Apple Developer account needed)
 
 dmg:
   title: "${productName}"
