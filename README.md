@@ -2,6 +2,8 @@
 
 Local poker hand history tracker for GGPoker Rush & Cash. Parses hand histories, stores in DuckDB, computes H2N-style stats, shows graphs.
 
+**Website:** [ohm.antonchaynik.ru](https://ohm.antonchaynik.ru)
+
 ## Download
 
 | Platform | Download |
