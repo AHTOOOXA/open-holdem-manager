@@ -1,8 +1,8 @@
 from fastapi import APIRouter, UploadFile, File
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, FileResponse
 from decimal import Decimal
 from app.models import ImportResult
-from app.db import get_db, db_lock
+from app.db import get_db, db_lock, close_db, DB_PATH
 from app.parsers.ggpoker import parse_hand_history, ParsedHand
 from app.stat_flags import compute_stat_flags
 from app.player_classification import batch_update_player_types
@@ -12,7 +12,10 @@ import traceback
 import zipfile
 import io
 import json
+import os
 import re
+import shutil
+import tempfile
 import time
 import pyarrow as pa
 
@@ -32,7 +35,46 @@ _player_cache: dict[str, int] = {}  # username -> player_id
 _next_player_id: int | None = None
 _next_hp_id: int | None = None
 
-BATCH_SIZE = 500
+BATCH_SIZE = 2000
+
+# ── Index definitions (dropped during bulk import, recreated after) ──
+_BULK_INDEXES = [
+    "CREATE INDEX IF NOT EXISTS idx_hands_played_at ON hands(played_at)",
+    "CREATE INDEX IF NOT EXISTS idx_hands_stakes ON hands(stakes)",
+    "CREATE INDEX IF NOT EXISTS idx_hands_game_mode ON hands(game_mode)",
+    "CREATE INDEX IF NOT EXISTS idx_hp_hand_id ON hand_players(hand_id)",
+    "CREATE INDEX IF NOT EXISTS idx_hp_player_id ON hand_players(player_id)",
+    "CREATE INDEX IF NOT EXISTS idx_hp_position ON hand_players(position)",
+    "CREATE INDEX IF NOT EXISTS idx_actions_hand_id ON actions(hand_id)",
+    "CREATE INDEX IF NOT EXISTS idx_hand_tags_hand_id ON hand_tags(hand_id)",
+    "CREATE INDEX IF NOT EXISTS idx_hand_tags_tag ON hand_tags(tag)",
+    "CREATE INDEX IF NOT EXISTS idx_board_cards_hand_id ON board_cards(hand_id)",
+    "CREATE INDEX IF NOT EXISTS idx_hp_player_hand ON hand_players(player_id, hand_id)",
+    "CREATE INDEX IF NOT EXISTS idx_hp_hand_player ON hand_players(hand_id, player_id)",
+    "CREATE INDEX IF NOT EXISTS idx_hp_player_position ON hand_players(player_id, position)",
+    "CREATE INDEX IF NOT EXISTS idx_h_played_stakes ON hands(played_at, stakes)",
+]
+
+_INDEX_NAMES = [
+    "idx_hands_played_at", "idx_hands_stakes", "idx_hands_game_mode",
+    "idx_hp_hand_id", "idx_hp_player_id", "idx_hp_position",
+    "idx_actions_hand_id", "idx_hand_tags_hand_id", "idx_hand_tags_tag",
+    "idx_board_cards_hand_id",
+    "idx_hp_player_hand", "idx_hp_hand_player", "idx_hp_player_position",
+    "idx_h_played_stakes",
+]
+
+
+def _drop_indexes(db: duckdb.DuckDBPyConnection) -> None:
+    """Drop all non-PK indexes for fast bulk loading."""
+    for name in _INDEX_NAMES:
+        db.execute(f"DROP INDEX IF EXISTS {name}")
+
+
+def _create_indexes(db: duckdb.DuckDBPyConnection) -> None:
+    """Recreate all indexes after bulk loading."""
+    for stmt in _BULK_INDEXES:
+        db.execute(stmt)
 
 # ── Column keys for column-oriented PyArrow inserts ──
 _HANDS_COLS = (
@@ -233,9 +275,11 @@ def _compute_financials(parsed: ParsedHand):
 def _flush_batch(
     db: duckdb.DuckDBPyConnection,
     prepared: list[tuple[ParsedHand, dict]],
+    rebuild: bool = False,
 ) -> tuple[int, int, list[str]]:
     """Bulk-insert a batch of (parsed, player_stats) tuples using PyArrow column-oriented inserts.
 
+    When rebuild=True, skips inserting into the hands table (it already has the data).
     Returns (imported_count, error_count, error_details).
     """
     global _next_hp_id
@@ -247,7 +291,7 @@ def _flush_batch(
     _batch_resolve_players(db, prepared)
 
     # Column-oriented building: one list per column
-    hands_cols: dict[str, list] = {k: [] for k in _HANDS_COLS}
+    hands_cols: dict[str, list] = {k: [] for k in _HANDS_COLS} if not rebuild else None
     hp_cols: dict[str, list] = {k: [] for k in _HP_ALL_COLS}
     board_cols: dict[str, list] = {k: [] for k in _BOARD_COLS}
 
@@ -265,20 +309,21 @@ def _flush_batch(
         )
         player_invested, all_in_ev_bb_map = _compute_financials(parsed)
 
-        # Append to hands columns
-        hands_cols["id"].append(parsed.hand_id)
-        hands_cols["site_id"].append(parsed.site_id)
-        hands_cols["played_at"].append(parsed.played_at)
-        hands_cols["game_type"].append(parsed.game_type)
-        hands_cols["game_mode"].append(parsed.game_mode)
-        hands_cols["stakes"].append(parsed.stakes)
-        hands_cols["sb_amount"].append(float(parsed.sb_amount))
-        hands_cols["bb_amount"].append(bb_f)
-        hands_cols["table_name"].append(parsed.table_name)
-        hands_cols["table_size"].append(parsed.table_size)
-        hands_cols["button_seat"].append(parsed.button_seat)
-        hands_cols["raw_text"].append(parsed.raw_text)
-        hands_cols["cash_drop_received"].append(float(parsed.cash_drop_received))
+        # Append to hands columns (skip during rebuild — hands table is preserved)
+        if hands_cols is not None:
+            hands_cols["id"].append(parsed.hand_id)
+            hands_cols["site_id"].append(parsed.site_id)
+            hands_cols["played_at"].append(parsed.played_at)
+            hands_cols["game_type"].append(parsed.game_type)
+            hands_cols["game_mode"].append(parsed.game_mode)
+            hands_cols["stakes"].append(parsed.stakes)
+            hands_cols["sb_amount"].append(float(parsed.sb_amount))
+            hands_cols["bb_amount"].append(bb_f)
+            hands_cols["table_name"].append(parsed.table_name)
+            hands_cols["table_size"].append(parsed.table_size)
+            hands_cols["button_seat"].append(parsed.button_seat)
+            hands_cols["raw_text"].append(parsed.raw_text)
+            hands_cols["cash_drop_received"].append(float(parsed.cash_drop_received))
 
         for s in parsed.seats:
             uname = s["username"]
@@ -334,7 +379,7 @@ def _flush_batch(
     # Bulk insert using PyArrow tables
     db.execute("BEGIN TRANSACTION")
     try:
-        if hands_cols["id"]:
+        if hands_cols is not None and hands_cols["id"]:
             pa_hands = pa.table(hands_cols)
             db.execute("INSERT INTO hands BY NAME SELECT * FROM pa_hands")
         if hp_cols["id"]:
@@ -457,6 +502,9 @@ async def import_files_stream(files: list[UploadFile] = File(...)):
                     ).fetchall()
                     existing_ids.update(r[0] for r in rows)
 
+            # Drop indexes for fast bulk loading
+            _drop_indexes(db)
+
             pending: list[tuple[ParsedHand, dict]] = []
 
             for i, hand_text in enumerate(all_hands):
@@ -515,6 +563,11 @@ async def import_files_stream(files: list[UploadFile] = File(...)):
                 errors += errs
                 error_details.extend(details)
 
+            # Recreate indexes (bulk build is faster than incremental)
+            t0_idx = time.perf_counter()
+            _create_indexes(db)
+            t_idx = time.perf_counter() - t0_idx
+
             finalize_import(db)
 
         elapsed = time.perf_counter() - t_start
@@ -530,6 +583,7 @@ async def import_files_stream(files: list[UploadFile] = File(...)):
             "parse_ms": round(t_parse * 1000),
             "stats_ms": round(t_stats * 1000),
             "db_ms": round(t_db * 1000),
+            "index_ms": round(t_idx * 1000),
         }) + "\n"
 
     return StreamingResponse(generate(), media_type="application/x-ndjson")
@@ -562,6 +616,9 @@ def _process_hands(db, text_contents: list[str]) -> ImportResult:
                 f"SELECT id FROM hands WHERE id IN ({placeholders})", batch
             ).fetchall()
             existing_ids.update(r[0] for r in rows)
+
+    # Drop indexes for fast bulk loading
+    _drop_indexes(db)
 
     pending: list[tuple[ParsedHand, dict]] = []
 
@@ -596,6 +653,7 @@ def _process_hands(db, text_contents: list[str]) -> ImportResult:
         total_errors += errs
         error_details.extend(details)
 
+    _create_indexes(db)
     finalize_import(db)
 
     return ImportResult(
@@ -608,7 +666,11 @@ def _process_hands(db, text_contents: list[str]) -> ImportResult:
 
 @router.post("/import/rebuild")
 async def rebuild_hands():
-    """Re-parse all hands from stored raw_text. Useful after parser/schema changes."""
+    """Re-parse all hands from stored raw_text. Crash-safe: hands table is never touched.
+
+    Only derived tables (hand_players, board_cards, players, etc.) are deleted and rebuilt.
+    If interrupted, just re-run — the hands table with raw_text is always intact.
+    """
 
     def generate():
         with db_lock():
@@ -625,16 +687,12 @@ async def rebuild_hands():
 
             yield json.dumps({"type": "start", "total_hands": total, "files": 0}) + "\n"
 
-            # Copy raw_text to temp table so we can delete main tables
-            db.execute("CREATE TEMPORARY TABLE IF NOT EXISTS _rebuild_raw AS "
-                       "SELECT id, raw_text FROM hands ORDER BY played_at ASC, id ASC")
-
-            # Wipe everything and reset caches
+            # Only delete derived tables — hands table stays intact with raw_text
+            _drop_indexes(db)
             db.execute("DELETE FROM player_classifications")
             db.execute("DELETE FROM actions")
             db.execute("DELETE FROM board_cards")
             db.execute("DELETE FROM hand_players")
-            db.execute("DELETE FROM hands")
             db.execute("DELETE FROM players")
             reset_import_cache()
 
@@ -648,8 +706,8 @@ async def rebuild_hands():
             t_stats = 0.0
             t_db = 0.0
 
-            # Stream from temp table in batches
-            cursor = db.execute("SELECT id, raw_text FROM _rebuild_raw")
+            # Read directly from the hands table (no temp table needed)
+            cursor = db.execute("SELECT id, raw_text FROM hands ORDER BY played_at ASC, id ASC")
             i = 0
             while True:
                 batch_rows = cursor.fetchmany(BATCH_SIZE)
@@ -686,10 +744,10 @@ async def rebuild_hands():
                             "hands_per_sec": round(hps),
                         }) + "\n"
 
-                # Flush after each fetch batch
+                # Flush after each fetch batch (rebuild=True skips hands table insert)
                 if pending:
                     t0 = time.perf_counter()
-                    imp, errs, details = _flush_batch(db, pending)
+                    imp, errs, details = _flush_batch(db, pending, rebuild=True)
                     t_db += time.perf_counter() - t0
                     imported += imp
                     errors += errs
@@ -699,13 +757,17 @@ async def rebuild_hands():
             # Flush any remaining
             if pending:
                 t0 = time.perf_counter()
-                imp, errs, details = _flush_batch(db, pending)
+                imp, errs, details = _flush_batch(db, pending, rebuild=True)
                 t_db += time.perf_counter() - t0
                 imported += imp
                 errors += errs
                 error_details.extend(details)
 
-            db.execute("DROP TABLE IF EXISTS _rebuild_raw")
+            # Recreate indexes (bulk build is faster than incremental)
+            t0_idx = time.perf_counter()
+            _create_indexes(db)
+            t_idx = time.perf_counter() - t0_idx
+
             finalize_import(db)
 
         elapsed = time.perf_counter() - t_start
@@ -721,6 +783,7 @@ async def rebuild_hands():
             "parse_ms": round(t_parse * 1000),
             "stats_ms": round(t_stats * 1000),
             "db_ms": round(t_db * 1000),
+            "index_ms": round(t_idx * 1000),
         }) + "\n"
 
     return StreamingResponse(generate(), media_type="application/x-ndjson")
@@ -738,6 +801,77 @@ async def clear_hands():
         db.execute("DELETE FROM players")
         reset_import_cache()
     return {"status": "ok"}
+
+
+@router.get("/import/export")
+async def export_database():
+    """Export the database as a downloadable .duckdb file."""
+    with db_lock():
+        db = get_db()
+        db.execute("CHECKPOINT")
+        # Copy to a temp file while we hold the lock
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".duckdb")
+        tmp.close()
+        shutil.copy2(str(DB_PATH), tmp.name)
+
+    from datetime import datetime
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    filename = f"ohm-backup-{timestamp}.duckdb"
+
+    def cleanup():
+        try:
+            os.unlink(tmp.name)
+        except OSError:
+            pass
+
+    from starlette.background import BackgroundTask
+    return FileResponse(
+        tmp.name,
+        media_type="application/octet-stream",
+        filename=filename,
+        background=BackgroundTask(cleanup),
+    )
+
+
+@router.post("/import/database")
+async def import_database(file: UploadFile = File(...)):
+    """Import/restore a .duckdb database file, replacing the current one."""
+    # Save upload to temp file
+    tmp_fd, tmp_path = tempfile.mkstemp(suffix=".duckdb")
+    try:
+        with os.fdopen(tmp_fd, "wb") as f:
+            while chunk := await file.read(1024 * 1024):
+                f.write(chunk)
+
+        # Validate: open as read-only and check it has a hands table
+        try:
+            test_conn = duckdb.connect(tmp_path, read_only=True)
+            hand_count = test_conn.execute("SELECT COUNT(*) FROM hands").fetchone()[0]
+            test_conn.close()
+        except Exception as e:
+            raise ValueError(f"Invalid database file: {e}")
+
+        with db_lock():
+            close_db()
+            # Backup current file
+            bak_path = str(DB_PATH) + ".bak"
+            if DB_PATH.exists():
+                shutil.copy2(str(DB_PATH), bak_path)
+            # Replace with uploaded file
+            shutil.move(tmp_path, str(DB_PATH))
+            tmp_path = None  # prevent cleanup
+            # Re-open (triggers init_schema + sequence sync)
+            get_db()
+            reset_import_cache()
+
+        return {"status": "ok", "hands": hand_count}
+    except ValueError as e:
+        raise e
+    except Exception as e:
+        raise RuntimeError(f"Database import failed: {e}")
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            os.unlink(tmp_path)
 
 
 def split_hands(content: str) -> list[str]:

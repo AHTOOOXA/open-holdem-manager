@@ -13,6 +13,7 @@ import {
 } from '@/components/ui/breadcrumb';
 import { ImportProvider } from '@/contexts/ImportContext';
 import ImportOverlay from '@/components/ImportOverlay';
+import DragDropOverlay from '@/components/DragDropOverlay';
 import AppSidebar from '@/components/AppSidebar';
 import { getStatDisplayName } from '@/lib/stat-registry';
 import StatsPage from './pages/StatsPage';
@@ -119,6 +120,7 @@ export default function App() {
           </SidebarInset>
         </SidebarProvider>
         <ImportOverlay />
+        <DragDropOverlay />
       </ImportProvider>
     </BrowserRouter>
     </QueryClientProvider>

@@ -12,8 +12,6 @@ import {
   SidebarMenuItem,
   SidebarSeparator,
 } from '@/components/ui/sidebar';
-import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover';
-import ImportPopover from '@/components/ImportPopover';
 import SidebarFooterSettings from '@/components/SidebarFooterSettings';
 import { useImport } from '@/contexts/ImportContext';
 
@@ -33,7 +31,7 @@ const opponentItems = [
 
 export default function AppSidebar() {
   const location = useLocation();
-  const { importPopoverOpen: importOpen, setImportPopoverOpen: setImportOpen } = useImport();
+  const { setShowImportOverlay } = useImport();
 
   return (
     <Sidebar collapsible="icon">
@@ -48,17 +46,10 @@ export default function AppSidebar() {
           <SidebarGroupContent>
             <SidebarMenu>
               <SidebarMenuItem>
-                <Popover open={importOpen} onOpenChange={setImportOpen}>
-                  <PopoverTrigger asChild>
-                    <SidebarMenuButton tooltip="Import">
-                      <FolderUp />
-                      <span>Import</span>
-                    </SidebarMenuButton>
-                  </PopoverTrigger>
-                  <PopoverContent side="right" align="start" className="!w-64 p-3">
-                    <ImportPopover onClose={() => setImportOpen(false)} />
-                  </PopoverContent>
-                </Popover>
+                <SidebarMenuButton tooltip="Import" onClick={() => setShowImportOverlay(true)}>
+                  <FolderUp />
+                  <span>Import</span>
+                </SidebarMenuButton>
               </SidebarMenuItem>
               <SidebarSeparator className="my-1" />
               {navItems.map((item) => {

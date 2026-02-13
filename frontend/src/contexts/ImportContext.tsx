@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useCallback, useEffect, type ReactNode } from 'react';
-import { uploadFilesStream, rebuildHands, getSettings, updateSettings, getHealth, clearDatabase } from '@/lib/api';
+import { uploadFilesStream, rebuildHands, getSettings, updateSettings, getHealth, clearDatabase, exportDb, importDb } from '@/lib/api';
 import type { ImportResult, ImportProgress, Settings } from '@/lib/api';
 import { queryClient } from '@/lib/query-client';
 
@@ -22,8 +22,10 @@ interface ImportActions {
   dismiss: () => void;
   updateHeroName: (name: string) => Promise<void>;
   refreshHandCount: () => Promise<void>;
-  importPopoverOpen: boolean;
-  setImportPopoverOpen: (open: boolean) => void;
+  exportDatabase: () => Promise<void>;
+  importDatabase: (file: File) => Promise<void>;
+  showImportOverlay: boolean;
+  setShowImportOverlay: (open: boolean) => void;
 }
 
 type ImportContextValue = ImportState & ImportActions;
@@ -44,7 +46,7 @@ function ImportProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState<string | null>(null);
   const [handCount, setHandCount] = useState(0);
   const [settings, setSettings] = useState<Settings | null>(null);
-  const [importPopoverOpen, setImportPopoverOpen] = useState(false);
+  const [showImportOverlay, setShowImportOverlay] = useState(false);
 
   useEffect(() => {
     getSettings().then(setSettings).catch(() => {});
@@ -132,12 +134,22 @@ function ImportProvider({ children }: { children: ReactNode }) {
     queryClient.invalidateQueries();
   }, [settings]);
 
+  const exportDatabase = useCallback(async () => {
+    await exportDb();
+  }, []);
+
+  const importDatabase = useCallback(async (file: File) => {
+    const res = await importDb(file);
+    setHandCount(res.hands);
+    queryClient.invalidateQueries();
+  }, []);
+
   return (
     <ImportContext.Provider
       value={{
         phase, fileInfo, progress, result, error, handCount, settings,
         startImport, startRebuild, clearDb, dismiss, updateHeroName, refreshHandCount,
-        importPopoverOpen, setImportPopoverOpen,
+        exportDatabase, importDatabase, showImportOverlay, setShowImportOverlay,
       }}
     >
       {children}

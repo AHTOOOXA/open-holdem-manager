@@ -1218,6 +1218,32 @@ export async function clearDatabase(): Promise<void> {
   if (!res.ok) throw new Error(`Clear failed: ${res.statusText}`);
 }
 
+export async function exportDb(): Promise<void> {
+  const res = await fetch(`${BASE}/import/export`);
+  if (!res.ok) throw new Error(`Export failed: ${res.statusText}`);
+  const blob = await res.blob();
+  const disposition = res.headers.get('Content-Disposition');
+  const match = disposition?.match(/filename="?(.+?)"?$/);
+  const filename = match?.[1] ?? 'ohm-backup.duckdb';
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+export async function importDb(file: File): Promise<{ status: string; hands: number }> {
+  const form = new FormData();
+  form.append('file', file);
+  const res = await fetch(`${BASE}/import/database`, { method: 'POST', body: form });
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`Import DB failed: ${res.status} ${res.statusText}${body ? ` — ${body}` : ''}`);
+  }
+  return res.json();
+}
+
 export async function rebuildHands(
   onProgress: (progress: ImportProgress) => void,
 ): Promise<ImportResult> {

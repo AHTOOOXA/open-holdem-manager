@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Settings, RefreshCw, Trash2 } from 'lucide-react';
+import { useState, useRef } from 'react';
+import { Settings, RefreshCw, Trash2, Download, Upload } from 'lucide-react';
 import { useImport } from '@/contexts/ImportContext';
 import { SidebarFooter, SidebarMenu, SidebarMenuItem, SidebarMenuButton } from '@/components/ui/sidebar';
 import { Input } from '@/components/ui/input';
@@ -12,9 +12,10 @@ import {
 } from '@/components/ui/dropdown-menu';
 
 export default function SidebarFooterSettings() {
-  const { settings, handCount, phase, updateHeroName, startRebuild, clearDb } = useImport();
+  const { settings, handCount, phase, updateHeroName, startRebuild, clearDb, exportDatabase, importDatabase } = useImport();
   const [editing, setEditing] = useState(false);
   const [nameInput, setNameInput] = useState('');
+  const dbFileRef = useRef<HTMLInputElement>(null);
 
   const startEdit = () => {
     setNameInput(settings?.hero_username || '');
@@ -79,6 +80,21 @@ export default function SidebarFooterSettings() {
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem
+                disabled={handCount === 0 || phase !== 'idle'}
+                onClick={() => exportDatabase()}
+              >
+                <Download className="size-4" />
+                Export Database
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                disabled={phase !== 'idle'}
+                onClick={() => dbFileRef.current?.click()}
+              >
+                <Upload className="size-4" />
+                Import Database
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
                 variant="destructive"
                 disabled={phase !== 'idle'}
                 onClick={() => {
@@ -93,6 +109,22 @@ export default function SidebarFooterSettings() {
           </DropdownMenu>
         </SidebarMenuItem>
       </SidebarMenu>
+      <input
+        ref={dbFileRef}
+        type="file"
+        accept=".duckdb"
+        className="hidden"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (!file) return;
+          if (!confirm(`Replace current database with "${file.name}"? A backup will be saved as poker.duckdb.bak.`)) {
+            e.target.value = '';
+            return;
+          }
+          importDatabase(file);
+          e.target.value = '';
+        }}
+      />
     </SidebarFooter>
   );
 }

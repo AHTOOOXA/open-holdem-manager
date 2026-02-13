@@ -9,19 +9,19 @@ interface EmptyStateProps {
 }
 
 export default function EmptyState({ variant, onClearFilters, message }: EmptyStateProps) {
-  const { setImportPopoverOpen } = useImport();
+  const { setShowImportOverlay } = useImport();
 
   if (variant === 'no-data') {
     return (
       <div className="text-center py-12">
         <FolderUp className="mx-auto mb-3 text-text-muted" size={40} strokeWidth={1.5} />
         <p className="text-text-muted text-lg">{message ?? 'No hands imported yet'}</p>
-        <p className="text-text-muted text-sm mt-1">Import hand history files to get started.</p>
+        <p className="text-text-muted text-sm mt-1">Import hand history files or drag & drop anywhere.</p>
         <Button
           variant="outline"
           size="sm"
           className="mt-4"
-          onClick={() => setImportPopoverOpen(true)}
+          onClick={() => setShowImportOverlay(true)}
         >
           <FolderUp className="mr-2 h-4 w-4" />
           Import Hands
