@@ -14,6 +14,7 @@ import { Input } from '@/components/ui/input';
 import LeakSummaryPanel from '@/components/LeakSummaryPanel';
 import DriftPanel from '@/components/DriftPanel';
 import StatDetailPanel from '@/components/stats/StatDetailPanel';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { useDrift } from '@/hooks/useDrift';
 import {
   getBenchmarkForPosition,
@@ -153,15 +154,18 @@ function StatCell({
   statKey,
   drillKey,
   position,
-  decimals = 1,
+  decimals,
+  defaultDecimals = 1,
   colorFn,
   driftMap,
   onStatClick,
 }: CellDef & {
+  defaultDecimals?: number;
   driftMap?: Map<string, DriftStat>;
   onStatClick?: (key: string, position?: string) => void;
 }) {
-  const { text, color, sub, health, benchmark } = fmtStat(sv, statKey, position, decimals, colorFn);
+  const effectiveDecimals = decimals ?? defaultDecimals;
+  const { text, color, sub, health, benchmark } = fmtStat(sv, statKey, position, effectiveDecimals, colorFn);
 
   const driftKey = statKey ? STAT_TO_DRIFT_KEY[statKey] : undefined;
   const drift = driftKey && driftMap?.get(driftKey);
@@ -234,11 +238,13 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
 function PosTable({
   headers,
   rows,
+  defaultDecimals,
   driftMap,
   onStatClick,
 }: {
   headers: string[];
   rows: { label: string; cells: CellDef[] }[];
+  defaultDecimals?: number;
   driftMap?: Map<string, DriftStat>;
   onStatClick?: (key: string, position?: string) => void;
 }) {
@@ -264,6 +270,7 @@ function PosTable({
               <StatCell
                 key={i}
                 {...cell}
+                defaultDecimals={defaultDecimals}
                 driftMap={driftMap}
                 onStatClick={onStatClick}
               />
@@ -278,17 +285,20 @@ function PosTable({
 /** Key-value grid: two columns of label + value pairs */
 function KVGrid({
   items,
+  defaultDecimals,
   driftMap,
   onStatClick,
 }: {
   items: (CellDef & { label: string })[];
+  defaultDecimals?: number;
   driftMap?: Map<string, DriftStat>;
   onStatClick?: (key: string, position?: string) => void;
 }) {
   return (
     <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 p-2">
       {items.map((item) => {
-        const { text, color, sub, health, benchmark } = fmtStat(item.sv, item.statKey, item.position, item.decimals, item.colorFn);
+        const effectiveDecimals = item.decimals ?? defaultDecimals;
+        const { text, color, sub, health, benchmark } = fmtStat(item.sv, item.statKey, item.position, effectiveDecimals, item.colorFn);
         const displayName = item.statKey ? (STAT_DISPLAY_NAMES[item.statKey] || item.statKey) : item.label;
 
         // Drift arrow for KV items
@@ -368,15 +378,16 @@ function posRow(
 }
 
 /** Inline stat value for the missed-cbet / showdown sections */
-function InlineStat({ sv, statKey, drillKey, position, driftMap, onStatClick }: {
+function InlineStat({ sv, statKey, drillKey, position, defaultDecimals = 1, driftMap, onStatClick }: {
   sv: StatValue | undefined;
   statKey?: string;
   drillKey?: string;
   position?: string;
+  defaultDecimals?: number;
   driftMap?: Map<string, DriftStat>;
   onStatClick?: (key: string, position?: string) => void;
 }) {
-  const { text, color, sub, health, benchmark } = fmtStat(sv, statKey, position);
+  const { text, color, sub, health, benchmark } = fmtStat(sv, statKey, position, defaultDecimals);
   const displayName = statKey ? (STAT_DISPLAY_NAMES[statKey] || statKey) : '';
 
   const driftKeyVal = statKey ? STAT_TO_DRIFT_KEY[statKey] : undefined;
@@ -491,6 +502,9 @@ function StatsDetailView({ statKey }: { statKey: string }) {
 function StatsListView() {
   const navigate = useNavigate();
 
+  // Decimal precision toggle: 0 = integers, 1 = one decimal
+  const [decimals, setDecimals] = useState<0 | 1>(0);
+
   // Filters
   const [stakes, setStakes] = useState<string>('');
   const [gameMode, setGameMode] = useState<string>('');
@@ -593,6 +607,17 @@ function StatsListView() {
         <span className="text-xs text-text-muted">hands</span>
       </div>
 
+      {/* Decimal precision toggle */}
+      <ToggleGroup
+        type="single"
+        value={String(decimals)}
+        onValueChange={(v) => { if (v) setDecimals(Number(v) as 0 | 1); }}
+        className="h-8"
+      >
+        <ToggleGroupItem value="0" className="h-7 px-2 text-xs font-mono">0</ToggleGroupItem>
+        <ToggleGroupItem value="1" className="h-7 px-2 text-xs font-mono">0.0</ToggleGroupItem>
+      </ToggleGroup>
+
       {/* Summary stats */}
       {stats && stats.hands > 0 && (() => {
         const wr = stats.win_rate_bb100;
@@ -644,12 +669,6 @@ function StatsListView() {
         {/* ── Filter Bar ── */}
         <div className="mb-3">{filterBarContent}</div>
 
-        {/* ── Leak Summary Panel ── */}
-        {stats.hands >= 200 && <LeakSummaryPanel stats={stats} />}
-
-        {/* ── Drift Panel ── */}
-        <DriftPanel stats={driftStats} totalHands={driftTotalHands} />
-
         {/* ── PRE-FLOP ── */}
         <SectionTitle>Pre-Flop</SectionTitle>
         <div className="flex flex-col lg:flex-row gap-0 border-x border-b border-border">
@@ -657,6 +676,7 @@ function StatsListView() {
           <div className="flex-1 min-w-0 overflow-x-auto lg:border-r border-border">
             <PosTable
               headers={fullPosHeaders}
+              defaultDecimals={decimals}
               driftMap={driftMap}
               onStatClick={handleStatClick}
               rows={[
@@ -680,6 +700,7 @@ function StatsListView() {
           {/* Right: KV grid */}
           <div className="w-full lg:w-64 lg:shrink-0">
             <KVGrid
+              defaultDecimals={decimals}
               driftMap={driftMap}
               onStatClick={handleStatClick}
               items={[
@@ -703,6 +724,7 @@ function StatsListView() {
           <div className="flex-1 min-w-0 overflow-x-auto lg:border-r border-border">
             <PosTable
               headers={['Tot', 'BTN', 'SB']}
+              defaultDecimals={decimals}
               driftMap={driftMap}
               onStatClick={handleStatClick}
               rows={[
@@ -746,6 +768,7 @@ function StatsListView() {
           <div className="flex-1 min-w-0 overflow-x-auto">
             <PosTable
               headers={['SB', 'BB']}
+              defaultDecimals={decimals}
               driftMap={driftMap}
               onStatClick={handleStatClick}
               rows={[
@@ -785,6 +808,7 @@ function StatsListView() {
           <div className="flex-1 min-w-0 overflow-x-auto lg:border-r border-border">
             <PosTable
               headers={['Flop', 'Turn', 'River']}
+              defaultDecimals={decimals}
               driftMap={driftMap}
               onStatClick={handleStatClick}
               rows={[
@@ -836,6 +860,7 @@ function StatsListView() {
           <div className="flex-1 min-w-0 overflow-x-auto">
             <PosTable
               headers={['Fold', 'Call', 'Raise']}
+              defaultDecimals={decimals}
               driftMap={driftMap}
               onStatClick={handleStatClick}
               rows={[
@@ -871,24 +896,24 @@ function StatsListView() {
             <div className="space-y-2">
               <div className="flex items-baseline justify-between">
                 <span className="text-[13px] text-text-muted">Missed C-Bet</span>
-                <InlineStat sv={stats.missed_cbet_flop} drillKey="missed_cbet_flop" driftMap={driftMap} onStatClick={handleStatClick} />
+                <InlineStat sv={stats.missed_cbet_flop} drillKey="missed_cbet_flop" defaultDecimals={decimals} driftMap={driftMap} onStatClick={handleStatClick} />
               </div>
               <div className="pl-3 space-y-1">
                 <div className="flex items-baseline justify-between">
                   <span className="text-[12px] text-text-muted">In Position</span>
-                  <InlineStat sv={stats.missed_cbet_flop_ip} drillKey="missed_cbet_flop_ip" driftMap={driftMap} onStatClick={handleStatClick} />
+                  <InlineStat sv={stats.missed_cbet_flop_ip} drillKey="missed_cbet_flop_ip" defaultDecimals={decimals} driftMap={driftMap} onStatClick={handleStatClick} />
                 </div>
                 <div className="flex items-baseline justify-between">
                   <span className="text-[12px] text-text-muted">&rarr; Fold</span>
-                  <InlineStat sv={stats.missed_cbet_fold_ip} drillKey="missed_cbet_fold_ip" driftMap={driftMap} onStatClick={handleStatClick} />
+                  <InlineStat sv={stats.missed_cbet_fold_ip} drillKey="missed_cbet_fold_ip" defaultDecimals={decimals} driftMap={driftMap} onStatClick={handleStatClick} />
                 </div>
                 <div className="flex items-baseline justify-between">
                   <span className="text-[12px] text-text-muted">Out of Position</span>
-                  <InlineStat sv={stats.missed_cbet_flop_oop} drillKey="missed_cbet_flop_oop" driftMap={driftMap} onStatClick={handleStatClick} />
+                  <InlineStat sv={stats.missed_cbet_flop_oop} drillKey="missed_cbet_flop_oop" defaultDecimals={decimals} driftMap={driftMap} onStatClick={handleStatClick} />
                 </div>
                 <div className="flex items-baseline justify-between">
                   <span className="text-[12px] text-text-muted">&rarr; Fold</span>
-                  <InlineStat sv={stats.missed_cbet_fold_oop} drillKey="missed_cbet_fold_oop" driftMap={driftMap} onStatClick={handleStatClick} />
+                  <InlineStat sv={stats.missed_cbet_fold_oop} drillKey="missed_cbet_fold_oop" defaultDecimals={decimals} driftMap={driftMap} onStatClick={handleStatClick} />
                 </div>
               </div>
             </div>
@@ -899,24 +924,24 @@ function StatsListView() {
             <div className="space-y-2">
               <div className="flex items-baseline justify-between">
                 <span className="text-[13px] text-text-muted">vs. Missed C-Bet</span>
-                <InlineStat sv={stats.vs_missed_cbet} drillKey="vs_missed_cbet" driftMap={driftMap} onStatClick={handleStatClick} />
+                <InlineStat sv={stats.vs_missed_cbet} drillKey="vs_missed_cbet" defaultDecimals={decimals} driftMap={driftMap} onStatClick={handleStatClick} />
               </div>
               <div className="pl-3 space-y-1">
                 <div className="flex items-baseline justify-between">
                   <span className="text-[12px] text-text-muted">Bet In Position</span>
-                  <InlineStat sv={stats.vs_missed_cbet_bet_ip} drillKey="vs_missed_cbet_bet_ip" driftMap={driftMap} onStatClick={handleStatClick} />
+                  <InlineStat sv={stats.vs_missed_cbet_bet_ip} drillKey="vs_missed_cbet_bet_ip" defaultDecimals={decimals} driftMap={driftMap} onStatClick={handleStatClick} />
                 </div>
                 <div className="flex items-baseline justify-between">
                   <span className="text-[12px] text-text-muted">Check | Fold</span>
-                  <InlineStat sv={stats.vs_missed_cbet_check_fold_ip} drillKey="vs_missed_cbet_check_fold_ip" driftMap={driftMap} onStatClick={handleStatClick} />
+                  <InlineStat sv={stats.vs_missed_cbet_check_fold_ip} drillKey="vs_missed_cbet_check_fold_ip" defaultDecimals={decimals} driftMap={driftMap} onStatClick={handleStatClick} />
                 </div>
                 <div className="flex items-baseline justify-between">
                   <span className="text-[12px] text-text-muted">Bet OOP Turn</span>
-                  <InlineStat sv={stats.vs_missed_cbet_bet_oop_turn} drillKey="vs_missed_cbet_bet_oop_turn" driftMap={driftMap} onStatClick={handleStatClick} />
+                  <InlineStat sv={stats.vs_missed_cbet_bet_oop_turn} drillKey="vs_missed_cbet_bet_oop_turn" defaultDecimals={decimals} driftMap={driftMap} onStatClick={handleStatClick} />
                 </div>
                 <div className="flex items-baseline justify-between">
                   <span className="text-[12px] text-text-muted">Check-Fold</span>
-                  <InlineStat sv={stats.vs_missed_cbet_check_fold_oop} drillKey="vs_missed_cbet_check_fold_oop" driftMap={driftMap} onStatClick={handleStatClick} />
+                  <InlineStat sv={stats.vs_missed_cbet_check_fold_oop} drillKey="vs_missed_cbet_check_fold_oop" defaultDecimals={decimals} driftMap={driftMap} onStatClick={handleStatClick} />
                 </div>
               </div>
             </div>
@@ -929,18 +954,24 @@ function StatsListView() {
           <div className="flex gap-6">
             <div className="flex items-baseline gap-2">
               <span className="text-[12px] text-text-muted">WTSD</span>
-              <InlineStat sv={stats.wtsd} statKey="wtsd" drillKey="went_to_showdown" driftMap={driftMap} onStatClick={handleStatClick} />
+              <InlineStat sv={stats.wtsd} statKey="wtsd" drillKey="went_to_showdown" defaultDecimals={decimals} driftMap={driftMap} onStatClick={handleStatClick} />
             </div>
             <div className="flex items-baseline gap-2">
               <span className="text-[12px] text-text-muted">W$SD</span>
-              <InlineStat sv={stats.wsd} statKey="wsd" drillKey="won_at_showdown" driftMap={driftMap} onStatClick={handleStatClick} />
+              <InlineStat sv={stats.wsd} statKey="wsd" drillKey="won_at_showdown" defaultDecimals={decimals} driftMap={driftMap} onStatClick={handleStatClick} />
             </div>
             <div className="flex items-baseline gap-2">
               <span className="text-[12px] text-text-muted">WWSF</span>
-              <InlineStat sv={stats.wwsf} statKey="wwsf" drillKey="wwsf" driftMap={driftMap} onStatClick={handleStatClick} />
+              <InlineStat sv={stats.wwsf} statKey="wwsf" drillKey="wwsf" defaultDecimals={decimals} driftMap={driftMap} onStatClick={handleStatClick} />
             </div>
           </div>
         </div>
+
+        {/* ── Leak Summary Panel ── */}
+        {stats.hands >= 200 && <LeakSummaryPanel stats={stats} />}
+
+        {/* ── Drift Panel ── */}
+        <DriftPanel stats={driftStats} totalHands={driftTotalHands} />
 
         <div className="h-4" />
       </div>
