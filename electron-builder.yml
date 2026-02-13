@@ -29,6 +29,7 @@ mac:
   artifactName: "${productName}-${arch}.${ext}"
   target:
     - dmg
+    - zip
   # Uncomment and configure for code signing:
   # identity: "Developer ID Application: Your Name (TEAM_ID)"
   # notarize:
