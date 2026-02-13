@@ -30,7 +30,10 @@ mac:
   target:
     - dmg
     - zip
-  identity: null  # Ad-hoc sign (no Apple Developer account needed)
+  # To remove Gatekeeper warnings, configure code signing:
+  # identity: "Developer ID Application: Your Name (TEAM_ID)"
+  # notarize:
+  #   teamId: TEAM_ID
 
 dmg:
   title: "${productName}"

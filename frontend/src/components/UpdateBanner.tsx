@@ -83,11 +83,11 @@ export default function UpdateBanner() {
       <div className="sticky bottom-0 flex items-center gap-3 border-t border-border bg-surface px-4 py-1.5 text-xs text-muted-foreground">
         {error ? (
           <>
-            <span className="shrink-0 text-red">Update error: {error}</span>
+            <span className="min-w-0 truncate text-red">Update failed</span>
             <Button
               size="sm"
               variant="outline"
-              className="h-5 px-2 text-xs"
+              className="h-5 shrink-0 px-2 text-xs"
               onClick={() => getAPI()?.openExternal(`${REPO_URL}/releases/latest`)}
             >
               Download manually
