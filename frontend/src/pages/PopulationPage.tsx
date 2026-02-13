@@ -28,7 +28,7 @@ import {
 
 const POSITIONS = ['EP', 'MP', 'CO', 'BTN', 'SB', 'BB'];
 
-function fmt(v: number | null, decimals = 1): string {
+function fmt(v: number | null | undefined, decimals = 1): string {
   if (v === null || v === undefined) return '\u2014';
   return v.toFixed(decimals);
 }

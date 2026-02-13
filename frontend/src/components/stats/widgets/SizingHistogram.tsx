@@ -34,7 +34,7 @@ export default function SizingHistogram({ statKey, filterParams, position }: Pro
           <YAxis tick={{ fontSize: 9 }} tickLine={false} axisLine={false} />
           <Tooltip
             contentStyle={{ fontSize: 11, background: '#1e1e2e', border: '1px solid #333', borderRadius: 6 }}
-            formatter={(v: number) => [`${v}%`, 'Pct']}
+            formatter={(v: number | undefined) => [`${v ?? 0}%`, 'Pct']}
             labelFormatter={(l) => `${l} BB`}
           />
           <Bar dataKey="pct" fill="#6366f1" radius={[2, 2, 0, 0]} />

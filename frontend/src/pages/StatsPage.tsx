@@ -515,7 +515,7 @@ function StatsListView() {
 
   // Debounce lastN
   const [debouncedLastN, setDebouncedLastN] = useState<string>('');
-  const lastNTimer = useRef<ReturnType<typeof setTimeout>>();
+  const lastNTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => {
     lastNTimer.current = setTimeout(() => setDebouncedLastN(lastN), 500);
     return () => clearTimeout(lastNTimer.current);

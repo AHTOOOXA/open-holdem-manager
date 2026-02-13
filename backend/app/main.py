@@ -15,13 +15,15 @@ MultiPartParser.max_part_size = 50 * 1024 * 1024  # 50MB
 
 app = FastAPI(title="Open Holdem Manager", version="0.1.0")
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+if not os.environ.get("OHM_STATIC_DIR"):
+    # Dev mode: frontend on :5173, API on :8000 — need CORS
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["http://localhost:5173"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
 class CursorCleanupMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):

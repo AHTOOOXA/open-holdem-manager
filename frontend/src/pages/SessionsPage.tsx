@@ -843,7 +843,7 @@ function BigHandsCard({
 
 interface SessionTooltipProps {
   active?: boolean;
-  payload?: Array<{ name: string; value: number; color: string }>;
+  payload?: Array<{ name: string; value: number; color: string; payload?: Record<string, unknown> }>;
   label?: number;
   unit: 'bb' | 'usd';
 }

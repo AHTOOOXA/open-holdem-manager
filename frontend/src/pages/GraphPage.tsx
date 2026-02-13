@@ -107,7 +107,7 @@ function totalSessionHours(sessions: SessionMarker[]): number {
 
 interface CustomTooltipProps {
   active?: boolean;
-  payload?: Array<{ name: string; value: number | number[]; color: string }>;
+  payload?: Array<{ name: string; value: number | number[]; color: string; payload?: Record<string, unknown> }>;
   label?: number;
   unit: 'bb' | 'usd';
   tooltipNames: Record<string, string>;
@@ -199,7 +199,7 @@ export default function GraphPage() {
 
   // Debounce lastN so typing doesn't trigger a refetch on every keystroke
   const [debouncedLastN, setDebouncedLastN] = useState<string>('');
-  const lastNTimer = useRef<ReturnType<typeof setTimeout>>();
+  const lastNTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => {
     lastNTimer.current = setTimeout(() => setDebouncedLastN(lastN), 500);
     return () => clearTimeout(lastNTimer.current);
@@ -252,9 +252,9 @@ export default function GraphPage() {
 
   const hasEVData = useMemo(() => data.some(d => d.cumulative_ev_bb !== d.cumulative_bb), [data]);
 
-  const handleChartMouseMove = useCallback((e: { activeLabel?: number }) => {
+  const handleChartMouseMove = useCallback((e: { activeLabel?: string | number }) => {
     if (!e.activeLabel || !lines.has('sessions')) { setActiveSession(null); return; }
-    const hand = e.activeLabel;
+    const hand = Number(e.activeLabel);
     const found = sessions.find(s => hand >= s.start_hand && hand <= s.end_hand) ?? null;
     setActiveSession(found);
   }, [sessions, lines]);

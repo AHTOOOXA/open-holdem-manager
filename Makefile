@@ -24,7 +24,7 @@ electron-dev: stop
 
 # Build distributable Electron app (requires PyInstaller: pip install pyinstaller)
 electron-build:
-	cd frontend && npm run build
+	cd frontend && ELECTRON=1 npm run build
 	cd backend && pyinstaller --name ohm-backend --onedir --noconfirm --clean \
 		--collect-submodules uvicorn --collect-submodules fastapi \
 		--collect-submodules starlette --collect-submodules pydantic \

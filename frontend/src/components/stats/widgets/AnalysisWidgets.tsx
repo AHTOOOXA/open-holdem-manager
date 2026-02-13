@@ -132,7 +132,7 @@ export default function AnalysisWidgets({
       case 'opportunity_context':
         return <OpportunityContext statKey={statKey} heroStats={heroStats} />;
       case 'range_comparison':
-        return <RangeComparison filterParams={filterParams} />;
+        return <RangeComparison statKey={statKey} filterParams={filterParams} />;
       case 'contextual_rate':
         return null; // Requires explicit label/value/sample — used standalone, not via registry
       default:
