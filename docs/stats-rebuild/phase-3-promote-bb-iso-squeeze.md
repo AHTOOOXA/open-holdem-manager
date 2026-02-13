@@ -2,12 +2,12 @@
 
 ## Goal
 
-Convert BB Defense, Iso Raise, and Squeeze from flat `StatValue` to `PositionalStats` with full positional breakdowns. BB Defense only has meaningful data in the BB column, but positional rendering keeps the visual layout consistent. Iso Raise has meaningful positional variance (iso from BTN vs MP are different spots). Squeeze has positional variance (SB/BB squeeze more than CO).
+Convert BB Defense, Iso Raise, and Squeeze from flat `StatValue` to `PositionalStats` with full positional breakdowns. BB Defense only has meaningful data in the BB column — the promotion to `PositionalStats` is purely for layout consistency with the positional grid; the real analytical value lives in the response decomposition (call vs 3-bet). Iso Raise has meaningful positional variance (iso from BTN vs MP are different spots). Squeeze has positional variance — BTN and SB squeeze most often because they act after the most potential cold-callers; CO rarely has squeeze opportunities since few players remain to flat behind.
 
 Then add these to the Preflop positional grid:
-- BB Defense as row 15 in the "Defense" group
 - Iso Raise as row 5 in the "Entry" group (after Limp)
 - Squeeze as row 10 in the "vs Open" group (after 3-Bet OOP)
+- BB Defense as the last row in the "Defense" group
 
 **Scope**: Backend (models, stats_engine, stat_registry) + Frontend (StatsPage layout, stat-registry, benchmarks).
 
@@ -39,29 +39,19 @@ squeeze: PositionalStats = PositionalStats()
 
 ### 2. `backend/app/stats_engine.py`
 
-Change from `_sv()` to `_pos_stat()` for these three stats:
+Change from `_sv()` to `_pos_stat()` for all three stats. The approach is identical for each — no SQL changes needed since `_AGG_SQL` already computes the counts and the GROUP BY position means each position's counts are already in `by_pos[pos]`.
 
 ```python
 # Before:
 stats.bb_defense = _sv("bb_defense", "bb_defense_opp")
 stats.iso_raise = _sv("iso_raise", "iso_raise_opp")
+stats.squeeze = _sv("squeeze", "squeeze_opp")
 
 # After:
 stats.bb_defense = _pos_stat("bb_defense", "bb_defense_opp")
 stats.iso_raise = _pos_stat("iso_raise", "iso_raise_opp")
-```
-
-For squeeze, we need a different approach since the SQL already has `squeeze` and `squeeze_opp` counts:
-
-```python
-# Before:
-stats.squeeze = _sv("squeeze", "squeeze_opp")
-
-# After:
 stats.squeeze = _pos_stat("squeeze", "squeeze_opp")
 ```
-
-No SQL changes needed — `_AGG_SQL` already has `SUM(CASE WHEN hp.squeeze THEN 1 ELSE 0 END)` and the GROUP BY position means each position's counts are already in `by_pos[pos]`. The `_pos_stat()` helper already handles this.
 
 ### 3. `frontend/src/lib/api.ts`
 
@@ -131,19 +121,9 @@ Add as the last row in the "Defense" group (row 15):
 }
 ```
 
-#### Add vs Steal Fold to PosTable
+#### Do NOT duplicate vs Steal Fold here
 
-Add Fold to Steal as row 14 in the "Defense" group (before BB Defense):
-
-```tsx
-{
-  label: 'vs Steal Fold',
-  cells: [
-    { sv: stats.vs_steal_fold.total, statKey: 'fold_to_steal' },
-    // ... positional cells (only SB/BB have data)
-  ]
-}
-```
+The existing StatsPage already has a dedicated "vs Steal" PosTable (SB/BB columns with Fold/Call/3-Bet rows). Do not add a redundant "vs Steal Fold" row to the main positional grid — it would duplicate data that already has its own section with better granularity.
 
 #### Remove from KV grid
 
@@ -171,21 +151,31 @@ iso_raise: { ..., isPositional: true, ... },
 squeeze: { ..., isPositional: true, ... },
 ```
 
-Add `pvp_matrix` widget to `bb_defense`:
+Add `pvp_matrix` widget to `bb_defense`. Note: `response_distribution` (call vs 3-bet breakdown) is the key widget here — it shows how Hero continues, which is the core coaching question for BB defense. Removed `continuing_range` as it overlaps with `response_distribution`.
 ```typescript
 bb_defense: {
   displayName: 'BB Defense',
   heroStatsField: 'bb_defense',
   isPositional: true,
-  widgets: ['response_distribution', 'continuing_range', 'ev_breakdown', 'pvp_matrix', 'trend_sparkline'],
+  widgets: ['response_distribution', 'ev_breakdown', 'pvp_matrix', 'trend_sparkline'],
 },
 ```
 
-Add `pvp_matrix` widget to `squeeze`:
+Add `pvp_matrix` and `fold_equity` widget to `squeeze`:
 ```typescript
 squeeze: {
   displayName: 'Squeeze',
   heroStatsField: 'squeeze',
+  isPositional: true,
+  widgets: ['fold_equity', 'ev_breakdown', 'pvp_matrix', 'by_context', 'trend_sparkline'],
+},
+```
+
+Add `fold_equity` widget to `iso_raise` — iso-raising, like squeezing, is fundamentally about fold equity and denying cheap flops:
+```typescript
+iso_raise: {
+  displayName: 'Iso Raise',
+  heroStatsField: 'iso_raise',
   isPositional: true,
   widgets: ['fold_equity', 'ev_breakdown', 'by_context', 'trend_sparkline'],
 },
@@ -195,17 +185,27 @@ squeeze: {
 
 Add benchmarks for BB Defense and Iso Raise:
 
-**BB Defense** (total only — BB-specific):
+**BB Defense** (total only — BB-specific). Note: BB defense includes both calls and 3-bets from the BB vs a single raise. The benchmark should reflect total continuing frequency, not just calls.
 ```typescript
 bb_defense: {
-  total: { low: 45, high: 60, tipLow: 'Folding BB too much — bleeding antes', tipHigh: 'Defending too wide — losing postflop', fix: 'Defend 50-55% from BB vs single raise. Call wider vs small opens, tighter vs UTG.', weight: 5 },
+  total: { low: 55, high: 70, tipLow: 'Folding BB too much — surrendering equity you already have invested', tipHigh: 'Defending too wide — calling with hands that lack equity vs opener\'s range', fix: 'Defend 58-65% from BB vs single raise (combined call + 3-bet). Defend wider vs late position opens and smaller sizes, tighter vs EP opens.', weight: 5 },
 }
 ```
 
 **Iso Raise** (total only):
 ```typescript
 iso_raise: {
-  total: { low: 5, high: 15, tipLow: 'Not punishing limpers enough', tipHigh: 'Iso-raising too wide', fix: 'Iso-raise 8-12% when facing limps. Widen from BTN/CO, tighten from EP.', weight: 2 },
+  total: { low: 5, high: 15, tipLow: 'Not punishing limpers enough — letting weak ranges see cheap flops', tipHigh: 'Iso-raising too wide — building pots OOP or multiway with marginal hands', fix: 'Iso-raise 8-12% overall. From BTN/CO, iso wider (value + equity denial). From EP/MP, stick to value-heavy iso ranges. Size larger with more limpers behind.', weight: 2 },
+}
+```
+
+**Squeeze** (total + positional):
+```typescript
+squeeze: {
+  total: { low: 5, high: 12, tipLow: 'Not squeezing enough — letting multiway pots develop where your edge shrinks', tipHigh: 'Squeezing too wide — getting called or 4-bet when ranges are strong', fix: 'Squeeze 7-10% overall. Best from BTN/SB where you act after the most cold-callers. Size 3-4x the open when IP, 4-5x OOP. Tighten vs EP opens with multiple callers.', weight: 3 },
+  btn: { low: 7, high: 15 },
+  sb: { low: 7, high: 14 },
+  bb: { low: 5, high: 12 },
 }
 ```
 
@@ -237,15 +237,25 @@ Also add RESPONSE_DECOMPOSITION for bb_defense:
 },
 ```
 
+## Future Consideration: Postflop Bridges
+
+These stats are preflop-only. From a coaching perspective, the most important follow-up question after BB defense or iso-raise is "what happens postflop?" This phase does NOT add postflop stats, but the following would be high-value additions in a future phase:
+
+- **BB Defense postflop**: Donk-bet frequency after defending, check-raise frequency on flop as BB caller, fold-to-cbet after BB defense. These tell you whether a player defends well preflop but bleeds postflop.
+- **Iso Raise postflop**: Cbet frequency after iso-raising (should be high since you're the aggressor), win rate in iso pots vs limpers. The key coaching question is "are you profiting from the pots you iso into?"
+- **Squeeze postflop**: Fold equity realized (how often squeeze ends it preflop), cbet frequency after squeeze gets called. Squeezes that get called multiway are disaster scenarios.
+
+These bridge stats would be filtered versions of existing postflop flags (cbet, donk, fold-to-cbet) restricted to hands where the corresponding preflop action occurred. No new stat flags needed — just filtered queries.
+
 ## Verification
 
 1. `cd backend && python -m pytest tests/test_parser.py -v` — all tests pass
 2. Start backend + frontend
 3. `GET /api/stats/hero` returns `bb_defense`, `iso_raise`, `squeeze` as objects with `total`, `ep`, `mp`, etc. fields
-4. Preflop PosTable shows 15 rows with all groups
+4. Preflop PosTable shows rows with all groups (no duplicate vs Steal Fold row)
 5. BB Defense row shows data only in Tot and BB columns (other positions are `--`)
 6. Iso Raise shows positional data (BTN/CO should have higher values than EP)
-7. Squeeze shows positional data
+7. Squeeze shows positional data (BTN/SB should have highest frequencies)
 8. KV grid no longer shows these three stats
 9. Each cell is clickable and navigates to drill-down
 10. `cd frontend && npm run lint` — no lint errors

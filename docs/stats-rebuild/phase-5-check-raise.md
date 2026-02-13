@@ -11,7 +11,7 @@ Add check-raise tracking for all three postflop streets (flop, turn, river). Thi
 6. Frontend display in the Postflop by-street grid
 7. A data rebuild (`/api/import/rebuild`) to backfill existing hands
 
-Check-raise is one of the most important postflop actions and is currently completely untracked.
+Check-raise is one of the most important postflop actions and is currently completely untracked. It is primarily an OOP action: the player checks, an opponent bets, and the player then raises. Since the checker acts first, check-raising is almost exclusively done out of position (typically from the blinds). This means IP/OOP splits are unnecessary for this stat — the opportunity itself implies OOP play.
 
 **Scope**: Full stack — DB schema, stat_flags, stats_engine, models, API, frontend.
 
@@ -190,47 +190,76 @@ Add STAT_REGISTRY entries:
 },
 ```
 
-Add EV_BREAKDOWN_CONFIG:
+Add EV_BREAKDOWN_CONFIG. The EV breakdown should decompose what happens *after* hero check-raises (fold-through, called, re-raised) — this shows whether the check-raise is profitable. Do NOT decompose check-call/check-fold here; those are alternative responses to a bet and belong in a RESPONSE_DECOMPOSITION entry, not EV breakdown:
 
 ```python
 "check_raise_flop": [
-    ("Check-Raise", "hp.check_raise_flop = TRUE"),
-    ("Check-Call", "hp.check_raise_flop_opp = TRUE AND hp.check_raise_flop IS NOT TRUE AND hp.flop_calls > 0"),
-    ("Check-Fold", "hp.check_raise_flop_opp = TRUE AND hp.check_raise_flop IS NOT TRUE AND hp.flop_folds > 0"),
+    ("Fold-through", "hp.check_raise_flop = TRUE AND hp.saw_turn IS NOT TRUE"),
+    ("Called", "hp.check_raise_flop = TRUE AND hp.saw_turn = TRUE"),
 ],
 "check_raise_turn": [
-    ("Check-Raise", "hp.check_raise_turn = TRUE"),
-    ("Check-Call", "hp.check_raise_turn_opp = TRUE AND hp.check_raise_turn IS NOT TRUE AND hp.turn_calls > 0"),
-    ("Check-Fold", "hp.check_raise_turn_opp = TRUE AND hp.check_raise_turn IS NOT TRUE AND hp.turn_folds > 0"),
+    ("Fold-through", "hp.check_raise_turn = TRUE AND hp.saw_river IS NOT TRUE"),
+    ("Called", "hp.check_raise_turn = TRUE AND hp.saw_river = TRUE"),
 ],
 "check_raise_river": [
-    ("Check-Raise", "hp.check_raise_river = TRUE"),
-    ("Check-Call", "hp.check_raise_river_opp = TRUE AND hp.check_raise_river IS NOT TRUE AND hp.river_calls > 0"),
-    ("Check-Fold", "hp.check_raise_river_opp = TRUE AND hp.check_raise_river IS NOT TRUE AND hp.river_folds > 0"),
+    ("Fold-through", "hp.check_raise_river = TRUE AND hp.went_to_showdown IS NOT TRUE"),
+    ("Called", "hp.check_raise_river = TRUE AND hp.went_to_showdown = TRUE"),
 ],
 ```
 
-Add FOLD_EQUITY_CONFIG:
+Add RESPONSE_DECOMPOSITION for the check-raise opportunity (what hero does when checked and then bet into):
 
 ```python
 "check_raise_flop": {
-    "action_sql": "hp.check_raise_flop = TRUE",
-    "fold_sql": "...",  # villain folds to the check-raise
+    "opp_sql": "hp.check_raise_flop_opp = TRUE",
+    "fold_sql": "hp.flop_folds > 0 AND hp.check_raise_flop IS NOT TRUE",
+    "raise_sql": "hp.check_raise_flop = TRUE",
+},
+"check_raise_turn": {
+    "opp_sql": "hp.check_raise_turn_opp = TRUE",
+    "fold_sql": "hp.turn_folds > 0 AND hp.check_raise_turn IS NOT TRUE",
+    "raise_sql": "hp.check_raise_turn = TRUE",
+},
+"check_raise_river": {
+    "opp_sql": "hp.check_raise_river_opp = TRUE",
+    "fold_sql": "hp.river_folds > 0 AND hp.check_raise_river IS NOT TRUE",
+    "raise_sql": "hp.check_raise_river = TRUE",
 },
 ```
 
-Add SIZING_CONFIG for check-raise sizing:
+Add SIZING_CONFIG for check-raise sizing on all three streets:
+
+```python
+"check_raise_flop": ("hp.check_raise_flop = TRUE", "a.action_type = 'raise'"),
+"check_raise_turn": ("hp.check_raise_turn = TRUE", "a.action_type = 'raise'"),
+"check_raise_river": ("hp.check_raise_river = TRUE", "a.action_type = 'raise'"),
+```
+
+**Note**: FOLD_EQUITY_CONFIG is not applicable to check-raise. Fold equity is a useful frame for opening actions (3-bet, squeeze) where hero initiates aggression. Check-raise is a reactive raise against a bet — the relevant "did villain fold?" data is already captured in the EV_BREAKDOWN_CONFIG fold-through scenario above.
+
+Add BY_CONTEXT_CONFIG — check-raise frequency varies by which opponent position bet into us:
 
 ```python
 "check_raise_flop": {
-    "filter_sql": "hp.check_raise_flop = TRUE",
-    "action_type": "raise",
-    "street": "flop",
+    "dimension": "bettor_position",
+    "action_sql": "hp.check_raise_flop = TRUE",
+    "opp_sql": "hp.check_raise_flop_opp = TRUE",
+    "join": "JOIN hand_players v ON v.hand_id = hp.hand_id AND v.flop_bets > 0 AND v.player_id != hp.player_id",
+    "group_expr": "v.position",
 },
 "check_raise_turn": {
-    "filter_sql": "hp.check_raise_turn = TRUE",
-    "action_type": "raise",
-    "street": "turn",
+    "dimension": "bettor_position",
+    "action_sql": "hp.check_raise_turn = TRUE",
+    "opp_sql": "hp.check_raise_turn_opp = TRUE",
+    "join": "JOIN hand_players v ON v.hand_id = hp.hand_id AND v.turn_bets > 0 AND v.player_id != hp.player_id",
+    "group_expr": "v.position",
+},
+"check_raise_river": {
+    "dimension": "bettor_position",
+    "action_sql": "hp.check_raise_river = TRUE",
+    "opp_sql": "hp.check_raise_river_opp = TRUE",
+    "join": "JOIN hand_players v ON v.hand_id = hp.hand_id AND v.river_bets > 0 AND v.player_id != hp.player_id",
+    "group_expr": "v.position",
 },
 ```
 
@@ -278,35 +307,43 @@ check_raise_flop: {
   displayName: 'Check-Raise Flop',
   heroStatsField: 'check_raise_flop',
   isPositional: false,
-  widgets: ['range_heatmap', 'fold_equity', 'ev_breakdown', 'ip_oop_split', 'by_context', 'sizing_histogram', 'trend_sparkline'],
+  widgets: ['range_heatmap', 'response_distribution', 'ev_breakdown', 'by_context', 'sizing_histogram', 'trend_sparkline'],
 },
 check_raise_turn: {
   displayName: 'Check-Raise Turn',
   heroStatsField: 'check_raise_turn',
   isPositional: false,
-  widgets: ['range_heatmap', 'fold_equity', 'ev_breakdown', 'trend_sparkline'],
+  widgets: ['range_heatmap', 'response_distribution', 'ev_breakdown', 'by_context', 'sizing_histogram', 'trend_sparkline'],
 },
 check_raise_river: {
   displayName: 'Check-Raise River',
   heroStatsField: 'check_raise_river',
   isPositional: false,
-  widgets: ['range_heatmap', 'fold_equity', 'ev_breakdown', 'trend_sparkline'],
+  widgets: ['range_heatmap', 'response_distribution', 'ev_breakdown', 'by_context', 'sizing_histogram', 'trend_sparkline'],
 },
 ```
 
 ### 10. `frontend/src/lib/benchmarks.ts`
 
+Add display names to `STAT_DISPLAY_NAMES`:
+
+```typescript
+check_raise_flop: 'Check-Raise Flop',
+check_raise_turn: 'Check-Raise Turn',
+check_raise_river: 'Check-Raise River',
+```
+
 Add benchmarks:
 
 ```typescript
 check_raise_flop: {
-  total: { low: 6, high: 12, tipLow: 'Not check-raising enough — villain can bet freely', tipHigh: 'Check-raising too often — getting called by strong hands', fix: 'Check-raise 8-10% on flop. Mix value (sets, two pair) with draws.', weight: 4 },
+  total: { low: 7, high: 12, tipLow: 'Not check-raising enough — villain can c-bet freely without punishment.', tipHigh: 'Check-raising too often — getting called or re-raised by strong hands.', fix: 'Target 8-11% flop check-raise. Balance value (sets, two pair, overpairs) with semi-bluffs (flush draws, OESDs).', weight: 4, statFlagFilter: 'check_raise_flop', oppFlagFilter: 'check_raise_flop_opp' },
 },
 check_raise_turn: {
-  total: { low: 5, high: 12, tipLow: 'Passive turn play when checking', tipHigh: 'Over-check-raising turns', fix: 'Check-raise turn 6-10%. Mostly value with some draws.', weight: 3 },
+  total: { low: 6, high: 11, tipLow: 'Too passive on the turn after checking. Letting villain barrel cheaply.', tipHigh: 'Over-check-raising turns. Villain adjusts by checking back more.', fix: 'Target 7-10% turn check-raise. Shift toward more value and fewer bluffs than flop.', weight: 3, statFlagFilter: 'check_raise_turn', oppFlagFilter: 'check_raise_turn_opp' },
 },
 check_raise_river: {
-  total: { low: 4, high: 10, tipLow: 'Never check-raising rivers — missing value', tipHigh: 'Over-bluffing river check-raises', fix: 'Check-raise river 5-8%. Mostly thin value and polarized bluffs.', weight: 2 },
+  total: { low: 5, high: 10, tipLow: 'Never check-raising rivers — missing value from strong hands.', tipHigh: 'Over-bluffing river check-raises — villain calls with bluff-catchers.', fix: 'Target 6-9% river check-raise. Should be polarized: nuts or air. No thin value — villain calls or folds.', weight: 2, statFlagFilter: 'check_raise_river', oppFlagFilter: 'check_raise_river_opp' },
 },
 ```
 
@@ -328,8 +365,10 @@ This re-parses all stored raw_text through the updated `compute_stat_flags()` pi
    - Assert `check_raise_flop = True`, `check_raise_flop_opp = True`
    - Create a hand where hero checks, villain bets, hero calls
    - Assert `check_raise_flop_opp = True`, `check_raise_flop = False` (or NULL)
+   - Create a hand where hero checks, villain checks behind (no bet) — no check-raise opportunity
+   - Assert `check_raise_flop_opp = False` (or NULL)
 3. Import existing hands → run rebuild → verify check-raise stats appear
 4. `GET /api/stats/hero` returns `check_raise_flop`, `check_raise_turn`, `check_raise_river` with values
 5. Postflop grid shows Check-Raise row with data
-6. Click check-raise cells → drill-down loads with range heatmap, fold equity widgets
+6. Click check-raise cells → drill-down loads with range heatmap, response distribution, EV breakdown, and by-context widgets
 7. `cd frontend && npm run lint` — no lint errors

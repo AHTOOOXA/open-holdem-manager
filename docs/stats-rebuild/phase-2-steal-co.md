@@ -2,9 +2,9 @@
 
 ## Goal
 
-Add the CO (cutoff) column to the Steal Attempted section. CO steals are a core strategy concept (the widest open from a non-button position). The backend already computes steal stats for CO via `_pos_steal("steal", "steal_opp", ["CO", "BTN", "SB"])` — the frontend just doesn't render the CO column.
+Add the CO (cutoff) column to the Steal Attempted section. CO steals are a core steal concept because you open into only 3 remaining players (BTN, SB, BB), yet unlike BTN steals, the BTN can flat to play in position against you — creating unique postflop dynamics that require a separate column to track. The backend already computes the main steal stat for CO via `_pos_steal("steal", "steal_opp", ["CO", "BTN", "SB"])`, but the steal sub-stats (Fold to 3-Bet, 4-Bet, 4-Bet-Fold) are missing CO, and the frontend doesn't render any CO column.
 
-**Scope**: Frontend only. No backend changes.
+**Scope**: Frontend + small backend fix (3 lines in `stats_engine.py`).
 
 ## Current State
 
@@ -36,43 +36,30 @@ For each row, add a CO cell that reads from the `.co` field of the corresponding
 
 **Row 1: Steal**
 ```tsx
-{ sv: stats.steal.co, statKey: 'steal', position: 'co' }
+{ sv: stats.steal.co, statKey: 'steal', drillKey: 'steal', position: 'co' }
 ```
 
 **Row 2: Fold to 3-Bet (steal context)**
 ```tsx
-{ sv: stats.fold_to_3bet_steal.co, statKey: 'fold_to_3bet_steal', position: 'co' }
+{ sv: stats.fold_to_3bet_steal.co, statKey: 'fold_to_3bet', drillKey: 'fold_to_3bet', position: 'co' }
 ```
 
 **Row 3: 4-Bet (steal context)**
 ```tsx
-{ sv: stats.four_bet_steal.co, statKey: 'four_bet_steal', position: 'co' }
+{ sv: stats.four_bet_steal.co, statKey: 'four_bet', drillKey: 'four_bet', position: 'co' }
 ```
 
 **Row 4: 4-Bet-Fold (steal context)**
+
+Note: the 4-Bet-Fold row in steal context will have very small sample sizes, especially for CO. Expect `--` or subscript sample counts most of the time. This is inherent to the stat (the intersection of steal + 4-bet + fold is rare), not a bug.
+
 ```tsx
-{ sv: stats.four_bet_fold_steal.co, statKey: 'four_bet_fold_steal', position: 'co' }
+{ sv: stats.four_bet_fold_steal.co, drillKey: 'four_bet_fold_steal', position: 'co' }
 ```
-
-Note: The backend currently computes steal for CO/BTN/SB but the steal sub-stats (fold_to_3bet_steal, four_bet_steal, four_bet_fold_steal) only compute for BTN/SB. Check `stats_engine.py` line ~332:
-
-```python
-stats.fold_to_3bet_steal = _pos_steal("steal_fold_to_3bet", "steal_faced_3bet", ["BTN", "SB"])
-```
-
-**Backend fix needed**: Change these three `_pos_steal` calls to include `"CO"`:
-
-```python
-stats.fold_to_3bet_steal = _pos_steal("steal_fold_to_3bet", "steal_faced_3bet", ["CO", "BTN", "SB"])
-stats.four_bet_steal = _pos_steal("steal_four_bet", "steal_faced_3bet", ["CO", "BTN", "SB"])
-stats.four_bet_fold_steal = _pos_steal("steal_4bet_fold", "steal_4bet_fold_opp", ["CO", "BTN", "SB"])
-```
-
-This is a one-line change per stat in `stats_engine.py` — no new SQL or model changes needed since `PositionalStats` already has a `.co` field.
 
 ### 2. `backend/app/stats_engine.py`
 
-Change the position lists in three `_pos_steal` calls (around line 332-334):
+The main steal stat already includes CO, but the three steal sub-stats are missing it. Change the position lists in these three `_pos_steal` calls (around line 323-325):
 
 ```python
 # Before:
@@ -86,12 +73,29 @@ stats.four_bet_steal = _pos_steal("steal_four_bet", "steal_faced_3bet", ["CO", "
 stats.four_bet_fold_steal = _pos_steal("steal_4bet_fold", "steal_4bet_fold_opp", ["CO", "BTN", "SB"])
 ```
 
+No new SQL or model changes needed — the SQL already computes steal sub-stats for all positions and `PositionalStats` already has a `.co` field.
+
+## Coaching context: expected ranges for CO steal stats
+
+Use these rough benchmarks to sanity-check the data after implementation. If the numbers fall wildly outside these ranges, something is likely wrong with the computation.
+
+| Stat | CO expected | BTN expected | SB expected |
+|------|-----------|------------|-----------|
+| Steal | 25-35% | 45-55% | 30-45% |
+| Fold to 3-Bet (steal) | 55-65% | 45-55% | 50-60% |
+| 4-Bet (steal) | 5-12% | 5-12% | 5-12% |
+
+CO Fold to 3-Bet in steal context is typically higher than BTN because CO faces 3-bets from 3 positions (BTN, SB, BB) and the BTN's 3-bet range against CO is often strong and credible, making folds correct more often.
+
+The 4-Bet-Fold row will almost always show `--` or tiny sample subscripts for CO and SB. That is expected — the intersection of steal + 4-bet + fold to 5-bet is extremely rare.
+
 ## Verification
 
 1. `cd backend && python -m pytest tests/test_parser.py -v` — all tests pass
 2. `cd frontend && npm run dev` — page loads
 3. Steal Attempted section shows 4 columns: Tot | CO | BTN | SB
-4. CO column has data for Steal row (should show a value — CO steal is common)
-5. CO column for sub-stats (Fold to 3-Bet, 4-Bet, 4-Bet-Fold) shows values (or `--` if sample too small)
-6. vs Steal section is unchanged (SB | BB columns)
-7. Clicking CO steal cells navigates to drill-down correctly
+4. CO Steal shows a value in the 25-35% range (sanity check — if 60%+ or <15%, investigate)
+5. CO Fold to 3-Bet shows a value (typically 55-65%) or `--` if sample < 10
+6. CO 4-Bet and 4-Bet-Fold will likely show `--` with small sample subscripts — this is correct behavior
+7. vs Steal section is unchanged (SB | BB columns) — note that vs Steal stats already include defense against CO opens since `faced_steal` is set for any steal attempt
+8. Clicking CO steal cells navigates to drill-down correctly

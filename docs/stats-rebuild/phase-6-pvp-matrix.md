@@ -2,9 +2,11 @@
 
 ## Goal
 
-Add a Player vs Player positional matrix widget to stat detail pages. This shows Hero Position (rows) x Villain Position (columns) heatmap for interaction stats. For example, the 3-Bet PvP matrix shows how often hero 3-bets from each position against each opener position.
+Add a Player vs Player positional matrix widget to stat detail pages. This shows Hero Position (rows) x Villain Position (columns) heatmap for interaction stats. For example, the 3-Bet PvP matrix shows how often hero 3-bets from each position against each villain open-raise position.
 
 **Scope**: Backend (new endpoint + config) + Frontend (new widget component).
+
+**Why this matters**: Aggregate stats hide positional dynamics. A 7% overall 3-bet looks fine, but if it is 2% from SB vs BTN opens and 15% from BTN vs EP opens, the player has a massive blind-defense leak. The PvP matrix exposes these matchup-specific tendencies at a glance.
 
 ## Weak Dependency
 
@@ -27,20 +29,25 @@ Hero  MP    8.1    —      —      —      —
 
 - Color intensity = stat frequency (light to dark gradient)
 - Each cell clickable → filters hand explorer to that hero pos + villain pos matchup
-- Cells with <10 sample → muted text + subscript sample size
+- Cells with <30 sample → muted text + subscript sample size (frequency stats need 30+ hands to be directionally useful; at 10 samples one hand = 10pp of noise)
 - Impossible matchups (hero EP can't 3-bet EP opener) → `—`
 
 ### Stats That Get PvP Matrix
 
-| Stat | Rows (Hero) | Cols (Villain) | Villain Join |
-|------|-------------|----------------|-------------|
-| `three_bet` | Hero 3-bet pos | Opener pos | `v.open_raise = TRUE` |
-| `three_bet_ip` | Hero pos (IP) | Opener pos | `v.open_raise = TRUE` |
-| `fold_to_3bet` | Hero open pos | 3-bettor pos | `v.three_bet = TRUE` |
-| `four_bet` | Hero pos | 3-bettor pos | `v.three_bet = TRUE` |
-| `call_open_raise` | Hero call pos | Opener pos | `v.open_raise = TRUE` |
-| `open_raise` | Hero open pos | 3-bettor pos | `v.three_bet = TRUE` |
-| `bb_defense` | BB (1D) | Raiser pos | `v.open_raise = TRUE` |
+| Stat | Rows (Hero) | Cols (Villain) | Villain Join | Notes |
+|------|-------------|----------------|-------------|-------|
+| `three_bet` | Hero 3-bet pos | Opener pos | `v.open_raise = TRUE` | Core matchup stat. Exposes IP/OOP 3-bet tendencies by position pair (no need for a separate "3-bet IP" matrix — that info is already encoded in the row/col positions). |
+| `fold_to_3bet` | Hero open pos | 3-bettor pos | `v.three_bet = TRUE` | Exposes which matchups hero overfolds or underfolds after opening. |
+| `four_bet` | Hero pos | 3-bettor pos | `v.three_bet = TRUE` | |
+| `call_open_raise` | Hero call pos | Opener pos | `v.open_raise = TRUE` | Cold-calling frequency by matchup. |
+| `steal` | Hero steal pos (CO/BTN/SB) | Defender pos (SB/BB) | `v.faced_steal = TRUE` | Small matrix (3x2). Shows if hero steals too wide vs specific blinds. |
+| `fold_to_steal` | Hero defend pos (SB/BB) | Stealer pos (CO/BTN/SB) | `v.steal_attempted = TRUE` | Inverse of above. Shows blind defense leaks vs each steal position. |
+| `cbet_flop` | Hero cbet pos | Villain pos | `v.saw_flop = TRUE AND v.player_id != hp.player_id` | Postflop PvP: how cbet frequency changes by opponent position. |
+| `bb_defense` | BB only | Raiser pos | `v.open_raise = TRUE` | Collapses to a single-row strip (hero is always BB). Render as a 1-row bar, not a full matrix. |
+
+**Removed from original list:**
+- `three_bet_ip` — Redundant. The PvP matrix inherently encodes IP/OOP: if hero is CO and villain is EP, hero is IP. A separate IP matrix just removes half the cells.
+- `open_raise` — Open raise (RFI) is a unilateral decision. There is no villain involved. The original spec defined this as "hero open pos vs 3-bettor pos" which is actually the fold_to_3bet stat repackaged.
 
 ## Files to Modify
 
@@ -54,50 +61,58 @@ PVP_MATRIX_CONFIG = {
         "action_sql": "hp.three_bet = TRUE",
         "opp_sql": "hp.three_bet_opp = TRUE",
         "villain_join": "v.open_raise = TRUE",
-        "hero_label": "hero_position",
-        "villain_label": "opener_position",
-    },
-    "three_bet_ip": {
-        "action_sql": "hp.three_bet = TRUE",
-        "opp_sql": "hp.three_bet_opp = TRUE AND hp.three_bet_opp_ip = TRUE",
-        "villain_join": "v.open_raise = TRUE",
-        "hero_label": "hero_position",
-        "villain_label": "opener_position",
+        "hero_label": "Hero Position",
+        "villain_label": "Opener Position",
     },
     "fold_to_3bet": {
         "action_sql": "hp.fold_to_3bet = TRUE",
         "opp_sql": "hp.fold_to_3bet IS NOT NULL",
         "villain_join": "v.three_bet = TRUE",
-        "hero_label": "hero_position",
-        "villain_label": "3bettor_position",
+        "hero_label": "Hero Open Position",
+        "villain_label": "3-Bettor Position",
     },
     "four_bet": {
         "action_sql": "hp.four_bet = TRUE",
         "opp_sql": "hp.four_bet_opp = TRUE",
         "villain_join": "v.three_bet = TRUE",
-        "hero_label": "hero_position",
-        "villain_label": "3bettor_position",
+        "hero_label": "Hero Position",
+        "villain_label": "3-Bettor Position",
     },
     "call_open_raise": {
         "action_sql": "hp.call_open_raise = TRUE",
-        "opp_sql": "1=1",
+        "opp_sql": "hp.call_open_raise_opp = TRUE",
         "villain_join": "v.open_raise = TRUE",
-        "hero_label": "hero_position",
-        "villain_label": "opener_position",
+        "hero_label": "Hero Position",
+        "villain_label": "Opener Position",
     },
-    "open_raise": {
-        "action_sql": "hp.fold_to_3bet IS NOT NULL",
-        "opp_sql": "hp.open_raise = TRUE",
-        "villain_join": "v.three_bet = TRUE",
-        "hero_label": "hero_position",
-        "villain_label": "3bettor_position",
+    "steal": {
+        "action_sql": "hp.steal_attempted = TRUE",
+        "opp_sql": "hp.steal_opp = TRUE",
+        "villain_join": "v.faced_steal = TRUE",
+        "hero_label": "Hero Steal Position",
+        "villain_label": "Defender Position",
+    },
+    "fold_to_steal": {
+        "action_sql": "hp.fold_to_steal = TRUE",
+        "opp_sql": "hp.faced_steal = TRUE",
+        "villain_join": "v.steal_attempted = TRUE",
+        "hero_label": "Hero Defend Position",
+        "villain_label": "Stealer Position",
+    },
+    "cbet_flop": {
+        "action_sql": "hp.cbet_flop = TRUE",
+        "opp_sql": "hp.cbet_flop_opp = TRUE",
+        "villain_join": "v.saw_flop = TRUE",
+        "hero_label": "Hero Position",
+        "villain_label": "Villain Position",
     },
     "bb_defense": {
         "action_sql": "hp.bb_defense = TRUE",
         "opp_sql": "hp.bb_defense_opp = TRUE",
         "villain_join": "v.open_raise = TRUE",
-        "hero_label": "hero_position",
-        "villain_label": "raiser_position",
+        "hero_label": "Hero (BB)",
+        "villain_label": "Raiser Position",
+        "single_row": True,  # Always BB — render as 1-row strip, not full matrix
     },
 }
 ```
@@ -117,6 +132,7 @@ class PvpMatrixCell(BaseModel):
 class PvpMatrixResponse(BaseModel):
     hero_label: str
     villain_label: str
+    single_row: bool = False  # True for bb_defense (hero always BB) — render as 1-row strip
     cells: list[PvpMatrixCell]
 ```
 
@@ -175,6 +191,7 @@ async def get_pvp_matrix(
     return PvpMatrixResponse(
         hero_label=config["hero_label"],
         villain_label=config["villain_label"],
+        single_row=config.get("single_row", False),
         cells=cells,
     )
 ```
@@ -195,6 +212,7 @@ export interface PvpMatrixCell {
 export interface PvpMatrixResponse {
   hero_label: string;
   villain_label: string;
+  single_row: boolean;
   cells: PvpMatrixCell[];
 }
 ```
@@ -231,13 +249,14 @@ export type WidgetType =
 Add `pvp_matrix` to widget lists for relevant stats:
 
 ```typescript
-three_bet:       { ..., widgets: ['range_heatmap', 'fold_equity', 'ev_breakdown', 'pvp_matrix', 'ip_oop_split', 'postflop_bridge', 'trend_sparkline'] },
-fold_to_3bet:    { ..., widgets: ['response_distribution', 'continuing_range', 'ev_breakdown', 'pvp_matrix', 'trend_sparkline'] },
-four_bet:        { ..., widgets: ['range_heatmap', 'fold_equity', 'ev_breakdown', 'opportunity_context', 'pvp_matrix', 'money_burned', 'trend_sparkline'] },
-call_open_raise: { ..., widgets: ['range_heatmap', 'ev_breakdown', 'pvp_matrix', 'postflop_bridge', 'trend_sparkline'] },
-open_raise:      { ..., widgets: ['range_heatmap', 'villain_response', 'ev_breakdown', 'sizing_histogram', 'pvp_matrix', 'trend_sparkline'] },
+three_bet:       { ..., widgets: ['range_heatmap', 'fold_equity', 'ev_breakdown', 'pvp_matrix', 'postflop_bridge', 'trend_sparkline'] },
+fold_to_3bet:    { ..., widgets: ['response_distribution', 'continuing_range', 'ev_breakdown', 'pvp_matrix', 'by_context', 'trend_sparkline'] },
+four_bet:        { ..., widgets: ['range_heatmap', 'fold_equity', 'ev_breakdown', 'opportunity_context', 'pvp_matrix', 'trend_sparkline'] },
+call_open_raise: { ..., widgets: ['range_heatmap', 'ev_breakdown', 'pvp_matrix', 'by_context', 'trend_sparkline'] },
+steal:           { ..., widgets: ['pvp_matrix', 'trend_sparkline'] },
+fold_to_steal:   { ..., widgets: ['response_distribution', 'pvp_matrix', 'trend_sparkline'] },
+cbet_flop:       { ..., widgets: ['positional_bar', 'pvp_matrix', 'trend_sparkline'] },
 bb_defense:      { ..., widgets: ['response_distribution', 'continuing_range', 'ev_breakdown', 'pvp_matrix', 'trend_sparkline'] },
-three_bet_ip:    { ..., widgets: ['range_heatmap', 'fold_equity', 'ev_breakdown', 'pvp_matrix', 'trend_sparkline'] },
 ```
 
 ### 6. `frontend/src/components/stats/PvpMatrixWidget.tsx` — New component
@@ -303,10 +322,10 @@ export default function PvpMatrixWidget({ statKey, filters }: PvpMatrixWidgetPro
                   <td
                     key={vp}
                     style={{ backgroundColor: `rgba(99, 102, 241, ${bgOpacity})` }}
-                    className={cell.opportunities < 10 ? 'text-text-muted' : ''}
+                    className={cell.opportunities < 30 ? 'text-text-muted' : ''}
                   >
                     {cell.pct?.toFixed(1)}
-                    {cell.opportunities < 10 && (
+                    {cell.opportunities < 30 && (
                       <sub className="text-xs">{cell.opportunities}</sub>
                     )}
                   </td>
@@ -335,9 +354,11 @@ case 'pvp_matrix':
 1. `cd backend && python -m pytest tests/test_parser.py -v` — all tests pass
 2. `GET /api/stats/detail/three_bet/pvp-matrix` returns cells with hero_pos, villain_pos, pct
 3. Navigate to `/stats/three_bet` → PvP Matrix widget renders with colored grid
-4. Cells with <10 sample show muted text with subscript count
+4. Cells with <30 sample show muted text with subscript count
 5. Impossible matchups show `—`
 6. Click a cell → (future: filters hand explorer to that matchup)
-7. Try multiple stats: `fold_to_3bet`, `four_bet`, `call_open_raise` → all render
-8. Apply filters (stakes, date) → matrix updates
-9. `cd frontend && npm run lint` — no lint errors
+7. Try multiple stats: `fold_to_3bet`, `four_bet`, `call_open_raise`, `steal`, `fold_to_steal`, `cbet_flop` → all render
+8. `bb_defense` renders as a single-row strip (hero is always BB)
+9. `steal` renders as a small 3x2 matrix (CO/BTN/SB rows x SB/BB cols)
+10. Apply filters (stakes, date) → matrix updates
+11. `cd frontend && npm run lint` — no lint errors

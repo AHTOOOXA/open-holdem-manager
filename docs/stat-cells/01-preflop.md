@@ -47,7 +47,7 @@
 | 41 | 3-Bet OOP | SB | `three_bet_oop` | `sb` |
 | 42 | 3-Bet OOP | BB | `three_bet_oop` | `bb` |
 
-> **Future simplification note:** The 14 positional cells for 3-Bet IP (#29-35) and 3-Bet OOP (#36-42) are candidates for consolidation into a single IP/OOP toggle on the main 3-Bet detail page. Position already determines IP/OOP in almost every case ("3-Bet IP from BB" is nearly impossible). The Tot rows are valuable; the 7-position breakdown for each is low signal. Flag for future UI refactor — don't delete cells yet, but plan to replace with a filter.
+> **Merged:** 3-Bet IP (#29-35) and 3-Bet OOP (#36-42) are deprecated. Their detail pages are replaced by an IP/OOP filter (widget #6) on the main `three_bet` detail page. Position already determines IP/OOP in almost every case. These 14 grid cells should be removed and the cell count updated accordingly.
 
 ## Right Grid — KV (single value each)
 
@@ -102,11 +102,12 @@ Every widget is tagged with a build phase:
 | # | Widget | Phase | Description |
 |---|--------|-------|-------------|
 | 1 | **Range heatmap** | `NOW` | 13x13 combo grid colored by open-raise frequency. The single most important view — shows exactly which hands hero opens from each position. |
-| 2 | **Villain response breakdown** | `NOW` | Stacked bar: % fold-through / % called / % 3-bet faced after hero opens. Reveals if hero is opening too wide (high 3-bet faced) or too tight (high fold-through = leaving money on table). |
+| 2 | **Villain response breakdown** | `NOW` | Stacked bar: % fold-through / % called / % 3-bet faced after hero opens. **Must be filtered by position** — villain response is a function of villain tendencies, not hero's range width alone. Include population benchmarks per position as reference lines (e.g., typical 3-bet-faced rate vs CO open ≈ 8-12%). Without a baseline this widget is uninterpretable. |
 | 3 | **EV by outcome** | `NOW*` | Three bb/100 numbers: when open gets fold-through, when called, when 3-bet faced. Shows which scenarios are profitable and which are the leak. *Rich version (M5.5): adds hand-strength x texture matrix.* |
-| 4 | **Raise sizing distribution** | `NOW` | Histogram of hero's open sizes (2x, 2.5x, 3x, etc.) as raw BB amounts. Sizing leaks are extremely common — opening 3x from EP but 2.5x from BTN tells villains your range. |
-| 5 | **Sizing as % pot** | `M5.3` | Upgrade of widget #4: buckets open sizes as % of pot (requires `bet_pct_pot`). Shows whether hero's sizing is consistent relative to pot geometry. |
+| 4 | **Raise sizing distribution** | `NOW` | Histogram of hero's open sizes (2x, 2.5x, 3x, etc.) as raw BB amounts. Sizing leaks are extremely common — opening 3x from EP but 2.5x from BTN tells villains your range. *Replaced by widget #5 when M5.3 ships — do not keep both.* |
+| 5 | **Sizing as % pot** | `M5.3` | Replaces widget #4: buckets open sizes as % of pot (requires `bet_pct_pot`). Strictly more informative than raw BB — shows whether hero's sizing is consistent relative to pot geometry. |
 | 6 | **Trend sparkline** | `NOW` | Rolling open raise % over time with overall reference line. |
+| 7 | **Postflop c-bet bridge** | `NOW` | Flop c-bet rate when open is called, broken down by position. This is the most common transition in poker (hero opens → called → sees flop) and the #1 thing a coach checks after the opening range. Connects preflop decisions to postflop follow-through. |
 
 ---
 
@@ -119,8 +120,9 @@ Every widget is tagged with a build phase:
 | 1 | **Response distribution** | `NOW` | Stacked bar: Fold / Call / 4-bet split when facing a 3-bet. The core view — the ratio between these three responses matters more than any single number. |
 | 2 | **Continuing range heatmap** | `NOW` | 13x13 grid showing which combos hero continues with (call = blue, 4-bet = red, fold = gray). Coaches look at what you KEEP, not what you fold. Shows if continuing range is balanced. |
 | 3 | **EV by response** | `NOW*` | bb/100 for each response: fold, call, 4-bet. Reveals misplayed combos — e.g., "you're folding KQs which is +EV to call." *Basic version uses `won_bb` averages. Rich version (M5.5): adds hand-strength x texture decision matrix.* |
-| 4 | **By 3-bettor position** | `NOW` | Breakdown of fold % by who 3-bet you (BB vs BTN vs CO). Folding 70% to a BB 3-bet is fine; folding 70% to a BTN 3-bet means you're overfolding to a wide range. |
-| 5 | **Trend sparkline** | `NOW` | Rolling fold-to-3bet % over time. |
+| 4 | **By 3-bettor position** | `NOW` | Fold % AND continuing range heatmap per villain position. Folding 70% to a BB 3-bet is fine — but only if the 30% you continue with is the right 30%. A single fold % per position tells you quantity but not quality of the adjustment. Needs both the number and the filtered heatmap. |
+| 5 | **Fold rate by 3-bet size** | `NOW` | Fold % bucketed by 3-bet sizing (min-3bet, 3x, 4x, pot-sized). Folding to min-3bets is a huge leak; folding to pot-sized 3-bets is often correct. Missing sizing context makes fold-to-3bet % misleading. *Enhanced version (M5.3): buckets by `bet_pct_pot` for precise relative sizing.* |
+| 6 | **Trend sparkline** | `NOW` | Rolling fold-to-3bet % over time. |
 
 ---
 
@@ -132,9 +134,10 @@ Every widget is tagged with a build phase:
 |---|--------|-------|-------------|
 | 1 | **Range heatmap** | `NOW` | 13x13 grid of cold-call combos. Cold-calling is the most common leak in lower-stakes play. This immediately reveals over-calling (too many suited connectors, too many offsuit broadways). |
 | 2 | **EV impact** | `NOW*` | bb/100 for cold-called pots vs all other entries. Cold-calling is often a hidden leak because the losses are small per hand but constant. *Rich version (M5.5): EV by hand strength category.* |
-| 3 | **Postflop WWSF** | `NOW` | Win rate when saw flop after cold-calling. If this is below ~40%, hero is calling preflop and then surrendering too often postflop — a classic passive leak. |
+| 3 | **Postflop aggression frequency** | `NOW` | How often hero bets or raises (vs checks/calls/folds) in cold-called pots. Replaces WWSF, which is misleading here — a passive player who calls down three streets and wins at showdown has a high WWSF while playing terribly. Aggression frequency directly reveals the passive leak that makes cold-calling unprofitable. |
 | 4 | **By opener position** | `NOW` | Cold-call frequency broken down by opener position. Calling vs UTG open is very different than vs CO open — should show hero adjusts (or doesn't). |
-| 5 | **Trend sparkline** | `NOW` | Rolling cold-call % over time. |
+| 5 | **Heads-up vs multiway EV** | `NOW` | bb/100 in cold-called pots that go heads-up vs multiway (3+ players). Cold-calling from BTN typically goes HU; cold-calling from SB often goes multiway. These are completely different EV profiles and shouldn't be blended. |
+| 6 | **Trend sparkline** | `NOW` | Rolling cold-call % over time. |
 
 ---
 
@@ -147,37 +150,22 @@ Every widget is tagged with a build phase:
 | 1 | **Range heatmap** | `NOW` | 13x13 grid of 3-bet combos. Should show a polarized range (premiums + suited blockers as bluffs) — if it's only AA-QQ/AK, hero is way too tight. |
 | 2 | **Fold equity** | `NOW` | Single number: how often villain folds to hero's 3-bet. This is THE key driver of 3-bet profitability. Below 50% = hero's 3-bet bluffs are in trouble. |
 | 3 | **EV by action** | `NOW*` | bb/100 comparing 3-bet vs call vs fold for the same opportunity pool (hands where hero faced an open). The question: "Would these hands be more profitable as calls?" *Rich version (M5.5): full decision analysis.* |
-| 4 | **Showdown hand composition** | `M5.2` | When 3-bet pots reach showdown, what does hero show up with? Pie chart or list of hand categories. Reveals if hero is only 3-betting value (no bluffs at showdown = opponents can overfold). |
-| 5 | **3-bet pot postflop bridge** | `NOW` | When hero 3-bets and gets called: c-bet rate + average SPR going to flop. Connects preflop 3-bet decisions to postflop consequences — "you 3-bet and then cbet only 40% of the time" reveals a preflop/postflop disconnect. |
-| 6 | **Trend sparkline** | `NOW` | Rolling 3-bet % over time. |
+| 4 | **Bluff success / range polarity** | `NOW` | What fraction of hero's 3-bet range never reaches showdown (because villain folded pre or postflop). This is the real bluff effectiveness metric. Showing up at showdown with bluffs means the bluffs *failed* — the goal is bluffs that get folds. Measures range polarity: high fold-out rate for non-premium hands = healthy polarized range. *Enhanced version (M5.2): categorizes showdown hands by strength to show what leaks through.* |
+| 5 | **3-bet pot postflop bridge** | `NOW` | When hero 3-bets and gets called: street-by-street bet/check frequencies (flop, turn, river) + average SPR going to flop. Goes beyond just c-bet rate — shows whether hero has a multi-street plan after 3-betting or just fires one barrel and gives up. The full flop→turn→river action sequence reveals preflop/postflop disconnect. |
+| 6 | **IP/OOP filter** | `NOW` | Toggle to split all widgets by in-position vs out-of-position. IP 3-bet range should be visibly wider (more suited connectors, broadways). OOP range should be tighter and more linear. If ranges are identical, hero isn't adjusting for position. *(Replaces the former separate `three_bet_ip` and `three_bet_oop` detail pages — position determines IP/OOP in almost every case.)* |
+| 7 | **Trend sparkline** | `NOW` | Rolling 3-bet % over time. |
 
 ---
 
-### `three_bet_ip` — 3-Bet In Position
+### ~~`three_bet_ip`~~ — DEPRECATED → merged into `three_bet`
 
-> Coach question: "Am I exploiting position by 3-betting wider than OOP?"
-
-| # | Widget | Phase | Description |
-|---|--------|-------|-------------|
-| 1 | **Range heatmap** | `NOW` | IP 3-betting range. Should be visibly wider than OOP — more suited connectors, more broadways. |
-| 2 | **Fold equity** | `NOW` | Villain fold % to hero's IP 3-bet. Typically higher than OOP because villains know they'll be OOP in a 3-bet pot. |
-| 3 | **EV impact** | `NOW*` | bb/100 for IP 3-bet pots vs IP flat-call pots. Quantifies the value of 3-betting in position vs just calling. *Rich version (M5.5).* |
-| 4 | **By villain open position** | `NOW` | 3-bet % vs EP opens vs MP opens vs CO opens. Hero should 3-bet wider against later-position opens (wider ranges) and tighter against EP opens. |
-| 5 | **Trend sparkline** | `NOW` | Rolling IP 3-bet % over time. |
+> **Merged:** IP 3-bet is now an IP/OOP filter (widget #6) on the `three_bet` detail page. Position already determines IP/OOP in almost every case — "3-Bet IP from BB" is nearly impossible. The useful widgets (fold equity by position, EV IP vs OOP, range comparison) are all accessible via the filter toggle. The 14 positional grid cells for 3-bet IP (#29-35) and 3-bet OOP (#36-42) should be removed from the main grid.
 
 ---
 
-### `three_bet_oop` — 3-Bet Out of Position
+### ~~`three_bet_oop`~~ — DEPRECATED → merged into `three_bet`
 
-> Coach question: "Is my OOP 3-bet range tight and linear enough to compensate for positional disadvantage?"
-
-| # | Widget | Phase | Description |
-|---|--------|-------|-------------|
-| 1 | **Range heatmap** | `NOW` | OOP 3-betting range. Should be tighter and more linear (strong broadways, big pairs) since hero will be OOP postflop. |
-| 2 | **Fold equity** | `NOW` | Villain fold % to OOP 3-bet. If low, hero needs a very strong continuing range. |
-| 3 | **EV impact** | `NOW*` | bb/100 for OOP 3-bet pots. Expected to be lower than IP 3-bet pots — if it's deeply negative, hero may be 3-betting too light OOP. *Rich version (M5.5).* |
-| 4 | **IP vs OOP range comparison** | `NOW` | Side-by-side or diff view showing how much tighter the OOP range is vs IP. The gap is a key coaching metric — if they're the same, hero isn't adjusting for position. |
-| 5 | **Trend sparkline** | `NOW` | Rolling OOP 3-bet % over time. |
+> **Merged:** See `three_bet_ip` note above. OOP-specific insights (tighter/more linear range, lower EV expectation, IP vs OOP range gap) are all visible through the IP/OOP filter on the main `three_bet` page.
 
 ---
 
@@ -188,7 +176,7 @@ Every widget is tagged with a build phase:
 | # | Widget | Phase | Description |
 |---|--------|-------|-------------|
 | 1 | **Range heatmap** | `NOW` | The master 13x13 range — every combo hero plays voluntarily. The most fundamental view in poker tracking. |
-| 2 | **Entry type composition** | `NOW` | Stacked bar or pie: what fraction of VPIP is open raise / cold call / 3-bet / limp / squeeze. The COMPOSITION matters more than the VPIP number itself — 25% VPIP with 22% PFR is great; 25% VPIP with 15% PFR means 10% passive entries. Sub-metric: **Multiway pot frequency** — how often hero ends up in 3+ player pots. Usually a sign of too much cold-calling or overlimping. |
+| 2 | **Multiway pot frequency** | `NOW` | How often hero ends up in 3+ player pots. Direct indicator of passive preflop play — too much cold-calling and overlimping creates multiway pots that destroy equity realization. This is the most actionable insight on the VPIP page. Sub-metric: entry type composition (open raise / cold call / 3-bet / limp / squeeze as shares) — but each of these has its own dedicated page, so keep the composition compact. |
 | 3 | **Positional breakdown** | `NOW` | Bar chart of VPIP per position. Should show a clear staircase pattern (EP ~15%, MP ~18%, CO ~28%, BTN ~45%, SB ~35%, BB is forced). Flat = not adjusting to position. |
 | 4 | **EV by entry type** | `NOW*` | bb/100 broken down by how hero entered the pot (open raise vs cold call vs limp vs 3-bet). Immediately reveals which entry types are leaking. *Rich version (M5.5): adds hand-strength dimension.* |
 | 5 | **Trend sparkline** | `NOW` | Rolling VPIP over time. |
@@ -221,6 +209,7 @@ Every widget is tagged with a build phase:
 | 4 | **EV impact** | `NOW*` | bb/100 for 4-bet pots vs flatting the 3-bet. Large pots magnify mistakes — even a small leak per hand is costly in 4-bet pots. *Rich version (M5.5).* |
 | 5 | **Trend sparkline** | `NOW` | Rolling 4-bet % over time. |
 | 6 | **Opportunity context** | `NOW` | *(Merged from `four_bet_range`.)* "You 4-bet X% of all hands, but had the opportunity Y% of the time. Of those opportunities, you 4-bet Z%." Disentangles frequency from opportunity. By-position distribution bar. |
+| 7 | **4-bet sizing distribution** | `NOW` | 4-bet size as a multiplier of the 3-bet (2.2x, 2.5x, jam, etc.). Sizing varies wildly and is a major tell — some players 4-bet small (polarized, leaving room to fold) while others jam (linear, committing). Inconsistent sizing = exploitable pattern. *Enhanced version (M5.3): buckets by `bet_pct_pot`.* |
 
 ---
 
@@ -234,7 +223,8 @@ Every widget is tagged with a build phase:
 | 2 | **Money lost total** | `NOW` | Cumulative bb lost in limped pots. A single motivational number: "you have lost X bb by limping." Makes the cost concrete. |
 | 3 | **Limp-fold rate** | `NOW` | % of limps that end with hero folding to a raise. Pure money burn — every limp-fold is 1bb thrown away. |
 | 4 | **EV comparison** | `NOW*` | bb/100 for limped hands vs what those same hand categories earn when raised (from other sessions or positions). Shows limping is strictly dominated. *Rich version (M5.5).* |
-| 5 | **Trend sparkline** | `NOW` | Rolling limp % over time — ideally trending toward zero. |
+| 5 | **Limp-call vs limp-raise breakdown** | `NOW` | What happens after the limp: limp-fold (covered on its own page), limp-call (passive, almost always bad), or limp-raise (trapping, sometimes valid in specific games). These are completely different strategies with different ranges. Shows the split and EV for each. |
+| 6 | **Trend sparkline** | `NOW` | Rolling limp % over time — ideally trending toward zero. |
 
 ---
 
@@ -254,7 +244,7 @@ Every widget is tagged with a build phase:
 | 2 | **Which hands** | `NOW` | Combo list or heatmap of what hero limp-folds with. Every single one of these should either be raised or folded pre — never limped. |
 | 3 | **By position** | `NOW` | Where are the limp-folds happening? SB limp-folds are the most common. |
 | 4 | **Raise size faced** | `NOW` | Distribution of raise sizes hero folds to after limping (raw BB amounts). If folding to min-raises, the leak is even worse. *Enhanced version (M5.3): buckets by `bet_pct_pot` for proper relative sizing display.* |
-| 5 | **Trend sparkline** | `NOW` | Rolling limp-fold % over time. |
+| 5 | **Trend sparkline** | `NOW` | Rolling limp-fold % over time. *Low-frequency stat — sparkline will be noisy. Consider gating display on sample size.* |
 
 ---
 
@@ -266,9 +256,9 @@ Every widget is tagged with a build phase:
 |---|--------|-------|-------------|
 | 1 | **Fold equity** | `NOW` | How often squeeze takes the pot preflop. Squeeze works often because multiple players need to fold — but when it works, it wins a big pot uncontested. |
 | 2 | **EV impact** | `NOW*` | bb/100 for squeeze pots. Squeezes typically have high EV because of dead money from callers. *Rich version (M5.5).* |
-| 3 | **By number of callers** | `NOW` | Squeeze % and success rate vs 1 caller vs 2+ callers. More dead money with more callers, but also harder to get everyone to fold. |
+| 3 | **By number of callers** | `NOW` | Squeeze % and success rate vs 1 caller vs 2+ callers, shown as **separate rows with SPR context** — not a flattened comparison bar. Against 1 caller, hero is essentially 3-betting with dead money. Against 2+ callers, it's a multiway squeeze where stack-to-pot matters enormously. Different spots, different ranges, different sizing. |
 | 4 | **By position** | `NOW` | Where hero squeezes from. SB/BB squeezes vs late-position squeezes have different dynamics. |
-| 5 | **Trend sparkline** | `NOW` | Rolling squeeze % over time. |
+| 5 | **Trend sparkline** | `NOW` | Rolling squeeze % over time. *Low-frequency stat — sparkline will be noisy below 50k hands. Consider gating display on sample size.* |
 
 ---
 
@@ -290,13 +280,13 @@ Every widget is tagged with a build phase:
 
 > Coach question: "Am I defending my 3-bets properly or giving up too easily?"
 
+**Simplified** — this spot occurs ~2% of the time. Reduced from 5 widgets to 3. The former response distribution (#1 old) and continuing range heatmap (#2 old) were redundant — the heatmap already shows fold/call/5-bet by color. "By original 3-bet position" dropped — sample is too thin to split further.
+
 | # | Widget | Phase | Description |
 |---|--------|-------|-------------|
-| 1 | **Response distribution** | `NOW` | Stacked bar: Fold / Call / 5-bet split when facing a 4-bet. The full picture of how hero reacts. |
-| 2 | **Continuing range heatmap** | `NOW` | Which combos hero continues with vs folds. Coaches check if hero is folding hands with good equity (like AQs) or correctly folding bluffs. |
-| 3 | **EV by response** | `NOW*` | bb/100 for fold vs call vs 5-bet. Reveals if hero is folding +EV spots or correctly releasing bluffs. *Rich version (M5.5).* |
-| 4 | **By original 3-bet position** | `NOW` | Fold % broken down by where hero 3-bet from. SB 3-bet facing 4-bet should fold more (linear range); BTN 3-bet facing 4-bet has more bluffs to release. |
-| 5 | **Trend sparkline** | `NOW` | Rolling fold-to-4bet % over time. |
+| 1 | **Continuing range heatmap with response overlay** | `NOW` | 13x13 grid colored by response: fold = gray, call = blue, 5-bet = red. Combines the old response distribution and range heatmap into a single view. Coaches check if hero is folding hands with good equity (like AQs) or correctly folding bluffs. |
+| 2 | **EV by response** | `NOW*` | bb/100 for fold vs call vs 5-bet. Reveals if hero is folding +EV spots or correctly releasing bluffs. *Rich version (M5.5).* |
+| 3 | **Trend sparkline** | `NOW` | Rolling fold-to-4bet % over time. |
 
 ---
 
@@ -322,7 +312,7 @@ Every widget is tagged with a build phase:
 
 | # | Widget | Phase | Description |
 |---|--------|-------|-------------|
-| 1 | **Showdown hands** | `NOW` | What hero shows up with at showdown after 5-betting. If it's 100% AA/KK, hero is exploitably tight — opponents can fold everything except AA. |
+| 1 | **Range heatmap** | `NOW` | 13x13 grid of 5-bet combos. Most 5-bets are all-in preflop, so showdown hands ≈ the entire 5-bet range. If it's 100% AA/KK, hero is exploitably tight — opponents can fold everything except AA. |
 | 2 | **EV impact** | `NOW` | bb/100 for 5-bet pots. Should be very positive given the dead money and fold equity. |
 | 3 | **Trend sparkline** | `NOW` | Rolling 5-bet frequency over time (very low sample — sparkline may be noisy). |
 
@@ -342,7 +332,8 @@ One of the top 3 things every coach looks at. At low-mid stakes, players fold BB
 | 2 | **Defending range heatmap** | `NOW` | 13x13 grid of hands hero continues with from BB (call = blue, 3-bet = red, fold = gray). BB gets 2.5-3.5:1 pot odds — the range should be wide. If only pocket pairs and suited broadways light up, hero is massively overfolding. |
 | 3 | **EV by response** | `NOW*` | bb/100 for fold vs call vs 3-bet from BB. Reveals if hero is folding +EV spots. At pot odds of 3.5:1, many hands that "feel weak" have enough equity to defend. *Rich version (M5.5): by hand strength and board texture.* |
 | 4 | **By raiser position** | `NOW` | Defense rate broken down by who opened (EP through SB). Folding 80% vs UTG is fine (strong range). Folding 80% vs BTN is a massive leak (wide range, great pot odds). If flat across positions, hero isn't reading ranges. |
-| 5 | **Trend sparkline** | `NOW` | Rolling BB defense % over time. |
+| 5 | **Postflop check-fold rate** | `NOW` | How often hero check-folds the flop after defending BB. This is the missing half of BB defense — if hero defends 55% but check-folds flop 60%, the effective defense rate is much lower. The single most common leak at low-mid stakes: defend BB, see flop, give up immediately. |
+| 6 | **Trend sparkline** | `NOW` | Rolling BB defense % over time. |
 
 ---
 
@@ -358,7 +349,7 @@ Raising after one or more limpers — NOT an open raise. Different spot, differe
 | 2 | **By number of limpers** | `NOW` | Iso-raise frequency vs 1 limper vs 2+ limpers. More dead money but worse equity realization multiway. |
 | 3 | **Sizing distribution** | `NOW` | Histogram of iso-raise sizes (raw BB amounts). Standard is open size + 1bb per limper — deviations are tells. *Enhanced version (M5.3): buckets by `bet_pct_pot`.* |
 | 4 | **EV impact** | `NOW*` | bb/100 for iso-raised pots vs limped-along pots vs folded. Quantifies the value of isolating. *Rich version (M5.5).* |
-| 5 | **Trend sparkline** | `NOW` | Rolling iso-raise % over time. |
+| 5 | **Trend sparkline** | `NOW` | Rolling iso-raise % over time. *Low-frequency stat — sparkline will be noisy below 50k hands. Consider gating display on sample size.* |
 
 ---
 
@@ -368,10 +359,12 @@ Raising after one or more limpers — NOT an open raise. Different spot, differe
 
 Hero opens, gets called, faces a squeeze — what happens? This is a real spot that occurs regularly in 6-max. We track hero's squeeze play but not the defensive side.
 
+> **Consolidation candidate:** 4 of 5 widgets mirror `fold_to_3bet` (response distribution, continuing range, EV by response, by villain position). Consider whether this needs its own page or could be a "squeeze" filter/toggle on the `fold_to_3bet` page — same defensive decision, different pot geometry (more dead money from callers).
+
 | # | Widget | Phase | Description |
 |---|--------|-------|-------------|
 | 1 | **Response distribution** | `NOW` | Fold / Call / 4-bet split when facing a squeeze. The core defensive view. |
 | 2 | **Continuing range heatmap** | `NOW` | Which combos hero defends with vs folds when squeezed. Should include more of hero's open-raising range than fold-to-3bet since there's more dead money in the pot. |
 | 3 | **EV by response** | `NOW*` | bb/100 for each response. Folding is often correct — but folding too much lets squeezers print money. *Rich version (M5.5).* |
 | 4 | **By squeezer position** | `NOW` | Fold rate by who squeezed. Folding to a BB squeeze (likely wide) is different than folding to a UTG cold 4-bet (very strong). |
-| 5 | **Trend sparkline** | `NOW` | Rolling fold-to-squeeze % over time. |
+| 5 | **Trend sparkline** | `NOW` | Rolling fold-to-squeeze % over time. *Low-frequency stat — sparkline will be noisy. Consider gating display on sample size.* |
