@@ -1,9 +1,12 @@
 const { app, BrowserWindow, dialog, ipcMain, shell } = require('electron');
-const { autoUpdater } = require('electron-updater');
+// TODO: Buy Apple Developer account ($99/yr) and re-enable electron-updater
+// for true auto-update with code signing + notarization.
+// const { autoUpdater } = require('electron-updater');
 const { spawn } = require('child_process');
 const path = require('path');
 const net = require('net');
 const http = require('http');
+const https = require('https');
 
 let backendProcess = null;
 let mainWindow = null;
@@ -149,72 +152,68 @@ function killBackend() {
   }
 }
 
-// Track update state so we can re-send on manual check
-let updateState = { available: null, downloaded: false };
+// --- GitHub-based update checker (no code signing required) ---
+// TODO: Buy Apple Developer account ($99/yr) and replace this with
+// electron-updater for true auto-update (auto-download + install).
+// See git history for the electron-updater implementation.
 
-function setupAutoUpdater() {
-  if (isDev) return;
+const REPO_OWNER = 'AHTOOOXA';
+const REPO_NAME = 'open-holdem-manager';
 
-  autoUpdater.autoDownload = true;
-  autoUpdater.autoInstallOnAppQuit = true;
+let updateState = { available: null };
 
-  autoUpdater.on('update-available', (info) => {
-    updateState.available = {
-      version: info.version,
-      releaseNotes: info.releaseNotes,
-    };
-    if (mainWindow) {
-      mainWindow.webContents.send('update-available', updateState.available);
-    }
-  });
-
-  autoUpdater.on('download-progress', (progress) => {
-    if (mainWindow) {
-      mainWindow.webContents.send('download-progress', {
-        percent: progress.percent,
+function checkForGitHubUpdate() {
+  return new Promise((resolve) => {
+    const url = `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest`;
+    https.get(url, { headers: { 'User-Agent': 'open-holdem-manager' } }, (res) => {
+      let data = '';
+      res.on('data', (chunk) => { data += chunk; });
+      res.on('end', () => {
+        try {
+          const release = JSON.parse(data);
+          const latestVersion = (release.tag_name || '').replace(/^v/, '');
+          const currentVersion = app.getVersion();
+          if (latestVersion && latestVersion !== currentVersion && isNewer(latestVersion, currentVersion)) {
+            const info = {
+              version: latestVersion,
+              releaseNotes: release.body || null,
+            };
+            updateState.available = info;
+            if (mainWindow) {
+              mainWindow.webContents.send('update-available', info);
+            }
+          }
+          resolve();
+        } catch (err) {
+          console.error('Failed to parse GitHub release:', err.message);
+          resolve();
+        }
       });
-    }
-  });
-
-  autoUpdater.on('update-downloaded', () => {
-    updateState.downloaded = true;
-    if (mainWindow) {
-      mainWindow.webContents.send('update-downloaded');
-    }
-  });
-
-  autoUpdater.on('error', (err) => {
-    console.error('Auto-updater error:', err.message);
-    if (mainWindow) {
-      mainWindow.webContents.send('update-error', err.message);
-    }
-  });
-
-  autoUpdater.checkForUpdates().catch((err) => {
-    console.error('Update check failed:', err.message);
-  });
-
-  // Re-check every 4 hours
-  setInterval(() => {
-    autoUpdater.checkForUpdates().catch((err) => {
-      console.error('Periodic update check failed:', err.message);
+    }).on('error', (err) => {
+      console.error('GitHub update check failed:', err.message);
+      resolve();
     });
-  }, 4 * 60 * 60 * 1000);
+  });
 }
 
-ipcMain.handle('install-update', () => {
-  // Defer so the IPC response completes before the app quits
-  setTimeout(() => {
-    try {
-      autoUpdater.quitAndInstall(false, true);
-    } catch (err) {
-      console.error('quitAndInstall failed:', err);
-      // Fallback: relaunch manually
-      app.relaunch();
-      app.exit(0);
-    }
-  }, 100);
-});
+function isNewer(latest, current) {
+  const a = latest.split('.').map(Number);
+  const b = current.split('.').map(Number);
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    if ((a[i] || 0) > (b[i] || 0)) return true;
+    if ((a[i] || 0) < (b[i] || 0)) return false;
+  }
+  return false;
+}
+
+function setupUpdateChecker() {
+  if (isDev) return;
+
+  checkForGitHubUpdate();
+
+  // Re-check every 4 hours
+  setInterval(() => checkForGitHubUpdate(), 4 * 60 * 60 * 1000);
+}
 
 ipcMain.handle('get-app-version', () => app.getVersion());
 
@@ -223,14 +222,9 @@ ipcMain.handle('check-for-updates', () => {
   // Re-send cached state if we already know about an update
   if (updateState.available && mainWindow) {
     mainWindow.webContents.send('update-available', updateState.available);
-    if (updateState.downloaded) {
-      mainWindow.webContents.send('update-downloaded');
-    }
     return;
   }
-  autoUpdater.checkForUpdates().catch((err) => {
-    console.error('Manual update check failed:', err.message);
-  });
+  checkForGitHubUpdate();
 });
 
 ipcMain.handle('open-external', (_event, url) => {
@@ -256,7 +250,7 @@ app.whenReady().then(async () => {
     }
 
     createWindow(url);
-    setupAutoUpdater();
+    setupUpdateChecker();
   } catch (err) {
     console.error('Startup error:', err);
     dialog.showErrorBox(
