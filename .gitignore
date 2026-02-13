@@ -15,6 +15,7 @@ dist/
 # Node
 node_modules/
 frontend/dist/
+frontend/dist-landing/
 
 # IDE
 .idea/

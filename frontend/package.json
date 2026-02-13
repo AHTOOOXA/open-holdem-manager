@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "dev:landing": "vite --config vite.config.landing.ts",
+    "build:landing": "vite build --config vite.config.landing.ts",
     "lint": "eslint .",
     "preview": "vite preview"
   },
