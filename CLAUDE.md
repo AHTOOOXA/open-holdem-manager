@@ -295,19 +295,20 @@ npm version patch           # Bumps package.json version, creates git tag
 git push origin main --tags # Triggers GitHub Actions release workflow
 ```
 
-The CI workflow (`.github/workflows/release.yml`) builds on macOS + Windows in parallel, produces `.dmg` and `.exe`, and publishes them to GitHub Releases. electron-builder creates the release using the version from `package.json`.
+The CI workflow (`.github/workflows/release.yml`) builds on macOS + Windows in parallel, produces `.dmg` and `.exe`, and auto-publishes them to GitHub Releases (electron-builder creates a draft, then a `publish` job promotes it). electron-builder uses the version from `package.json` for the release tag name.
 
 **Important**: The git tag version and `package.json` version must match — electron-builder uses `package.json` for the release tag name (`v{version}`).
 
 ### Auto-Update (electron-updater)
 
-- On launch and every 4 hours, checks GitHub Releases for newer versions
+- On launch and every 4 hours, checks GitHub Releases for newer versions via `latest-mac.yml`/`latest.yml` manifests
 - Downloads in background, shows progress in `UpdateBanner.tsx` (sticky footer)
-- User clicks "Restart to update" to apply
+- "What's new?" link opens a Dialog with release notes (pulled from GitHub Release body) + "View on GitHub" button (opens release page in system browser via `shell.openExternal`)
+- User clicks "Restart to update" → `autoUpdater.quitAndInstall()` (full app restart, not in-place reload)
 - IPC channels: `update-available`, `download-progress`, `update-downloaded` (main → renderer)
-- IPC handlers: `install-update`, `check-for-updates`, `get-app-version` (renderer → main)
+- IPC handlers: `install-update`, `check-for-updates`, `get-app-version`, `open-external` (renderer → main)
 - Preload exposes these via `window.electronAPI`
-- Settings dropdown shows current version and "Check for Updates" button
+- Settings dropdown shows current version (`__APP_VERSION__` from Vite define) and "Check for Updates" button
 
 ### Auto-Rebuild on Stat Version Bump
 
