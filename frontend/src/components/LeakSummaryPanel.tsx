@@ -2,6 +2,8 @@ import { useState, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import type { HeroStats } from '@/lib/api';
 import { computeLeaks } from '@/lib/benchmarks';
+import { Card, CardHeader, CardTitle } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
 
 /** Stats where the value is a ratio, not a percentage */
 const RATIO_STATS = new Set(['af_flop', 'af_turn', 'af_river']);
@@ -40,20 +42,22 @@ export default function LeakSummaryPanel({ stats }: { stats: HeroStats }) {
   if (leaks.length === 0) return null;
 
   return (
-    <div className="border border-border rounded overflow-hidden mb-3">
+    <Card className="gap-0 py-0 overflow-hidden">
       {/* Header */}
-      <button
+      <CardHeader
+        className="px-3 py-2 border-b border-border cursor-pointer hover:bg-surface-hover transition-colors"
         onClick={() => setCollapsed(!collapsed)}
-        className="w-full flex items-center justify-between px-3 py-2 bg-surface hover:bg-surface-hover transition-colors"
       >
-        <div className="flex items-center gap-2">
-          <span className="text-[13px] font-bold text-text">Your Top Leaks</span>
-          <span className="text-[11px] px-1.5 py-0.5 rounded bg-red/10 text-red">
-            {leaks.length} {leaks.length === 1 ? 'leak' : 'leaks'}
-          </span>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <CardTitle className="text-[13px] font-bold text-text">Your Top Leaks</CardTitle>
+            <Badge variant="destructive" className="text-[11px]">
+              {leaks.length} {leaks.length === 1 ? 'leak' : 'leaks'}
+            </Badge>
+          </div>
+          <span className="text-[11px] text-text-muted">{collapsed ? '\u25B6' : '\u25BC'}</span>
         </div>
-        <span className="text-[11px] text-text-muted">{collapsed ? '\u25B6' : '\u25BC'}</span>
-      </button>
+      </CardHeader>
 
       {/* Body */}
       {!collapsed && leaks.length > 0 && (
@@ -65,6 +69,6 @@ export default function LeakSummaryPanel({ stats }: { stats: HeroStats }) {
           </div>
         </div>
       )}
-    </div>
+    </Card>
   );
 }

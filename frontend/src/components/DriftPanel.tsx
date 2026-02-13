@@ -1,5 +1,6 @@
 import type { DriftStat } from '@/lib/api';
 import { getBenchmarkForPosition } from '@/lib/benchmarks';
+import { Card } from '@/components/ui/card';
 import {
   Tooltip,
   TooltipContent,
@@ -90,8 +91,8 @@ export default function DriftPanel({ stats, totalHands }: {
   if (totalHands < 20000 || stats.length === 0) return null;
 
   return (
-    <div className="border border-border rounded overflow-hidden mb-3">
-      <div className="px-3 py-2 bg-surface flex items-center gap-2">
+    <Card className="gap-0 py-0 overflow-hidden">
+      <div className="px-3 py-2 flex items-center gap-2 border-b border-border">
         <span className="text-[13px] font-bold text-text">Strategy Drift</span>
         <span className="text-[11px] text-text-muted">Recent play differs from your lifetime averages</span>
       </div>
@@ -104,6 +105,6 @@ export default function DriftPanel({ stats, totalHands }: {
             ))}
         </div>
       </div>
-    </div>
+    </Card>
   );
 }
