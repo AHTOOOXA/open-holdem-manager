@@ -310,8 +310,9 @@ def compute_stat_flags(parsed: ParsedHand) -> dict[str, dict]:
                     player_stats[uname]["fold_to_steal"] = False
 
             elif raise_count == 3:
-                # 4-bet
-                player_stats[uname]["four_bet"] = True
+                # 4-bet (only counts when opener 4-bets back over a 3-bet)
+                if uname == first_raiser:
+                    player_stats[uname]["four_bet"] = True
                 third_raiser = uname
 
                 # The 3-bettor now faces a 4-bet → 5-bet opportunity

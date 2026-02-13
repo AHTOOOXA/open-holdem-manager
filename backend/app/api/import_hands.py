@@ -272,20 +272,17 @@ def _compute_financials(parsed: ParsedHand):
     return player_invested, all_in_ev_bb_map
 
 
-def _flush_batch(
+def _build_batch_arrays(
     db: duckdb.DuckDBPyConnection,
     prepared: list[tuple[ParsedHand, dict]],
     rebuild: bool = False,
-) -> tuple[int, int, list[str]]:
-    """Bulk-insert a batch of (parsed, player_stats) tuples using PyArrow column-oriented inserts.
+) -> tuple[pa.Table | None, pa.Table | None, pa.Table | None]:
+    """Build PyArrow tables from a batch of (parsed, player_stats) tuples.
 
-    When rebuild=True, skips inserting into the hands table (it already has the data).
-    Returns (imported_count, error_count, error_details).
+    Pure CPU work — no DB writes. Safe to call from a thread.
+    Returns (pa_hands, pa_hp, pa_board).  pa_hands is None when rebuild=True.
     """
     global _next_hp_id
-
-    if not prepared:
-        return 0, 0, []
 
     _init_counters(db)
     _batch_resolve_players(db, prepared)
@@ -376,22 +373,60 @@ def _flush_batch(
                 board_cols["card"].append(card)
                 board_cols["card_order"].append(i + 1)
 
-    # Bulk insert using PyArrow tables
-    db.execute("BEGIN TRANSACTION")
+    pa_hands = pa.table(hands_cols) if hands_cols and hands_cols["id"] else None
+    pa_hp = pa.table(hp_cols) if hp_cols["id"] else None
+    pa_board = pa.table(board_cols) if board_cols["hand_id"] else None
+    return pa_hands, pa_hp, pa_board
+
+
+def _insert_arrays(
+    db: duckdb.DuckDBPyConnection,
+    pa_hands: pa.Table | None,
+    pa_hp: pa.Table | None,
+    pa_board: pa.Table | None,
+    in_transaction: bool = False,
+) -> None:
+    """Insert pre-built PyArrow tables into the database.
+
+    When in_transaction=True, caller manages the transaction — no BEGIN/COMMIT here.
+    """
+    if not in_transaction:
+        db.execute("BEGIN TRANSACTION")
     try:
-        if hands_cols is not None and hands_cols["id"]:
-            pa_hands = pa.table(hands_cols)
+        if pa_hands is not None:
             db.execute("INSERT INTO hands BY NAME SELECT * FROM pa_hands")
-        if hp_cols["id"]:
-            pa_hp = pa.table(hp_cols)
+        if pa_hp is not None:
             db.execute("INSERT INTO hand_players BY NAME SELECT * FROM pa_hp")
-        if board_cols["hand_id"]:
-            pa_board = pa.table(board_cols)
+        if pa_board is not None:
             db.execute("INSERT INTO board_cards BY NAME SELECT * FROM pa_board")
-        db.execute("COMMIT")
+        if not in_transaction:
+            db.execute("COMMIT")
+    except Exception:
+        if not in_transaction:
+            db.execute("ROLLBACK")
+        raise
+
+
+def _flush_batch(
+    db: duckdb.DuckDBPyConnection,
+    prepared: list[tuple[ParsedHand, dict]],
+    rebuild: bool = False,
+    in_transaction: bool = False,
+) -> tuple[int, int, list[str]]:
+    """Bulk-insert a batch of (parsed, player_stats) tuples using PyArrow column-oriented inserts.
+
+    When rebuild=True, skips inserting into the hands table (it already has the data).
+    When in_transaction=True, caller manages the transaction — no BEGIN/COMMIT per batch.
+    Returns (imported_count, error_count, error_details).
+    """
+    if not prepared:
+        return 0, 0, []
+
+    try:
+        pa_hands, pa_hp, pa_board = _build_batch_arrays(db, prepared, rebuild=rebuild)
+        _insert_arrays(db, pa_hands, pa_hp, pa_board, in_transaction=in_transaction)
         return len(prepared), 0, []
     except Exception as e:
-        db.execute("ROLLBACK")
         traceback.print_exc()
         return 0, len(prepared), [f"Batch insert failed: {e}"]
 
@@ -505,6 +540,10 @@ async def import_files_stream(files: list[UploadFile] = File(...)):
             # Drop indexes for fast bulk loading
             _drop_indexes(db)
 
+            # Single transaction + suppress auto-checkpoint for bulk load
+            db.execute("BEGIN TRANSACTION")
+            db.execute("SET checkpoint_threshold = '10GB'")
+
             pending: list[tuple[ParsedHand, dict]] = []
 
             for i, hand_text in enumerate(all_hands):
@@ -532,7 +571,7 @@ async def import_files_stream(files: list[UploadFile] = File(...)):
                 # Flush batch to DB
                 if len(pending) >= BATCH_SIZE:
                     t0 = time.perf_counter()
-                    imp, errs, details = _flush_batch(db, pending)
+                    imp, errs, details = _flush_batch(db, pending, in_transaction=True)
                     t_db += time.perf_counter() - t0
                     imported += imp
                     errors += errs
@@ -540,7 +579,7 @@ async def import_files_stream(files: list[UploadFile] = File(...)):
                     pending = []
 
                 # Progress update
-                if (i + 1) % 200 == 0 or i == total - 1:
+                if (i + 1) % 500 == 0 or i == total - 1:
                     elapsed = time.perf_counter() - t_start
                     hps = imported / elapsed if elapsed > 0 else 0
                     yield json.dumps({
@@ -557,11 +596,13 @@ async def import_files_stream(files: list[UploadFile] = File(...)):
             # Flush remaining
             if pending:
                 t0 = time.perf_counter()
-                imp, errs, details = _flush_batch(db, pending)
+                imp, errs, details = _flush_batch(db, pending, in_transaction=True)
                 t_db += time.perf_counter() - t0
                 imported += imp
                 errors += errs
                 error_details.extend(details)
+
+            db.execute("COMMIT")
 
             # Recreate indexes (bulk build is faster than incremental)
             t0_idx = time.perf_counter()
@@ -620,6 +661,10 @@ def _process_hands(db, text_contents: list[str]) -> ImportResult:
     # Drop indexes for fast bulk loading
     _drop_indexes(db)
 
+    # Single transaction + suppress auto-checkpoint for bulk load
+    db.execute("BEGIN TRANSACTION")
+    db.execute("SET checkpoint_threshold = '10GB'")
+
     pending: list[tuple[ParsedHand, dict]] = []
 
     for i, hand_text in enumerate(all_hands):
@@ -641,18 +686,19 @@ def _process_hands(db, text_contents: list[str]) -> ImportResult:
             error_details.append(f"Hand parse error: {str(e)}")
 
         if len(pending) >= BATCH_SIZE:
-            imp, errs, details = _flush_batch(db, pending)
+            imp, errs, details = _flush_batch(db, pending, in_transaction=True)
             total_imported += imp
             total_errors += errs
             error_details.extend(details)
             pending = []
 
     if pending:
-        imp, errs, details = _flush_batch(db, pending)
+        imp, errs, details = _flush_batch(db, pending, in_transaction=True)
         total_imported += imp
         total_errors += errs
         error_details.extend(details)
 
+    db.execute("COMMIT")
     _create_indexes(db)
     finalize_import(db)
 
@@ -719,6 +765,13 @@ async def rebuild_hands():
                 "elapsed_ms": 0, "hands_per_sec": 0,
             }) + "\n"
 
+            # Single transaction for entire rebuild — no per-batch commit overhead.
+            # Crash-safe: hands table is intact, just re-run rebuild if interrupted.
+            db.execute("BEGIN TRANSACTION")
+
+            # Suppress auto-checkpoint during bulk load
+            db.execute("SET checkpoint_threshold = '10GB'")
+
             for i, (hand_id, raw_text) in enumerate(all_rows):
                 try:
                     t0 = time.perf_counter()
@@ -737,14 +790,14 @@ async def rebuild_hands():
                 # Flush batch to DB
                 if len(pending) >= BATCH_SIZE:
                     t0 = time.perf_counter()
-                    imp, errs, details = _flush_batch(db, pending, rebuild=True)
+                    imp, errs, details = _flush_batch(db, pending, rebuild=True, in_transaction=True)
                     t_db += time.perf_counter() - t0
                     imported += imp
                     errors += errs
                     error_details.extend(details)
                     pending = []
 
-                if (i + 1) % 200 == 0 or i + 1 == total:
+                if (i + 1) % 500 == 0 or i + 1 == total:
                     elapsed = time.perf_counter() - t_start
                     hps = imported / elapsed if elapsed > 0 else 0
                     yield json.dumps({
@@ -761,11 +814,13 @@ async def rebuild_hands():
             # Flush remaining
             if pending:
                 t0 = time.perf_counter()
-                imp, errs, details = _flush_batch(db, pending, rebuild=True)
+                imp, errs, details = _flush_batch(db, pending, rebuild=True, in_transaction=True)
                 t_db += time.perf_counter() - t0
                 imported += imp
                 errors += errs
                 error_details.extend(details)
+
+            db.execute("COMMIT")
 
             # Recreate indexes (bulk build is faster than incremental)
             t0_idx = time.perf_counter()

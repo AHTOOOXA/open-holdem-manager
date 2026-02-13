@@ -48,7 +48,6 @@ const REGISTRY: Record<string, StatRegistryEntry> = {
   limp_fold:         { displayName: 'Limp-Fold',         heroStatsField: 'limp_fold',         isPositional: false, widgets: ['money_burned', 'range_heatmap', 'positional_bar', 'trend_sparkline'] },
   four_bet_fold:     { displayName: '4-Bet-Fold',        heroStatsField: 'four_bet_fold',     isPositional: false, widgets: ['money_burned', 'range_heatmap', 'trend_sparkline'] },
   call_4bet:         { displayName: 'Call 4-Bet',        heroStatsField: 'call_4bet',         isPositional: false, widgets: ['ev_breakdown', 'range_heatmap', 'trend_sparkline'] },
-  four_bet_range:    { displayName: '4-Bet Range',       heroStatsField: 'four_bet_range',    isPositional: false, widgets: ['trend_sparkline'] },
   // New preflop stats
   bb_defense:        { displayName: 'BB Defense',        heroStatsField: 'bb_defense',        isPositional: false, widgets: ['response_distribution', 'continuing_range', 'ev_breakdown', 'by_context', 'trend_sparkline'] },
   iso_raise:         { displayName: 'Iso Raise',         heroStatsField: 'iso_raise',         isPositional: false, widgets: ['range_heatmap', 'by_context', 'sizing_histogram', 'ev_breakdown', 'trend_sparkline'] },

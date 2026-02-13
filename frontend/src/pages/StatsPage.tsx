@@ -48,7 +48,7 @@ function fmtStat(
   sv: StatValue | undefined,
   statKey?: string,
   position?: string,
-  decimals: number = 0,
+  decimals: number = 1,
   colorFn?: (v: number) => ColorClass,
 ): { text: string; color: ColorClass; sub?: string; health?: StatHealth; benchmark?: BenchmarkRange } {
   if (!sv) return { text: '-', color: 'text-text-muted' };
@@ -153,7 +153,7 @@ function StatCell({
   statKey,
   drillKey,
   position,
-  decimals = 0,
+  decimals = 1,
   colorFn,
   driftMap,
   onStatClick,
@@ -181,7 +181,7 @@ function StatCell({
   const inner = (
     <span className={color}>
       {text}
-      {sub && <sub className="text-[9px] ml-0.5 text-text-muted">{sub}</sub>}
+      {sub && <sub className="text-[9px] ml-0.5 text-text-muted select-none">{sub}</sub>}
       {drift && <DriftArrow drift={drift} statKey={statKey} />}
     </span>
   );
@@ -310,7 +310,7 @@ function KVGrid({
         const valueSpan = (
           <span className={`font-mono text-[13px] ${color}`}>
             {text}
-            {sub && <sub className="text-[9px] ml-0.5 text-text-muted">{sub}</sub>}
+            {sub && <sub className="text-[9px] ml-0.5 text-text-muted select-none">{sub}</sub>}
             {drift && <DriftArrow drift={drift} statKey={item.statKey} />}
           </span>
         );
@@ -397,7 +397,7 @@ function InlineStat({ sv, statKey, drillKey, position, driftMap, onStatClick }: 
   const inner = (
     <span className={`font-mono text-[13px] ${color}`}>
       {text}
-      {sub && <sub className="text-[9px] ml-0.5 text-text-muted">{sub}</sub>}
+      {sub && <sub className="text-[9px] ml-0.5 text-text-muted select-none">{sub}</sub>}
       {drift && <DriftArrow drift={drift} statKey={statKey} />}
     </span>
   );
@@ -660,12 +660,19 @@ function StatsListView() {
               driftMap={driftMap}
               onStatClick={handleStatClick}
               rows={[
-                posRow('Open Raise', stats.open_raise, 'open_raise', fullPosKeys),
-                posRow('Fold to 3Bet', stats.fold_to_3bet, 'fold_to_3bet', fullPosKeys),
-                posRow('Call Open', stats.call_open_raise, undefined, fullPosKeys, 'call_open_raise'),
-                posRow('3-Bet', stats.three_bet, 'three_bet', fullPosKeys),
-                posRow('3-Bet IP', stats.three_bet_ip, 'three_bet', fullPosKeys, 'three_bet_ip'),
-                posRow('3-Bet OOP', stats.three_bet_oop, 'three_bet', fullPosKeys, 'three_bet_oop'),
+                // Group: Entry
+                posRow('VPIP',          stats.vpip,            'vpip',         fullPosKeys),
+                posRow('PFR',           stats.pfr,             'pfr',          fullPosKeys),
+                posRow('Open Raise',    stats.open_raise,      'open_raise',   fullPosKeys),
+                posRow('Limp',          stats.limp,            'limp',         fullPosKeys),
+                // Group: vs Open
+                posRow('Call Open',     stats.call_open_raise, undefined,      fullPosKeys, 'call_open_raise'),
+                posRow('3-Bet',         stats.three_bet,       'three_bet',    fullPosKeys),
+                // Group: vs 3-Bet
+                posRow('Fold to 3-Bet', stats.fold_to_3bet,    'fold_to_3bet', fullPosKeys),
+                posRow('4-Bet',         stats.four_bet,        'four_bet',     fullPosKeys),
+                // Group: vs 4-Bet
+                posRow('Fold to 4-Bet', stats.fold_to_4bet,    'fold_to_4bet', fullPosKeys),
               ]}
             />
           </div>
@@ -676,20 +683,14 @@ function StatsListView() {
               driftMap={driftMap}
               onStatClick={handleStatClick}
               items={[
-                { label: 'VPIP', sv: stats.vpip.total, statKey: 'vpip' },
-                { label: 'PFR', sv: stats.pfr.total, statKey: 'pfr' },
-                { label: '4-Bet', sv: stats.four_bet.total, statKey: 'four_bet' },
-                { label: 'Limp', sv: stats.limp.total, drillKey: 'limp' },
-                { label: '4-Bet Range', sv: stats.four_bet_range, decimals: 1, drillKey: 'four_bet_range' },
-                { label: 'Limp-Fold', sv: stats.limp_fold, drillKey: 'limp_fold' },
                 { label: 'Squeeze', sv: stats.squeeze, drillKey: 'squeeze' },
+                { label: 'Limp-Fold', sv: stats.limp_fold, drillKey: 'limp_fold' },
+                { label: '5-Bet', sv: stats.five_bet, drillKey: 'five_bet' },
                 { label: '4-Bet-Fold', sv: stats.four_bet_fold, drillKey: 'four_bet_fold' },
-                { label: 'Fold to 4-Bet', sv: stats.fold_to_4bet.total, statKey: 'fold_to_4bet' },
+                { label: 'Call 4-Bet', sv: stats.call_4bet, drillKey: 'call_4bet' },
                 { label: 'Win Rate', sv: wr !== null ? { value: wr, sample: stats.hands } : undefined, colorFn: (v: number) => v >= 0 ? 'text-green' : 'text-red', decimals: 2 },
                 { label: 'Win Rate EV', sv: wrEv !== null ? { value: wrEv, sample: stats.hands } : undefined, colorFn: (v: number) => v >= 0 ? 'text-green' : 'text-red', decimals: 2 },
-                { label: 'Call 4-Bet', sv: stats.call_4bet, drillKey: 'call_4bet' },
-                { label: 'Hands', sv: { value: stats.hands, sample: stats.hands } },
-                { label: '5-Bet', sv: stats.five_bet, drillKey: 'five_bet' },
+                { label: 'Hands', sv: { value: stats.hands, sample: stats.hands }, decimals: 0 },
               ]}
             />
           </div>

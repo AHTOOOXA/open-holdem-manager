@@ -27,6 +27,9 @@ frontend/dist/
 .DS_Store
 Thumbs.db
 
+# Benchmark
+backend/tests/benchmark_log.jsonl
+
 # Env
 .env
 .env.local
