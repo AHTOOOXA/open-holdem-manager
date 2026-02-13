@@ -6,7 +6,11 @@ import time
 import threading
 from pathlib import Path
 
-DB_PATH = Path(__file__).parent.parent.parent / "data" / "poker.duckdb"
+_data_dir = os.environ.get("OHM_DATA_DIR")
+if _data_dir:
+    DB_PATH = Path(_data_dir) / "poker.duckdb"
+else:
+    DB_PATH = Path(__file__).parent.parent.parent / "data" / "poker.duckdb"
 
 _conn: duckdb.DuckDBPyConnection | None = None
 _lock = threading.Lock()

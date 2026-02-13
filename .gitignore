@@ -30,6 +30,18 @@ Thumbs.db
 # Benchmark
 backend/tests/benchmark_log.jsonl
 
+# Electron / electron-builder
+release/
+*.dmg
+*.exe
+*.AppImage
+
+# PyInstaller
+backend/dist/
+backend/build/
+backend/*.spec
+*.spec
+
 # Env
 .env
 .env.local

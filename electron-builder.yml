@@ -1,0 +1,48 @@
+appId: com.openholdemmanager.app
+productName: Open Holdem Manager
+copyright: Copyright © 2025
+
+directories:
+  output: release
+  buildResources: build
+
+# Only package the electron/ folder (main process code)
+files:
+  - electron/**/*
+
+# Bundle the built backend + frontend as resources
+extraResources:
+  - from: backend/dist/ohm-backend
+    to: backend
+    filter:
+      - "**/*"
+  - from: frontend/dist
+    to: frontend
+    filter:
+      - "**/*"
+
+mac:
+  category: public.app-category.utilities
+  target:
+    - dmg
+  # Uncomment and configure for code signing:
+  # identity: "Developer ID Application: Your Name (TEAM_ID)"
+  # notarize:
+  #   teamId: TEAM_ID
+
+dmg:
+  title: "${productName}"
+
+win:
+  target:
+    - nsis
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  deleteAppDataOnUninstall: false
+
+linux:
+  target:
+    - AppImage

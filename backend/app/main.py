@@ -1,5 +1,10 @@
+import os
+from pathlib import Path as _Path
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from starlette.formparsers import MultiPartParser
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -59,3 +64,21 @@ def health():
     except Exception:
         hand_count = 0
     return {"status": "ok", "hands": hand_count}
+
+
+# Serve built frontend in packaged mode (OHM_STATIC_DIR set by Electron)
+_static_dir = os.environ.get("OHM_STATIC_DIR")
+if _static_dir and _Path(_static_dir).is_dir():
+    _static_path = _Path(_static_dir)
+    _assets_path = _static_path / "assets"
+    if _assets_path.is_dir():
+        app.mount("/assets", StaticFiles(directory=str(_assets_path)), name="static-assets")
+
+    @app.get("/{full_path:path}")
+    async def _serve_spa(full_path: str):
+        """SPA fallback: serve the file if it exists, otherwise index.html."""
+        if full_path and ".." not in full_path:
+            file_path = _static_path / full_path
+            if file_path.is_file():
+                return FileResponse(str(file_path))
+        return FileResponse(str(_static_path / "index.html"))

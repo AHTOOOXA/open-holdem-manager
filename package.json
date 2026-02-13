@@ -1,0 +1,22 @@
+{
+  "name": "open-holdem-manager",
+  "version": "1.0.0",
+  "description": "Local poker hand history tracker for GGPoker Rush & Cash",
+  "main": "electron/main.js",
+  "private": true,
+  "scripts": {
+    "electron:dev": "electron .",
+    "frontend:build": "cd frontend && npm run build",
+    "backend:build": "cd backend && pyinstaller --name ohm-backend --onedir --noconfirm --clean --collect-submodules uvicorn --collect-submodules fastapi --collect-submodules starlette --collect-submodules pydantic --collect-submodules duckdb --hidden-import multipart run_server.py",
+    "build": "npm run frontend:build && npm run backend:build && electron-builder",
+    "dist:mac": "electron-builder --mac",
+    "dist:win": "electron-builder --win",
+    "dist:linux": "electron-builder --linux"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "author": "",
+  "license": "MIT"
+}
