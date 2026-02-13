@@ -936,6 +936,8 @@ def get_postflop_bridge(
         return PostflopBridgeResponse(cbet_pct=None, cbet_count=0, cbet_opp=0, avg_spr=None)
 
     base_where, base_params = _build_filter_where(player_id, position, stakes, game_mode, date_from, date_to)
+    filter_sql = config["filter"]
+    pot_estimate = config["pot_estimate"]
 
     q = f"""
         SELECT
@@ -944,15 +946,14 @@ def get_postflop_bridge(
             AVG(CAST(hp.stack_bb AS DOUBLE))
         FROM hand_players hp
         JOIN hands h ON hp.hand_id = h.id
-        WHERE {base_where} AND ({config})
+        WHERE {base_where} AND ({filter_sql})
     """
     row = db.execute(q, base_params).fetchone()
     cbet_count = int(row[0] or 0)
     cbet_opp = int(row[1] or 0)
     avg_stack = float(row[2]) if row[2] is not None else None
     cbet_pct = round(cbet_count / cbet_opp * 100, 1) if cbet_opp > 0 else None
-    # Approximate SPR: stack / estimated pot (3-bet pot ~ 6-8 BB average)
-    avg_spr = round(avg_stack / 7, 1) if avg_stack else None
+    avg_spr = round(avg_stack / pot_estimate, 1) if avg_stack else None
 
     return PostflopBridgeResponse(cbet_pct=cbet_pct, cbet_count=cbet_count, cbet_opp=cbet_opp, avg_spr=avg_spr)
 

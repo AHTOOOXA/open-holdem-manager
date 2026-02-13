@@ -1,10 +1,9 @@
-import { useState, useMemo } from 'react';
+import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { getStatRange } from '@/lib/api';
 import type { StatRangeCombo } from '@/lib/api';
 import { queryKeys } from '@/lib/query-keys';
 import { Skeleton } from '@/components/ui/skeleton';
-import { ChevronDown, ChevronRight } from 'lucide-react';
 
 const RANKS = ['A', 'K', 'Q', 'J', 'T', '9', '8', '7', '6', '5', '4', '3', '2'];
 
@@ -101,7 +100,7 @@ function MiniGrid({
 }
 
 export default function RangeHeatmapMini({ statKey, filterParams, position }: RangeHeatmapMiniProps) {
-  const [expanded, setExpanded] = useState(false);
+  const expanded = true;
 
   const rangeParams = useMemo(() => ({
     position,
@@ -170,18 +169,14 @@ export default function RangeHeatmapMini({ statKey, filterParams, position }: Ra
 
   return (
     <div>
-      <button
-        onClick={() => setExpanded(!expanded)}
-        className="flex items-center gap-1 text-[11px] text-text-muted hover:text-text w-full"
-      >
-        {expanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+      <div className="flex items-center gap-1 text-[11px] text-text-muted w-full">
         Range Heatmap
         {data && (
           <span className="ml-auto font-mono">
             {activeCombos} combos, {rangePct}%
           </span>
         )}
-      </button>
+      </div>
 
       {expanded && (
         <div className="mt-1">

@@ -22,20 +22,12 @@ export default function PostflopBridge({ statKey, filterParams, position }: Prop
   return (
     <div>
       <div className="text-[11px] text-muted-foreground mb-0.5">Postflop Bridge</div>
-      <div className="flex items-center gap-4 text-[12px]">
-        <div>
-          <span className="text-muted-foreground">CBet: </span>
-          <span className="font-medium text-foreground">
-            {data.cbet_pct != null ? `${data.cbet_pct.toFixed(0)}%` : '—'}
-          </span>
-          <span className="text-muted-foreground text-[10px] ml-1">({data.cbet_count}/{data.cbet_opp})</span>
-        </div>
-        {data.avg_spr != null && (
-          <div>
-            <span className="text-muted-foreground">SPR: </span>
-            <span className="font-medium text-foreground">~{data.avg_spr}</span>
-          </div>
-        )}
+      <div className="text-[12px]">
+        <span className="text-muted-foreground">CBet: </span>
+        <span className="font-medium text-foreground">
+          {data.cbet_pct != null ? `${data.cbet_pct.toFixed(0)}%` : '—'}
+        </span>
+        <span className="text-muted-foreground text-[10px] ml-1">({data.cbet_count}/{data.cbet_opp})</span>
       </div>
     </div>
   );

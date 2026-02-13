@@ -33,7 +33,7 @@ const REGISTRY: Record<string, StatRegistryEntry> = {
   // Preflop action
   vpip:              { displayName: 'VPIP',              heroStatsField: 'vpip',              isPositional: true,  widgets: ['range_heatmap', 'composition', 'positional_bar', 'ev_breakdown', 'trend_sparkline'] },
   pfr:               { displayName: 'PFR',               heroStatsField: 'pfr',               isPositional: true,  widgets: ['range_heatmap', 'gap_indicator', 'composition', 'positional_bar', 'trend_sparkline'] },
-  open_raise:        { displayName: 'Open Raise',        heroStatsField: 'open_raise',        isPositional: true,  widgets: ['range_heatmap', 'villain_response', 'ev_breakdown', 'sizing_histogram', 'trend_sparkline'] },
+  open_raise:        { displayName: 'Open Raise',        heroStatsField: 'open_raise',        isPositional: true,  widgets: ['range_heatmap', 'villain_response', 'ev_breakdown', 'sizing_histogram', 'postflop_bridge'] },
   call_open_raise:   { displayName: 'Call Open Raise',   heroStatsField: 'call_open_raise',   isPositional: true,  widgets: ['range_heatmap', 'ev_breakdown', 'by_context', 'trend_sparkline'] },
   three_bet:         { displayName: '3-Bet',             heroStatsField: 'three_bet',         isPositional: true,  widgets: ['range_heatmap', 'fold_equity', 'ev_breakdown', 'postflop_bridge', 'trend_sparkline'] },
   three_bet_ip:      { displayName: '3-Bet IP',          heroStatsField: 'three_bet_ip',      isPositional: true,  widgets: ['range_heatmap', 'fold_equity', 'ev_breakdown', 'by_context', 'trend_sparkline'] },

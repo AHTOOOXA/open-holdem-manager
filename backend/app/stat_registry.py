@@ -619,8 +619,9 @@ MONEY_CONFIG: dict[str, str] = {
 
 
 # ── Postflop Bridge Config ──────────────────────────────────────────
-POSTFLOP_BRIDGE_CONFIG: dict[str, str] = {
-    "three_bet": "hp.three_bet = TRUE AND hp.saw_flop = TRUE",
+POSTFLOP_BRIDGE_CONFIG: dict[str, dict] = {
+    "three_bet": {"filter": "hp.three_bet = TRUE AND hp.saw_flop = TRUE", "pot_estimate": 10},
+    "open_raise": {"filter": "hp.open_raise = TRUE AND hp.saw_flop = TRUE", "pot_estimate": 6.5},
 }
 
 

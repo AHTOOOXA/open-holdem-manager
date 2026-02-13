@@ -317,6 +317,25 @@ export const BENCHMARKS: Record<string, PositionalBenchmarks> = {
   },
 };
 
+// ── Villain Response Benchmarks ──────────────────────────────────────
+// Population averages for how villains respond to hero's action, by position.
+// Each entry: { [scenarioLabel]: percentage }
+// Used as reference lines on the VillainResponseBar widget.
+
+export interface VillainResponseBenchmark {
+  [label: string]: number;
+}
+
+export const VILLAIN_RESPONSE_BENCHMARKS: Record<string, Record<string, VillainResponseBenchmark>> = {
+  open_raise: {
+    EP:  { 'Fold-through': 70, 'Called': 18, '3-Bet faced': 12 },
+    MP:  { 'Fold-through': 65, 'Called': 23, '3-Bet faced': 12 },
+    CO:  { 'Fold-through': 58, 'Called': 30, '3-Bet faced': 12 },
+    BTN: { 'Fold-through': 52, 'Called': 33, '3-Bet faced': 15 },
+    SB:  { 'Fold-through': 60, 'Called': 20, '3-Bet faced': 20 },
+  },
+};
+
 // ── Health computation ───────────────────────────────────────────────
 
 /**

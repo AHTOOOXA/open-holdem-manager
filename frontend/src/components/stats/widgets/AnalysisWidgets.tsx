@@ -20,6 +20,7 @@ import GapIndicator from './GapIndicator';
 import PostflopBridge from './PostflopBridge';
 import OpportunityContext from './OpportunityContext';
 import RangeComparison from './RangeComparison';
+import { VILLAIN_RESPONSE_BENCHMARKS, type VillainResponseBenchmark } from '@/lib/benchmarks';
 
 interface AnalysisWidgetsProps {
   statKey: string;
@@ -109,8 +110,12 @@ export default function AnalysisWidgets({
             isLoading={trendLoading}
           />
         );
-      case 'villain_response':
-        return <VillainResponseBar {...stdProps} />;
+      case 'villain_response': {
+        const posKey = position?.toUpperCase();
+        const benchmarks: VillainResponseBenchmark | undefined =
+          posKey ? VILLAIN_RESPONSE_BENCHMARKS[statKey]?.[posKey] : undefined;
+        return <VillainResponseBar {...stdProps} benchmarks={benchmarks} />;
+      }
       case 'ev_breakdown':
         return <EvBreakdown {...stdProps} />;
       case 'sizing_histogram':
