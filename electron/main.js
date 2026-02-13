@@ -149,6 +149,9 @@ function killBackend() {
   }
 }
 
+// Track update state so we can re-send on manual check
+let updateState = { available: null, downloaded: false };
+
 function setupAutoUpdater() {
   if (isDev) return;
 
@@ -156,11 +159,12 @@ function setupAutoUpdater() {
   autoUpdater.autoInstallOnAppQuit = true;
 
   autoUpdater.on('update-available', (info) => {
+    updateState.available = {
+      version: info.version,
+      releaseNotes: info.releaseNotes,
+    };
     if (mainWindow) {
-      mainWindow.webContents.send('update-available', {
-        version: info.version,
-        releaseNotes: info.releaseNotes,
-      });
+      mainWindow.webContents.send('update-available', updateState.available);
     }
   });
 
@@ -173,6 +177,7 @@ function setupAutoUpdater() {
   });
 
   autoUpdater.on('update-downloaded', () => {
+    updateState.downloaded = true;
     if (mainWindow) {
       mainWindow.webContents.send('update-downloaded');
     }
@@ -202,6 +207,14 @@ ipcMain.handle('get-app-version', () => app.getVersion());
 
 ipcMain.handle('check-for-updates', () => {
   if (isDev) return;
+  // Re-send cached state if we already know about an update
+  if (updateState.available && mainWindow) {
+    mainWindow.webContents.send('update-available', updateState.available);
+    if (updateState.downloaded) {
+      mainWindow.webContents.send('update-downloaded');
+    }
+    return;
+  }
   autoUpdater.checkForUpdates().catch((err) => {
     console.error('Manual update check failed:', err.message);
   });

@@ -27,6 +27,11 @@ function getAPI(): ElectronAPI | null {
   return null;
 }
 
+// Custom events so Settings dropdown can react to update state
+export function dispatchUpdateState(state: { version: string; ready: boolean }) {
+  window.dispatchEvent(new CustomEvent('ohm-update-state', { detail: state }));
+}
+
 export default function UpdateBanner() {
   const [version, setVersion] = useState<string | null>(null);
   const [releaseNotes, setReleaseNotes] = useState<string | null>(null);
@@ -41,9 +46,11 @@ export default function UpdateBanner() {
 
     api.onUpdateAvailable((info) => {
       setVersion(info.version);
+      setDismissed(false);
       if (typeof info.releaseNotes === 'string') {
         setReleaseNotes(info.releaseNotes);
       }
+      dispatchUpdateState({ version: info.version, ready: false });
     });
 
     api.onDownloadProgress((info) => {
@@ -53,6 +60,11 @@ export default function UpdateBanner() {
     api.onUpdateDownloaded(() => {
       setReady(true);
       setPercent(null);
+      setDismissed(false);
+      setVersion((v) => {
+        if (v) dispatchUpdateState({ version: v, ready: true });
+        return v;
+      });
     });
   }, []);
 
@@ -115,9 +127,10 @@ export default function UpdateBanner() {
           <DialogHeader>
             <DialogTitle>What's new in v{version}</DialogTitle>
             <DialogDescription asChild>
-              <div className="pt-2 text-sm text-muted-foreground whitespace-pre-wrap">
-                {releaseNotes}
-              </div>
+              <div
+                className="pt-2 text-sm text-muted-foreground [&_h1]:text-base [&_h1]:font-semibold [&_h1]:text-foreground [&_h1]:mb-2 [&_h2]:text-sm [&_h2]:font-semibold [&_h2]:text-foreground [&_h2]:mb-2 [&_ul]:list-disc [&_ul]:pl-4 [&_ul]:space-y-1 [&_li]:leading-relaxed [&_p]:mb-2"
+                dangerouslySetInnerHTML={{ __html: releaseNotes || '' }}
+              />
             </DialogDescription>
           </DialogHeader>
           <div className="flex items-center gap-3 pt-2">

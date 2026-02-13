@@ -1,5 +1,5 @@
-import { useState, useRef } from 'react';
-import { Settings, RefreshCw, Trash2, Download, Upload, RotateCw } from 'lucide-react';
+import { useState, useRef, useEffect } from 'react';
+import { Settings, RefreshCw, Trash2, Download, Upload, RotateCw, ArrowDownToLine } from 'lucide-react';
 import { useImport } from '@/contexts/ImportContext';
 import { SidebarFooter, SidebarMenu, SidebarMenuItem, SidebarMenuButton } from '@/components/ui/sidebar';
 import { Input } from '@/components/ui/input';
@@ -17,6 +17,18 @@ export default function SidebarFooterSettings() {
   const [editing, setEditing] = useState(false);
   const [nameInput, setNameInput] = useState('');
   const dbFileRef = useRef<HTMLInputElement>(null);
+  const [updateReady, setUpdateReady] = useState(false);
+  const [updateVersion, setUpdateVersion] = useState<string | null>(null);
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const { version, ready } = (e as CustomEvent).detail;
+      setUpdateVersion(version);
+      setUpdateReady(ready);
+    };
+    window.addEventListener('ohm-update-state', handler);
+    return () => window.removeEventListener('ohm-update-state', handler);
+  }, []);
 
   const startEdit = () => {
     setNameInput(settings?.hero_username || '');
@@ -107,15 +119,27 @@ export default function SidebarFooterSettings() {
                 Clear Database
               </DropdownMenuItem>
               <DropdownMenuSeparator />
-              <DropdownMenuItem
-                onClick={() => {
-                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                  (window as any).electronAPI?.checkForUpdates?.();
-                }}
-              >
-                <RotateCw className="size-4" />
-                Check for Updates
-              </DropdownMenuItem>
+              {updateReady ? (
+                <DropdownMenuItem
+                  onClick={() => {
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    (window as any).electronAPI?.installUpdate?.();
+                  }}
+                >
+                  <ArrowDownToLine className="size-4" />
+                  Restart to Update (v{updateVersion})
+                </DropdownMenuItem>
+              ) : (
+                <DropdownMenuItem
+                  onClick={() => {
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    (window as any).electronAPI?.checkForUpdates?.();
+                  }}
+                >
+                  <RotateCw className="size-4" />
+                  {updateVersion ? `Downloading v${updateVersion}...` : 'Check for Updates'}
+                </DropdownMenuItem>
+              )}
               <DropdownMenuLabel className="text-[10px] font-normal text-muted-foreground/50">
                 v{__APP_VERSION__}
               </DropdownMenuLabel>
