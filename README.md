@@ -11,6 +11,11 @@ Local poker hand history tracker for GGPoker Rush & Cash. Parses hand histories,
 
 [All releases](https://github.com/AHTOOOXA/open-holdem-manager/releases)
 
+> **macOS note:** The app is not code-signed yet. macOS will show "app is damaged and can't be opened." To fix, run in Terminal after installing:
+> ```
+> xattr -cr /Applications/Open\ Holdem\ Manager.app
+> ```
+
 ## Development
 
 ```bash
