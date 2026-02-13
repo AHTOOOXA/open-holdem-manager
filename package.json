@@ -1,6 +1,6 @@
 {
   "name": "open-holdem-manager",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "Local poker hand history tracker for GGPoker Rush & Cash",
   "main": "electron/main.js",
   "private": true,
