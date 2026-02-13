@@ -3,7 +3,7 @@ import statistics
 from typing import Optional
 
 from fastapi import APIRouter, Query, HTTPException, Path
-from app.db import get_read_cursor
+from app.db import get_read_cursor, get_hero_player_id
 from app.models import (
     HeroStats, ComboStats, RangeResponse, StatDetailHand, StatDetailHandsResponse,
     TrendPoint, StatTrendResponse, ResponseDistribution, StatAnalysisResponse,
@@ -188,29 +188,6 @@ def get_range_stats(
     return RangeResponse(combos=combos, total_hands=total_hands)
 
 
-# ── Hero player lookup (reused from hands.py pattern) ────────────
-
-def _get_hero_player_id(db) -> Optional[int]:
-    row = db.execute(
-        "SELECT value FROM settings WHERE key = 'hero_username'"
-    ).fetchone()
-    if not row:
-        return None
-    hero_username = row[0]
-
-    row = db.execute(
-        "SELECT value FROM settings WHERE key = 'hero_site'"
-    ).fetchone()
-    hero_site = row[0] if row else "GG"
-
-    row = db.execute(
-        "SELECT p.id FROM players p JOIN sites s ON p.site_id = s.id "
-        "WHERE p.username = ? AND s.code = ?",
-        [hero_username, hero_site],
-    ).fetchone()
-    return row[0] if row else None
-
-
 @router.get("/stats/detail/{stat_key}/hands", response_model=StatDetailHandsResponse)
 def get_stat_detail_hands(
     stat_key: str = Path(...),
@@ -227,7 +204,7 @@ def get_stat_detail_hands(
         raise HTTPException(status_code=404, detail=f"Unknown stat key: {stat_key}")
 
     db = get_read_cursor()
-    player_id = _get_hero_player_id(db)
+    player_id = get_hero_player_id(db)
     if not player_id:
         return StatDetailHandsResponse(
             stat_key=stat_key, stat_name=entry["name"],
@@ -419,7 +396,7 @@ def get_stat_trend(
         raise HTTPException(status_code=404, detail=f"Unknown stat key: {stat_key}")
 
     db = get_read_cursor()
-    player_id = _get_hero_player_id(db)
+    player_id = get_hero_player_id(db)
     if not player_id:
         return StatTrendResponse(stat_key=stat_key, overall_pct=0, points=[])
 
@@ -570,7 +547,7 @@ def get_stat_analysis(
         return StatAnalysisResponse(stat_key=stat_key)
 
     db = get_read_cursor()
-    player_id = _get_hero_player_id(db)
+    player_id = get_hero_player_id(db)
     if not player_id:
         return StatAnalysisResponse(stat_key=stat_key)
 
@@ -674,7 +651,7 @@ def get_ev_breakdown(
         raise HTTPException(status_code=404, detail=f"No EV breakdown config for: {stat_key}")
 
     db = get_read_cursor()
-    player_id = _get_hero_player_id(db)
+    player_id = get_hero_player_id(db)
     if not player_id:
         return EvBreakdownResponse(stat_key=stat_key, scenarios=[], overall_bb_per_100=0, overall_hands=0)
 
@@ -728,7 +705,7 @@ def get_sizing(
 
     flag_filter, action_filter = config
     db = get_read_cursor()
-    player_id = _get_hero_player_id(db)
+    player_id = get_hero_player_id(db)
     if not player_id:
         return SizingResponse(buckets=[], avg_size_bb=None, median_size_bb=None, total=0)
 
@@ -783,7 +760,7 @@ def get_fold_equity(
         raise HTTPException(status_code=404, detail=f"No fold equity config for: {stat_key}")
 
     db = get_read_cursor()
-    player_id = _get_hero_player_id(db)
+    player_id = get_hero_player_id(db)
     if not player_id:
         return FoldEquityResponse(fold_pct=0, fold_count=0, total=0)
 
@@ -821,7 +798,7 @@ def get_by_context(
         raise HTTPException(status_code=404, detail=f"No by-context config for: {stat_key}")
 
     db = get_read_cursor()
-    player_id = _get_hero_player_id(db)
+    player_id = get_hero_player_id(db)
     if not player_id:
         return ByContextResponse(dimension=config["dimension"], buckets=[])
 
@@ -873,7 +850,7 @@ def get_composition(
         raise HTTPException(status_code=404, detail=f"No composition config for: {stat_key}")
 
     db = get_read_cursor()
-    player_id = _get_hero_player_id(db)
+    player_id = get_hero_player_id(db)
     if not player_id:
         return CompositionResponse(slices=[], total=0)
 
@@ -918,7 +895,7 @@ def get_money(
         raise HTTPException(status_code=404, detail=f"No money config for: {stat_key}")
 
     db = get_read_cursor()
-    player_id = _get_hero_player_id(db)
+    player_id = get_hero_player_id(db)
     if not player_id:
         return MoneyResponse(total_bb=0, hands=0, bb_per_100=0)
 
@@ -954,7 +931,7 @@ def get_postflop_bridge(
         raise HTTPException(status_code=404, detail=f"No postflop bridge config for: {stat_key}")
 
     db = get_read_cursor()
-    player_id = _get_hero_player_id(db)
+    player_id = get_hero_player_id(db)
     if not player_id:
         return PostflopBridgeResponse(cbet_pct=None, cbet_count=0, cbet_opp=0, avg_spr=None)
 
@@ -996,7 +973,7 @@ def get_continuing_range(
         raise HTTPException(status_code=404, detail=f"No continuing range config for: {stat_key}")
 
     db = get_read_cursor()
-    player_id = _get_hero_player_id(db)
+    player_id = get_hero_player_id(db)
     if not player_id:
         return ContinuingRangeResponse(combos=[], total_hands=0)
 
@@ -1052,7 +1029,7 @@ def get_stat_range(
         raise HTTPException(status_code=404, detail=f"Unknown stat key: {stat_key}")
 
     db = get_read_cursor()
-    player_id = _get_hero_player_id(db)
+    player_id = get_hero_player_id(db)
     if not player_id:
         return StatRangeResponse()
 

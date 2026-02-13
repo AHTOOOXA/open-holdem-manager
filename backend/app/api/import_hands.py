@@ -6,7 +6,7 @@ from app.db import get_db, db_lock
 from app.parsers.ggpoker import parse_hand_history, ParsedHand
 from app.stat_flags import compute_stat_flags
 from app.player_classification import batch_update_player_types
-from app.board_texture import classify_flop, classify_turn, classify_river
+
 import duckdb
 import traceback
 import zipfile
@@ -39,7 +39,6 @@ _HANDS_COLS = (
     "id", "site_id", "played_at", "game_type", "game_mode", "stakes",
     "sb_amount", "bb_amount", "table_name", "table_size", "button_seat", "raw_text",
     "cash_drop_received",
-    "flop_texture_rank", "flop_texture_suit", "flop_paired", "turn_texture", "river_texture",
 )
 _HP_BASE_COLS = (
     "id", "hand_id", "player_id", "seat", "position",
@@ -281,32 +280,6 @@ def _flush_batch(
         hands_cols["raw_text"].append(parsed.raw_text)
         hands_cols["cash_drop_received"].append(float(parsed.cash_drop_received))
 
-        # Board texture classification
-        flop_cards = parsed.board_cards.get("flop", [])
-        turn_cards = parsed.board_cards.get("turn", [])
-        river_cards = parsed.board_cards.get("river", [])
-
-        if len(flop_cards) >= 3:
-            ft_rank, ft_suit, ft_paired = classify_flop(flop_cards)
-            hands_cols["flop_texture_rank"].append(ft_rank)
-            hands_cols["flop_texture_suit"].append(ft_suit)
-            hands_cols["flop_paired"].append(ft_paired)
-        else:
-            hands_cols["flop_texture_rank"].append(None)
-            hands_cols["flop_texture_suit"].append(None)
-            hands_cols["flop_paired"].append(False)
-
-        if len(turn_cards) >= 1 and len(flop_cards) >= 3:
-            hands_cols["turn_texture"].append(classify_turn(flop_cards, turn_cards[0]))
-        else:
-            hands_cols["turn_texture"].append(None)
-
-        if len(river_cards) >= 1 and len(flop_cards) >= 3:
-            board_before_river = flop_cards + turn_cards
-            hands_cols["river_texture"].append(classify_river(board_before_river, river_cards[0]))
-        else:
-            hands_cols["river_texture"].append(None)
-
         for s in parsed.seats:
             uname = s["username"]
             pid = _player_cache[uname]
@@ -430,8 +403,9 @@ async def import_files(files: list[UploadFile] = File(...)):
     files_data = [(f.filename or "", await f.read()) for f in files]
     text_contents = _read_uploads(files_data)
 
-    db = get_db()
-    result = _process_hands(db, text_contents)
+    with db_lock():
+        db = get_db()
+        result = _process_hands(db, text_contents)
     return result
 
 
@@ -458,89 +432,90 @@ async def import_files_stream(files: list[UploadFile] = File(...)):
             "files": file_count,
         }) + "\n"
 
-        db = get_db()
-        imported = 0
-        duplicates = 0
-        errors = 0
-        error_details: list[str] = []
+        with db_lock():
+            db = get_db()
+            imported = 0
+            duplicates = 0
+            errors = 0
+            error_details: list[str] = []
 
-        t_start = time.perf_counter()
-        t_parse = 0.0
-        t_stats = 0.0
-        t_db = 0.0
+            t_start = time.perf_counter()
+            t_parse = 0.0
+            t_stats = 0.0
+            t_db = 0.0
 
-        # Bulk duplicate check
-        all_ids = [extract_hand_id(h) for h in all_hands]
-        existing_ids: set[str] = set()
-        valid_ids = [hid for hid in all_ids if hid is not None]
-        if valid_ids:
-            for j in range(0, len(valid_ids), 500):
-                batch = valid_ids[j:j + 500]
-                placeholders = ",".join(["?"] * len(batch))
-                rows = db.execute(
-                    f"SELECT id FROM hands WHERE id IN ({placeholders})", batch
-                ).fetchall()
-                existing_ids.update(r[0] for r in rows)
+            # Bulk duplicate check
+            all_ids = [extract_hand_id(h) for h in all_hands]
+            existing_ids: set[str] = set()
+            valid_ids = [hid for hid in all_ids if hid is not None]
+            if valid_ids:
+                for j in range(0, len(valid_ids), 500):
+                    batch = valid_ids[j:j + 500]
+                    placeholders = ",".join(["?"] * len(batch))
+                    rows = db.execute(
+                        f"SELECT id FROM hands WHERE id IN ({placeholders})", batch
+                    ).fetchall()
+                    existing_ids.update(r[0] for r in rows)
 
-        pending: list[tuple[ParsedHand, dict]] = []
+            pending: list[tuple[ParsedHand, dict]] = []
 
-        for i, hand_text in enumerate(all_hands):
-            hid = all_ids[i]
-            if hid is None:
-                errors += 1
-                error_details.append("Could not extract hand ID")
-            elif hid in existing_ids:
-                duplicates += 1
-            else:
-                existing_ids.add(hid)
-                try:
-                    t0 = time.perf_counter()
-                    parsed = parse_hand_history(hand_text)
-                    t1 = time.perf_counter()
-                    stats = compute_stat_flags(parsed)
-                    t2 = time.perf_counter()
-                    t_parse += t1 - t0
-                    t_stats += t2 - t1
-                    pending.append((parsed, stats))
-                except Exception as e:
+            for i, hand_text in enumerate(all_hands):
+                hid = all_ids[i]
+                if hid is None:
                     errors += 1
-                    error_details.append(f"Hand parse error: {str(e)}")
+                    error_details.append("Could not extract hand ID")
+                elif hid in existing_ids:
+                    duplicates += 1
+                else:
+                    existing_ids.add(hid)
+                    try:
+                        t0 = time.perf_counter()
+                        parsed = parse_hand_history(hand_text)
+                        t1 = time.perf_counter()
+                        stats = compute_stat_flags(parsed)
+                        t2 = time.perf_counter()
+                        t_parse += t1 - t0
+                        t_stats += t2 - t1
+                        pending.append((parsed, stats))
+                    except Exception as e:
+                        errors += 1
+                        error_details.append(f"Hand parse error: {str(e)}")
 
-            # Flush batch to DB
-            if len(pending) >= BATCH_SIZE:
+                # Flush batch to DB
+                if len(pending) >= BATCH_SIZE:
+                    t0 = time.perf_counter()
+                    imp, errs, details = _flush_batch(db, pending)
+                    t_db += time.perf_counter() - t0
+                    imported += imp
+                    errors += errs
+                    error_details.extend(details)
+                    pending = []
+
+                # Progress update
+                if (i + 1) % 200 == 0 or i == total - 1:
+                    elapsed = time.perf_counter() - t_start
+                    hps = imported / elapsed if elapsed > 0 else 0
+                    yield json.dumps({
+                        "type": "progress",
+                        "processed": i + 1,
+                        "total": total,
+                        "imported": imported,
+                        "duplicates": duplicates,
+                        "errors": errors,
+                        "elapsed_ms": round(elapsed * 1000),
+                        "hands_per_sec": round(hps),
+                    }) + "\n"
+
+            # Flush remaining
+            if pending:
                 t0 = time.perf_counter()
                 imp, errs, details = _flush_batch(db, pending)
                 t_db += time.perf_counter() - t0
                 imported += imp
                 errors += errs
                 error_details.extend(details)
-                pending = []
 
-            # Progress update
-            if (i + 1) % 200 == 0 or i == total - 1:
-                elapsed = time.perf_counter() - t_start
-                hps = imported / elapsed if elapsed > 0 else 0
-                yield json.dumps({
-                    "type": "progress",
-                    "processed": i + 1,
-                    "total": total,
-                    "imported": imported,
-                    "duplicates": duplicates,
-                    "errors": errors,
-                    "elapsed_ms": round(elapsed * 1000),
-                    "hands_per_sec": round(hps),
-                }) + "\n"
-
-        # Flush remaining
-        if pending:
-            t0 = time.perf_counter()
-            imp, errs, details = _flush_batch(db, pending)
-            t_db += time.perf_counter() - t0
-            imported += imp
-            errors += errs
-            error_details.extend(details)
-
-        finalize_import(db)
+            finalize_import(db)
 
         elapsed = time.perf_counter() - t_start
         hps = imported / elapsed if elapsed > 0 else 0
@@ -636,90 +611,102 @@ async def rebuild_hands():
     """Re-parse all hands from stored raw_text. Useful after parser/schema changes."""
 
     def generate():
-        db = get_db()
+        with db_lock():
+            db = get_db()
 
-        rows = db.execute(
-            "SELECT id, raw_text FROM hands ORDER BY played_at ASC, id ASC"
-        ).fetchall()
-        total = len(rows)
+            total = db.execute("SELECT COUNT(*) FROM hands").fetchone()[0]
 
-        if total == 0:
-            yield json.dumps({
-                "type": "done", "imported": 0, "duplicates": 0,
-                "errors": 0, "error_details": [],
-            }) + "\n"
-            return
+            if total == 0:
+                yield json.dumps({
+                    "type": "done", "imported": 0, "duplicates": 0,
+                    "errors": 0, "error_details": [],
+                }) + "\n"
+                return
 
-        yield json.dumps({"type": "start", "total_hands": total, "files": 0}) + "\n"
+            yield json.dumps({"type": "start", "total_hands": total, "files": 0}) + "\n"
 
-        hand_texts = [(hid, raw) for hid, raw in rows]
+            # Copy raw_text to temp table so we can delete main tables
+            db.execute("CREATE TEMPORARY TABLE IF NOT EXISTS _rebuild_raw AS "
+                       "SELECT id, raw_text FROM hands ORDER BY played_at ASC, id ASC")
 
-        # Wipe everything and reset caches
-        db.execute("DELETE FROM player_classifications")
-        db.execute("DELETE FROM actions")
-        db.execute("DELETE FROM board_cards")
-        db.execute("DELETE FROM hand_players")
-        db.execute("DELETE FROM hands")
-        db.execute("DELETE FROM players")
-        reset_import_cache()
+            # Wipe everything and reset caches
+            db.execute("DELETE FROM player_classifications")
+            db.execute("DELETE FROM actions")
+            db.execute("DELETE FROM board_cards")
+            db.execute("DELETE FROM hand_players")
+            db.execute("DELETE FROM hands")
+            db.execute("DELETE FROM players")
+            reset_import_cache()
 
-        imported = 0
-        errors = 0
-        error_details: list[str] = []
-        pending: list[tuple[ParsedHand, dict]] = []
+            imported = 0
+            errors = 0
+            error_details: list[str] = []
+            pending: list[tuple[ParsedHand, dict]] = []
 
-        t_start = time.perf_counter()
-        t_parse = 0.0
-        t_stats = 0.0
-        t_db = 0.0
+            t_start = time.perf_counter()
+            t_parse = 0.0
+            t_stats = 0.0
+            t_db = 0.0
 
-        for i, (hand_id, raw_text) in enumerate(hand_texts):
-            try:
-                t0 = time.perf_counter()
-                parsed = parse_hand_history(raw_text)
-                t1 = time.perf_counter()
-                stats = compute_stat_flags(parsed)
-                t2 = time.perf_counter()
-                t_parse += t1 - t0
-                t_stats += t2 - t1
-                pending.append((parsed, stats))
-            except Exception as e:
-                errors += 1
-                error_details.append(f"{hand_id}: {str(e)}")
-                traceback.print_exc()
+            # Stream from temp table in batches
+            cursor = db.execute("SELECT id, raw_text FROM _rebuild_raw")
+            i = 0
+            while True:
+                batch_rows = cursor.fetchmany(BATCH_SIZE)
+                if not batch_rows:
+                    break
 
-            if len(pending) >= BATCH_SIZE:
+                for hand_id, raw_text in batch_rows:
+                    try:
+                        t0 = time.perf_counter()
+                        parsed = parse_hand_history(raw_text)
+                        t1 = time.perf_counter()
+                        stats = compute_stat_flags(parsed)
+                        t2 = time.perf_counter()
+                        t_parse += t1 - t0
+                        t_stats += t2 - t1
+                        pending.append((parsed, stats))
+                    except Exception as e:
+                        errors += 1
+                        error_details.append(f"{hand_id}: {str(e)}")
+                        traceback.print_exc()
+
+                    i += 1
+                    if (i) % 200 == 0 or i == total:
+                        elapsed = time.perf_counter() - t_start
+                        hps = imported / elapsed if elapsed > 0 else 0
+                        yield json.dumps({
+                            "type": "progress",
+                            "processed": i,
+                            "total": total,
+                            "imported": imported,
+                            "duplicates": 0,
+                            "errors": errors,
+                            "elapsed_ms": round(elapsed * 1000),
+                            "hands_per_sec": round(hps),
+                        }) + "\n"
+
+                # Flush after each fetch batch
+                if pending:
+                    t0 = time.perf_counter()
+                    imp, errs, details = _flush_batch(db, pending)
+                    t_db += time.perf_counter() - t0
+                    imported += imp
+                    errors += errs
+                    error_details.extend(details)
+                    pending = []
+
+            # Flush any remaining
+            if pending:
                 t0 = time.perf_counter()
                 imp, errs, details = _flush_batch(db, pending)
                 t_db += time.perf_counter() - t0
                 imported += imp
                 errors += errs
                 error_details.extend(details)
-                pending = []
 
-            if (i + 1) % 200 == 0 or i == total - 1:
-                elapsed = time.perf_counter() - t_start
-                hps = imported / elapsed if elapsed > 0 else 0
-                yield json.dumps({
-                    "type": "progress",
-                    "processed": i + 1,
-                    "total": total,
-                    "imported": imported,
-                    "duplicates": 0,
-                    "errors": errors,
-                    "elapsed_ms": round(elapsed * 1000),
-                    "hands_per_sec": round(hps),
-                }) + "\n"
-
-        if pending:
-            t0 = time.perf_counter()
-            imp, errs, details = _flush_batch(db, pending)
-            t_db += time.perf_counter() - t0
-            imported += imp
-            errors += errs
-            error_details.extend(details)
-
-        finalize_import(db)
+            db.execute("DROP TABLE IF EXISTS _rebuild_raw")
+            finalize_import(db)
 
         elapsed = time.perf_counter() - t_start
         hps = imported / elapsed if elapsed > 0 else 0

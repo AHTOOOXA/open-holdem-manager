@@ -3,7 +3,7 @@ from pydantic import BaseModel
 from typing import Optional
 import math
 
-from app.db import get_db, db_lock, get_read_cursor
+from app.db import get_db, db_lock, get_read_cursor, get_hero_player_id, get_hero_username
 from app.models import (
     HandSummary, HandListResponse, HandDetail, HandPlayerDetail,
     HandAction, BoardCards, TagCount, ActionItem,
@@ -13,37 +13,6 @@ from app.stat_registry import STAT_REGISTRY
 
 router = APIRouter()
 
-# ── Hero username helper ─────────────────────────────────────────────
-
-def _get_hero_player_id(db) -> Optional[int]:
-    row = db.execute(
-        "SELECT value FROM settings WHERE key = 'hero_username'"
-    ).fetchone()
-    if not row:
-        return None
-    hero_username = row[0]
-
-    row = db.execute(
-        "SELECT value FROM settings WHERE key = 'hero_site'"
-    ).fetchone()
-    hero_site = row[0] if row else "GG"
-
-    row = db.execute(
-        "SELECT p.id FROM players p JOIN sites s ON p.site_id = s.id "
-        "WHERE p.username = ? AND s.code = ?",
-        [hero_username, hero_site],
-    ).fetchone()
-    return row[0] if row else None
-
-
-def _get_hero_username(db) -> str:
-    row = db.execute(
-        "SELECT value FROM settings WHERE key = 'hero_username'"
-    ).fetchone()
-    return row[0] if row else "Hero"
-
-
-# ── List hands ───────────────────────────────────────────────────────
 
 @router.get("/hands", response_model=HandListResponse)
 def list_hands(
@@ -63,11 +32,11 @@ def list_hands(
     player_id: Optional[int] = Query(None),
 ):
     db = get_read_cursor()
-    hero_id = _get_hero_player_id(db)
+    hero_id = get_hero_player_id(db)
     if hero_id is None:
         return HandListResponse(hands=[], total=0, page=1, per_page=per_page, total_pages=0)
 
-    hero_username = _get_hero_username(db)
+    hero_username = get_hero_username(db)
     params: list = [hero_id]
     where_clauses: list[str] = []
 
@@ -179,7 +148,7 @@ def list_hands(
     main_sql = f"""
         SELECT h.id, h.played_at, h.stakes, h.bb_amount,
                hp.position, hp.card1, hp.card2, hp.won_bb,
-               hp.all_in_ev_bb, h.raw_text
+               hp.all_in_ev_bb
         FROM hands h
         JOIN hand_players hp ON hp.hand_id = h.id AND hp.player_id = ?
         WHERE 1=1 {where_sql}
@@ -214,20 +183,51 @@ def list_hands(
         board_map.setdefault(hid, {"flop": [], "turn": [], "river": []})
         board_map[hid][street].append(card)
 
+    # Batch fetch actions from DB instead of parsing raw_text
+    action_rows = db.execute(
+        f"SELECT a.hand_id, a.street, a.action_type, a.amount_bb, a.player_id "
+        f"FROM actions a WHERE a.hand_id IN ({ph}) ORDER BY a.hand_id, a.action_order",
+        hand_ids,
+    ).fetchall()
+
+    _ACT_MAP = {"raise": "R", "bet": "B", "call": "C", "check": "X", "fold": "F"}
+    _BLIND_TYPES = {"sb", "bb", "ante", "straddle"}
+    _STREETS = ("preflop", "flop", "turn", "river")
+
+    # Build per-hand action summaries + pot sizes
+    actions_map: dict[str, dict[str, dict]] = {}
+    for hid, street, action_type, amount_bb, pid in action_rows:
+        hand_acts = actions_map.setdefault(hid, {
+            s: {"actions": [], "pot": 0} for s in _STREETS
+        })
+        amt_bb_f = float(amount_bb) if amount_bb is not None else 0
+        if action_type in _BLIND_TYPES:
+            hand_acts["preflop"]["pot"] += amt_bb_f
+            continue
+        abbr = _ACT_MAP.get(action_type)
+        if not abbr or street not in hand_acts:
+            continue
+        v = round(amt_bb_f) if amt_bb_f else None
+        hand_acts[street]["actions"].append(ActionItem(a=abbr, v=v, h=(pid == hero_id)))
+
+    # Propagate pot sizes: pot at flop start = preflop total, etc.
+    for hid, hand_acts in actions_map.items():
+        running = 0
+        for s in _STREETS:
+            sa = hand_acts[s]
+            street_total = sum(
+                (float(ai.v) if ai.v else 0) for ai in sa["actions"] if ai.a in ("R", "B", "C")
+            )
+            sa["pot"] = round(running + sa.get("pot", 0))
+            running = sa["pot"] + round(street_total)
+
     hands = []
     for r in rows:
         hid = r[0]
         bb_amount = float(r[3])
-        raw_text = r[9] or ""
 
         board = board_map.get(hid, {"flop": [], "turn": [], "river": []})
-
-        # Parse actions from raw text
-        ss = parse_actions_from_raw(raw_text, hero_username, bb_amount)
-        pf = ss["preflop"]
-        fl = ss["flop"]
-        tu = ss["turn"]
-        ri = ss["river"]
+        hand_acts = actions_map.get(hid, {s: {"actions": [], "pot": 0} for s in _STREETS})
 
         hands.append(HandSummary(
             id=hid,
@@ -240,16 +240,16 @@ def list_hands(
             won_bb=float(r[7]),
             all_in_ev_bb=float(r[8]) if r[8] is not None else float(r[7]),
             tags=tags_map.get(hid, []),
-            preflop_actions=pf["actions"],
+            preflop_actions=hand_acts["preflop"]["actions"],
             flop_cards=board["flop"],
-            flop_pot=fl["pot"],
-            flop_actions=fl["actions"],
+            flop_pot=hand_acts["flop"]["pot"],
+            flop_actions=hand_acts["flop"]["actions"],
             turn_card=board["turn"][0] if board["turn"] else None,
-            turn_pot=tu["pot"],
-            turn_actions=tu["actions"],
+            turn_pot=hand_acts["turn"]["pot"],
+            turn_actions=hand_acts["turn"]["actions"],
             river_card=board["river"][0] if board["river"] else None,
-            river_pot=ri["pot"],
-            river_actions=ri["actions"],
+            river_pot=hand_acts["river"]["pot"],
+            river_actions=hand_acts["river"]["actions"],
         ))
 
     return HandListResponse(
@@ -266,8 +266,8 @@ def list_hands(
 @router.get("/hands/{hand_id}", response_model=HandDetail)
 def get_hand(hand_id: str):
     db = get_read_cursor()
-    hero_id = _get_hero_player_id(db)
-    hero_username = _get_hero_username(db)
+    hero_id = get_hero_player_id(db)
+    hero_username = get_hero_username(db)
 
     hand_row = db.execute(
         "SELECT id, played_at, stakes, bb_amount, table_name, table_size, raw_text "

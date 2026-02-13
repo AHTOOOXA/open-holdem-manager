@@ -2,27 +2,11 @@ from fastapi import APIRouter, Query
 from pydantic import BaseModel
 from typing import Optional
 
-from app.db import get_read_cursor
+from app.db import get_read_cursor, get_hero_player_id
 
 router = APIRouter()
 
 POSITIONS = ["EP", "MP", "CO", "BTN", "SB", "BB"]
-
-
-# ── Helper ──────────────────────────────────────────────────────────
-
-def _get_hero_player_id(db) -> Optional[int]:
-    row = db.execute(
-        "SELECT value FROM settings WHERE key = 'hero_username'"
-    ).fetchone()
-    if not row:
-        return None
-    hero_username = row[0]
-    row = db.execute(
-        "SELECT p.id FROM players p WHERE p.username = ? AND p.site_id = 1",
-        [hero_username],
-    ).fetchone()
-    return row[0] if row else None
 
 
 def _build_where(
@@ -56,7 +40,7 @@ def _build_where(
         params.append(date_to)
 
     if exclude_hero:
-        hero_id = _get_hero_player_id(db)
+        hero_id = get_hero_player_id(db)
         if hero_id:
             clauses.append("hp.player_id != ?")
             params.append(hero_id)
@@ -96,8 +80,9 @@ def population_overview(
     where_sql, params, having_sql = _build_where(stakes, date_from, date_to, min_hands, exclude_hero, player_type, db)
 
     row = db.execute(f"""
-        SELECT COUNT(*), SUM(hands) FROM (
-            SELECT hp.player_id, COUNT(*) as hands
+        SELECT COUNT(*), SUM(hands), MIN(min_t), MAX(max_t) FROM (
+            SELECT hp.player_id, COUNT(*) as hands,
+                   MIN(h.played_at) as min_t, MAX(h.played_at) as max_t
             FROM hand_players hp
             JOIN hands h ON h.id = hp.hand_id
             JOIN players p ON p.id = hp.player_id
@@ -111,20 +96,11 @@ def population_overview(
     pc = row[0] if row else 0
     oc = row[1] if row and row[1] else 0
 
-    dates = db.execute(f"""
-        SELECT MIN(h.played_at), MAX(h.played_at)
-        FROM hand_players hp
-        JOIN hands h ON h.id = hp.hand_id
-        JOIN players p ON p.id = hp.player_id
-        LEFT JOIN player_classifications pc ON pc.player_id = p.id
-        WHERE 1=1 {where_sql}
-    """, params).fetchone()
-
     return PopulationOverview(
         player_count=pc,
         observation_count=oc,
-        date_min=dates[0].isoformat() if dates and dates[0] else None,
-        date_max=dates[1].isoformat() if dates and dates[1] else None,
+        date_min=row[2].isoformat() if row and row[2] else None,
+        date_max=row[3].isoformat() if row and row[3] else None,
     )
 
 
@@ -166,20 +142,18 @@ def population_preflop(
     db = get_read_cursor()
     where_sql, params, having_sql = _build_where(stakes, date_from, date_to, min_hands, exclude_hero, player_type, db)
 
-    # First filter to eligible player IDs
-    eligible_sql = f"""
-        SELECT hp.player_id
-        FROM hand_players hp
-        JOIN hands h ON h.id = hp.hand_id
-        JOIN players p ON p.id = hp.player_id
-        LEFT JOIN player_classifications pc ON pc.player_id = p.id
-        WHERE 1=1 {where_sql}
-        GROUP BY hp.player_id
-        {having_sql}
-    """
-
-    # Aggregate stats by position for eligible players
+    # Aggregate stats by position for eligible players (single-pass CTE)
     rows = db.execute(f"""
+        WITH eligible AS (
+            SELECT hp.player_id
+            FROM hand_players hp
+            JOIN hands h ON h.id = hp.hand_id
+            JOIN players p ON p.id = hp.player_id
+            LEFT JOIN player_classifications pc ON pc.player_id = p.id
+            WHERE 1=1 {where_sql}
+            GROUP BY hp.player_id
+            {having_sql}
+        )
         SELECT
             hp.position,
             COUNT(*) as hands,
@@ -198,8 +172,8 @@ def population_preflop(
             SUM(CASE WHEN hp.squeeze_opp THEN 1 ELSE 0 END) as sq_opp
         FROM hand_players hp
         JOIN hands h ON h.id = hp.hand_id
-        WHERE hp.player_id IN ({eligible_sql})
-          AND hp.position IN ('EP','MP','CO','BTN','SB','BB')
+        JOIN eligible e ON e.player_id = hp.player_id
+        WHERE hp.position IN ('EP','MP','CO','BTN','SB','BB')
         GROUP BY hp.position
     """, params).fetchall()
 
@@ -285,35 +259,45 @@ def population_segments(
     where_sql, params, having_sql = _build_where(stakes, date_from, date_to, min_hands, exclude_hero, None, db)
 
     rows = db.execute(f"""
-        SELECT
-            COALESCE(pc.player_type, 'UNK') as player_type,
-            COUNT(DISTINCT hp.player_id) as player_count,
-            COUNT(*) as total_hands,
-            SUM(CASE WHEN hp.vpip THEN 1 ELSE 0 END) as vpip_count,
-            SUM(CASE WHEN hp.pfr THEN 1 ELSE 0 END) as pfr_count,
-            SUM(CASE WHEN hp.three_bet THEN 1 ELSE 0 END) as tb_count,
-            SUM(CASE WHEN hp.three_bet_opp THEN 1 ELSE 0 END) as tb_opp,
-            SUM(COALESCE(hp.flop_bets,0) + COALESCE(hp.flop_raises,0)
-              + COALESCE(hp.turn_bets,0) + COALESCE(hp.turn_raises,0)
-              + COALESCE(hp.river_bets,0) + COALESCE(hp.river_raises,0)) as agg_count,
-            SUM(COALESCE(hp.flop_calls,0) + COALESCE(hp.turn_calls,0) + COALESCE(hp.river_calls,0)) as call_count,
-            SUM(CASE WHEN hp.went_to_showdown THEN 1 ELSE 0 END) as sd_count,
-            SUM(CASE WHEN hp.saw_flop THEN 1 ELSE 0 END) as sf_count,
-            SUM(CASE WHEN hp.saw_flop AND CAST(COALESCE(hp.won_bb, 0) AS DOUBLE) > 0 THEN 1 ELSE 0 END) as wwsf_count
-        FROM hand_players hp
-        JOIN hands h ON h.id = hp.hand_id
-        JOIN players p ON p.id = hp.player_id
-        LEFT JOIN player_classifications pc ON pc.player_id = p.id
-        WHERE hp.player_id IN (
-            SELECT hp2.player_id
-            FROM hand_players hp2
-            JOIN hands h2 ON h2.id = hp2.hand_id
-            JOIN players p2 ON p2.id = hp2.player_id
+        WITH player_agg AS (
+            SELECT
+                hp.player_id,
+                COALESCE(pc.player_type, 'UNK') as player_type,
+                COUNT(*) as hands,
+                SUM(CASE WHEN hp.vpip THEN 1 ELSE 0 END) as vpip_count,
+                SUM(CASE WHEN hp.pfr THEN 1 ELSE 0 END) as pfr_count,
+                SUM(CASE WHEN hp.three_bet THEN 1 ELSE 0 END) as tb_count,
+                SUM(CASE WHEN hp.three_bet_opp THEN 1 ELSE 0 END) as tb_opp,
+                SUM(COALESCE(hp.flop_bets,0) + COALESCE(hp.flop_raises,0)
+                  + COALESCE(hp.turn_bets,0) + COALESCE(hp.turn_raises,0)
+                  + COALESCE(hp.river_bets,0) + COALESCE(hp.river_raises,0)) as agg_count,
+                SUM(COALESCE(hp.flop_calls,0) + COALESCE(hp.turn_calls,0) + COALESCE(hp.river_calls,0)) as call_count,
+                SUM(CASE WHEN hp.went_to_showdown THEN 1 ELSE 0 END) as sd_count,
+                SUM(CASE WHEN hp.saw_flop THEN 1 ELSE 0 END) as sf_count,
+                SUM(CASE WHEN hp.saw_flop AND CAST(COALESCE(hp.won_bb, 0) AS DOUBLE) > 0 THEN 1 ELSE 0 END) as wwsf_count
+            FROM hand_players hp
+            JOIN hands h ON h.id = hp.hand_id
+            JOIN players p ON p.id = hp.player_id
+            LEFT JOIN player_classifications pc ON pc.player_id = p.id
             WHERE 1=1 {where_sql}
-            GROUP BY hp2.player_id
+            GROUP BY hp.player_id, COALESCE(pc.player_type, 'UNK')
             {having_sql}
         )
-        GROUP BY COALESCE(pc.player_type, 'UNK')
+        SELECT
+            player_type,
+            COUNT(*) as player_count,
+            SUM(hands) as total_hands,
+            SUM(vpip_count) as vpip_count,
+            SUM(pfr_count) as pfr_count,
+            SUM(tb_count) as tb_count,
+            SUM(tb_opp) as tb_opp,
+            SUM(agg_count) as agg_count,
+            SUM(call_count) as call_count,
+            SUM(sd_count) as sd_count,
+            SUM(sf_count) as sf_count,
+            SUM(wwsf_count) as wwsf_count
+        FROM player_agg
+        GROUP BY player_type
         ORDER BY total_hands DESC
     """, params).fetchall()
 
@@ -367,18 +351,17 @@ def population_postflop(
     db = get_read_cursor()
     where_sql, params, having_sql = _build_where(stakes, date_from, date_to, min_hands, exclude_hero, player_type, db)
 
-    eligible_sql = f"""
-        SELECT hp.player_id
-        FROM hand_players hp
-        JOIN hands h ON h.id = hp.hand_id
-        JOIN players p ON p.id = hp.player_id
-        LEFT JOIN player_classifications pc ON pc.player_id = p.id
-        WHERE 1=1 {where_sql}
-        GROUP BY hp.player_id
-        {having_sql}
-    """
-
     rows = db.execute(f"""
+        WITH eligible AS (
+            SELECT hp.player_id
+            FROM hand_players hp
+            JOIN hands h ON h.id = hp.hand_id
+            JOIN players p ON p.id = hp.player_id
+            LEFT JOIN player_classifications pc ON pc.player_id = p.id
+            WHERE 1=1 {where_sql}
+            GROUP BY hp.player_id
+            {having_sql}
+        )
         SELECT
             -- Flop cbet
             SUM(CASE WHEN hp.cbet_flop_opp THEN 1 ELSE 0 END) as cb_flop_opp,
@@ -402,7 +385,7 @@ def population_postflop(
             SUM(CASE WHEN hp.saw_flop AND CAST(COALESCE(hp.won_bb, 0) AS DOUBLE) > 0 THEN 1 ELSE 0 END) as wwsf
         FROM hand_players hp
         JOIN hands h ON h.id = hp.hand_id
-        WHERE hp.player_id IN ({eligible_sql})
+        JOIN eligible e ON e.player_id = hp.player_id
     """, params).fetchone()
 
     if not rows:
@@ -457,18 +440,17 @@ def population_pot_types(
     db = get_read_cursor()
     where_sql, params, having_sql = _build_where(stakes, date_from, date_to, min_hands, exclude_hero, player_type, db)
 
-    eligible_sql = f"""
-        SELECT hp.player_id
-        FROM hand_players hp
-        JOIN hands h ON h.id = hp.hand_id
-        JOIN players p ON p.id = hp.player_id
-        LEFT JOIN player_classifications pc ON pc.player_id = p.id
-        WHERE 1=1 {where_sql}
-        GROUP BY hp.player_id
-        {having_sql}
-    """
-
     rows = db.execute(f"""
+        WITH eligible AS (
+            SELECT hp.player_id
+            FROM hand_players hp
+            JOIN hands h ON h.id = hp.hand_id
+            JOIN players p ON p.id = hp.player_id
+            LEFT JOIN player_classifications pc ON pc.player_id = p.id
+            WHERE 1=1 {where_sql}
+            GROUP BY hp.player_id
+            {having_sql}
+        )
         SELECT
             COALESCE(hp.pot_type, 'SRP') as pt,
             COUNT(*) as hands,
@@ -480,7 +462,7 @@ def population_pot_types(
             SUM(CASE WHEN hp.went_to_showdown THEN 1 ELSE 0 END) as sd
         FROM hand_players hp
         JOIN hands h ON h.id = hp.hand_id
-        WHERE hp.player_id IN ({eligible_sql})
+        JOIN eligible e ON e.player_id = hp.player_id
         GROUP BY COALESCE(hp.pot_type, 'SRP')
         ORDER BY hands DESC
     """, params).fetchall()
@@ -530,18 +512,21 @@ def population_showdown(
     db = get_read_cursor()
     where_sql, params, having_sql = _build_where(stakes, date_from, date_to, min_hands, exclude_hero, player_type, db)
 
-    eligible_sql = f"""
-        SELECT hp.player_id
-        FROM hand_players hp
-        JOIN hands h ON h.id = hp.hand_id
-        JOIN players p ON p.id = hp.player_id
-        LEFT JOIN player_classifications pc ON pc.player_id = p.id
-        WHERE 1=1 {where_sql}
-        GROUP BY hp.player_id
-        {having_sql}
+    eligible_cte = f"""
+        WITH eligible AS (
+            SELECT hp.player_id
+            FROM hand_players hp
+            JOIN hands h ON h.id = hp.hand_id
+            JOIN players p ON p.id = hp.player_id
+            LEFT JOIN player_classifications pc ON pc.player_id = p.id
+            WHERE 1=1 {where_sql}
+            GROUP BY hp.player_id
+            {having_sql}
+        )
     """
 
     pos_rows = db.execute(f"""
+        {eligible_cte}
         SELECT
             hp.position,
             SUM(CASE WHEN hp.saw_flop THEN 1 ELSE 0 END) as sf,
@@ -550,8 +535,8 @@ def population_showdown(
             SUM(CASE WHEN hp.saw_flop AND CAST(COALESCE(hp.won_bb, 0) AS DOUBLE) > 0 THEN 1 ELSE 0 END) as wwsf
         FROM hand_players hp
         JOIN hands h ON h.id = hp.hand_id
-        WHERE hp.player_id IN ({eligible_sql})
-          AND hp.position IN ('EP','MP','CO','BTN','SB','BB')
+        JOIN eligible e ON e.player_id = hp.player_id
+        WHERE hp.position IN ('EP','MP','CO','BTN','SB','BB')
         GROUP BY hp.position
     """, params).fetchall()
 
@@ -570,6 +555,7 @@ def population_showdown(
 
     # Aggression overall
     agg = db.execute(f"""
+        {eligible_cte}
         SELECT
             SUM(COALESCE(hp.flop_bets, 0) + COALESCE(hp.flop_raises, 0)) as f_agg,
             SUM(COALESCE(hp.flop_calls, 0)) as f_call,
@@ -585,7 +571,7 @@ def population_showdown(
               + COALESCE(hp.river_calls, 0) + COALESCE(hp.river_checks, 0) + COALESCE(hp.river_folds, 0)) as r_total
         FROM hand_players hp
         JOIN hands h ON h.id = hp.hand_id
-        WHERE hp.player_id IN ({eligible_sql})
+        JOIN eligible e ON e.player_id = hp.player_id
     """, params).fetchone()
 
     af_f = round(float(agg[0]) / float(agg[1]), 2) if agg and agg[1] and agg[1] > 0 else None
@@ -630,18 +616,17 @@ def population_hu_vs_mw(
     db = get_read_cursor()
     where_sql, params, having_sql = _build_where(stakes, date_from, date_to, min_hands, exclude_hero, player_type, db)
 
-    eligible_sql = f"""
-        SELECT hp.player_id
-        FROM hand_players hp
-        JOIN hands h ON h.id = hp.hand_id
-        JOIN players p ON p.id = hp.player_id
-        LEFT JOIN player_classifications pc ON pc.player_id = p.id
-        WHERE 1=1 {where_sql}
-        GROUP BY hp.player_id
-        {having_sql}
-    """
-
     rows = db.execute(f"""
+        WITH eligible AS (
+            SELECT hp.player_id
+            FROM hand_players hp
+            JOIN hands h ON h.id = hp.hand_id
+            JOIN players p ON p.id = hp.player_id
+            LEFT JOIN player_classifications pc ON pc.player_id = p.id
+            WHERE 1=1 {where_sql}
+            GROUP BY hp.player_id
+            {having_sql}
+        )
         SELECT
             CASE WHEN COALESCE(hp.is_multiway, false) THEN 'Multiway' ELSE 'Heads-Up' END as cat,
             COUNT(*) as hands,
@@ -655,8 +640,8 @@ def population_hu_vs_mw(
             SUM(CASE WHEN hp.went_to_showdown THEN 1 ELSE 0 END) as sd
         FROM hand_players hp
         JOIN hands h ON h.id = hp.hand_id
-        WHERE hp.player_id IN ({eligible_sql})
-          AND hp.saw_flop = true
+        JOIN eligible e ON e.player_id = hp.player_id
+        WHERE hp.saw_flop = true
         GROUP BY CASE WHEN COALESCE(hp.is_multiway, false) THEN 'Multiway' ELSE 'Heads-Up' END
     """, params).fetchall()
 
@@ -696,23 +681,22 @@ def population_comparison(
     min_hands: int = Query(20, ge=0),
 ):
     db = get_read_cursor()
-    hero_id = _get_hero_player_id(db)
+    hero_id = get_hero_player_id(db)
 
     # Get population averages (excluding hero)
     where_sql, params, having_sql = _build_where(stakes, date_from, date_to, min_hands, True, None, db)
 
-    eligible_sql = f"""
-        SELECT hp.player_id
-        FROM hand_players hp
-        JOIN hands h ON h.id = hp.hand_id
-        JOIN players p ON p.id = hp.player_id
-        LEFT JOIN player_classifications pc ON pc.player_id = p.id
-        WHERE 1=1 {where_sql}
-        GROUP BY hp.player_id
-        {having_sql}
-    """
-
     pop = db.execute(f"""
+        WITH eligible AS (
+            SELECT hp.player_id
+            FROM hand_players hp
+            JOIN hands h ON h.id = hp.hand_id
+            JOIN players p ON p.id = hp.player_id
+            LEFT JOIN player_classifications pc ON pc.player_id = p.id
+            WHERE 1=1 {where_sql}
+            GROUP BY hp.player_id
+            {having_sql}
+        )
         SELECT
             COUNT(*) as hands,
             SUM(CASE WHEN hp.vpip THEN 1 ELSE 0 END) * 100.0 / COUNT(*) as vpip,
@@ -728,7 +712,7 @@ def population_comparison(
                 ELSE NULL END as wtsd
         FROM hand_players hp
         JOIN hands h ON h.id = hp.hand_id
-        WHERE hp.player_id IN ({eligible_sql})
+        JOIN eligible e ON e.player_id = hp.player_id
     """, params).fetchone()
 
     # Get hero stats
@@ -737,9 +721,11 @@ def population_comparison(
         hero_where = "hp.player_id = ?"
         hero_params: list = [hero_id]
         if stakes:
-            for s in stakes.split(","):
-                hero_where += " AND h.stakes = ?"
-                hero_params.append(s.strip())
+            stakes_list = [s.strip() for s in stakes.split(",") if s.strip()]
+            if stakes_list:
+                ph = ",".join("?" for _ in stakes_list)
+                hero_where += f" AND h.stakes IN ({ph})"
+                hero_params.extend(stakes_list)
         if date_from:
             hero_where += " AND h.played_at >= ?"
             hero_params.append(date_from)

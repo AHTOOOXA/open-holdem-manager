@@ -1,8 +1,9 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.formparsers import MultiPartParser
+from starlette.middleware.base import BaseHTTPMiddleware
 
-from app.db import get_db, close_db, get_read_cursor
+from app.db import get_db, close_db, get_read_cursor, init_request_cursors, cleanup_request_cursors
 from app.api import import_hands, stats, reports, settings, hands, cash_drop, sessions, players, population
 
 MultiPartParser.max_part_size = 50 * 1024 * 1024  # 50MB
@@ -16,6 +17,18 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+class CursorCleanupMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        init_request_cursors()
+        try:
+            response = await call_next(request)
+            return response
+        finally:
+            cleanup_request_cursors()
+
+
+app.add_middleware(CursorCleanupMiddleware)
 
 app.include_router(import_hands.router, prefix="/api")
 app.include_router(stats.router, prefix="/api")

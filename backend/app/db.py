@@ -1,4 +1,5 @@
 import atexit
+import contextvars
 import duckdb
 import os
 import time
@@ -9,6 +10,9 @@ DB_PATH = Path(__file__).parent.parent.parent / "data" / "poker.duckdb"
 
 _conn: duckdb.DuckDBPyConnection | None = None
 _lock = threading.Lock()
+_request_cursors: contextvars.ContextVar[list | None] = contextvars.ContextVar(
+    '_request_cursors', default=None
+)
 
 
 def get_db() -> duckdb.DuckDBPyConnection:
@@ -37,13 +41,57 @@ def get_read_cursor() -> duckdb.DuckDBPyConnection:
 
     DuckDB supports concurrent reads via separate cursors on the same
     connection, so read-only endpoints can run in parallel.
+    Cursors are tracked per-request and closed by cleanup_request_cursors().
     """
-    return get_db().cursor()
+    cursor = get_db().cursor()
+    cursors = _request_cursors.get(None)
+    if cursors is not None:
+        cursors.append(cursor)
+    return cursor
+
+
+def init_request_cursors():
+    """Call at the start of a request to enable cursor tracking."""
+    _request_cursors.set([])
+
+
+def cleanup_request_cursors():
+    """Close all read cursors opened during this request."""
+    cursors = _request_cursors.get(None)
+    if cursors:
+        for c in cursors:
+            try:
+                c.close()
+            except Exception:
+                pass
+        cursors.clear()
+    _request_cursors.set(None)
 
 
 def db_lock() -> threading.Lock:
     """Return the lock that must be held during write operations."""
     return _lock
+
+
+def get_hero_player_id(db) -> int | None:
+    """Shared hero player ID lookup — single query, used by all endpoints."""
+    row = db.execute(
+        "SELECT p.id FROM players p "
+        "WHERE p.username = COALESCE((SELECT value FROM settings WHERE key = 'hero_username'), 'Hero') "
+        "AND p.site_id = COALESCE("
+        "  (SELECT s.id FROM sites s WHERE s.code = COALESCE("
+        "    (SELECT value FROM settings WHERE key = 'hero_site'), 'GG'))"
+        ", 1)"
+    ).fetchone()
+    return row[0] if row else None
+
+
+def get_hero_username(db) -> str:
+    """Get hero username from settings."""
+    row = db.execute(
+        "SELECT value FROM settings WHERE key = 'hero_username'"
+    ).fetchone()
+    return row[0] if row else "Hero"
 
 
 def close_db():
@@ -77,7 +125,6 @@ def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
             color_tag VARCHAR,
             first_seen TIMESTAMP,
             last_seen TIMESTAMP,
-            player_type VARCHAR DEFAULT 'UNK',
             UNIQUE(site_id, username)
         )
     """)
@@ -324,23 +371,9 @@ def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
     for col, default in [
         ("cash_drop_received", "DECIMAL DEFAULT 0"),
         ("game_mode", "VARCHAR DEFAULT ''"),
-        ("flop_texture_rank", "VARCHAR"),
-        ("flop_texture_suit", "VARCHAR"),
-        ("flop_paired", "BOOLEAN DEFAULT FALSE"),
-        ("turn_texture", "VARCHAR"),
-        ("river_texture", "VARCHAR"),
     ]:
         try:
             conn.execute(f"ALTER TABLE hands ADD COLUMN {col} {default}")
-        except duckdb.CatalogException:
-            pass
-
-    # Migration for players table
-    for col, default in [
-        ("player_type", "VARCHAR DEFAULT 'UNK'"),
-    ]:
-        try:
-            conn.execute(f"ALTER TABLE players ADD COLUMN {col} {default}")
         except duckdb.CatalogException:
             pass
 
@@ -367,8 +400,13 @@ def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_actions_hand_id ON actions(hand_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_hand_tags_hand_id ON hand_tags(hand_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_hand_tags_tag ON hand_tags(tag)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_players_type ON players(player_type)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_board_cards_hand_id ON board_cards(hand_id)")
+
+    # Composite indexes for common query patterns
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_hp_player_hand ON hand_players(player_id, hand_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_hp_hand_player ON hand_players(hand_id, player_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_hp_player_position ON hand_players(player_id, position)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_h_played_stakes ON hands(played_at, stakes)")
 
     # Sync sequences to max existing IDs (prevents collisions after restart)
     for table, seq in [

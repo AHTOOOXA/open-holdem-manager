@@ -25,11 +25,6 @@ def _is_broadway(card: str) -> bool:
     return card[0] in "TJQKA"
 
 
-def _is_connected(r1: int, r2: int) -> bool:
-    """Are two ranks within 2 of each other (potential straight connectivity)."""
-    return abs(r1 - r2) <= 2
-
-
 def classify_flop(cards: list[str]) -> tuple[str, str, bool]:
     """Classify flop texture.
 

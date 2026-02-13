@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Query
-from app.db import get_read_cursor
+from app.db import get_read_cursor, get_hero_player_id
 from app.models import GraphPoint, GraphResponse, VarianceStats, SessionMarker, FilterOptions, StakeBreakdown, MonthBreakdown, PositionBreakdown, ResultsBreakdown, DriftStat, DriftResponse
 import math
 from datetime import datetime, timedelta
@@ -170,22 +170,11 @@ def get_graph(
     return GraphResponse(points=points, sessions=sessions, variance=variance)
 
 
-def _get_hero_player_id(db):
-    row = db.execute(
-        "SELECT value FROM settings WHERE key = 'hero_username'"
-    ).fetchone()
-    hero_username = row[0] if row else "Hero"
-    player = db.execute(
-        "SELECT id FROM players WHERE username = ? AND site_id = 1",
-        [hero_username],
-    ).fetchone()
-    return player[0] if player else None
-
 
 @router.get("/reports/filter-options", response_model=FilterOptions)
 def get_filter_options():
     db = get_read_cursor()
-    player_id = _get_hero_player_id(db)
+    player_id = get_hero_player_id(db)
     if not player_id:
         return FilterOptions()
 
@@ -240,7 +229,7 @@ def get_breakdown(
     last_n: int | None = Query(None, gt=0),
 ):
     db = get_read_cursor()
-    player_id = _get_hero_player_id(db)
+    player_id = get_hero_player_id(db)
     if not player_id:
         return ResultsBreakdown()
 
@@ -276,133 +265,104 @@ def get_breakdown(
         # params are used twice: once in CTE, once in main query
         params = last_n_params + params
 
-    # By stakes (grouped by game_mode + stakes)
-    stakes_rows = db.execute(
-        f"""{last_n_cte}
-        SELECT h.game_mode, h.stakes, h.bb_amount,
-               COUNT(*) as hands,
-               SUM(COALESCE(hp.won_bb, 0)) as won_bb,
-               SUM(COALESCE(hp.won, 0)) as won_usd,
-               SUM(COALESCE(hp.all_in_ev_bb, hp.won_bb, 0)) as ev_bb,
-               SUM(COALESCE(hp.rake_bb, 0)) as rake_bb,
-               SUM(COALESCE(hp.rake, 0)) as rake_usd,
-               SUM(COALESCE(hp.jackpot_bb, 0)) as jackpot_bb,
-               SUM(COALESCE(hp.jackpot, 0)) as jackpot_usd
+    # Single CTE materializes the base dataset, then 3 GROUP BYs via GROUPING SETS
+    _agg_cols = """
+        COUNT(*) as hands,
+        SUM(COALESCE(hp.won_bb, 0)) as won_bb,
+        SUM(COALESCE(hp.won, 0)) as won_usd,
+        SUM(COALESCE(hp.all_in_ev_bb, hp.won_bb, 0)) as ev_bb,
+        SUM(COALESCE(hp.rake_bb, 0)) as rake_bb,
+        SUM(COALESCE(hp.rake, 0)) as rake_usd,
+        SUM(COALESCE(hp.jackpot_bb, 0)) as jackpot_bb,
+        SUM(COALESCE(hp.jackpot, 0)) as jackpot_usd
+    """
+
+    base_cte = f"""{last_n_cte}
+    {',' if last_n_cte else 'WITH'} base AS (
+        SELECT h.game_mode, h.stakes, h.bb_amount, hp.position,
+               strftime(h.played_at, '%Y-%m') AS month,
+               COALESCE(hp.won_bb, 0) AS won_bb_v,
+               COALESCE(hp.won, 0) AS won_usd_v,
+               COALESCE(hp.all_in_ev_bb, hp.won_bb, 0) AS ev_bb_v,
+               COALESCE(hp.rake_bb, 0) AS rake_bb_v,
+               COALESCE(hp.rake, 0) AS rake_usd_v,
+               COALESCE(hp.jackpot_bb, 0) AS jackpot_bb_v,
+               COALESCE(hp.jackpot, 0) AS jackpot_usd_v
         FROM hand_players hp
         JOIN hands h ON hp.hand_id = h.id
         WHERE {where}
-        GROUP BY h.game_mode, h.stakes, h.bb_amount
-        ORDER BY h.bb_amount ASC, h.game_mode ASC
-        """,
-        params,
+    )
+    """
+
+    # By stakes
+    stakes_rows = db.execute(
+        f"""{base_cte}
+        SELECT game_mode, stakes, bb_amount, COUNT(*),
+               SUM(won_bb_v), SUM(won_usd_v), SUM(ev_bb_v),
+               SUM(rake_bb_v), SUM(rake_usd_v), SUM(jackpot_bb_v), SUM(jackpot_usd_v)
+        FROM base
+        GROUP BY game_mode, stakes, bb_amount
+        ORDER BY bb_amount ASC, game_mode ASC
+        """, params,
     ).fetchall()
 
     by_stakes = []
     for r in stakes_rows:
-        hands_count = int(r[3])
-        won_bb_val = float(r[4])
-        ev_bb_val = float(r[6])
+        n = int(r[3]); wb = float(r[4]); eb = float(r[6])
         by_stakes.append(StakeBreakdown(
-            game_mode=r[0],
-            stakes=r[1],
-            bb_amount=float(r[2]),
-            hands=hands_count,
-            won_bb=round(won_bb_val, 2),
-            won_usd=round(float(r[5]), 2),
-            ev_bb=round(ev_bb_val, 2),
-            rake_bb=round(float(r[7]), 2),
-            rake_usd=round(float(r[8]), 2),
-            jackpot_bb=round(float(r[9]), 2),
-            jackpot_usd=round(float(r[10]), 2),
-            bb_per_100=round((won_bb_val / hands_count) * 100, 2) if hands_count else 0,
-            ev_bb_per_100=round((ev_bb_val / hands_count) * 100, 2) if hands_count else 0,
+            game_mode=r[0], stakes=r[1], bb_amount=float(r[2]), hands=n,
+            won_bb=round(wb, 2), won_usd=round(float(r[5]), 2), ev_bb=round(eb, 2),
+            rake_bb=round(float(r[7]), 2), rake_usd=round(float(r[8]), 2),
+            jackpot_bb=round(float(r[9]), 2), jackpot_usd=round(float(r[10]), 2),
+            bb_per_100=round((wb / n) * 100, 2) if n else 0,
+            ev_bb_per_100=round((eb / n) * 100, 2) if n else 0,
         ))
 
     # By month
     month_rows = db.execute(
-        f"""{last_n_cte}
-        SELECT strftime(h.played_at, '%Y-%m') as month,
-               COUNT(*) as hands,
-               SUM(COALESCE(hp.won_bb, 0)) as won_bb,
-               SUM(COALESCE(hp.won, 0)) as won_usd,
-               SUM(COALESCE(hp.all_in_ev_bb, hp.won_bb, 0)) as ev_bb,
-               SUM(COALESCE(hp.rake_bb, 0)) as rake_bb,
-               SUM(COALESCE(hp.rake, 0)) as rake_usd,
-               SUM(COALESCE(hp.jackpot_bb, 0)) as jackpot_bb,
-               SUM(COALESCE(hp.jackpot, 0)) as jackpot_usd
-        FROM hand_players hp
-        JOIN hands h ON hp.hand_id = h.id
-        WHERE {where}
-        GROUP BY strftime(h.played_at, '%Y-%m')
-        ORDER BY month DESC
-        """,
-        params,
+        f"""{base_cte}
+        SELECT month, COUNT(*), SUM(won_bb_v), SUM(won_usd_v), SUM(ev_bb_v),
+               SUM(rake_bb_v), SUM(rake_usd_v), SUM(jackpot_bb_v), SUM(jackpot_usd_v)
+        FROM base GROUP BY month ORDER BY month DESC
+        """, params,
     ).fetchall()
 
     by_month = []
     for r in month_rows:
-        hands_count = int(r[1])
-        won_bb_val = float(r[2])
-        ev_bb_val = float(r[4])
+        n = int(r[1]); wb = float(r[2]); eb = float(r[4])
         by_month.append(MonthBreakdown(
-            month=r[0],
-            hands=hands_count,
-            won_bb=round(won_bb_val, 2),
-            won_usd=round(float(r[3]), 2),
-            ev_bb=round(ev_bb_val, 2),
-            rake_bb=round(float(r[5]), 2),
-            rake_usd=round(float(r[6]), 2),
-            jackpot_bb=round(float(r[7]), 2),
-            jackpot_usd=round(float(r[8]), 2),
-            bb_per_100=round((won_bb_val / hands_count) * 100, 2) if hands_count else 0,
-            ev_bb_per_100=round((ev_bb_val / hands_count) * 100, 2) if hands_count else 0,
+            month=r[0], hands=n,
+            won_bb=round(wb, 2), won_usd=round(float(r[3]), 2), ev_bb=round(eb, 2),
+            rake_bb=round(float(r[5]), 2), rake_usd=round(float(r[6]), 2),
+            jackpot_bb=round(float(r[7]), 2), jackpot_usd=round(float(r[8]), 2),
+            bb_per_100=round((wb / n) * 100, 2) if n else 0,
+            ev_bb_per_100=round((eb / n) * 100, 2) if n else 0,
         ))
 
     # By position
     pos_order = ['EP', 'MP', 'CO', 'BTN', 'SB', 'BB']
     pos_rows = db.execute(
-        f"""{last_n_cte}
-        SELECT hp.position,
-               COUNT(*) as hands,
-               SUM(COALESCE(hp.won_bb, 0)) as won_bb,
-               SUM(COALESCE(hp.won, 0)) as won_usd,
-               SUM(COALESCE(hp.all_in_ev_bb, hp.won_bb, 0)) as ev_bb,
-               SUM(COALESCE(hp.rake_bb, 0)) as rake_bb,
-               SUM(COALESCE(hp.rake, 0)) as rake_usd,
-               SUM(COALESCE(hp.jackpot_bb, 0)) as jackpot_bb,
-               SUM(COALESCE(hp.jackpot, 0)) as jackpot_usd
-        FROM hand_players hp
-        JOIN hands h ON hp.hand_id = h.id
-        WHERE {where}
-        GROUP BY hp.position
-        """,
-        params,
+        f"""{base_cte}
+        SELECT position, COUNT(*), SUM(won_bb_v), SUM(won_usd_v), SUM(ev_bb_v),
+               SUM(rake_bb_v), SUM(rake_usd_v), SUM(jackpot_bb_v), SUM(jackpot_usd_v)
+        FROM base GROUP BY position
+        """, params,
     ).fetchall()
 
-    pos_map = {}
-    for r in pos_rows:
-        pos_map[r[0]] = r
-
+    pos_map = {r[0]: r for r in pos_rows}
     by_position = []
     for pos in pos_order:
         r = pos_map.get(pos)
         if not r:
             continue
-        hands_count = int(r[1])
-        won_bb_val = float(r[2])
-        ev_bb_val = float(r[4])
+        n = int(r[1]); wb = float(r[2]); eb = float(r[4])
         by_position.append(PositionBreakdown(
-            position=pos,
-            hands=hands_count,
-            won_bb=round(won_bb_val, 2),
-            won_usd=round(float(r[3]), 2),
-            ev_bb=round(ev_bb_val, 2),
-            rake_bb=round(float(r[5]), 2),
-            rake_usd=round(float(r[6]), 2),
-            jackpot_bb=round(float(r[7]), 2),
-            jackpot_usd=round(float(r[8]), 2),
-            bb_per_100=round((won_bb_val / hands_count) * 100, 2) if hands_count else 0,
-            ev_bb_per_100=round((ev_bb_val / hands_count) * 100, 2) if hands_count else 0,
+            position=pos, hands=n,
+            won_bb=round(wb, 2), won_usd=round(float(r[3]), 2), ev_bb=round(eb, 2),
+            rake_bb=round(float(r[5]), 2), rake_usd=round(float(r[6]), 2),
+            jackpot_bb=round(float(r[7]), 2), jackpot_usd=round(float(r[8]), 2),
+            bb_per_100=round((wb / n) * 100, 2) if n else 0,
+            ev_bb_per_100=round((eb / n) * 100, 2) if n else 0,
         ))
 
     return ResultsBreakdown(by_stakes=by_stakes, by_month=by_month, by_position=by_position)
@@ -484,7 +444,7 @@ def get_drift(
     date_to: str | None = Query(None),
 ):
     db = get_read_cursor()
-    player_id = _get_hero_player_id(db)
+    player_id = get_hero_player_id(db)
     if not player_id:
         return DriftResponse()
 
@@ -518,70 +478,186 @@ def get_drift(
 
     results: list[DriftStat] = []
 
-    # Process standard boolean/0-1 stats
-    for stat_key, value_expr, opp_filter in _DRIFT_STATS_V2:
-        # Lifetime average + count
-        lifetime_row = db.execute(
-            f"""
-            SELECT AVG({value_expr}), COUNT(*)
-            FROM hand_players hp
-            JOIN hands h ON hp.hand_id = h.id
-            WHERE {where} {opp_filter}
-            """,
-            params,
-        ).fetchone()
+    # ── One query for ALL lifetime stats ──
+    lt = db.execute(
+        f"""
+        SELECT
+            AVG(CAST(hp.vpip AS DOUBLE)), COUNT(*),
+            AVG(CAST(hp.pfr AS DOUBLE)),
+            AVG(CAST(hp.three_bet AS DOUBLE)) FILTER (WHERE hp.three_bet_opp),
+            COUNT(*) FILTER (WHERE hp.three_bet_opp),
+            AVG(CAST(hp.fold_to_3bet AS DOUBLE)) FILTER (WHERE hp.three_bet_opp),
+            AVG(CAST(hp.cbet_flop AS DOUBLE)) FILTER (WHERE hp.cbet_flop_opp),
+            COUNT(*) FILTER (WHERE hp.cbet_flop_opp),
+            AVG(CAST(hp.fold_to_cbet_flop AS DOUBLE)) FILTER (WHERE hp.fold_to_cbet_flop IS NOT NULL),
+            COUNT(*) FILTER (WHERE hp.fold_to_cbet_flop IS NOT NULL),
+            AVG(CAST(hp.went_to_showdown AS DOUBLE)) FILTER (WHERE hp.saw_flop),
+            COUNT(*) FILTER (WHERE hp.saw_flop),
+            AVG(CAST(hp.won_at_showdown AS DOUBLE)) FILTER (WHERE hp.went_to_showdown),
+            COUNT(*) FILTER (WHERE hp.went_to_showdown),
+            AVG(CAST(hp.steal_attempted AS DOUBLE)) FILTER (WHERE hp.steal_opp),
+            COUNT(*) FILTER (WHERE hp.steal_opp),
+            AVG(CAST(hp.fold_to_steal AS DOUBLE)) FILTER (WHERE hp.faced_steal),
+            COUNT(*) FILTER (WHERE hp.faced_steal),
+            AVG(CASE WHEN hp.won_bb > 0 THEN 1.0 ELSE 0.0 END) FILTER (WHERE hp.saw_flop),
+            SUM(hp.flop_bets + hp.flop_raises) FILTER (WHERE hp.saw_flop),
+            SUM(hp.flop_bets + hp.flop_raises + hp.flop_calls + hp.flop_checks + hp.flop_folds) FILTER (WHERE hp.saw_flop)
+        FROM hand_players hp
+        JOIN hands h ON hp.hand_id = h.id
+        WHERE {where}
+        """,
+        params,
+    ).fetchone()
 
-        lifetime_avg = float(lifetime_row[0]) if lifetime_row[0] is not None else 0.0
-        lifetime_n = int(lifetime_row[1])
+    # Map: (stat_key, lt_avg_idx, lt_n_idx)
+    # vpip/pfr share count at idx 1
+    _LT_MAP = [
+        ("vpip",              0,  1),
+        ("pfr",               2,  1),
+        ("three_bet",         3,  4),
+        ("fold_to_3bet",      5,  4),
+        ("cbet_flop",         6,  7),
+        ("fold_to_cbet_flop", 8,  9),
+        ("went_to_showdown",  10, 11),
+        ("won_at_showdown",   12, 13),
+        ("steal",             14, 15),
+        ("fold_to_steal",     16, 17),
+        ("wwsf",              18, 11),  # shares saw_flop count
+    ]
 
-        if lifetime_n == 0:
+    lifetime_data: dict[str, tuple[float, int]] = {}
+    for stat_key, avg_idx, n_idx in _LT_MAP:
+        avg_val = float(lt[avg_idx]) if lt[avg_idx] is not None else 0.0
+        n_val = int(lt[n_idx])
+        if n_val > 0:
+            lifetime_data[stat_key] = (avg_val, n_val)
+
+    # AFq flop lifetime
+    afq_lt_num = int(lt[19]) if lt[19] is not None else 0
+    afq_lt_den = int(lt[20]) if lt[20] is not None else 0
+
+    # ── Window queries grouped by opp_filter ──
+    _WINDOW_GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
+        ("", [
+            ("vpip", "CAST(hp.vpip AS DOUBLE)"),
+            ("pfr", "CAST(hp.pfr AS DOUBLE)"),
+        ]),
+        ("AND hp.three_bet_opp = true", [
+            ("three_bet", "CAST(hp.three_bet AS DOUBLE)"),
+            ("fold_to_3bet", "CAST(hp.fold_to_3bet AS DOUBLE)"),
+        ]),
+        ("AND hp.cbet_flop_opp = true", [
+            ("cbet_flop", "CAST(hp.cbet_flop AS DOUBLE)"),
+        ]),
+        ("AND hp.fold_to_cbet_flop IS NOT NULL", [
+            ("fold_to_cbet_flop", "CAST(hp.fold_to_cbet_flop AS DOUBLE)"),
+        ]),
+        ("AND hp.saw_flop = true", [
+            ("went_to_showdown", "CAST(hp.went_to_showdown AS DOUBLE)"),
+            ("wwsf", "CASE WHEN hp.won_bb > 0 THEN 1.0 ELSE 0.0 END"),
+        ]),
+        ("AND hp.went_to_showdown = true", [
+            ("won_at_showdown", "CAST(hp.won_at_showdown AS DOUBLE)"),
+        ]),
+        ("AND hp.steal_opp = true", [
+            ("steal", "CAST(hp.steal_attempted AS DOUBLE)"),
+        ]),
+        ("AND hp.faced_steal = true", [
+            ("fold_to_steal", "CAST(hp.fold_to_steal AS DOUBLE)"),
+        ]),
+    ]
+
+    window_data: dict[str, tuple[float, int]] = {}
+
+    for opp_filter, stats_in_group in _WINDOW_GROUPS:
+        # Skip if none of these stats have lifetime data
+        if not any(sk in lifetime_data for sk, _ in stats_in_group):
             continue
 
-        # Window: last N hands (by played_at) where opportunity is met
-        window_row = db.execute(
+        select_parts = [f"AVG({expr}) AS v{i}" for i, (_, expr) in enumerate(stats_in_group)]
+        select_sql = ", ".join(select_parts) + ", COUNT(*)"
+
+        row = db.execute(
             f"""
             WITH recent AS (
-                SELECT {value_expr} AS val
+                SELECT {', '.join(expr + f' AS c{i}' for i, (_, expr) in enumerate(stats_in_group))}
                 FROM hand_players hp
                 JOIN hands h ON hp.hand_id = h.id
                 WHERE {where} {opp_filter}
                 ORDER BY h.played_at DESC, h.id DESC
                 LIMIT ?
             )
-            SELECT AVG(val), COUNT(*) FROM recent
+            SELECT {', '.join(f'AVG(c{i})' for i in range(len(stats_in_group)))}, COUNT(*) FROM recent
             """,
             params + [window_size],
         ).fetchone()
 
-        window_avg = float(window_row[0]) if window_row[0] is not None else 0.0
-        window_n = int(window_row[1])
+        cnt = int(row[len(stats_in_group)])
+        for i, (sk, _) in enumerate(stats_in_group):
+            avg = float(row[i]) if row[i] is not None else 0.0
+            window_data[sk] = (avg, cnt)
 
-        if window_n < 30:
+    # ── Build results for boolean stats ──
+    for stat_key in [sk for sk, _, _ in _LT_MAP]:
+        if stat_key not in lifetime_data or stat_key not in window_data:
             continue
-
-        result = _check_drift(lifetime_avg, window_avg, window_n)
+        lt_avg, lt_n = lifetime_data[stat_key]
+        w_avg, w_n = window_data[stat_key]
+        if w_n < 30:
+            continue
+        result = _check_drift(lt_avg, w_avg, w_n)
         if result is None:
             continue
-
         drift_pct, ci_lower, ci_upper = result
-        direction = "up" if window_avg > lifetime_avg else "down"
+        direction = "up" if w_avg > lt_avg else "down"
         interp = _DRIFT_INTERPRETATIONS.get(stat_key, {}).get(direction, "")
-
         results.append(DriftStat(
             stat=stat_key,
-            lifetime_avg=round(lifetime_avg * 100, 2),
-            window_avg=round(window_avg * 100, 2),
-            lifetime_n=lifetime_n,
-            window_n=window_n,
+            lifetime_avg=round(lt_avg * 100, 2),
+            window_avg=round(w_avg * 100, 2),
+            lifetime_n=lt_n, window_n=w_n,
             drift_pct=round(drift_pct, 1),
             ci_lower=round(ci_lower * 100, 2),
             ci_upper=round(ci_upper * 100, 2),
-            direction=direction,
-            interpretation=interp,
+            direction=direction, interpretation=interp,
         ))
 
-    # AFq Flop: action-ratio stat (not a simple boolean)
-    _process_afq_flop(db, where, params, window_size, results)
+    # ── AFq Flop (ratio stat) ──
+    if afq_lt_den > 0:
+        afq_lt_avg = afq_lt_num / afq_lt_den
+        afq_w = db.execute(
+            f"""
+            WITH recent AS (
+                SELECT hp.flop_bets + hp.flop_raises AS num,
+                       hp.flop_bets + hp.flop_raises + hp.flop_calls + hp.flop_checks + hp.flop_folds AS den
+                FROM hand_players hp JOIN hands h ON hp.hand_id = h.id
+                WHERE {where} AND hp.saw_flop = true
+                ORDER BY h.played_at DESC, h.id DESC
+                LIMIT ?
+            )
+            SELECT SUM(num), SUM(den), COUNT(*) FROM recent
+            """,
+            params + [window_size],
+        ).fetchone()
+        w_num = int(afq_w[0] or 0)
+        w_den = int(afq_w[1] or 0)
+        if w_den > 0 and int(afq_w[2]) >= 30:
+            afq_w_avg = w_num / w_den
+            afq_result = _check_drift(afq_lt_avg, afq_w_avg, w_den)
+            if afq_result:
+                drift_pct, ci_lower, ci_upper = afq_result
+                direction = "up" if afq_w_avg > afq_lt_avg else "down"
+                interp = _DRIFT_INTERPRETATIONS.get("afq_flop", {}).get(direction, "")
+                results.append(DriftStat(
+                    stat="afq_flop",
+                    lifetime_avg=round(afq_lt_avg * 100, 2),
+                    window_avg=round(afq_w_avg * 100, 2),
+                    lifetime_n=afq_lt_den, window_n=w_den,
+                    drift_pct=round(drift_pct, 1),
+                    ci_lower=round(ci_lower * 100, 2),
+                    ci_upper=round(ci_upper * 100, 2),
+                    direction=direction, interpretation=interp,
+                ))
 
     return DriftResponse(
         stats=results,
@@ -590,74 +666,3 @@ def get_drift(
     )
 
 
-def _process_afq_flop(
-    db, where: str, params: list, window_size: int, results: list[DriftStat],
-) -> None:
-    """AFq Flop = (bets + raises) / (bets + raises + calls + checks + folds) on flop."""
-    # Lifetime
-    lifetime_row = db.execute(
-        f"""
-        SELECT SUM(hp.flop_bets + hp.flop_raises),
-               SUM(hp.flop_bets + hp.flop_raises + hp.flop_calls + hp.flop_checks + hp.flop_folds),
-               COUNT(*)
-        FROM hand_players hp
-        JOIN hands h ON hp.hand_id = h.id
-        WHERE {where} AND hp.saw_flop = true
-        """,
-        params,
-    ).fetchone()
-
-    agg_num = int(lifetime_row[0]) if lifetime_row[0] is not None else 0
-    agg_den = int(lifetime_row[1]) if lifetime_row[1] is not None else 0
-
-    if agg_den == 0:
-        return
-
-    lifetime_avg = agg_num / agg_den
-
-    # Window
-    window_row = db.execute(
-        f"""
-        WITH recent AS (
-            SELECT hp.flop_bets + hp.flop_raises AS num,
-                   hp.flop_bets + hp.flop_raises + hp.flop_calls + hp.flop_checks + hp.flop_folds AS den
-            FROM hand_players hp
-            JOIN hands h ON hp.hand_id = h.id
-            WHERE {where} AND hp.saw_flop = true
-            ORDER BY h.played_at DESC, h.id DESC
-            LIMIT ?
-        )
-        SELECT SUM(num), SUM(den), COUNT(*) FROM recent
-        """,
-        params + [window_size],
-    ).fetchone()
-
-    w_num = int(window_row[0]) if window_row[0] is not None else 0
-    w_den = int(window_row[1]) if window_row[1] is not None else 0
-    window_n = int(window_row[2])
-
-    if w_den == 0 or window_n < 30:
-        return
-
-    window_avg = w_num / w_den
-
-    result = _check_drift(lifetime_avg, window_avg, w_den)
-    if result is None:
-        return
-
-    drift_pct, ci_lower, ci_upper = result
-    direction = "up" if window_avg > lifetime_avg else "down"
-    interp = _DRIFT_INTERPRETATIONS.get("afq_flop", {}).get(direction, "")
-
-    results.append(DriftStat(
-        stat="afq_flop",
-        lifetime_avg=round(lifetime_avg * 100, 2),
-        window_avg=round(window_avg * 100, 2),
-        lifetime_n=agg_den,
-        window_n=w_den,
-        drift_pct=round(drift_pct, 1),
-        ci_lower=round(ci_lower * 100, 2),
-        ci_upper=round(ci_upper * 100, 2),
-        direction=direction,
-        interpretation=interp,
-    ))

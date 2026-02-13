@@ -3,28 +3,11 @@ from pydantic import BaseModel
 from typing import Optional
 import math
 
-from app.db import get_db, db_lock, get_read_cursor
+from app.db import get_db, db_lock, get_read_cursor, get_hero_player_id
 from app.stats_engine import compute_player_stats
 from app.models import HeroStats
 
 router = APIRouter()
-
-
-# ── Helper ──────────────────────────────────────────────────────────
-
-def _get_hero_player_id(db) -> Optional[int]:
-    row = db.execute(
-        "SELECT value FROM settings WHERE key = 'hero_username'"
-    ).fetchone()
-    if not row:
-        return None
-    hero_username = row[0]
-    row = db.execute(
-        "SELECT p.id FROM players p WHERE p.username = ? AND p.site_id = 1",
-        [hero_username],
-    ).fetchone()
-    return row[0] if row else None
-
 
 # ── Player list ─────────────────────────────────────────────────────
 
@@ -310,7 +293,7 @@ class HeadToHeadResponse(BaseModel):
 @router.get("/players/{player_id}/head-to-head", response_model=HeadToHeadResponse)
 def get_head_to_head(player_id: int):
     db = get_read_cursor()
-    hero_id = _get_hero_player_id(db)
+    hero_id = get_hero_player_id(db)
     if hero_id is None:
         return HeadToHeadResponse(rows=[], total_hands=0, total_won_bb=0, overall_bb_per_100=0)
 
