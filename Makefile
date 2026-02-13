@@ -1,4 +1,4 @@
-.PHONY: dev backend frontend setup stop electron-dev electron-build
+.PHONY: dev backend frontend setup stop electron-dev electron-build release
 
 setup:
 	cd backend && pip install -r requirements.txt
@@ -31,3 +31,17 @@ electron-build:
 		--collect-submodules duckdb --hidden-import multipart \
 		run_server.py
 	npx electron-builder
+
+# Release: bump version, commit, tag, push → CI builds & publishes
+# Usage: make release v=0.0.3
+release:
+ifndef v
+	$(error Usage: make release v=0.0.3)
+endif
+	@echo "Releasing v$(v)..."
+	npm version $(v) --no-git-tag-version
+	git add package.json package-lock.json
+	git commit -m "v$(v)"
+	git tag "v$(v)"
+	git push origin main --tags
+	@echo "Release v$(v) triggered. Watch: https://github.com/AHTOOOXA/open-holdem-manager/actions"

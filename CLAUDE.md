@@ -291,13 +291,17 @@ In production (packaged app):
 
 ```bash
 make electron-build         # Local: builds frontend + PyInstaller backend + electron-builder
-npm version patch           # Bumps package.json version, creates git tag
-git push origin main --tags # Triggers GitHub Actions release workflow
+make release v=0.0.3        # Bump version, commit, tag, push → CI builds & auto-publishes
 ```
 
-The CI workflow (`.github/workflows/release.yml`) builds on macOS + Windows in parallel, produces `.dmg` and `.exe`, and auto-publishes them to GitHub Releases (electron-builder creates a draft, then a `publish` job promotes it). electron-builder uses the version from `package.json` for the release tag name.
+`make release v=X.Y.Z` bumps `package.json`, commits, tags `vX.Y.Z`, and pushes. The CI workflow (`.github/workflows/release.yml`) then builds on macOS + Windows in parallel, produces `.dmg` and `.exe`, and auto-publishes to GitHub Releases (electron-builder creates a draft, then a `publish` job promotes it).
 
-**Important**: The git tag version and `package.json` version must match — electron-builder uses `package.json` for the release tag name (`v{version}`).
+After the release is published, add release notes via:
+```bash
+gh release edit vX.Y.Z --notes "release notes here"
+```
+
+**Important**: The git tag version and `package.json` version must match — electron-builder uses `package.json` for the release tag name (`v{version}`). Artifact filenames are version-less (e.g. `Open-Holdem-Manager-arm64.dmg`) so README download links stay stable.
 
 ### Auto-Update (electron-updater)
 
