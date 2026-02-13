@@ -122,6 +122,8 @@ def compute_stat_flags(parsed: ParsedHand) -> dict[str, dict]:
             "iso_raise_opp": False,
             "faced_squeeze": False,
             "fold_to_squeeze": None,
+            "pot_type": "SRP",
+            "is_multiway": False,
         }
 
     # ── Preflop stat computation ──
@@ -353,6 +355,21 @@ def compute_stat_flags(parsed: ParsedHand) -> dict[str, dict]:
         for s in seats:
             player_stats[s["username"]]["is_3bet_pot"] = True
 
+    # ── Pot type: SRP/3BP/4BP/5BP/limped ──
+    limpers_exist = any(player_stats[s["username"]]["limp"] for s in seats)
+    if raise_count == 0 and limpers_exist:
+        pot_type = "limped"
+    elif raise_count >= 4:
+        pot_type = "5BP"
+    elif raise_count >= 3:
+        pot_type = "4BP"
+    elif raise_count >= 2:
+        pot_type = "3BP"
+    else:
+        pot_type = "SRP"
+    for s in seats:
+        player_stats[s["username"]]["pot_type"] = pot_type
+
     # ── Mark 3-bet opp for players between open raise and 3-bet (inclusive) ──
     if first_raiser:
         first_raise_order = _find_action_order(voluntary_preflop, first_raiser, "raise")
@@ -396,6 +413,11 @@ def compute_stat_flags(parsed: ParsedHand) -> dict[str, dict]:
                 flop_survivors = players_in_hand - players_folded
                 for uname in flop_survivors:
                     player_stats[uname]["saw_flop"] = True
+                # is_multiway: 3+ players saw flop
+                multiway = len(flop_survivors) >= 3
+                if multiway:
+                    for s in seats:
+                        player_stats[s["username"]]["is_multiway"] = True
                 # Compute postflop IP: player with latest position among flop survivors
                 if len(flop_survivors) >= 2:
                     max_order = max(_POS_ORDER.get(username_to_info[u]["position"], 0) for u in flop_survivors)

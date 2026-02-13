@@ -76,6 +76,7 @@ def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
             color_tag VARCHAR,
             first_seen TIMESTAMP,
             last_seen TIMESTAMP,
+            player_type VARCHAR DEFAULT 'UNK',
             UNIQUE(site_id, username)
         )
     """)
@@ -262,6 +263,12 @@ def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
         )
     """)
     conn.execute("""
+        CREATE TABLE IF NOT EXISTS player_classifications (
+            player_id INTEGER PRIMARY KEY,
+            player_type VARCHAR NOT NULL DEFAULT 'UNK'
+        )
+    """)
+    conn.execute("""
         INSERT OR IGNORE INTO settings VALUES ('hero_username', 'Hero')
     """)
     conn.execute("""
@@ -304,6 +311,8 @@ def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
         ("iso_raise_opp", "BOOLEAN DEFAULT FALSE"),
         ("faced_squeeze", "BOOLEAN DEFAULT FALSE"),
         ("fold_to_squeeze", "BOOLEAN"),
+        ("pot_type", "VARCHAR DEFAULT 'SRP'"),
+        ("is_multiway", "BOOLEAN DEFAULT FALSE"),
     ]:
         try:
             conn.execute(f"ALTER TABLE hand_players ADD COLUMN {col} {default}")
@@ -314,9 +323,23 @@ def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
     for col, default in [
         ("cash_drop_received", "DECIMAL DEFAULT 0"),
         ("game_mode", "VARCHAR DEFAULT ''"),
+        ("flop_texture_rank", "VARCHAR"),
+        ("flop_texture_suit", "VARCHAR"),
+        ("flop_paired", "BOOLEAN DEFAULT FALSE"),
+        ("turn_texture", "VARCHAR"),
+        ("river_texture", "VARCHAR"),
     ]:
         try:
             conn.execute(f"ALTER TABLE hands ADD COLUMN {col} {default}")
+        except duckdb.CatalogException:
+            pass
+
+    # Migration for players table
+    for col, default in [
+        ("player_type", "VARCHAR DEFAULT 'UNK'"),
+    ]:
+        try:
+            conn.execute(f"ALTER TABLE players ADD COLUMN {col} {default}")
         except duckdb.CatalogException:
             pass
 
@@ -343,6 +366,7 @@ def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_actions_hand_id ON actions(hand_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_hand_tags_hand_id ON hand_tags(hand_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_hand_tags_tag ON hand_tags(tag)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_players_type ON players(player_type)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_board_cards_hand_id ON board_cards(hand_id)")
 
     # Sync sequences to max existing IDs (prevents collisions after restart)

@@ -60,6 +60,7 @@ def list_hands(
     search: Optional[str] = None,
     stat_flag: list[str] | None = Query(None),
     stat_key: Optional[str] = Query(None),
+    player_id: Optional[int] = Query(None),
 ):
     db = get_read_cursor()
     hero_id = _get_hero_player_id(db)
@@ -114,6 +115,12 @@ def list_hands(
     if date_to:
         where_clauses.append("h.played_at <= ?")
         params.append(date_to)
+
+    if player_id is not None:
+        where_clauses.append(
+            "EXISTS (SELECT 1 FROM hand_players hp2 WHERE hp2.hand_id = h.id AND hp2.player_id = ?)"
+        )
+        params.append(player_id)
 
     if search:
         where_clauses.append("h.id LIKE ?")
@@ -276,9 +283,10 @@ def get_hand(hand_id: str):
     # Players
     player_rows = db.execute(
         "SELECT hp.seat, hp.position, p.username, hp.stack_bb, hp.card1, hp.card2, "
-        "hp.won_bb, hp.player_id "
+        "hp.won_bb, hp.player_id, COALESCE(pc.player_type, 'UNK') "
         "FROM hand_players hp "
         "JOIN players p ON p.id = hp.player_id "
+        "LEFT JOIN player_classifications pc ON pc.player_id = p.id "
         "WHERE hp.hand_id = ? "
         "ORDER BY hp.seat",
         [hand_id],
@@ -297,6 +305,7 @@ def get_hand(hand_id: str):
             card2=pr[5],
             won_bb=float(pr[6]),
             is_hero=(pr[7] == hero_id),
+            player_type=pr[8] or "UNK",
         ))
 
     # Board cards

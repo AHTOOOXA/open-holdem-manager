@@ -38,4 +38,22 @@ export const queryKeys = {
     list: ['sessions', 'list'] as const,
     detail: (index: number) => ['sessions', 'detail', index] as const,
   },
+
+  population: {
+    overview: (filters: Record<string, unknown>) => ['population', 'overview', filters] as const,
+    preflop: (filters: Record<string, unknown>) => ['population', 'preflop', filters] as const,
+    segments: (filters: Record<string, unknown>) => ['population', 'segments', filters] as const,
+    postflop: (filters: Record<string, unknown>) => ['population', 'postflop', filters] as const,
+    potTypes: (filters: Record<string, unknown>) => ['population', 'pot-types', filters] as const,
+    showdown: (filters: Record<string, unknown>) => ['population', 'showdown', filters] as const,
+    huVsMw: (filters: Record<string, unknown>) => ['population', 'hu-vs-mw', filters] as const,
+    comparison: (filters: Record<string, unknown>) => ['population', 'comparison', filters] as const,
+  },
+
+  players: {
+    list: (params: Record<string, unknown>) => ['players', 'list', params] as const,
+    detail: (id: number) => ['players', 'detail', id] as const,
+    stats: (id: number, filters: Record<string, unknown>) => ['players', 'stats', id, filters] as const,
+    h2h: (id: number) => ['players', 'h2h', id] as const,
+  },
 };

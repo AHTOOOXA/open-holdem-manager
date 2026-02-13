@@ -336,6 +336,7 @@ export interface HandPlayerDetail {
   card2: string | null;
   won_bb: number;
   is_hero: boolean;
+  player_type: string;
 }
 
 export interface HandAction {
@@ -388,6 +389,7 @@ export interface HandListParams {
   search?: string;
   stat_flag?: string[];
   stat_key?: string;
+  player_id?: number;
 }
 
 export async function getHands(params?: HandListParams): Promise<HandListResponse> {
@@ -407,6 +409,7 @@ export async function getHands(params?: HandListParams): Promise<HandListRespons
     for (const flag of params.stat_flag) sp.append('stat_flag', flag);
   }
   if (params?.stat_key) sp.set('stat_key', params.stat_key);
+  if (params?.player_id) sp.set('player_id', String(params.player_id));
   const res = await fetch(`${BASE}/hands?${sp}`);
   if (!res.ok) throw new Error(`Hands failed: ${res.statusText}`);
   return res.json();
@@ -910,6 +913,303 @@ export async function getDrift(params?: {
   if (params?.date_to) sp.set('date_to', params.date_to);
   const res = await fetch(`${BASE}/reports/drift?${sp}`);
   if (!res.ok) throw new Error(`Drift failed: ${res.statusText}`);
+  return res.json();
+}
+
+// ── Player Types ──────────────────────────────────────────────────────
+
+export interface PlayerSummary {
+  id: number;
+  username: string;
+  player_type: string;
+  hands: number;
+  vpip: number | null;
+  pfr: number | null;
+  three_bet: number | null;
+  af: number | null;
+  last_seen: string | null;
+  stakes: string[];
+}
+
+export interface PlayerListResponse {
+  players: PlayerSummary[];
+  total: number;
+  page: number;
+  per_page: number;
+  total_pages: number;
+}
+
+export interface PlayerListParams {
+  search?: string;
+  player_type?: string;
+  min_hands?: number;
+  sort_by?: string;
+  sort_dir?: string;
+  page?: number;
+  per_page?: number;
+}
+
+export interface PlayerHeader {
+  id: number;
+  username: string;
+  player_type: string;
+  hands: number;
+  first_seen: string | null;
+  last_seen: string | null;
+  stakes: string[];
+  notes: string | null;
+  color_tag: string | null;
+}
+
+export interface HeadToHeadRow {
+  hero_position: string;
+  hands: number;
+  hero_won_bb: number;
+  bb_per_100: number;
+}
+
+export interface HeadToHeadResponse {
+  rows: HeadToHeadRow[];
+  total_hands: number;
+  total_won_bb: number;
+  overall_bb_per_100: number;
+}
+
+export async function getPlayers(params?: PlayerListParams): Promise<PlayerListResponse> {
+  const sp = new URLSearchParams();
+  if (params?.search) sp.set('search', params.search);
+  if (params?.player_type) sp.set('player_type', params.player_type);
+  if (params?.min_hands !== undefined) sp.set('min_hands', String(params.min_hands));
+  if (params?.sort_by) sp.set('sort_by', params.sort_by);
+  if (params?.sort_dir) sp.set('sort_dir', params.sort_dir);
+  if (params?.page) sp.set('page', String(params.page));
+  if (params?.per_page) sp.set('per_page', String(params.per_page));
+  const res = await fetch(`${BASE}/players?${sp}`);
+  if (!res.ok) throw new Error(`Players failed: ${res.statusText}`);
+  return res.json();
+}
+
+export async function getPlayer(playerId: number): Promise<PlayerHeader> {
+  const res = await fetch(`${BASE}/players/${playerId}`);
+  if (!res.ok) throw new Error(`Player failed: ${res.statusText}`);
+  return res.json();
+}
+
+export async function getPlayerStats(playerId: number, params?: {
+  position?: string;
+  stakes?: string;
+  game_mode?: string;
+  date_from?: string;
+  date_to?: string;
+}): Promise<HeroStats> {
+  const sp = new URLSearchParams();
+  setPositionParam(sp, params?.position);
+  if (params?.stakes) sp.set('stakes', params.stakes);
+  setGameModeParam(sp, params?.game_mode);
+  if (params?.date_from) sp.set('date_from', params.date_from);
+  if (params?.date_to) sp.set('date_to', params.date_to);
+  const res = await fetch(`${BASE}/players/${playerId}/stats?${sp}`);
+  if (!res.ok) throw new Error(`Player stats failed: ${res.statusText}`);
+  return res.json();
+}
+
+export async function getHeadToHead(playerId: number): Promise<HeadToHeadResponse> {
+  const res = await fetch(`${BASE}/players/${playerId}/head-to-head`);
+  if (!res.ok) throw new Error(`H2H failed: ${res.statusText}`);
+  return res.json();
+}
+
+export async function updatePlayerNotes(playerId: number, data: { notes?: string; color_tag?: string }): Promise<void> {
+  const res = await fetch(`${BASE}/players/${playerId}/notes`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) throw new Error(`Update player notes failed: ${res.statusText}`);
+}
+
+// ── Population Types ──────────────────────────────────────────────────
+
+export interface PopulationOverview {
+  player_count: number;
+  observation_count: number;
+  date_min: string | null;
+  date_max: string | null;
+}
+
+export interface PositionStat {
+  position: string;
+  value: number | null;
+  sample: number;
+}
+
+export interface PreflopResponse {
+  open_raise: PositionStat[];
+  three_bet_matrix: unknown[];
+  fold_to_3bet_matrix: unknown[];
+  vpip_by_position: PositionStat[];
+  pfr_by_position: PositionStat[];
+  limp_by_position: PositionStat[];
+  squeeze: PositionStat | null;
+  four_bet: PositionStat[];
+}
+
+export interface SegmentStats {
+  player_type: string;
+  count: number;
+  avg_hands: number;
+  vpip: number | null;
+  pfr: number | null;
+  three_bet: number | null;
+  af: number | null;
+  wtsd: number | null;
+  wwsf: number | null;
+}
+
+export interface SegmentsResponse {
+  segments: SegmentStats[];
+}
+
+export interface PostflopLineStat {
+  street: string;
+  stat: string;
+  pot_type: string;
+  value: number | null;
+  sample: number;
+}
+
+export interface PostflopResponse {
+  lines: PostflopLineStat[];
+}
+
+export interface ComparisonStat {
+  stat: string;
+  hero_value: number | null;
+  pop_value: number | null;
+  diff: number | null;
+}
+
+export interface ComparisonResponse {
+  stats: ComparisonStat[];
+}
+
+export interface PotTypeStat {
+  pot_type: string;
+  hands: number;
+  cbet_flop: number | null;
+  fold_to_cbet_flop: number | null;
+  wtsd: number | null;
+}
+
+export interface PotTypesResponse {
+  pot_types: PotTypeStat[];
+}
+
+export interface ShowdownPositionStat {
+  position: string;
+  wtsd: number | null;
+  wsd: number | null;
+  wwsf: number | null;
+  sample: number;
+}
+
+export interface ShowdownResponse {
+  by_position: ShowdownPositionStat[];
+  af_flop: number | null;
+  af_turn: number | null;
+  af_river: number | null;
+  afq_flop: number | null;
+  afq_turn: number | null;
+  afq_river: number | null;
+}
+
+export interface HuMwStat {
+  category: string;
+  hands: number;
+  vpip: number | null;
+  pfr: number | null;
+  cbet_flop: number | null;
+  fold_to_cbet_flop: number | null;
+  wtsd: number | null;
+}
+
+export interface HuMwResponse {
+  stats: HuMwStat[];
+}
+
+export interface PopulationFilterParams {
+  stakes?: string;
+  date_from?: string;
+  date_to?: string;
+  min_hands?: number;
+  exclude_hero?: boolean;
+  player_type?: string;
+}
+
+function _buildPopParams(params?: PopulationFilterParams): URLSearchParams {
+  const sp = new URLSearchParams();
+  if (params?.stakes) sp.set('stakes', params.stakes);
+  if (params?.date_from) sp.set('date_from', params.date_from);
+  if (params?.date_to) sp.set('date_to', params.date_to);
+  if (params?.min_hands !== undefined) sp.set('min_hands', String(params.min_hands));
+  if (params?.exclude_hero !== undefined) sp.set('exclude_hero', String(params.exclude_hero));
+  if (params?.player_type) sp.set('player_type', params.player_type);
+  return sp;
+}
+
+export async function getPopulationOverview(params?: PopulationFilterParams): Promise<PopulationOverview> {
+  const sp = _buildPopParams(params);
+  const res = await fetch(`${BASE}/population/overview?${sp}`);
+  if (!res.ok) throw new Error(`Population overview failed: ${res.statusText}`);
+  return res.json();
+}
+
+export async function getPopulationPreflop(params?: PopulationFilterParams): Promise<PreflopResponse> {
+  const sp = _buildPopParams(params);
+  const res = await fetch(`${BASE}/population/preflop?${sp}`);
+  if (!res.ok) throw new Error(`Population preflop failed: ${res.statusText}`);
+  return res.json();
+}
+
+export async function getPopulationSegments(params?: PopulationFilterParams): Promise<SegmentsResponse> {
+  const sp = _buildPopParams(params);
+  const res = await fetch(`${BASE}/population/segments?${sp}`);
+  if (!res.ok) throw new Error(`Population segments failed: ${res.statusText}`);
+  return res.json();
+}
+
+export async function getPopulationPostflop(params?: PopulationFilterParams): Promise<PostflopResponse> {
+  const sp = _buildPopParams(params);
+  const res = await fetch(`${BASE}/population/postflop?${sp}`);
+  if (!res.ok) throw new Error(`Population postflop failed: ${res.statusText}`);
+  return res.json();
+}
+
+export async function getPopulationPotTypes(params?: PopulationFilterParams): Promise<PotTypesResponse> {
+  const sp = _buildPopParams(params);
+  const res = await fetch(`${BASE}/population/pot-types?${sp}`);
+  if (!res.ok) throw new Error(`Population pot types failed: ${res.statusText}`);
+  return res.json();
+}
+
+export async function getPopulationShowdown(params?: PopulationFilterParams): Promise<ShowdownResponse> {
+  const sp = _buildPopParams(params);
+  const res = await fetch(`${BASE}/population/showdown?${sp}`);
+  if (!res.ok) throw new Error(`Population showdown failed: ${res.statusText}`);
+  return res.json();
+}
+
+export async function getPopulationHuVsMw(params?: PopulationFilterParams): Promise<HuMwResponse> {
+  const sp = _buildPopParams(params);
+  const res = await fetch(`${BASE}/population/hu-vs-mw?${sp}`);
+  if (!res.ok) throw new Error(`Population HU vs MW failed: ${res.statusText}`);
+  return res.json();
+}
+
+export async function getPopulationComparison(params?: PopulationFilterParams): Promise<ComparisonResponse> {
+  const sp = _buildPopParams(params);
+  const res = await fetch(`${BASE}/population/comparison?${sp}`);
+  if (!res.ok) throw new Error(`Population comparison failed: ${res.statusText}`);
   return res.json();
 }
 

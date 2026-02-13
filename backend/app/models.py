@@ -203,6 +203,7 @@ class HandPlayerDetail(BaseModel):
     card2: Optional[str] = None
     won_bb: float
     is_hero: bool = False
+    player_type: str = "UNK"
 
 
 class HandAction(BaseModel):

@@ -1,10 +1,11 @@
-import { BarChart3, Grid3X3, TrendingUp, List, DollarSign, FolderUp, Clock } from 'lucide-react';
+import { BarChart3, Grid3X3, TrendingUp, List, DollarSign, FolderUp, Clock, Users, PieChart } from 'lucide-react';
 import { NavLink, useLocation } from 'react-router-dom';
 import {
   Sidebar,
   SidebarContent,
   SidebarGroup,
   SidebarGroupContent,
+  SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
   SidebarMenuButton,
@@ -23,6 +24,11 @@ const navItems = [
   { to: '/sessions', label: 'Sessions', icon: Clock },
   { to: '/hands', label: 'Hands', icon: List },
   { to: '/cash-drop', label: 'Cash Drop', icon: DollarSign },
+];
+
+const opponentItems = [
+  { to: '/players', label: 'Players', icon: Users },
+  { to: '/population', label: 'Population', icon: PieChart },
 ];
 
 export default function AppSidebar() {
@@ -56,6 +62,26 @@ export default function AppSidebar() {
               </SidebarMenuItem>
               <SidebarSeparator className="my-1" />
               {navItems.map((item) => {
+                const isActive = location.pathname.startsWith(item.to);
+                return (
+                  <SidebarMenuItem key={item.to}>
+                    <SidebarMenuButton asChild isActive={isActive} tooltip={item.label}>
+                      <NavLink to={item.to}>
+                        <item.icon />
+                        <span>{item.label}</span>
+                      </NavLink>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                );
+              })}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+        <SidebarGroup>
+          <SidebarGroupLabel>Opponents</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {opponentItems.map((item) => {
                 const isActive = location.pathname.startsWith(item.to);
                 return (
                   <SidebarMenuItem key={item.to}>

@@ -21,6 +21,9 @@ import HandsPage from './pages/HandsPage';
 import RangePage from './pages/RangePage';
 import CashDropPage from './pages/CashDropPage';
 import SessionsPage from './pages/SessionsPage';
+import PlayersPage from './pages/PlayersPage';
+import PlayerProfilePage from './pages/PlayerProfilePage';
+import PopulationPage from './pages/PopulationPage';
 
 const PAGE_LABELS: Record<string, string> = {
   '/stats': 'Stats',
@@ -29,6 +32,8 @@ const PAGE_LABELS: Record<string, string> = {
   '/sessions': 'Sessions',
   '/hands': 'Hands',
   '/cash-drop': 'Cash Drop',
+  '/players': 'Players',
+  '/population': 'Population',
 };
 
 function AppBreadcrumb() {
@@ -51,6 +56,9 @@ function AppBreadcrumb() {
   } else if (parts.length > 1 && topPath === '/stats') {
     segments.push({ label: topLabel, href: topPath });
     segments.push({ label: getStatDisplayName(parts[1]) });
+  } else if (parts.length > 1 && topPath === '/players') {
+    segments.push({ label: topLabel, href: topPath });
+    segments.push({ label: `Player #${parts[1]}` });
   } else {
     segments.push({ label: topLabel });
   }
@@ -102,6 +110,9 @@ export default function App() {
                 <Route path="/sessions" element={<SessionsPage />} />
                 <Route path="/sessions/:sessionIndex" element={<SessionsPage />} />
                 <Route path="/cash-drop" element={<CashDropPage />} />
+                <Route path="/players" element={<PlayersPage />} />
+                <Route path="/players/:playerId" element={<PlayerProfilePage />} />
+                <Route path="/population" element={<PopulationPage />} />
                 <Route path="*" element={<Navigate to="/graph" replace />} />
               </Routes>
             </main>

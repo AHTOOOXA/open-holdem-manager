@@ -171,9 +171,9 @@ GROUP BY hp.position
 """
 
 
-def compute_hero_stats(
+def compute_player_stats(
     db: duckdb.DuckDBPyConnection,
-    hero_username: str,
+    player_id: int,
     position: str | None = None,
     stakes: str | None = None,
     game_mode: str | None = None,
@@ -181,15 +181,7 @@ def compute_hero_stats(
     date_to: str | None = None,
     last_n: int | None = None,
 ) -> HeroStats:
-    player = db.execute(
-        "SELECT id FROM players WHERE username = ? AND site_id = 1",
-        [hero_username],
-    ).fetchone()
-    if not player:
-        return HeroStats()
-
-    player_id = player[0]
-
+    """Compute full stats for any player by player_id."""
     where = "hp.player_id = ?"
     params: list = [player_id]
 
@@ -210,7 +202,6 @@ def compute_hero_stats(
         params.append(date_to)
 
     if last_n:
-        # Restrict to most recent N hands using a CTE
         cte_where = where
         cte_params = list(params)
         cte = f"""WITH recent_hands AS (
@@ -447,3 +438,27 @@ def compute_hero_stats(
     stats.wwsf = StatValue(value=round(wwsf / sf * 100, 1) if sf > 0 else None, sample=sf)
 
     return stats
+
+
+def compute_hero_stats(
+    db: duckdb.DuckDBPyConnection,
+    hero_username: str,
+    position: str | None = None,
+    stakes: str | None = None,
+    game_mode: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    last_n: int | None = None,
+) -> HeroStats:
+    """Compute stats for hero by username. Thin wrapper around compute_player_stats."""
+    player = db.execute(
+        "SELECT id FROM players WHERE username = ? AND site_id = 1",
+        [hero_username],
+    ).fetchone()
+    if not player:
+        return HeroStats()
+    return compute_player_stats(
+        db, player[0],
+        position=position, stakes=stakes, game_mode=game_mode,
+        date_from=date_from, date_to=date_to, last_n=last_n,
+    )

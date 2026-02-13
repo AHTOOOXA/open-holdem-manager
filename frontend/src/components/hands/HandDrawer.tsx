@@ -6,6 +6,7 @@ import HandActionsDisplay from './HandActions';
 import TagPill from './TagPill';
 import TagPicker from './TagPicker';
 import { formatStakes } from '@/lib/utils';
+import PlayerTypeBadge from '@/components/PlayerTypeBadge';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -171,7 +172,12 @@ export default function HandDrawer({
                         <TableCell className="py-0.5 px-1 font-mono text-text-muted">{p.seat}</TableCell>
                         <TableCell className="py-0.5 px-1 font-mono">{p.position}</TableCell>
                         <TableCell className={`py-0.5 px-1 ${p.is_hero ? 'font-semibold text-primary' : 'text-text'}`}>
-                          {p.username}
+                          <span className="flex items-center gap-1.5">
+                            {p.username}
+                            {!p.is_hero && p.player_type && p.player_type !== 'UNK' && (
+                              <PlayerTypeBadge type={p.player_type} />
+                            )}
+                          </span>
                         </TableCell>
                         <TableCell className="py-0.5 px-1 text-right font-mono">{p.stack_bb.toFixed(1)}</TableCell>
                         <TableCell className="py-0.5 px-1">

@@ -5,6 +5,8 @@ from app.models import ImportResult
 from app.db import get_db, db_lock
 from app.parsers.ggpoker import parse_hand_history, ParsedHand
 from app.stat_flags import compute_stat_flags
+from app.player_classification import batch_update_player_types
+from app.board_texture import classify_flop, classify_turn, classify_river
 import duckdb
 import traceback
 import zipfile
@@ -37,6 +39,7 @@ _HANDS_COLS = (
     "id", "site_id", "played_at", "game_type", "game_mode", "stakes",
     "sb_amount", "bb_amount", "table_name", "table_size", "button_seat", "raw_text",
     "cash_drop_received",
+    "flop_texture_rank", "flop_texture_suit", "flop_paired", "turn_texture", "river_texture",
 )
 _HP_BASE_COLS = (
     "id", "hand_id", "player_id", "seat", "position",
@@ -64,6 +67,7 @@ _STAT_FLAG_KEYS = (
     "postflop_ip",
     "bb_defense", "bb_defense_opp", "iso_raise", "iso_raise_opp",
     "faced_squeeze", "fold_to_squeeze",
+    "pot_type", "is_multiway",
 )
 _HP_ALL_COLS = _HP_BASE_COLS + _STAT_FLAG_KEYS
 _BOARD_COLS = ("hand_id", "street", "card", "card_order")
@@ -277,6 +281,32 @@ def _flush_batch(
         hands_cols["raw_text"].append(parsed.raw_text)
         hands_cols["cash_drop_received"].append(float(parsed.cash_drop_received))
 
+        # Board texture classification
+        flop_cards = parsed.board_cards.get("flop", [])
+        turn_cards = parsed.board_cards.get("turn", [])
+        river_cards = parsed.board_cards.get("river", [])
+
+        if len(flop_cards) >= 3:
+            ft_rank, ft_suit, ft_paired = classify_flop(flop_cards)
+            hands_cols["flop_texture_rank"].append(ft_rank)
+            hands_cols["flop_texture_suit"].append(ft_suit)
+            hands_cols["flop_paired"].append(ft_paired)
+        else:
+            hands_cols["flop_texture_rank"].append(None)
+            hands_cols["flop_texture_suit"].append(None)
+            hands_cols["flop_paired"].append(False)
+
+        if len(turn_cards) >= 1 and len(flop_cards) >= 3:
+            hands_cols["turn_texture"].append(classify_turn(flop_cards, turn_cards[0]))
+        else:
+            hands_cols["turn_texture"].append(None)
+
+        if len(river_cards) >= 1 and len(flop_cards) >= 3:
+            board_before_river = flop_cards + turn_cards
+            hands_cols["river_texture"].append(classify_river(board_before_river, river_cards[0]))
+        else:
+            hands_cols["river_texture"].append(None)
+
         for s in parsed.seats:
             uname = s["username"]
             pid = _player_cache[uname]
@@ -349,7 +379,7 @@ def _flush_batch(
 
 
 def finalize_import(db: duckdb.DuckDBPyConnection) -> None:
-    """Batch-update player first_seen/last_seen. Call once after import."""
+    """Batch-update player first_seen/last_seen and player types. Call once after import."""
     db.execute("""
         UPDATE players SET
             first_seen = sub.min_t,
@@ -361,6 +391,7 @@ def finalize_import(db: duckdb.DuckDBPyConnection) -> None:
         ) sub
         WHERE players.id = sub.player_id
     """)
+    batch_update_player_types(db)
 
 
 def insert_parsed_hand(db: duckdb.DuckDBPyConnection, parsed: ParsedHand) -> str:
@@ -624,6 +655,7 @@ async def rebuild_hands():
         hand_texts = [(hid, raw) for hid, raw in rows]
 
         # Wipe everything and reset caches
+        db.execute("DELETE FROM player_classifications")
         db.execute("DELETE FROM actions")
         db.execute("DELETE FROM board_cards")
         db.execute("DELETE FROM hand_players")
@@ -711,6 +743,7 @@ async def rebuild_hands():
 async def clear_hands():
     with db_lock():
         db = get_db()
+        db.execute("DELETE FROM player_classifications")
         db.execute("DELETE FROM actions")
         db.execute("DELETE FROM board_cards")
         db.execute("DELETE FROM hand_players")
