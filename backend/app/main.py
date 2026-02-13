@@ -8,7 +8,7 @@ from fastapi.responses import FileResponse
 from starlette.formparsers import MultiPartParser
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from app.db import get_db, close_db, get_read_cursor, init_request_cursors, cleanup_request_cursors
+from app.db import get_db, close_db, get_read_cursor, get_rebuild_status, init_request_cursors, cleanup_request_cursors
 from app.api import import_hands, stats, reports, settings, hands, cash_drop, sessions, players, population
 
 MultiPartParser.max_part_size = 50 * 1024 * 1024  # 50MB
@@ -60,12 +60,24 @@ def shutdown():
 
 @app.get("/api/health")
 def health():
+    rebuild = get_rebuild_status()
+    if rebuild["active"]:
+        # Skip DB query during rebuild — the write transaction blocks read cursors
+        return {
+            "status": "ok",
+            "hands": rebuild["total"],
+            "rebuilding": True,
+            "rebuild_progress": {
+                "processed": rebuild["processed"],
+                "total": rebuild["total"],
+            },
+        }
     try:
         row = get_read_cursor().execute("SELECT COUNT(*) FROM hands").fetchone()
         hand_count = row[0] if row else 0
     except Exception:
         hand_count = 0
-    return {"status": "ok", "hands": hand_count}
+    return {"status": "ok", "hands": hand_count, "rebuilding": False}
 
 
 # Serve built frontend in packaged mode (OHM_STATIC_DIR set by Electron)

@@ -768,171 +768,54 @@ def _process_hands(db, text_contents: list[str]) -> ImportResult:
 
 @router.post("/import/rebuild")
 async def rebuild_hands():
-    """Re-parse all hands from stored raw_text. Crash-safe: hands table is never touched.
+    """Re-parse all hands from stored raw_text in a background thread.
 
-    Only derived tables (hand_players, board_cards, players, etc.) are deleted and rebuilt.
-    If interrupted, just re-run — the hands table with raw_text is always intact.
+    Returns immediately. Poll GET /api/health for progress.
     """
+    import threading
+    from app.db import get_rebuild_status, _rebuild_status, STAT_VERSION
 
-    def generate():
-        with db_lock():
-            db = get_db()
+    status = get_rebuild_status()
+    if status["active"]:
+        return {"status": "already_running"}
 
-            total = db.execute("SELECT COUNT(*) FROM hands").fetchone()[0]
+    db = get_db()
+    total = db.execute("SELECT COUNT(*) FROM hands").fetchone()[0]
+    if total == 0:
+        return {"status": "empty"}
 
-            if total == 0:
-                yield json.dumps({
-                    "type": "done", "imported": 0, "duplicates": 0,
-                    "errors": 0, "error_details": [],
-                }) + "\n"
-                return
+    _rebuild_status["active"] = True
+    _rebuild_status["processed"] = 0
+    _rebuild_status["total"] = total
 
-            yield json.dumps({"type": "start", "total_hands": total, "files": 0}) + "\n"
+    def _bg_rebuild():
+        try:
+            with db_lock():
+                conn = get_db()
 
-            # Fetch all hand IDs + raw_text into memory before deleting derived tables.
-            # This avoids cursor invalidation when _flush_batch runs DML on the same connection.
-            all_rows = db.execute(
-                "SELECT id, raw_text FROM hands ORDER BY played_at ASC, id ASC"
-            ).fetchall()
+                def _on_progress(processed: int, t: int):
+                    _rebuild_status["processed"] = processed
+                    _rebuild_status["total"] = t
 
-            # Only delete derived tables — hands table stays intact with raw_text
-            _drop_indexes(db)
-            db.execute("DELETE FROM player_classifications")
-            db.execute("DELETE FROM actions")
-            db.execute("DELETE FROM board_cards")
-            db.execute("DELETE FROM hand_players")
-            db.execute("DELETE FROM players")
-            reset_import_cache()
+                _run_rebuild_sync(conn, on_progress=_on_progress)
 
-            imported = 0
-            errors = 0
-            error_details: list[str] = []
+                conn.execute(
+                    "INSERT OR REPLACE INTO settings VALUES ('stat_version', ?)",
+                    [str(STAT_VERSION)],
+                )
+                logging.getLogger(__name__).info("User-triggered rebuild complete")
+        except Exception:
+            logging.getLogger(__name__).exception("Rebuild failed")
+        finally:
+            _rebuild_status["active"] = False
 
-            t_start = time.perf_counter()
-            t_parse = 0.0
-            t_stats = 0.0
-            t_equity = 0.0
-            t_db = 0.0
+    t = threading.Thread(target=_bg_rebuild, daemon=True, name="user-rebuild")
+    t.start()
 
-            # Send initial progress so UI shows 0% immediately
-            yield json.dumps({
-                "type": "progress", "processed": 0, "total": total,
-                "imported": 0, "duplicates": 0, "errors": 0,
-                "elapsed_ms": 0, "hands_per_sec": 0,
-            }) + "\n"
-
-            # Single transaction for entire rebuild — no per-batch commit overhead.
-            # Crash-safe: hands table is intact, just re-run rebuild if interrupted.
-            db.execute("BEGIN TRANSACTION")
-
-            # Suppress auto-checkpoint during bulk load
-            db.execute("SET checkpoint_threshold = '10GB'")
-
-            # Build chunks of raw_text for pipeline parallelism
-            # _parse_batch expects (hand_texts, ids, existing_ids) — for rebuild,
-            # all IDs are valid and there are no duplicates, so we pass dummy IDs.
-            def _rebuild_parse_chunk(rows_chunk):
-                """Parse a chunk of (hand_id, raw_text) rows for rebuild."""
-                prepared = []
-                chunk_errors = 0
-                chunk_error_details = []
-                bp = bs = be = 0.0
-                for hand_id, raw_text in rows_chunk:
-                    try:
-                        t0 = time.perf_counter()
-                        parsed = parse_hand_history(raw_text)
-                        t1 = time.perf_counter()
-                        stats = compute_stat_flags(parsed)
-                        t2 = time.perf_counter()
-                        financials = _compute_financials(parsed)
-                        t3 = time.perf_counter()
-                        bp += t1 - t0
-                        bs += t2 - t1
-                        be += t3 - t2
-                        prepared.append((parsed, stats, financials))
-                    except Exception as e:
-                        chunk_errors += 1
-                        chunk_error_details.append(f"{hand_id}: {str(e)}")
-                        traceback.print_exc()
-                return prepared, chunk_errors, chunk_error_details, bp, bs, be
-
-            # Split rows into BATCH_SIZE chunks
-            chunks = [all_rows[ci:ci + BATCH_SIZE] for ci in range(0, total, BATCH_SIZE)]
-
-            processed = 0
-            with ThreadPoolExecutor(max_workers=1) as executor:
-                parse_future: Future | None = None
-                if chunks:
-                    parse_future = executor.submit(_rebuild_parse_chunk, chunks[0])
-
-                for ci in range(len(chunks)):
-                    batch_prepared, batch_errs, batch_details, bp, bs, be = parse_future.result()
-                    errors += batch_errs
-                    error_details.extend(batch_details)
-                    t_parse += bp
-                    t_stats += bs
-                    t_equity += be
-
-                    # Submit next batch for parsing (overlaps with DB insert)
-                    if ci + 1 < len(chunks):
-                        parse_future = executor.submit(_rebuild_parse_chunk, chunks[ci + 1])
-                    else:
-                        parse_future = None
-
-                    # Flush current batch to DB
-                    if batch_prepared:
-                        t0 = time.perf_counter()
-                        imp, errs, details = _flush_batch(db, batch_prepared, rebuild=True, in_transaction=True)
-                        t_db += time.perf_counter() - t0
-                        imported += imp
-                        errors += errs
-                        error_details.extend(details)
-
-                    # Progress update (every batch)
-                    processed += len(chunks[ci])
-                    elapsed = time.perf_counter() - t_start
-                    hps = imported / elapsed if elapsed > 0 else 0
-                    yield json.dumps({
-                        "type": "progress",
-                        "processed": processed,
-                        "total": total,
-                        "imported": imported,
-                        "duplicates": 0,
-                        "errors": errors,
-                        "elapsed_ms": round(elapsed * 1000),
-                        "hands_per_sec": round(hps),
-                    }) + "\n"
-
-            db.execute("COMMIT")
-
-            # Recreate indexes (bulk build is faster than incremental)
-            t0_idx = time.perf_counter()
-            _create_indexes(db)
-            t_idx = time.perf_counter() - t0_idx
-
-            finalize_import(db)
-
-        elapsed = time.perf_counter() - t_start
-        hps = imported / elapsed if elapsed > 0 else 0
-        yield json.dumps({
-            "type": "done",
-            "imported": imported,
-            "duplicates": 0,
-            "errors": errors,
-            "error_details": error_details[:20],
-            "elapsed_ms": round(elapsed * 1000),
-            "hands_per_sec": round(hps),
-            "parse_ms": round(t_parse * 1000),
-            "stats_ms": round(t_stats * 1000),
-            "equity_ms": round(t_equity * 1000),
-            "db_ms": round(t_db * 1000),
-            "index_ms": round(t_idx * 1000),
-        }) + "\n"
-
-    return StreamingResponse(generate(), media_type="application/x-ndjson")
+    return {"status": "started", "total": total}
 
 
-def _run_rebuild_sync(db) -> None:
+def _run_rebuild_sync(db, on_progress: 'Callable[[int, int], None] | None' = None) -> None:
     """Synchronous rebuild for auto-upgrade. Called from db.py at startup (lock already held)."""
     total = db.execute("SELECT COUNT(*) FROM hands").fetchone()[0]
     if total == 0:
@@ -955,6 +838,7 @@ def _run_rebuild_sync(db) -> None:
 
     imported = 0
     errors = 0
+    processed = 0
     t_start = time.perf_counter()
 
     chunks = [all_rows[ci:ci + BATCH_SIZE] for ci in range(0, total, BATCH_SIZE)]
@@ -975,6 +859,10 @@ def _run_rebuild_sync(db) -> None:
             imp, errs, _ = _flush_batch(db, prepared, rebuild=True, in_transaction=True)
             imported += imp
             errors += errs
+
+        processed += len(chunk)
+        if on_progress:
+            on_progress(processed, total)
 
         if (ci + 1) % 5 == 0 or ci == len(chunks) - 1:
             elapsed = time.perf_counter() - t_start

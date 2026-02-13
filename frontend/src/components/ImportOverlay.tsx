@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 export default function ImportOverlay() {
   const { phase, fileInfo, progress, result, error, dismiss } = useImport();
 
-  if (phase === 'idle') return null;
+  if (phase === 'idle' || phase === 'rebuilding') return null;
 
   const pct =
     progress?.total != null && progress.total > 0
@@ -17,19 +17,17 @@ export default function ImportOverlay() {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm">
       <Card className="w-full max-w-md mx-4">
-        {/* Uploading / Rebuilding */}
-        {(phase === 'uploading' || phase === 'rebuilding') && (
+        {/* Uploading */}
+        {phase === 'uploading' && (
           <>
             <CardHeader className="pb-2">
-              <CardTitle className="text-base">
-                {phase === 'rebuilding' ? 'Rebuilding Stats...' : 'Importing Hands...'}
-              </CardTitle>
+              <CardTitle className="text-base">Importing Hands...</CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
               {progress?.type === 'start' || progress?.type === 'progress' ? (
                 <>
                   <p className="text-text-muted text-sm">
-                    {phase === 'uploading' && fileInfo && !progress?.total_hands
+                    {fileInfo && !progress?.total_hands
                       ? `Uploading ${fileInfo.count} file${fileInfo.count !== 1 ? 's' : ''} (${(fileInfo.size / 1024).toFixed(0)} KB)...`
                       : `Processing ${progress?.total_hands?.toLocaleString() ?? '...'} hands from ${progress?.files ?? fileInfo?.count ?? '?'} file${(progress?.files ?? fileInfo?.count ?? 0) !== 1 ? 's' : ''}...`}
                   </p>
@@ -57,11 +55,9 @@ export default function ImportOverlay() {
                 </>
               ) : (
                 <p className="text-text-muted text-sm">
-                  {phase === 'uploading' && fileInfo
+                  {fileInfo
                     ? `Uploading ${fileInfo.count} file${fileInfo.count !== 1 ? 's' : ''} (${(fileInfo.size / 1024).toFixed(0)} KB)...`
-                    : phase === 'rebuilding'
-                      ? 'Rebuilding...'
-                      : 'Uploading...'}
+                    : 'Uploading...'}
                 </p>
               )}
             </CardContent>

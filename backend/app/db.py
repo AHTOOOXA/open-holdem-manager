@@ -24,6 +24,9 @@ _request_cursors: contextvars.ContextVar[list | None] = contextvars.ContextVar(
     '_request_cursors', default=None
 )
 
+# Background rebuild state (shared with health endpoint)
+_rebuild_status: dict = {"active": False, "processed": 0, "total": 0}
+
 
 def get_db() -> duckdb.DuckDBPyConnection:
     global _conn
@@ -433,8 +436,16 @@ def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
     _check_stat_version(conn)
 
 
+def get_rebuild_status() -> dict:
+    """Return current background rebuild status."""
+    return dict(_rebuild_status)
+
+
 def _check_stat_version(conn: duckdb.DuckDBPyConnection) -> None:
-    """Auto-rebuild stats if STAT_VERSION has been bumped since last run."""
+    """Auto-rebuild stats if STAT_VERSION has been bumped since last run.
+
+    Runs in a background thread so the app is usable immediately.
+    """
     row = conn.execute(
         "SELECT value FROM settings WHERE key = 'stat_version'"
     ).fetchone()
@@ -445,15 +456,35 @@ def _check_stat_version(conn: duckdb.DuckDBPyConnection) -> None:
         return
 
     logger.info(
-        "Stat version changed (%d → %d), rebuilding %d hands...",
+        "Stat version changed (%d → %d), scheduling background rebuild for %d hands...",
         db_version, STAT_VERSION, hand_count,
     )
 
-    from app.api.import_hands import _run_rebuild_sync
-    _run_rebuild_sync(conn)
+    _rebuild_status["active"] = True
+    _rebuild_status["processed"] = 0
+    _rebuild_status["total"] = hand_count
 
-    conn.execute(
-        "INSERT OR REPLACE INTO settings VALUES ('stat_version', ?)",
-        [str(STAT_VERSION)],
-    )
-    logger.info("Auto-rebuild complete, stat_version set to %d", STAT_VERSION)
+    def _bg_rebuild():
+        try:
+            with _lock:
+                db = get_db()
+                from app.api.import_hands import _run_rebuild_sync
+
+                def _on_progress(processed: int, total: int):
+                    _rebuild_status["processed"] = processed
+                    _rebuild_status["total"] = total
+
+                _run_rebuild_sync(db, on_progress=_on_progress)
+
+                db.execute(
+                    "INSERT OR REPLACE INTO settings VALUES ('stat_version', ?)",
+                    [str(STAT_VERSION)],
+                )
+                logger.info("Background rebuild complete, stat_version set to %d", STAT_VERSION)
+        except Exception:
+            logger.exception("Background rebuild failed")
+        finally:
+            _rebuild_status["active"] = False
+
+    t = threading.Thread(target=_bg_rebuild, daemon=True, name="stat-rebuild")
+    t.start()

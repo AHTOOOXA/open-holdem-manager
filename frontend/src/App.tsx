@@ -15,6 +15,7 @@ import { ImportProvider } from '@/contexts/ImportContext';
 import ImportOverlay from '@/components/ImportOverlay';
 import DragDropOverlay from '@/components/DragDropOverlay';
 import AppSidebar from '@/components/AppSidebar';
+import RebuildBanner from '@/components/RebuildBanner';
 import { getStatDisplayName } from '@/lib/stat-registry';
 import StatsPage from './pages/StatsPage';
 import GraphPage from './pages/GraphPage';
@@ -117,6 +118,7 @@ export default function App() {
                 <Route path="*" element={<Navigate to="/graph" replace />} />
               </Routes>
             </main>
+            <RebuildBanner />
           </SidebarInset>
         </SidebarProvider>
         <ImportOverlay />

@@ -285,7 +285,14 @@ export async function updateSettings(settings: Settings): Promise<Settings> {
   return res.json();
 }
 
-export async function getHealth(): Promise<{ status: string; hands: number }> {
+export interface HealthResponse {
+  status: string;
+  hands: number;
+  rebuilding: boolean;
+  rebuild_progress?: { processed: number; total: number };
+}
+
+export async function getHealth(): Promise<HealthResponse> {
   const res = await fetch(`${BASE}/health`);
   if (!res.ok) throw new Error(`Health check failed: ${res.statusText}`);
   return res.json();
@@ -1247,50 +1254,13 @@ export async function importDb(file: File): Promise<{ status: string; hands: num
   return res.json();
 }
 
-export async function rebuildHands(
-  onProgress: (progress: ImportProgress) => void,
-): Promise<ImportResult> {
+export async function rebuildHands(): Promise<{ status: string; total?: number }> {
   const res = await fetch(`${BASE}/import/rebuild`, { method: 'POST' });
   if (!res.ok) {
     const body = await res.text().catch(() => '');
     throw new Error(`Rebuild failed: ${res.status} ${res.statusText}${body ? ` — ${body}` : ''}`);
   }
-
-  const reader = res.body!.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-  let finalResult: ImportResult | null = null;
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split('\n');
-    buffer = lines.pop() || '';
-
-    for (const line of lines) {
-      if (!line.trim()) continue;
-      const msg: ImportProgress = JSON.parse(line);
-      onProgress(msg);
-      if (msg.type === 'done') {
-        finalResult = {
-          imported: msg.imported ?? 0,
-          duplicates: msg.duplicates ?? 0,
-          errors: msg.errors ?? 0,
-          error_details: msg.error_details ?? [],
-          elapsed_ms: msg.elapsed_ms,
-          hands_per_sec: msg.hands_per_sec,
-          parse_ms: msg.parse_ms,
-          stats_ms: msg.stats_ms,
-          equity_ms: msg.equity_ms,
-          db_ms: msg.db_ms,
-        };
-      }
-    }
-  }
-
-  return finalResult ?? { imported: 0, duplicates: 0, errors: 0, error_details: [] };
+  return res.json();
 }
 
 // ── Widget API Types ──────────────────────────────────────────────────

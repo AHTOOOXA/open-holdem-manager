@@ -1,9 +1,14 @@
-import { createContext, useContext, useState, useCallback, useEffect, type ReactNode } from 'react';
+import { createContext, useContext, useState, useCallback, useEffect, useRef, type ReactNode } from 'react';
 import { uploadFilesStream, rebuildHands, getSettings, updateSettings, getHealth, clearDatabase, exportDb, importDb } from '@/lib/api';
-import type { ImportResult, ImportProgress, Settings } from '@/lib/api';
+import type { ImportResult, ImportProgress, Settings, HealthResponse } from '@/lib/api';
 import { queryClient } from '@/lib/query-client';
 
 type Phase = 'idle' | 'uploading' | 'rebuilding' | 'done' | 'error';
+
+interface RebuildProgress {
+  processed: number;
+  total: number;
+}
 
 interface ImportState {
   phase: Phase;
@@ -13,6 +18,7 @@ interface ImportState {
   error: string | null;
   handCount: number;
   settings: Settings | null;
+  autoRebuildProgress: RebuildProgress | null;
 }
 
 interface ImportActions {
@@ -47,11 +53,46 @@ function ImportProvider({ children }: { children: ReactNode }) {
   const [handCount, setHandCount] = useState(0);
   const [settings, setSettings] = useState<Settings | null>(null);
   const [showImportOverlay, setShowImportOverlay] = useState(false);
+  const [autoRebuildProgress, setAutoRebuildProgress] = useState<RebuildProgress | null>(null);
+  const rebuildPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const startRebuildPolling = useCallback((initialProgress?: RebuildProgress) => {
+    setPhase('rebuilding');
+    if (initialProgress) setAutoRebuildProgress(initialProgress);
+
+    if (rebuildPollRef.current) clearInterval(rebuildPollRef.current);
+    rebuildPollRef.current = setInterval(async () => {
+      try {
+        const h = await getHealth();
+        setHandCount(h.hands);
+        if (h.rebuilding) {
+          setAutoRebuildProgress(h.rebuild_progress ?? null);
+        } else {
+          if (rebuildPollRef.current) clearInterval(rebuildPollRef.current);
+          rebuildPollRef.current = null;
+          setPhase('idle');
+          setAutoRebuildProgress(null);
+          queryClient.invalidateQueries();
+        }
+      } catch {
+        // ignore transient errors
+      }
+    }, 1000);
+  }, []);
 
   useEffect(() => {
     getSettings().then(setSettings).catch(() => {});
-    getHealth().then((h) => setHandCount(h.hands)).catch(() => {});
-  }, []);
+    getHealth().then((h: HealthResponse) => {
+      setHandCount(h.hands);
+      if (h.rebuilding) {
+        startRebuildPolling(h.rebuild_progress ?? undefined);
+      }
+    }).catch(() => {});
+
+    return () => {
+      if (rebuildPollRef.current) clearInterval(rebuildPollRef.current);
+    };
+  }, [startRebuildPolling]);
 
   const refreshHandCount = useCallback(async () => {
     const h = await getHealth();
@@ -92,23 +133,17 @@ function ImportProvider({ children }: { children: ReactNode }) {
   const startRebuild = useCallback(async () => {
     if (phase !== 'idle') return;
 
-    setPhase('rebuilding');
-    setError(null);
-    setResult(null);
-    setProgress(null);
-    setFileInfo(null);
-
     try {
-      const res = await rebuildHands((p) => setProgress(p));
-      setResult(res);
-      setPhase('done');
-      await refreshHandCount();
-      queryClient.invalidateQueries();
+      const res = await rebuildHands();
+      if (res.status === 'already_running' || res.status === 'started') {
+        startRebuildPolling(res.total ? { processed: 0, total: res.total } : undefined);
+      }
+      // 'empty' — nothing to do
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Rebuild failed');
       setPhase('error');
     }
-  }, [phase, refreshHandCount]);
+  }, [phase, startRebuildPolling]);
 
   const clearDb = useCallback(async () => {
     await clearDatabase();
@@ -148,6 +183,7 @@ function ImportProvider({ children }: { children: ReactNode }) {
     <ImportContext.Provider
       value={{
         phase, fileInfo, progress, result, error, handCount, settings,
+        autoRebuildProgress,
         startImport, startRebuild, clearDb, dismiss, updateHeroName, refreshHandCount,
         exportDatabase, importDatabase, showImportOverlay, setShowImportOverlay,
       }}
