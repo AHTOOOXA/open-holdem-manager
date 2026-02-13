@@ -687,6 +687,12 @@ async def rebuild_hands():
 
             yield json.dumps({"type": "start", "total_hands": total, "files": 0}) + "\n"
 
+            # Fetch all hand IDs + raw_text into memory before deleting derived tables.
+            # This avoids cursor invalidation when _flush_batch runs DML on the same connection.
+            all_rows = db.execute(
+                "SELECT id, raw_text FROM hands ORDER BY played_at ASC, id ASC"
+            ).fetchall()
+
             # Only delete derived tables — hands table stays intact with raw_text
             _drop_indexes(db)
             db.execute("DELETE FROM player_classifications")
@@ -706,46 +712,30 @@ async def rebuild_hands():
             t_stats = 0.0
             t_db = 0.0
 
-            # Read directly from the hands table (no temp table needed)
-            cursor = db.execute("SELECT id, raw_text FROM hands ORDER BY played_at ASC, id ASC")
-            i = 0
-            while True:
-                batch_rows = cursor.fetchmany(BATCH_SIZE)
-                if not batch_rows:
-                    break
+            # Send initial progress so UI shows 0% immediately
+            yield json.dumps({
+                "type": "progress", "processed": 0, "total": total,
+                "imported": 0, "duplicates": 0, "errors": 0,
+                "elapsed_ms": 0, "hands_per_sec": 0,
+            }) + "\n"
 
-                for hand_id, raw_text in batch_rows:
-                    try:
-                        t0 = time.perf_counter()
-                        parsed = parse_hand_history(raw_text)
-                        t1 = time.perf_counter()
-                        stats = compute_stat_flags(parsed)
-                        t2 = time.perf_counter()
-                        t_parse += t1 - t0
-                        t_stats += t2 - t1
-                        pending.append((parsed, stats))
-                    except Exception as e:
-                        errors += 1
-                        error_details.append(f"{hand_id}: {str(e)}")
-                        traceback.print_exc()
+            for i, (hand_id, raw_text) in enumerate(all_rows):
+                try:
+                    t0 = time.perf_counter()
+                    parsed = parse_hand_history(raw_text)
+                    t1 = time.perf_counter()
+                    stats = compute_stat_flags(parsed)
+                    t2 = time.perf_counter()
+                    t_parse += t1 - t0
+                    t_stats += t2 - t1
+                    pending.append((parsed, stats))
+                except Exception as e:
+                    errors += 1
+                    error_details.append(f"{hand_id}: {str(e)}")
+                    traceback.print_exc()
 
-                    i += 1
-                    if (i) % 200 == 0 or i == total:
-                        elapsed = time.perf_counter() - t_start
-                        hps = imported / elapsed if elapsed > 0 else 0
-                        yield json.dumps({
-                            "type": "progress",
-                            "processed": i,
-                            "total": total,
-                            "imported": imported,
-                            "duplicates": 0,
-                            "errors": errors,
-                            "elapsed_ms": round(elapsed * 1000),
-                            "hands_per_sec": round(hps),
-                        }) + "\n"
-
-                # Flush after each fetch batch (rebuild=True skips hands table insert)
-                if pending:
+                # Flush batch to DB
+                if len(pending) >= BATCH_SIZE:
                     t0 = time.perf_counter()
                     imp, errs, details = _flush_batch(db, pending, rebuild=True)
                     t_db += time.perf_counter() - t0
@@ -754,7 +744,21 @@ async def rebuild_hands():
                     error_details.extend(details)
                     pending = []
 
-            # Flush any remaining
+                if (i + 1) % 200 == 0 or i + 1 == total:
+                    elapsed = time.perf_counter() - t_start
+                    hps = imported / elapsed if elapsed > 0 else 0
+                    yield json.dumps({
+                        "type": "progress",
+                        "processed": i + 1,
+                        "total": total,
+                        "imported": imported,
+                        "duplicates": 0,
+                        "errors": errors,
+                        "elapsed_ms": round(elapsed * 1000),
+                        "hands_per_sec": round(hps),
+                    }) + "\n"
+
+            # Flush remaining
             if pending:
                 t0 = time.perf_counter()
                 imp, errs, details = _flush_batch(db, pending, rebuild=True)
