@@ -1,0 +1,89 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            platform: mac
+            pyinstaller_sep: ":"
+          - os: windows-latest
+            platform: win
+            pyinstaller_sep: ";"
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # ── Python backend ──────────────────────────────────────────
+      - name: Install Python dependencies
+        run: pip install -r backend/requirements.txt pyinstaller
+
+      - name: Build backend with PyInstaller
+        working-directory: backend
+        run: >
+          pyinstaller
+          --name ohm-backend
+          --onedir
+          --noconfirm
+          --clean
+          --collect-submodules uvicorn
+          --collect-submodules fastapi
+          --collect-submodules starlette
+          --collect-submodules pydantic
+          --collect-submodules duckdb
+          --hidden-import multipart
+          run_server.py
+
+      # ── Frontend ────────────────────────────────────────────────
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build
+
+      # ── Electron ────────────────────────────────────────────────
+      - name: Install Electron dependencies
+        run: npm ci
+
+      - name: Build & publish Electron app
+        run: npx electron-builder --${{ matrix.platform }} --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Optional: create a GitHub Release with notes
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate release notes
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
