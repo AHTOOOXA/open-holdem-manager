@@ -1,4 +1,5 @@
-const { app, BrowserWindow, dialog } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, shell } = require('electron');
+const { autoUpdater } = require('electron-updater');
 const { spawn } = require('child_process');
 const path = require('path');
 const net = require('net');
@@ -148,6 +149,71 @@ function killBackend() {
   }
 }
 
+function setupAutoUpdater() {
+  if (isDev) return;
+
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+
+  autoUpdater.on('update-available', (info) => {
+    if (mainWindow) {
+      mainWindow.webContents.send('update-available', {
+        version: info.version,
+        releaseNotes: info.releaseNotes,
+      });
+    }
+  });
+
+  autoUpdater.on('download-progress', (progress) => {
+    if (mainWindow) {
+      mainWindow.webContents.send('download-progress', {
+        percent: progress.percent,
+      });
+    }
+  });
+
+  autoUpdater.on('update-downloaded', () => {
+    if (mainWindow) {
+      mainWindow.webContents.send('update-downloaded');
+    }
+  });
+
+  autoUpdater.on('error', (err) => {
+    console.error('Auto-updater error:', err.message);
+  });
+
+  autoUpdater.checkForUpdates().catch((err) => {
+    console.error('Update check failed:', err.message);
+  });
+
+  // Re-check every 4 hours
+  setInterval(() => {
+    autoUpdater.checkForUpdates().catch((err) => {
+      console.error('Periodic update check failed:', err.message);
+    });
+  }, 4 * 60 * 60 * 1000);
+}
+
+ipcMain.handle('install-update', () => {
+  autoUpdater.quitAndInstall();
+});
+
+ipcMain.handle('get-app-version', () => app.getVersion());
+
+ipcMain.handle('check-for-updates', () => {
+  if (isDev) return;
+  autoUpdater.checkForUpdates().catch((err) => {
+    console.error('Manual update check failed:', err.message);
+  });
+});
+
+ipcMain.handle('open-external', (_event, url) => {
+  // Only allow GitHub URLs for safety
+  if (typeof url === 'string' && url.startsWith('https://github.com/')) {
+    shell.openExternal(url);
+  }
+});
+
 app.whenReady().then(async () => {
   try {
     let url;
@@ -164,6 +230,7 @@ app.whenReady().then(async () => {
     }
 
     createWindow(url);
+    setupAutoUpdater();
   } catch (err) {
     console.error('Startup error:', err);
     dialog.showErrorBox(

@@ -18,5 +18,8 @@
     "electron-builder": "^25.1.8"
   },
   "author": "",
-  "license": "MIT"
+  "license": "MIT",
+  "dependencies": {
+    "electron-updater": "^6.7.3"
+  }
 }

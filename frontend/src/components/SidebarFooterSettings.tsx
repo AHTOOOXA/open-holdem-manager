@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react';
-import { Settings, RefreshCw, Trash2, Download, Upload } from 'lucide-react';
+import { Settings, RefreshCw, Trash2, Download, Upload, RotateCw } from 'lucide-react';
 import { useImport } from '@/contexts/ImportContext';
 import { SidebarFooter, SidebarMenu, SidebarMenuItem, SidebarMenuButton } from '@/components/ui/sidebar';
 import { Input } from '@/components/ui/input';
@@ -9,6 +9,7 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
+  DropdownMenuLabel,
 } from '@/components/ui/dropdown-menu';
 
 export default function SidebarFooterSettings() {
@@ -105,6 +106,19 @@ export default function SidebarFooterSettings() {
                 <Trash2 className="size-4" />
                 Clear Database
               </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                onClick={() => {
+                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                  (window as any).electronAPI?.checkForUpdates?.();
+                }}
+              >
+                <RotateCw className="size-4" />
+                Check for Updates
+              </DropdownMenuItem>
+              <DropdownMenuLabel className="text-[10px] font-normal text-muted-foreground/50">
+                v{__APP_VERSION__}
+              </DropdownMenuLabel>
             </DropdownMenuContent>
           </DropdownMenu>
         </SidebarMenuItem>
