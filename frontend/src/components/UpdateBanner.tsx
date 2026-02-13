@@ -16,6 +16,7 @@ interface ElectronAPI {
   onUpdateAvailable: (cb: (info: { version: string; releaseNotes?: string }) => void) => void;
   onDownloadProgress: (cb: (info: { percent: number }) => void) => void;
   onUpdateDownloaded: (cb: () => void) => void;
+  onUpdateError: (cb: (message: string) => void) => void;
   installUpdate: () => void;
   openExternal: (url: string) => void;
 }
@@ -39,6 +40,7 @@ export default function UpdateBanner() {
   const [ready, setReady] = useState(false);
   const [dismissed, setDismissed] = useState(false);
   const [showNotes, setShowNotes] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const api = getAPI();
@@ -66,6 +68,10 @@ export default function UpdateBanner() {
         return v;
       });
     });
+
+    api.onUpdateError((message) => {
+      setError(message);
+    });
   }, []);
 
   if (!version || dismissed) return null;
@@ -75,7 +81,19 @@ export default function UpdateBanner() {
   return (
     <>
       <div className="sticky bottom-0 flex items-center gap-3 border-t border-border bg-surface px-4 py-1.5 text-xs text-muted-foreground">
-        {ready ? (
+        {error ? (
+          <>
+            <span className="shrink-0 text-red">Update error: {error}</span>
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-5 px-2 text-xs"
+              onClick={() => getAPI()?.openExternal(`${REPO_URL}/releases/latest`)}
+            >
+              Download manually
+            </Button>
+          </>
+        ) : ready ? (
           <>
             <span className="shrink-0">Update v{version} ready</span>
             {releaseNotes && (

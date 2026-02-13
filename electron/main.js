@@ -185,6 +185,9 @@ function setupAutoUpdater() {
 
   autoUpdater.on('error', (err) => {
     console.error('Auto-updater error:', err.message);
+    if (mainWindow) {
+      mainWindow.webContents.send('update-error', err.message);
+    }
   });
 
   autoUpdater.checkForUpdates().catch((err) => {
@@ -201,7 +204,16 @@ function setupAutoUpdater() {
 
 ipcMain.handle('install-update', () => {
   // Defer so the IPC response completes before the app quits
-  setTimeout(() => autoUpdater.quitAndInstall(false, true), 100);
+  setTimeout(() => {
+    try {
+      autoUpdater.quitAndInstall(false, true);
+    } catch (err) {
+      console.error('quitAndInstall failed:', err);
+      // Fallback: relaunch manually
+      app.relaunch();
+      app.exit(0);
+    }
+  }, 100);
 });
 
 ipcMain.handle('get-app-version', () => app.getVersion());
