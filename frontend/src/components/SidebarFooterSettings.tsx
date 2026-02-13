@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { Settings, RefreshCw, Trash2, Download, Upload, RotateCw, ExternalLink } from 'lucide-react';
+import { Settings, RefreshCw, Trash2, Download, Upload, RotateCw, ExternalLink, ArrowDownToLine } from 'lucide-react';
 import { useImport } from '@/contexts/ImportContext';
 import { SidebarFooter, SidebarMenu, SidebarMenuItem, SidebarMenuButton } from '@/components/ui/sidebar';
 import { Input } from '@/components/ui/input';
@@ -18,11 +18,15 @@ export default function SidebarFooterSettings() {
   const [nameInput, setNameInput] = useState('');
   const dbFileRef = useRef<HTMLInputElement>(null);
   const [updateVersion, setUpdateVersion] = useState<string | null>(null);
+  const [updateReady, setUpdateReady] = useState(false);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const canAutoUpdate = (window as any).electronAPI?.platform === 'win32';
 
   useEffect(() => {
     const handler = (e: Event) => {
-      const { version } = (e as CustomEvent).detail;
+      const { version, ready } = (e as CustomEvent).detail;
       setUpdateVersion(version);
+      setUpdateReady(ready);
     };
     window.addEventListener('ohm-update-state', handler);
     return () => window.removeEventListener('ohm-update-state', handler);
@@ -117,18 +121,35 @@ export default function SidebarFooterSettings() {
                 Clear Database
               </DropdownMenuItem>
               <DropdownMenuSeparator />
-              {updateVersion ? (
+              {updateReady && canAutoUpdate ? (
                 <DropdownMenuItem
                   onClick={() => {
                     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                    (window as any).electronAPI?.openExternal?.(
-                      `https://github.com/AHTOOOXA/open-holdem-manager/releases/tag/v${updateVersion}`
-                    );
+                    (window as any).electronAPI?.installUpdate?.();
                   }}
                 >
-                  <ExternalLink className="size-4" />
-                  Download v{updateVersion}
+                  <ArrowDownToLine className="size-4" />
+                  Restart to Update (v{updateVersion})
                 </DropdownMenuItem>
+              ) : updateVersion ? (
+                canAutoUpdate ? (
+                  <DropdownMenuItem disabled>
+                    <RotateCw className="size-4" />
+                    Downloading v{updateVersion}...
+                  </DropdownMenuItem>
+                ) : (
+                  <DropdownMenuItem
+                    onClick={() => {
+                      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                      (window as any).electronAPI?.openExternal?.(
+                        `https://github.com/AHTOOOXA/open-holdem-manager/releases/tag/v${updateVersion}`
+                      );
+                    }}
+                  >
+                    <ExternalLink className="size-4" />
+                    Download v{updateVersion}
+                  </DropdownMenuItem>
+                )
               ) : (
                 <DropdownMenuItem
                   onClick={() => {
