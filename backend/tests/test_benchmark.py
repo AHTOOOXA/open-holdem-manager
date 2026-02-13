@@ -16,7 +16,7 @@ from unittest.mock import patch
 from app.parsers.ggpoker import parse_hand_history
 from app.stat_flags import compute_stat_flags
 from app.api.import_hands import (
-    _flush_batch, reset_import_cache, split_hands, BATCH_SIZE,
+    _flush_batch, _compute_financials, reset_import_cache, split_hands, BATCH_SIZE,
 )
 from app.db import init_schema
 
@@ -89,9 +89,11 @@ def _run_import(db, hands: list[str], *, rebuild=False, in_transaction=False,
             t1 = time.perf_counter()
             stats = compute_stat_flags(parsed)
             t2 = time.perf_counter()
+            financials = _compute_financials(parsed)
+            t3 = time.perf_counter()
             t_parse += t1 - t0
-            t_stats += t2 - t1
-            pending.append((parsed, stats))
+            t_stats += t2 - t1 + (t3 - t2)
+            pending.append((parsed, stats, financials))
 
             if len(pending) >= BATCH_SIZE:
                 t0 = time.perf_counter()

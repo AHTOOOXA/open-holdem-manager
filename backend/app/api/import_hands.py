@@ -3,7 +3,7 @@ from fastapi.responses import StreamingResponse, FileResponse
 from decimal import Decimal
 from app.models import ImportResult
 from app.db import get_db, db_lock, close_db, DB_PATH
-from app.parsers.ggpoker import parse_hand_history, ParsedHand
+from app.parsers.ggpoker import parse_hand_history, ParsedHand, _ZERO
 from app.stat_flags import compute_stat_flags
 from app.player_classification import batch_update_player_types
 
@@ -18,6 +18,7 @@ import shutil
 import tempfile
 import time
 import pyarrow as pa
+from concurrent.futures import ThreadPoolExecutor, Future
 
 try:
     from app.equity import calculate_headsup_equity as _calc_equity
@@ -137,13 +138,14 @@ def _init_counters(db: duckdb.DuckDBPyConnection) -> None:
 
 def _batch_resolve_players(
     db: duckdb.DuckDBPyConnection,
-    prepared: list[tuple[ParsedHand, dict]],
+    prepared: list,
 ) -> None:
     """Resolve player IDs for all hands in a batch. Creates new players as needed."""
     global _next_player_id
 
     all_usernames = set()
-    for parsed, _ in prepared:
+    for item in prepared:
+        parsed = item[0]
         for s in parsed.seats:
             all_usernames.add(s["username"])
 
@@ -185,25 +187,30 @@ def _batch_resolve_players(
         )
 
 
+_STREETS = ("preflop", "flop", "turn", "river")
+_INVEST_ACTIONS = frozenset(("sb", "bb", "ante", "straddle", "call", "bet"))
+_STREET_ORDER = {"preflop": 0, "flop": 1, "turn": 2, "river": 3}
+
+
 def _compute_financials(parsed: ParsedHand):
     """Compute per-player investment and all-in EV for a parsed hand.
 
     Returns (player_invested, all_in_ev_bb_map).
     """
-    player_invested = {s["username"]: Decimal("0") for s in parsed.seats}
+    player_invested = {s["username"]: _ZERO for s in parsed.seats}
 
-    for street in ("preflop", "flop", "turn", "river"):
+    for street in _STREETS:
         street_put_in: dict[str, Decimal] = {}
         for a in parsed.actions_by_street[street]:
             uname = a["username"]
             action = a["action"]
             amt = a["amount"]
 
-            if action in ("sb", "bb", "ante", "straddle", "call", "bet"):
-                street_put_in[uname] = street_put_in.get(uname, Decimal("0")) + amt
+            if action in _INVEST_ACTIONS:
+                street_put_in[uname] = street_put_in.get(uname, _ZERO) + amt
                 player_invested[uname] += amt
             elif action == "raise":
-                already_in = street_put_in.get(uname, Decimal("0"))
+                already_in = street_put_in.get(uname, _ZERO)
                 increment = amt - already_in
                 if increment > 0:
                     player_invested[uname] += increment
@@ -213,8 +220,7 @@ def _compute_financials(parsed: ParsedHand):
     all_in_ev_bb_map: dict[str, float] = {}
 
     all_in_street = None
-    street_order = {"preflop": 0, "flop": 1, "turn": 2, "river": 3}
-    for street in ("preflop", "flop", "turn", "river"):
+    for street in _STREETS:
         for a in parsed.actions_by_street[street]:
             if a["is_all_in"]:
                 all_in_street = street
@@ -225,7 +231,7 @@ def _compute_financials(parsed: ParsedHand):
     if all_in_street is not None and _calc_equity:
         players_in = set(s["username"] for s in parsed.seats)
         folded = set()
-        for st in ("preflop", "flop", "turn", "river"):
+        for st in _STREETS:
             for a in parsed.actions_by_street[st]:
                 if a["action"] == "fold":
                     folded.add(a["username"])
@@ -236,11 +242,11 @@ def _compute_financials(parsed: ParsedHand):
 
         if real_showdown and len(remaining) == 2:
             board_at = []
-            if street_order[all_in_street] >= 1:
+            if _STREET_ORDER[all_in_street] >= 1:
                 board_at.extend(parsed.board_cards["flop"])
-            if street_order[all_in_street] >= 2:
+            if _STREET_ORDER[all_in_street] >= 2:
                 board_at.extend(parsed.board_cards["turn"])
-            if street_order[all_in_street] >= 3:
+            if _STREET_ORDER[all_in_street] >= 3:
                 board_at.extend(parsed.board_cards["river"])
 
             if 5 - len(board_at) > 0:
@@ -253,10 +259,10 @@ def _compute_financials(parsed: ParsedHand):
                         )
                         p2_eq = 1.0 - p1_eq
                         p1_net = float(player_invested[p1]) - float(
-                            parsed.uncalled_returns.get(p1, Decimal("0"))
+                            parsed.uncalled_returns.get(p1, _ZERO)
                         )
                         p2_net = float(player_invested[p2]) - float(
-                            parsed.uncalled_returns.get(p2, Decimal("0"))
+                            parsed.uncalled_returns.get(p2, _ZERO)
                         )
                         total_risk = (
                             sum(float(v) for v in player_invested.values())
@@ -274,10 +280,10 @@ def _compute_financials(parsed: ParsedHand):
 
 def _build_batch_arrays(
     db: duckdb.DuckDBPyConnection,
-    prepared: list[tuple[ParsedHand, dict]],
+    prepared: list[tuple[ParsedHand, dict, tuple]],
     rebuild: bool = False,
 ) -> tuple[pa.Table | None, pa.Table | None, pa.Table | None]:
-    """Build PyArrow tables from a batch of (parsed, player_stats) tuples.
+    """Build PyArrow tables from a batch of (parsed, player_stats, financials) tuples.
 
     Pure CPU work — no DB writes. Safe to call from a thread.
     Returns (pa_hands, pa_hp, pa_board).  pa_hands is None when rebuild=True.
@@ -292,19 +298,19 @@ def _build_batch_arrays(
     hp_cols: dict[str, list] = {k: [] for k in _HP_ALL_COLS}
     board_cols: dict[str, list] = {k: [] for k in _BOARD_COLS}
 
-    for parsed, player_stats in prepared:
+    for parsed, player_stats, financials in prepared:
         bb_amount = parsed.bb_amount
         bb_f = float(bb_amount) if bb_amount else 0.0
         num_winners = len(parsed.collected)
         per_player_rake = (
             parsed.total_rake / max(num_winners, 1)
-            if parsed.total_rake else Decimal("0")
+            if parsed.total_rake else _ZERO
         )
         per_player_jackpot = (
             parsed.total_jackpot / max(num_winners, 1)
-            if parsed.total_jackpot else Decimal("0")
+            if parsed.total_jackpot else _ZERO
         )
-        player_invested, all_in_ev_bb_map = _compute_financials(parsed)
+        player_invested, all_in_ev_bb_map = financials
 
         # Append to hands columns (skip during rebuild — hands table is preserved)
         if hands_cols is not None:
@@ -409,11 +415,11 @@ def _insert_arrays(
 
 def _flush_batch(
     db: duckdb.DuckDBPyConnection,
-    prepared: list[tuple[ParsedHand, dict]],
+    prepared: list[tuple[ParsedHand, dict, tuple]],
     rebuild: bool = False,
     in_transaction: bool = False,
 ) -> tuple[int, int, list[str]]:
-    """Bulk-insert a batch of (parsed, player_stats) tuples using PyArrow column-oriented inserts.
+    """Bulk-insert a batch of (parsed, player_stats, financials) tuples using PyArrow column-oriented inserts.
 
     When rebuild=True, skips inserting into the hands table (it already has the data).
     When in_transaction=True, caller manages the transaction — no BEGIN/COMMIT per batch.
@@ -453,7 +459,8 @@ def insert_parsed_hand(db: duckdb.DuckDBPyConnection, parsed: ParsedHand) -> str
     Kept for backward compatibility (used by tests).
     """
     player_stats = compute_stat_flags(parsed)
-    imported, errors, details = _flush_batch(db, [(parsed, player_stats)])
+    financials = _compute_financials(parsed)
+    imported, errors, details = _flush_batch(db, [(parsed, player_stats, financials)])
     if errors:
         raise RuntimeError(details[0])
     return parsed.hand_id
@@ -476,6 +483,51 @@ def _read_uploads(files_data: list[tuple[str, bytes]]) -> list[str]:
         elif fname.endswith(".txt"):
             text_contents.append(raw.decode("utf-8", errors="replace"))
     return text_contents
+
+
+def _parse_batch(
+    hand_texts: list[str],
+    ids: list[str | None],
+    existing_ids: set[str],
+) -> tuple[list[tuple[ParsedHand, dict, tuple]], int, int, list[str], float, float, float]:
+    """Parse+stats+financials for a chunk of hands. Pure CPU, no DB.
+
+    Returns (prepared, new_count, error_count, error_details, t_parse, t_stats, t_equity).
+    """
+    prepared: list[tuple[ParsedHand, dict, tuple]] = []
+    error_count = 0
+    dup_count = 0
+    error_details: list[str] = []
+    t_parse = 0.0
+    t_stats = 0.0
+    t_equity = 0.0
+
+    for hand_text, hid in zip(hand_texts, ids):
+        if hid is None:
+            error_count += 1
+            error_details.append("Could not extract hand ID")
+            continue
+        if hid in existing_ids:
+            dup_count += 1
+            continue
+        existing_ids.add(hid)
+        try:
+            t0 = time.perf_counter()
+            parsed = parse_hand_history(hand_text)
+            t1 = time.perf_counter()
+            stats = compute_stat_flags(parsed)
+            t2 = time.perf_counter()
+            financials = _compute_financials(parsed)
+            t3 = time.perf_counter()
+            t_parse += t1 - t0
+            t_stats += t2 - t1
+            t_equity += t3 - t2
+            prepared.append((parsed, stats, financials))
+        except Exception as e:
+            error_count += 1
+            error_details.append(f"Hand parse error: {str(e)}")
+
+    return prepared, dup_count, error_count, error_details, t_parse, t_stats, t_equity
 
 
 @router.post("/import/files", response_model=ImportResult)
@@ -522,6 +574,7 @@ async def import_files_stream(files: list[UploadFile] = File(...)):
             t_start = time.perf_counter()
             t_parse = 0.0
             t_stats = 0.0
+            t_equity = 0.0
             t_db = 0.0
 
             # Bulk duplicate check
@@ -544,47 +597,56 @@ async def import_files_stream(files: list[UploadFile] = File(...)):
             db.execute("BEGIN TRANSACTION")
             db.execute("SET checkpoint_threshold = '10GB'")
 
-            pending: list[tuple[ParsedHand, dict]] = []
+            # Split hands into BATCH_SIZE chunks for pipeline parallelism
+            chunks: list[tuple[list[str], list[str | None]]] = []
+            for ci in range(0, total, BATCH_SIZE):
+                chunk_texts = all_hands[ci:ci + BATCH_SIZE]
+                chunk_ids = all_ids[ci:ci + BATCH_SIZE]
+                chunks.append((chunk_texts, chunk_ids))
 
-            for i, hand_text in enumerate(all_hands):
-                hid = all_ids[i]
-                if hid is None:
-                    errors += 1
-                    error_details.append("Could not extract hand ID")
-                elif hid in existing_ids:
-                    duplicates += 1
-                else:
-                    existing_ids.add(hid)
-                    try:
+            processed = 0
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                # Start parsing first batch
+                parse_future: Future | None = None
+                if chunks:
+                    parse_future = executor.submit(
+                        _parse_batch, chunks[0][0], chunks[0][1], existing_ids
+                    )
+
+                for ci in range(len(chunks)):
+                    # Wait for current parse result
+                    batch_prepared, batch_dups, batch_errs, batch_details, bp, bs, be = parse_future.result()
+                    duplicates += batch_dups
+                    errors += batch_errs
+                    error_details.extend(batch_details)
+                    t_parse += bp
+                    t_stats += bs
+                    t_equity += be
+
+                    # Submit next batch for parsing (overlaps with DB insert)
+                    if ci + 1 < len(chunks):
+                        parse_future = executor.submit(
+                            _parse_batch, chunks[ci + 1][0], chunks[ci + 1][1], existing_ids
+                        )
+                    else:
+                        parse_future = None
+
+                    # Flush current batch to DB
+                    if batch_prepared:
                         t0 = time.perf_counter()
-                        parsed = parse_hand_history(hand_text)
-                        t1 = time.perf_counter()
-                        stats = compute_stat_flags(parsed)
-                        t2 = time.perf_counter()
-                        t_parse += t1 - t0
-                        t_stats += t2 - t1
-                        pending.append((parsed, stats))
-                    except Exception as e:
-                        errors += 1
-                        error_details.append(f"Hand parse error: {str(e)}")
+                        imp, errs, details = _flush_batch(db, batch_prepared, in_transaction=True)
+                        t_db += time.perf_counter() - t0
+                        imported += imp
+                        errors += errs
+                        error_details.extend(details)
 
-                # Flush batch to DB
-                if len(pending) >= BATCH_SIZE:
-                    t0 = time.perf_counter()
-                    imp, errs, details = _flush_batch(db, pending, in_transaction=True)
-                    t_db += time.perf_counter() - t0
-                    imported += imp
-                    errors += errs
-                    error_details.extend(details)
-                    pending = []
-
-                # Progress update
-                if (i + 1) % 500 == 0 or i == total - 1:
+                    # Progress update (every batch = BATCH_SIZE hands)
+                    processed += len(chunks[ci][0])
                     elapsed = time.perf_counter() - t_start
                     hps = imported / elapsed if elapsed > 0 else 0
                     yield json.dumps({
                         "type": "progress",
-                        "processed": i + 1,
+                        "processed": processed,
                         "total": total,
                         "imported": imported,
                         "duplicates": duplicates,
@@ -592,15 +654,6 @@ async def import_files_stream(files: list[UploadFile] = File(...)):
                         "elapsed_ms": round(elapsed * 1000),
                         "hands_per_sec": round(hps),
                     }) + "\n"
-
-            # Flush remaining
-            if pending:
-                t0 = time.perf_counter()
-                imp, errs, details = _flush_batch(db, pending, in_transaction=True)
-                t_db += time.perf_counter() - t0
-                imported += imp
-                errors += errs
-                error_details.extend(details)
 
             db.execute("COMMIT")
 
@@ -623,6 +676,7 @@ async def import_files_stream(files: list[UploadFile] = File(...)):
             "hands_per_sec": round(hps),
             "parse_ms": round(t_parse * 1000),
             "stats_ms": round(t_stats * 1000),
+            "equity_ms": round(t_equity * 1000),
             "db_ms": round(t_db * 1000),
             "index_ms": round(t_idx * 1000),
         }) + "\n"
@@ -665,7 +719,7 @@ def _process_hands(db, text_contents: list[str]) -> ImportResult:
     db.execute("BEGIN TRANSACTION")
     db.execute("SET checkpoint_threshold = '10GB'")
 
-    pending: list[tuple[ParsedHand, dict]] = []
+    pending: list[tuple[ParsedHand, dict, tuple]] = []
 
     for i, hand_text in enumerate(all_hands):
         hid = all_ids[i]
@@ -680,7 +734,8 @@ def _process_hands(db, text_contents: list[str]) -> ImportResult:
         try:
             parsed = parse_hand_history(hand_text)
             stats = compute_stat_flags(parsed)
-            pending.append((parsed, stats))
+            financials = _compute_financials(parsed)
+            pending.append((parsed, stats, financials))
         except Exception as e:
             total_errors += 1
             error_details.append(f"Hand parse error: {str(e)}")
@@ -751,11 +806,11 @@ async def rebuild_hands():
             imported = 0
             errors = 0
             error_details: list[str] = []
-            pending: list[tuple[ParsedHand, dict]] = []
 
             t_start = time.perf_counter()
             t_parse = 0.0
             t_stats = 0.0
+            t_equity = 0.0
             t_db = 0.0
 
             # Send initial progress so UI shows 0% immediately
@@ -772,37 +827,73 @@ async def rebuild_hands():
             # Suppress auto-checkpoint during bulk load
             db.execute("SET checkpoint_threshold = '10GB'")
 
-            for i, (hand_id, raw_text) in enumerate(all_rows):
-                try:
-                    t0 = time.perf_counter()
-                    parsed = parse_hand_history(raw_text)
-                    t1 = time.perf_counter()
-                    stats = compute_stat_flags(parsed)
-                    t2 = time.perf_counter()
-                    t_parse += t1 - t0
-                    t_stats += t2 - t1
-                    pending.append((parsed, stats))
-                except Exception as e:
-                    errors += 1
-                    error_details.append(f"{hand_id}: {str(e)}")
-                    traceback.print_exc()
+            # Build chunks of raw_text for pipeline parallelism
+            # _parse_batch expects (hand_texts, ids, existing_ids) — for rebuild,
+            # all IDs are valid and there are no duplicates, so we pass dummy IDs.
+            def _rebuild_parse_chunk(rows_chunk):
+                """Parse a chunk of (hand_id, raw_text) rows for rebuild."""
+                prepared = []
+                chunk_errors = 0
+                chunk_error_details = []
+                bp = bs = be = 0.0
+                for hand_id, raw_text in rows_chunk:
+                    try:
+                        t0 = time.perf_counter()
+                        parsed = parse_hand_history(raw_text)
+                        t1 = time.perf_counter()
+                        stats = compute_stat_flags(parsed)
+                        t2 = time.perf_counter()
+                        financials = _compute_financials(parsed)
+                        t3 = time.perf_counter()
+                        bp += t1 - t0
+                        bs += t2 - t1
+                        be += t3 - t2
+                        prepared.append((parsed, stats, financials))
+                    except Exception as e:
+                        chunk_errors += 1
+                        chunk_error_details.append(f"{hand_id}: {str(e)}")
+                        traceback.print_exc()
+                return prepared, chunk_errors, chunk_error_details, bp, bs, be
 
-                # Flush batch to DB
-                if len(pending) >= BATCH_SIZE:
-                    t0 = time.perf_counter()
-                    imp, errs, details = _flush_batch(db, pending, rebuild=True, in_transaction=True)
-                    t_db += time.perf_counter() - t0
-                    imported += imp
-                    errors += errs
-                    error_details.extend(details)
-                    pending = []
+            # Split rows into BATCH_SIZE chunks
+            chunks = [all_rows[ci:ci + BATCH_SIZE] for ci in range(0, total, BATCH_SIZE)]
 
-                if (i + 1) % 500 == 0 or i + 1 == total:
+            processed = 0
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                parse_future: Future | None = None
+                if chunks:
+                    parse_future = executor.submit(_rebuild_parse_chunk, chunks[0])
+
+                for ci in range(len(chunks)):
+                    batch_prepared, batch_errs, batch_details, bp, bs, be = parse_future.result()
+                    errors += batch_errs
+                    error_details.extend(batch_details)
+                    t_parse += bp
+                    t_stats += bs
+                    t_equity += be
+
+                    # Submit next batch for parsing (overlaps with DB insert)
+                    if ci + 1 < len(chunks):
+                        parse_future = executor.submit(_rebuild_parse_chunk, chunks[ci + 1])
+                    else:
+                        parse_future = None
+
+                    # Flush current batch to DB
+                    if batch_prepared:
+                        t0 = time.perf_counter()
+                        imp, errs, details = _flush_batch(db, batch_prepared, rebuild=True, in_transaction=True)
+                        t_db += time.perf_counter() - t0
+                        imported += imp
+                        errors += errs
+                        error_details.extend(details)
+
+                    # Progress update (every batch)
+                    processed += len(chunks[ci])
                     elapsed = time.perf_counter() - t_start
                     hps = imported / elapsed if elapsed > 0 else 0
                     yield json.dumps({
                         "type": "progress",
-                        "processed": i + 1,
+                        "processed": processed,
                         "total": total,
                         "imported": imported,
                         "duplicates": 0,
@@ -810,15 +901,6 @@ async def rebuild_hands():
                         "elapsed_ms": round(elapsed * 1000),
                         "hands_per_sec": round(hps),
                     }) + "\n"
-
-            # Flush remaining
-            if pending:
-                t0 = time.perf_counter()
-                imp, errs, details = _flush_batch(db, pending, rebuild=True, in_transaction=True)
-                t_db += time.perf_counter() - t0
-                imported += imp
-                errors += errs
-                error_details.extend(details)
 
             db.execute("COMMIT")
 
@@ -841,6 +923,7 @@ async def rebuild_hands():
             "hands_per_sec": round(hps),
             "parse_ms": round(t_parse * 1000),
             "stats_ms": round(t_stats * 1000),
+            "equity_ms": round(t_equity * 1000),
             "db_ms": round(t_db * 1000),
             "index_ms": round(t_idx * 1000),
         }) + "\n"

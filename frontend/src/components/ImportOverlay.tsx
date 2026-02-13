@@ -97,7 +97,7 @@ export default function ImportOverlay() {
               </div>
               {result.parse_ms != null && result.imported > 0 && (
                 <div className="text-xs text-text-muted text-center">
-                  parse {result.parse_ms}ms / stats {result.stats_ms}ms / db {result.db_ms}ms
+                  parse {result.parse_ms}ms / stats {result.stats_ms}ms / equity {result.equity_ms ?? 0}ms / db {result.db_ms}ms
                 </div>
               )}
               {result.error_details.length > 0 && (

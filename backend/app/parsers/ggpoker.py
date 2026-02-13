@@ -12,6 +12,15 @@ from datetime import datetime
 
 SITE_ID = 1  # GGPoker
 
+# Module-level constants to avoid per-call allocation
+_ZERO = Decimal("0")
+_STANDARD_BB = [
+    Decimal("0.02"), Decimal("0.05"), Decimal("0.10"), Decimal("0.20"),
+    Decimal("0.25"), Decimal("0.50"), Decimal("1"), Decimal("2"),
+    Decimal("5"), Decimal("10"), Decimal("25"), Decimal("50"),
+    Decimal("100"), Decimal("200"), Decimal("500"),
+]
+
 
 @dataclass
 class ParsedHand:
@@ -40,7 +49,7 @@ class ParsedHand:
     sb_player: str | None
     bb_player: str | None
     raw_text: str
-    cash_drop_received: Decimal = Decimal("0")
+    cash_drop_received: Decimal = _ZERO
 
 
 # Position labels for 6-max (clockwise from BTN)
@@ -151,7 +160,7 @@ RE_COLLECTED_WON_AMOUNT = re.compile(r"(?:collected|won) \(\$([0-9.]+)\)")
 
 
 def _should_skip(line: str) -> bool:
-    return bool(RE_SKIP.search(line))
+    return RE_SKIP.search(line) is not None
 
 
 def _assign_positions(seats: list[dict], button_seat: int, table_size: int) -> None:
@@ -228,18 +237,11 @@ def parse_hand_history(hand_text: str) -> ParsedHand:
     # Strategy: scan for the "posts big blind" line and cross-reference with
     # the header BB. Use the value that matches a standard stake. If both are
     # non-standard, prefer the one closest to a known stake.
-    STANDARD_BB = [
-        Decimal("0.02"), Decimal("0.05"), Decimal("0.10"), Decimal("0.20"),
-        Decimal("0.25"), Decimal("0.50"), Decimal("1"), Decimal("2"),
-        Decimal("5"), Decimal("10"), Decimal("25"), Decimal("50"),
-        Decimal("100"), Decimal("200"), Decimal("500"),
-    ]
 
     # Quick scan for the actual blind posting amounts
     posted_bb = None
     posted_sb = None
-    for line in lines:
-        stripped = line.strip()
+    for stripped in lines:
         if not posted_bb:
             bm = RE_BIG_BLIND.match(stripped)
             if bm:
@@ -254,8 +256,8 @@ def parse_hand_history(hand_text: str) -> ParsedHand:
     # Pick the correct BB by cross-referencing header, posted BB, and posted SB.
     # When header and posted BB disagree but both are standard stakes, use the
     # posted SB as a tiebreaker: the correct BB should be 2x the SB.
-    header_ok = header_bb in STANDARD_BB
-    posted_ok = posted_bb is not None and posted_bb in STANDARD_BB
+    header_ok = header_bb in _STANDARD_BB
+    posted_ok = posted_bb is not None and posted_bb in _STANDARD_BB
     if posted_bb and posted_bb == header_bb:
         bb_amount = header_bb
     elif header_ok and not posted_ok:
@@ -264,14 +266,14 @@ def parse_hand_history(hand_text: str) -> ParsedHand:
         bb_amount = posted_bb
     elif header_ok and posted_ok:
         # Both standard but disagree — use SB values as tiebreaker
-        if posted_sb and posted_sb in STANDARD_BB:
+        if posted_sb and posted_sb in _STANDARD_BB:
             if posted_sb == posted_bb / 2:
                 bb_amount = posted_bb
             elif posted_sb == header_bb / 2:
                 bb_amount = header_bb
             else:
                 bb_amount = header_bb
-        elif header_sb and header_sb in STANDARD_BB:
+        elif header_sb and header_sb in _STANDARD_BB:
             # posted SB is corrupted, use header SB as tiebreaker
             if header_sb == posted_bb / 2:
                 bb_amount = posted_bb
@@ -340,9 +342,9 @@ def parse_hand_history(hand_text: str) -> ParsedHand:
     board_cards = {"flop": [], "turn": [], "river": []}
     uncalled_returns = {}  # username -> amount
     collected = {}  # username -> total amount collected
-    total_rake = Decimal("0")
-    total_jackpot = Decimal("0")
-    cash_drop_received = Decimal("0")
+    total_rake = _ZERO
+    total_jackpot = _ZERO
+    cash_drop_received = _ZERO
     went_to_showdown_players = set()
     in_showdown = False
     in_summary = False
@@ -354,10 +356,7 @@ def parse_hand_history(hand_text: str) -> ParsedHand:
 
     action_order = 0
 
-    for raw_line in lines[line_idx:]:
-        line = raw_line.strip()
-        if not line:
-            continue
+    for line in lines[line_idx:]:
         if _should_skip(line):
             continue
 
@@ -434,7 +433,7 @@ def parse_hand_history(hand_text: str) -> ParsedHand:
             for m_coll in RE_COLLECTED_WON_AMOUNT.finditer(line):
                 amt = Decimal(m_coll.group(1))
                 uname = uname_from_seat or "unknown"
-                collected[uname] = collected.get(uname, Decimal("0")) + amt
+                collected[uname] = collected.get(uname, _ZERO) + amt
                 found_any = True
 
             if found_any:
@@ -516,7 +515,7 @@ def parse_hand_history(hand_text: str) -> ParsedHand:
         if m:
             amt = Decimal(m.group(1))
             uname = m.group(2).strip()
-            uncalled_returns[uname] = uncalled_returns.get(uname, Decimal("0")) + amt
+            uncalled_returns[uname] = uncalled_returns.get(uname, _ZERO) + amt
             continue
 
         # Collected during hand body (before summary) — skip these,
@@ -551,7 +550,7 @@ def parse_hand_history(hand_text: str) -> ParsedHand:
                 actions_by_street[current_street].append({
                     "username": uname,
                     "action": "fold",
-                    "amount": Decimal("0"),
+                    "amount": _ZERO,
                     "is_all_in": False,
                     "order": action_order,
                 })
@@ -565,7 +564,7 @@ def parse_hand_history(hand_text: str) -> ParsedHand:
                 actions_by_street[current_street].append({
                     "username": uname,
                     "action": "check",
-                    "amount": Decimal("0"),
+                    "amount": _ZERO,
                     "is_all_in": False,
                     "order": action_order,
                 })

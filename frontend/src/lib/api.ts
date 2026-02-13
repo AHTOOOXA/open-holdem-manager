@@ -21,6 +21,7 @@ export interface ImportResult {
   hands_per_sec?: number;
   parse_ms?: number;
   stats_ms?: number;
+  equity_ms?: number;
   db_ms?: number;
 }
 
@@ -165,6 +166,7 @@ export interface ImportProgress {
   hands_per_sec?: number;
   parse_ms?: number;
   stats_ms?: number;
+  equity_ms?: number;
   db_ms?: number;
 }
 
@@ -219,6 +221,7 @@ export async function uploadFilesStream(
           hands_per_sec: msg.hands_per_sec,
           parse_ms: msg.parse_ms,
           stats_ms: msg.stats_ms,
+          equity_ms: msg.equity_ms,
           db_ms: msg.db_ms,
         };
       }
@@ -1280,6 +1283,7 @@ export async function rebuildHands(
           hands_per_sec: msg.hands_per_sec,
           parse_ms: msg.parse_ms,
           stats_ms: msg.stats_ms,
+          equity_ms: msg.equity_ms,
           db_ms: msg.db_ms,
         };
       }
