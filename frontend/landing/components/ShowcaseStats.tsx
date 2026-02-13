@@ -7,12 +7,12 @@ export default function ShowcaseStats() {
       <MemoryRouter initialEntries={['/stats']}>
         <Routes>
           <Route path="/stats/:statKey" element={
-            <div className="p-4">
+            <div className="px-2 py-3">
               <StatsPage />
             </div>
           } />
           <Route path="*" element={
-            <div className="p-4">
+            <div className="px-2 py-3">
               <StatsPage />
             </div>
           } />

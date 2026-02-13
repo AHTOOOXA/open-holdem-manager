@@ -7,7 +7,7 @@ export default function ShowcaseGraph() {
       <MemoryRouter initialEntries={['/graph']}>
         <Routes>
           <Route path="*" element={
-            <div className="p-4">
+            <div className="px-2 py-3">
               <GraphPage />
             </div>
           } />
