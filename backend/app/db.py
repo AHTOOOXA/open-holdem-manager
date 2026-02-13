@@ -20,6 +20,7 @@ def get_db() -> duckdb.DuckDBPyConnection:
                 for attempt in range(10):
                     try:
                         _conn = duckdb.connect(str(DB_PATH))
+                        _conn.execute("SET memory_limit = '4GB'")
                         break
                     except duckdb.IOException:
                         if attempt < 9:
