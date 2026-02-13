@@ -43,5 +43,5 @@ endif
 	git add package.json package-lock.json
 	git commit -m "v$(v)"
 	git tag "v$(v)"
-	git push origin main --tags
+	git push origin main "v$(v)"
 	@echo "Release v$(v) triggered. Watch: https://github.com/AHTOOOXA/open-holdem-manager/actions"
