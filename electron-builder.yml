@@ -26,6 +26,7 @@ extraResources:
 
 mac:
   category: public.app-category.utilities
+  artifactName: "${productName}-${arch}.${ext}"
   target:
     - dmg
   # Uncomment and configure for code signing:
@@ -37,6 +38,7 @@ dmg:
   title: "${productName}"
 
 win:
+  artifactName: "${productName}-Setup.${ext}"
   target:
     - nsis
 

@@ -6,8 +6,8 @@ Local poker hand history tracker for GGPoker Rush & Cash. Parses hand histories,
 
 | Platform | Download |
 |----------|----------|
-| macOS (Apple Silicon) | [Open-Holdem-Manager.dmg](https://github.com/AHTOOOXA/open-holdem-manager/releases/latest/download/Open-Holdem-Manager-1.0.0-arm64.dmg) |
-| Windows | [Open-Holdem-Manager-Setup.exe](https://github.com/AHTOOOXA/open-holdem-manager/releases/latest/download/Open-Holdem-Manager-Setup-1.0.0.exe) |
+| macOS (Apple Silicon) | [Open-Holdem-Manager.dmg](https://github.com/AHTOOOXA/open-holdem-manager/releases/latest/download/Open-Holdem-Manager-arm64.dmg) |
+| Windows | [Open-Holdem-Manager-Setup.exe](https://github.com/AHTOOOXA/open-holdem-manager/releases/latest/download/Open-Holdem-Manager-Setup.exe) |
 
 [All releases](https://github.com/AHTOOOXA/open-holdem-manager/releases)
 
