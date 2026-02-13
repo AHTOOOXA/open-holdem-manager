@@ -8,6 +8,7 @@ from app.stat_flags import compute_stat_flags
 from app.player_classification import batch_update_player_types
 
 import duckdb
+import logging
 import traceback
 import zipfile
 import io
@@ -929,6 +930,69 @@ async def rebuild_hands():
         }) + "\n"
 
     return StreamingResponse(generate(), media_type="application/x-ndjson")
+
+
+def _run_rebuild_sync(db) -> None:
+    """Synchronous rebuild for auto-upgrade. Called from db.py at startup (lock already held)."""
+    total = db.execute("SELECT COUNT(*) FROM hands").fetchone()[0]
+    if total == 0:
+        return
+
+    all_rows = db.execute(
+        "SELECT id, raw_text FROM hands ORDER BY played_at ASC, id ASC"
+    ).fetchall()
+
+    _drop_indexes(db)
+    db.execute("DELETE FROM player_classifications")
+    db.execute("DELETE FROM actions")
+    db.execute("DELETE FROM board_cards")
+    db.execute("DELETE FROM hand_players")
+    db.execute("DELETE FROM players")
+    reset_import_cache()
+
+    db.execute("BEGIN TRANSACTION")
+    db.execute("SET checkpoint_threshold = '10GB'")
+
+    imported = 0
+    errors = 0
+    t_start = time.perf_counter()
+
+    chunks = [all_rows[ci:ci + BATCH_SIZE] for ci in range(0, total, BATCH_SIZE)]
+
+    for ci, chunk in enumerate(chunks):
+        prepared = []
+        for hand_id, raw_text in chunk:
+            try:
+                parsed = parse_hand_history(raw_text)
+                stats = compute_stat_flags(parsed)
+                financials = _compute_financials(parsed)
+                prepared.append((parsed, stats, financials))
+            except Exception:
+                errors += 1
+                traceback.print_exc()
+
+        if prepared:
+            imp, errs, _ = _flush_batch(db, prepared, rebuild=True, in_transaction=True)
+            imported += imp
+            errors += errs
+
+        if (ci + 1) % 5 == 0 or ci == len(chunks) - 1:
+            elapsed = time.perf_counter() - t_start
+            hps = imported / elapsed if elapsed > 0 else 0
+            logging.getLogger(__name__).info(
+                "Auto-rebuild: %d/%d hands (%.0f h/s)", imported, total, hps,
+            )
+
+    db.execute("COMMIT")
+    _create_indexes(db)
+    finalize_import(db)
+
+    elapsed = time.perf_counter() - t_start
+    hps = imported / elapsed if elapsed > 0 else 0
+    logging.getLogger(__name__).info(
+        "Auto-rebuild complete: %d hands in %.1fs (%.0f h/s, %d errors)",
+        imported, elapsed, hps, errors,
+    )
 
 
 @router.post("/import/clear")

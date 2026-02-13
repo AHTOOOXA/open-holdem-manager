@@ -1,10 +1,16 @@
 import atexit
 import contextvars
 import duckdb
+import logging
 import os
 import time
 import threading
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+# Bump this when stat_flags.py or parser logic changes to trigger auto-rebuild.
+STAT_VERSION = 1
 
 _data_dir = os.environ.get("OHM_DATA_DIR")
 if _data_dir:
@@ -422,3 +428,32 @@ def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
         if max_id > 0:
             conn.execute(f"DROP SEQUENCE IF EXISTS {seq}")
             conn.execute(f"CREATE SEQUENCE {seq} START {max_id + 1}")
+
+    # Check stat version — trigger rebuild if outdated
+    _check_stat_version(conn)
+
+
+def _check_stat_version(conn: duckdb.DuckDBPyConnection) -> None:
+    """Auto-rebuild stats if STAT_VERSION has been bumped since last run."""
+    row = conn.execute(
+        "SELECT value FROM settings WHERE key = 'stat_version'"
+    ).fetchone()
+    db_version = int(row[0]) if row else 0
+
+    hand_count = conn.execute("SELECT COUNT(*) FROM hands").fetchone()[0]
+    if db_version >= STAT_VERSION or hand_count == 0:
+        return
+
+    logger.info(
+        "Stat version changed (%d → %d), rebuilding %d hands...",
+        db_version, STAT_VERSION, hand_count,
+    )
+
+    from app.api.import_hands import _run_rebuild_sync
+    _run_rebuild_sync(conn)
+
+    conn.execute(
+        "INSERT OR REPLACE INTO settings VALUES ('stat_version', ?)",
+        [str(STAT_VERSION)],
+    )
+    logger.info("Auto-rebuild complete, stat_version set to %d", STAT_VERSION)
