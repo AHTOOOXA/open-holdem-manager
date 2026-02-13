@@ -2,6 +2,12 @@ appId: com.openholdemmanager.app
 productName: Open Holdem Manager
 copyright: Copyright © 2025
 
+publish:
+  provider: github
+
+# No auto-update files (blockmaps, latest*.yml)
+generateUpdatesFilesForAllChannels: false
+
 directories:
   output: release
   buildResources: build
@@ -23,6 +29,7 @@ extraResources:
 
 mac:
   category: public.app-category.utilities
+  generateBlockmap: false
   target:
     - dmg
   # Uncomment and configure for code signing:
@@ -34,6 +41,7 @@ dmg:
   title: "${productName}"
 
 win:
+  generateBlockmap: false
   target:
     - nsis
 
