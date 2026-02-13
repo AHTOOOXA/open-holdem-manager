@@ -8,7 +8,8 @@ A local poker hand history tracker (like Hand2Note / HoldemManager) for GGPoker 
 
 - **Backend**: Python 3.12+, FastAPI >=0.115, DuckDB >=1.1, Pydantic >=2.0, python-multipart
 - **Frontend**: React 19, TypeScript 5.9, Vite 7, TailwindCSS v4 (@theme syntax), shadcn/ui (Radix), Recharts 3, React Router 7
-- **DB**: DuckDB file-based at `data/poker.duckdb` — schema auto-created on first startup
+- **Desktop**: Electron 33, electron-builder 25, electron-updater (auto-updates via GitHub Releases)
+- **DB**: DuckDB file-based — `data/poker.duckdb` in dev, `~/Library/Application Support/open-holdem-manager/data/` (macOS) or `%APPDATA%/open-holdem-manager/data/` (Windows) in packaged mode
 - **No auth, no cloud** — fully local, single-user
 
 ## Running
@@ -22,6 +23,8 @@ make frontend     # frontend only
 
 Backend: `cd backend && uvicorn app.main:app --reload --port 8000`
 Frontend: `cd frontend && npm run dev`
+Electron dev: `make electron-dev` (starts backend + frontend + Electron window)
+Electron build: `make electron-build` (builds .dmg/.exe via PyInstaller + electron-builder)
 Tests: `cd backend && python -m pytest tests/test_parser.py -v`
 Lint: `cd frontend && npm run lint`
 API docs: http://localhost:8000/docs (FastAPI auto-generated Swagger)
@@ -38,7 +41,7 @@ This project uses [shadcn/ui](https://ui.shadcn.com/) (Radix primitives + Tailwi
 
 - **Install new components**: `cd frontend && npx shadcn@latest add <component>`
 - **Always prefer shadcn** over raw HTML inputs, custom dropdowns, or hand-rolled UI. If a shadcn component exists for the pattern, use it.
-- Installed components: Button, Card, Input, Textarea, Select, Popover, Checkbox, RadioGroup, Toggle, ToggleGroup, Calendar, DatePicker (custom wrapper), Table, Sheet, Badge, Separator, Tooltip, Skeleton, Progress, Alert, DropdownMenu, Sidebar
+- Installed components: Button, Card, Input, Textarea, Select, Popover, Checkbox, RadioGroup, Toggle, ToggleGroup, Calendar, DatePicker (custom wrapper), Table, Sheet, Badge, Separator, Tooltip, Skeleton, Progress, Alert, DropdownMenu, Dialog, Sidebar
 - Shared cross-page components: `FilterBar` (stakes/date filters), `EmptyState` (no-data/no-match variants with import CTA), `DatePicker` (Popover + Calendar)
 
 ## Project Structure
@@ -46,8 +49,8 @@ This project uses [shadcn/ui](https://ui.shadcn.com/) (Radix primitives + Tailwi
 ```
 backend/
   app/
-    main.py                 # FastAPI app, CORS (localhost:5173), startup, health
-    db.py                   # DuckDB connection, schema init, sequence sync
+    main.py                 # FastAPI app, CORS (dev only), startup, health, static file serving (packaged)
+    db.py                   # DuckDB connection, schema init, sequence sync, STAT_VERSION auto-rebuild
     models.py               # Pydantic response models
     stats_engine.py         # Computes H2N-style stats from hand_players table
     stat_flags.py           # Site-independent stat flag computation (VPIP, PFR, 3-bet, cbet, etc.)
@@ -59,6 +62,7 @@ backend/
       reports.py            # GET /api/reports/graph, /filter-options, /breakdown
       hands.py              # Hand browser: GET /api/hands, /hands/{id}, tags, notes
       settings.py           # GET/PATCH /api/settings
+  run_server.py             # PyInstaller entry point for bundled backend
   tests/
     test_parser.py          # 11 tests across 5 classes
     fixtures/
@@ -73,15 +77,28 @@ frontend/
   src/
     index.css               # Tailwind v4 @theme with custom dark color palette
     main.tsx                # React entry point (StrictMode)
+    globals.d.ts            # Declares __APP_VERSION__ global (injected by Vite from root package.json)
     App.tsx                 # Router: Upload / Stats / Results / Hands tabs
     lib/api.ts              # Typed API client (fetch wrapper, NDJSON streaming)
+    components/
+      RebuildBanner.tsx     # Sticky footer showing background stat rebuild progress
+      UpdateBanner.tsx      # Sticky footer for auto-update download/install (Electron only)
     pages/
       UploadPage.tsx        # Drag & drop files/folders/ZIPs, progress bar, clear DB
       StatsPage.tsx         # H2N-style stat table with positional columns
       GraphPage.tsx         # Results dashboard: graph (BB/$, EV, SD/NSD, rake lines), stat cards, breakdowns by stakes/month/position
       HandsPage.tsx         # Hand browser: paginated list, filters (position/stakes/result/tags/date), detail drawer, tagging, notes
-  vite.config.ts            # React plugin, Tailwind v4 plugin, API proxy to :8000
+  vite.config.ts            # React plugin, Tailwind v4 plugin, API proxy to :8000, ELECTRON=1 base path
   tsconfig.app.json         # Strict mode, ES2022, path alias @/*
+
+electron/
+  main.js                   # Main process — spawns backend, finds free port, opens window, auto-updater
+  preload.js                # Preload — exposes platform, version, auto-update IPC to renderer
+
+package.json                # Root — Electron 33, electron-builder 25, electron-updater, build scripts
+electron-builder.yml        # Packages .dmg (macOS), .exe/NSIS (Windows), .AppImage (Linux)
+release-workflow.yml        # GitHub Actions: builds on v* tags, publishes to GitHub Releases
+.github/workflows/release.yml  # Active copy of release-workflow.yml
 ```
 
 ## Database Schema (DuckDB)
@@ -105,13 +122,13 @@ Key tables in `backend/app/db.py`:
 - **board_cards** — community cards per street per hand
 - **hand_tags** — hand tagging (hand_id, tag, created_at)
 - **hand_notes** — per-hand notes (hand_id, note, updated_at)
-- **settings** — key/value (hero_username, hero_site)
+- **settings** — key/value (hero_username, hero_site, stat_version)
 
 ## API Endpoints
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/health` | Returns `{status, hands}` |
+| GET | `/api/health` | Returns `{status, hands, rebuilding, rebuild_progress?}` |
 | POST | `/api/import/files` | Synchronous multipart upload (50MB limit) |
 | POST | `/api/import/files/stream` | Streaming upload, returns NDJSON (`start`/`progress`/`done`) |
 | POST | `/api/import/clear` | Truncate all hand data |
@@ -247,6 +264,64 @@ Run: `cd backend && python -m pytest tests/test_parser.py -v`
 
 - 13,402 real GGPoker Rush & Cash hands imported successfully (1 had null byte corruption, now fixed)
 - All API endpoints verified: health, import, stats, graph, settings, clear
+
+## Electron Desktop App
+
+### Architecture
+
+In dev mode (`app.isPackaged === false`):
+- Backend runs separately via `make backend` (port 8000)
+- Frontend runs separately via `make frontend` (Vite dev server, port 5173)
+- Electron opens `http://localhost:5173`, DevTools auto-open
+- CORS middleware enabled (frontend ≠ backend origin)
+
+In production (packaged app):
+- Electron finds a free port, spawns the PyInstaller-bundled backend on it
+- Backend serves the built frontend via `OHM_STATIC_DIR` (FastAPI static files + SPA fallback)
+- All on one origin — no CORS needed
+- Data stored in `app.getPath('userData')/data/` (`~/Library/Application Support/open-holdem-manager/data/` on macOS, `%APPDATA%/open-holdem-manager/data/` on Windows)
+
+### Key Environment Variables
+
+- `OHM_DATA_DIR` — overrides DuckDB location (set by Electron to `userData/data/`)
+- `OHM_STATIC_DIR` — enables static file serving in `main.py` (set by Electron to `resources/frontend/`)
+- `ELECTRON=1` — tells Vite to use relative `base: './'` for asset paths in production builds
+
+### Building & Releasing
+
+```bash
+make electron-build         # Local: builds frontend + PyInstaller backend + electron-builder
+npm version patch           # Bumps package.json version, creates git tag
+git push origin main --tags # Triggers GitHub Actions release workflow
+```
+
+The CI workflow (`.github/workflows/release.yml`) builds on macOS + Windows in parallel, produces `.dmg` and `.exe`, and publishes them to GitHub Releases. electron-builder creates the release using the version from `package.json`.
+
+**Important**: The git tag version and `package.json` version must match — electron-builder uses `package.json` for the release tag name (`v{version}`).
+
+### Auto-Update (electron-updater)
+
+- On launch and every 4 hours, checks GitHub Releases for newer versions
+- Downloads in background, shows progress in `UpdateBanner.tsx` (sticky footer)
+- User clicks "Restart to update" to apply
+- IPC channels: `update-available`, `download-progress`, `update-downloaded` (main → renderer)
+- IPC handlers: `install-update`, `check-for-updates`, `get-app-version` (renderer → main)
+- Preload exposes these via `window.electronAPI`
+- Settings dropdown shows current version and "Check for Updates" button
+
+### Auto-Rebuild on Stat Version Bump
+
+When `stat_flags.py` or parser logic changes:
+1. Bump `STAT_VERSION` constant in `backend/app/db.py`
+2. On next startup, `_check_stat_version()` compares DB's `stat_version` setting vs code constant
+3. If outdated, triggers a background thread rebuild (`_bg_rebuild`) of all hands from stored `raw_text`
+4. `RebuildBanner.tsx` polls `/api/health` which returns `rebuilding: true` + progress during rebuild
+5. App remains usable during rebuild (read queries work, writes blocked by `_lock`)
+6. After completion, updates `stat_version` in settings table
+
+### macOS Code Signing
+
+Not configured yet. Users must run `xattr -cr /Applications/Open\ Holdem\ Manager.app` after install. To enable signing, uncomment and configure `identity` and `notarize` in `electron-builder.yml` (requires Apple Developer account).
 
 ## Reference Repos
 
