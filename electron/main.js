@@ -200,7 +200,8 @@ function setupAutoUpdater() {
 }
 
 ipcMain.handle('install-update', () => {
-  autoUpdater.quitAndInstall();
+  // Defer so the IPC response completes before the app quits
+  setTimeout(() => autoUpdater.quitAndInstall(false, true), 100);
 });
 
 ipcMain.handle('get-app-version', () => app.getVersion());
