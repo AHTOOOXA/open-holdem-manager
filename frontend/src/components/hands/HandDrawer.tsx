@@ -23,6 +23,22 @@ import {
 
 type ViewMode = 'visual' | 'text' | 'raw';
 
+/* Shared meta header used in visual + text views */
+function MetaHeader({ hand }: { hand: HandDetail }) {
+  return (
+    <div className="flex items-center gap-2 mb-3">
+      <span className="text-[15px] font-bold text-text">
+        {formatStakes(hand.stakes)}
+      </span>
+      <span className="text-[13px] text-text-muted">
+        {new Date(hand.played_at).toLocaleString()}
+        {' \u2022 '}
+        {hand.table_size}-max
+        {hand.table_name && <>{' \u2022 '}{hand.table_name}</>}
+      </span>
+    </div>
+  );
+}
 
 export default function HandDrawer({
   handId,
@@ -99,104 +115,91 @@ export default function HandDrawer({
 
   return (
     <Sheet open={true} onOpenChange={(open) => { if (!open) onClose(); }}>
-      <SheetContent side="right" showCloseButton={false} className={`w-full !max-w-none p-0 flex flex-col ${viewMode === 'visual' ? 'sm:w-[880px]' : 'sm:w-[640px]'}`}>
+      <SheetContent side="right" showCloseButton={false} className="w-full !max-w-none p-0 flex flex-col sm:w-[880px]">
         {/* Header */}
-        <SheetHeader className="px-4 py-2 border-b border-border shrink-0">
+        <SheetHeader className="px-4 py-2.5 border-b border-border shrink-0">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={onClose}>
+              <Button variant="ghost" size="sm" className="h-8 text-sm" onClick={onClose}>
                 &times;
               </Button>
-              <Button variant="outline" size="sm" className="h-7 text-xs" onClick={onPrev}>
+              <Button variant="outline" size="sm" className="h-8 text-sm" onClick={onPrev}>
                 &#9668; Prev
               </Button>
-              <Button variant="outline" size="sm" className="h-7 text-xs" onClick={onNext}>
+              <Button variant="outline" size="sm" className="h-8 text-sm" onClick={onNext}>
                 Next &#9658;
               </Button>
             </div>
             <div className="flex items-center gap-3">
-              <SheetTitle className="text-[11px] text-text-muted font-mono font-normal">{handId}</SheetTitle>
+              <SheetTitle className="text-[12px] text-text-muted font-mono font-normal">{handId}</SheetTitle>
               <ToggleGroup
                 type="single"
                 value={viewMode}
                 onValueChange={(v) => v && setViewMode(v as ViewMode)}
                 className="gap-0"
               >
-                <ToggleGroupItem value="visual" className="h-7 px-2 text-[11px]">Visual</ToggleGroupItem>
-                <ToggleGroupItem value="text" className="h-7 px-2 text-[11px]">Text</ToggleGroupItem>
-                <ToggleGroupItem value="raw" className="h-7 px-2 text-[11px]">Raw</ToggleGroupItem>
+                <ToggleGroupItem value="visual" className="h-8 px-2.5 text-[12px]">Visual</ToggleGroupItem>
+                <ToggleGroupItem value="text" className="h-8 px-2.5 text-[12px]">Text</ToggleGroupItem>
+                <ToggleGroupItem value="raw" className="h-8 px-2.5 text-[12px]">Raw</ToggleGroupItem>
               </ToggleGroup>
             </div>
           </div>
         </SheetHeader>
 
         {/* Body */}
-        <div className="flex-1 overflow-y-auto px-4 py-3">
+        <div className="flex-1 overflow-y-auto px-5 py-4">
           {loading ? (
             <p className="text-text-muted text-sm">Loading...</p>
           ) : !hand ? (
             <p className="text-text-muted text-sm">Hand not found.</p>
           ) : (
             <>
-              {/* View mode content */}
+              {/* ── Raw view ─────────────────────────────────────── */}
               {viewMode === 'raw' ? (
-                <pre className="text-[12px] font-mono text-text whitespace-pre-wrap break-words bg-background rounded p-3 border border-border">
-                  {hand.raw_text || 'No raw text available.'}
-                </pre>
+                <>
+                  <MetaHeader hand={hand} />
+                  <pre className="text-[13px] font-mono text-text whitespace-pre-wrap break-words bg-surface rounded-lg p-4 border border-border/40 leading-relaxed">
+                    {hand.raw_text || 'No raw text available.'}
+                  </pre>
+                  <div className="mt-4" />
+                </>
+
+              /* ── Visual view ───────────────────────────────────── */
               ) : viewMode === 'visual' ? (
                 <>
-                  {/* Meta */}
-                  <div className="mb-2">
-                    <div className="flex items-center gap-2">
-                      <span className="text-[13px] font-semibold text-text">
-                        {formatStakes(hand.stakes)}
-                      </span>
-                      <span className="text-[11px] text-text-muted">
-                        {new Date(hand.played_at).toLocaleString()}
-                        {' \u2022 '}
-                        {hand.table_size}-max
-                      </span>
-                    </div>
-                  </div>
+                  <MetaHeader hand={hand} />
                   <HandReplayer hand={hand} />
-                  <div className="mt-5" />
+                  <div className="mt-4" />
                 </>
+
+              /* ── Text view ─────────────────────────────────────── */
               ) : (
                 <>
-                  {/* Meta */}
-                  <div className="mb-3">
-                    <div className="text-[14px] font-semibold text-text">
-                      {formatStakes(hand.stakes)}
-                    </div>
-                    <div className="text-[12px] text-text-muted">
-                      {new Date(hand.played_at).toLocaleString()}
-                      {' \u2022 '}
-                      {hand.table_size}-max
-                      {hand.table_name && <> {' \u2022 '} {hand.table_name}</>}
-                    </div>
-                  </div>
+                  <MetaHeader hand={hand} />
 
-                  {/* Players */}
-                  <div className="mb-3">
+                  {/* Players — position-first */}
+                  <div className="mb-4">
                     <Table>
                       <TableHeader>
-                        <TableRow className="text-[12px]">
-                          <TableHead className="py-0.5 px-1 h-auto">Seat</TableHead>
-                          <TableHead className="py-0.5 px-1 h-auto">Pos</TableHead>
-                          <TableHead className="py-0.5 px-1 h-auto">Player</TableHead>
-                          <TableHead className="py-0.5 px-1 h-auto text-right">Stack</TableHead>
-                          <TableHead className="py-0.5 px-1 h-auto">Cards</TableHead>
+                        <TableRow className="text-[13px]">
+                          <TableHead className="py-1.5 px-2 h-auto w-[60px]">Pos</TableHead>
+                          <TableHead className="py-1.5 px-2 h-auto">Player</TableHead>
+                          <TableHead className="py-1.5 px-2 h-auto text-right">Stack</TableHead>
+                          <TableHead className="py-1.5 px-2 h-auto">Cards</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
                         {hand.players.map((p) => (
                           <TableRow
                             key={p.seat}
-                            className={`text-[12px] ${p.is_hero ? 'bg-primary/5' : ''}`}
+                            className={`text-[13px] ${p.is_hero ? 'bg-primary/5' : ''}`}
                           >
-                            <TableCell className="py-0.5 px-1 font-mono text-text-muted">{p.seat}</TableCell>
-                            <TableCell className="py-0.5 px-1 font-mono">{p.position}</TableCell>
-                            <TableCell className={`py-0.5 px-1 ${p.is_hero ? 'font-semibold text-primary' : 'text-text'}`}>
+                            <TableCell className="py-1.5 px-2">
+                              <span className="text-[12px] font-mono font-bold text-text bg-surface-hover rounded px-2 py-0.5">
+                                {p.position}
+                              </span>
+                            </TableCell>
+                            <TableCell className={`py-1.5 px-2 ${p.is_hero ? 'font-semibold text-primary' : 'text-text-muted'}`}>
                               <span className="flex items-center gap-1.5">
                                 {p.username}
                                 {!p.is_hero && p.player_type && p.player_type !== 'UNK' && (
@@ -204,8 +207,10 @@ export default function HandDrawer({
                                 )}
                               </span>
                             </TableCell>
-                            <TableCell className="py-0.5 px-1 text-right font-mono">{p.stack_bb.toFixed(1)}</TableCell>
-                            <TableCell className="py-0.5 px-1">
+                            <TableCell className="py-1.5 px-2 text-right font-mono">
+                              {p.stack_bb.toFixed(1)}
+                            </TableCell>
+                            <TableCell className="py-1.5 px-2">
                               <CardPair card1={p.card1} card2={p.card2} />
                             </TableCell>
                           </TableRow>
@@ -218,15 +223,15 @@ export default function HandDrawer({
                   <HandActionsDisplay actions={hand.actions} board={hand.board} />
 
                   {/* Result */}
-                  <div className={`my-3 text-[14px] font-bold font-mono ${heroWonBb >= 0 ? 'text-green' : 'text-red'}`}>
+                  <div className={`mt-1 mb-4 text-[14px] font-bold font-mono ${heroWonBb >= 0 ? 'text-green' : 'text-red'}`}>
                     Hero {heroWonBb >= 0 ? 'wins' : 'loses'} {Math.abs(heroWonBb).toFixed(1)} BB
                   </div>
                 </>
               )}
 
-              {/* Tags — visible in all view modes */}
+              {/* ── Tags (all views) ─────────────────────────────── */}
               <div className="mb-3">
-                <div className="flex items-center gap-1.5 flex-wrap">
+                <div className="flex items-center gap-2 flex-wrap">
                   {hand.tags.map((t) => (
                     <TagPill key={t} tag={t} onRemove={() => handleRemoveTag(t)} />
                   ))}
@@ -238,20 +243,20 @@ export default function HandDrawer({
                 </div>
               </div>
 
-              {/* Notes — visible in all view modes */}
+              {/* ── Notes (all views) ────────────────────────────── */}
               <div>
-                <div className="text-[11px] uppercase tracking-wider text-text-muted mb-1">Notes</div>
+                <div className="text-[12px] uppercase tracking-wider text-text-muted mb-1.5">Notes</div>
                 <Textarea
                   value={note}
                   onChange={(e) => setNote(e.target.value)}
                   rows={3}
                   placeholder="Add notes about this hand..."
-                  className="text-[12px] resize-y"
+                  className="text-[13px] resize-y"
                 />
-                <div className="flex justify-end mt-1">
+                <div className="flex justify-end mt-1.5">
                   <Button
                     size="sm"
-                    className="h-6 text-xs"
+                    className="h-7 text-xs"
                     onClick={handleNoteSave}
                     disabled={noteSaving || note === (hand.note || '')}
                   >

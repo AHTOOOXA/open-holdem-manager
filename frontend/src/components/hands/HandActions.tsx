@@ -1,14 +1,16 @@
 import type { HandAction, BoardCards } from '@/lib/api';
-import { BoardDisplay } from './CardDisplay';
+import { CardBoxRow } from './CardDisplay';
 
-function formatAction(a: HandAction): string {
-  let text = a.action;
-  if (a.amount_bb !== null && a.amount_bb !== undefined) {
-    text += ` ${a.amount_bb.toFixed(1)} BB`;
-  }
-  if (a.is_all_in) text += ' (all-in)';
-  return text;
-}
+const ACTION_COLORS: Record<string, string> = {
+  fold: 'text-text-muted',
+  check: 'text-text',
+  call: 'text-green',
+  bet: 'text-yellow-400',
+  raise: 'text-red',
+  post_sb: 'text-text-muted',
+  post_bb: 'text-text-muted',
+  post_ante: 'text-text-muted',
+};
 
 function StreetSection({
   label,
@@ -21,34 +23,40 @@ function StreetSection({
 }) {
   return (
     <div className="mb-3">
-      <div className="flex items-center gap-2 mb-1 text-[11px] uppercase tracking-wider text-text-muted border-b border-border/40 pb-1">
-        <span className="font-bold">{label}</span>
-        {boardCards.length > 0 && (
-          <span className="text-[13px] normal-case tracking-normal">
-            [<BoardDisplay cards={boardCards} />]
-          </span>
-        )}
+      {/* Street header with board cards */}
+      <div className="flex items-center gap-3 mb-1.5 pb-1 border-b border-border/30">
+        <span className="text-[12px] font-bold uppercase tracking-wider text-text-muted">
+          {label}
+        </span>
+        {boardCards.length > 0 && <CardBoxRow cards={boardCards} />}
       </div>
+      {/* Action lines — position badge first, then name, then action */}
       {actions.length > 0 ? (
         <div className="space-y-0.5">
           {actions.map((a, i) => (
-            <div
-              key={i}
-              className={`text-[13px] font-mono leading-snug ${
-                a.is_hero ? 'text-primary' : a.action === 'fold' ? 'text-text-muted' : 'text-text'
-              }`}
-            >
-              <span className={a.is_hero ? 'font-semibold' : ''}>
+            <div key={i} className="text-[13px] font-mono leading-relaxed flex items-center gap-1.5">
+              <span className="text-[11px] font-mono font-bold text-text bg-surface-hover rounded px-1.5 py-px shrink-0 min-w-[28px] text-center">
+                {a.position}
+              </span>
+              <span className={`truncate max-w-[100px] ${a.is_hero ? 'text-primary font-semibold' : 'text-text-muted'}`}>
                 {a.player}
               </span>
-              <span className="text-text-muted"> ({a.position})</span>
-              {': '}
-              <span className={a.is_all_in ? 'text-red' : ''}>{formatAction(a)}</span>
+              <span className={ACTION_COLORS[a.action] || 'text-text'}>
+                {a.action}
+              </span>
+              {a.amount_bb !== null && a.amount_bb !== undefined && (
+                <span className="text-text">{a.amount_bb.toFixed(1)} BB</span>
+              )}
+              {a.is_all_in && (
+                <span className="text-red text-[10px] font-bold uppercase tracking-wide">
+                  all-in
+                </span>
+              )}
             </div>
           ))}
         </div>
       ) : (
-        <div className="text-[12px] text-text-muted/50 italic">No action</div>
+        <div className="text-[12px] text-text-muted/40 italic">No action</div>
       )}
     </div>
   );

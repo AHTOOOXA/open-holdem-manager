@@ -31,7 +31,6 @@ export default function PlayerSeat({
     ? `${player.stack.toFixed(1)}`
     : `$${(player.stack * bbAmount).toFixed(2)}`;
 
-  // Show tail of username for non-hero (hashes are more distinguishable by suffix)
   const displayName = player.isHero
     ? 'Hero'
     : player.username.length > 8
@@ -40,7 +39,7 @@ export default function PlayerSeat({
 
   return (
     <div className={`flex flex-col items-center gap-0.5 w-[130px] ${opacityClass}`}>
-      {/* Cards — fixed height slot to prevent wobble when cards appear/disappear */}
+      {/* Cards */}
       <div className="flex gap-[3px] h-[44px] items-end mb-0.5">
         {isFolded && !isShowdown ? null : hasCards ? (
           <>
@@ -50,22 +49,23 @@ export default function PlayerSeat({
         ) : null}
       </div>
 
-      {/* Info box — name, position, stack only */}
+      {/* Info box — position first, then name, then stack */}
       <div className={`rounded-lg border px-2.5 py-1.5 text-center w-full bg-surface/90 backdrop-blur-sm ${borderClass}`}>
-        <div className="flex items-center justify-center gap-1">
-          <span
-            className={`text-[14px] font-semibold truncate leading-tight ${
-              player.isHero ? 'text-primary' : 'text-text'
-            }`}
-            title={player.username}
-          >
-            {displayName}
-          </span>
-          <span className="text-[11px] font-mono text-text-muted bg-surface-hover rounded px-1 leading-tight">
-            {player.position}
-          </span>
+        <div className="text-[14px] font-bold text-text leading-tight flex items-center justify-center gap-1">
+          {player.position}
+          {player.position === 'BTN' && (
+            <span className="w-[15px] h-[15px] rounded-full bg-yellow-400 text-black text-[8px] font-black inline-flex items-center justify-center shrink-0">
+              D
+            </span>
+          )}
         </div>
-        <div className="text-[13px] font-mono text-text-muted leading-tight">
+        <div
+          className={`text-[11px] truncate leading-tight ${player.isHero ? 'text-primary font-semibold' : 'text-text-muted'}`}
+          title={player.username}
+        >
+          {displayName}
+        </div>
+        <div className="text-[12px] font-mono text-text-muted leading-tight">
           {stackDisplay}
         </div>
       </div>
