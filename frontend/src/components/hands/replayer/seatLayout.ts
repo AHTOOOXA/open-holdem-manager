@@ -16,9 +16,9 @@ export function getSeatPositions(
 ): SeatPosition[] {
   const cx = containerWidth / 2;
   const cy = containerHeight / 2;
-  // Ellipse radii — inset enough that ~110px-wide seats stay inside container
+  // Ellipse radii — push seats closer to the edge of the container
   const rx = Math.max(0, containerWidth / 2 - 65);
-  const ry = Math.max(0, containerHeight / 2 - 50);
+  const ry = Math.max(0, containerHeight / 2 - 45);
 
   const positions: SeatPosition[] = [];
 
@@ -31,4 +31,25 @@ export function getSeatPositions(
   }
 
   return positions;
+}
+
+/**
+ * Returns a position between the seat and the table center,
+ * for rendering bet chips and action labels on the felt.
+ */
+export function getBetPosition(
+  seat: SeatPosition,
+  containerWidth: number,
+  containerHeight: number,
+): SeatPosition {
+  const cx = containerWidth / 2;
+  const cy = containerHeight / 2;
+  // Side seats: less horizontal pull so bets stay toward sides
+  const relX = Math.abs(seat.x - cx) / (containerWidth / 2);
+  const tx = 0.45 - 0.15 * relX; // sides ~0.30, top/bottom ~0.45
+  const ty = 0.45;
+  return {
+    x: Math.round(seat.x + (cx - seat.x) * tx),
+    y: Math.round(seat.y + (cy - seat.y) * ty),
+  };
 }

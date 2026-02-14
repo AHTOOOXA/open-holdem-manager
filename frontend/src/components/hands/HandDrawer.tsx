@@ -99,7 +99,7 @@ export default function HandDrawer({
 
   return (
     <Sheet open={true} onOpenChange={(open) => { if (!open) onClose(); }}>
-      <SheetContent side="right" className={`w-full !max-w-none p-0 flex flex-col [&>button:first-child]:hidden ${viewMode === 'visual' ? 'sm:w-[880px]' : 'sm:w-[640px]'}`}>
+      <SheetContent side="right" showCloseButton={false} className={`w-full !max-w-none p-0 flex flex-col ${viewMode === 'visual' ? 'sm:w-[880px]' : 'sm:w-[640px]'}`}>
         {/* Header */}
         <SheetHeader className="px-4 py-2 border-b border-border shrink-0">
           <div className="flex items-center justify-between">
@@ -159,10 +159,7 @@ export default function HandDrawer({
                     </div>
                   </div>
                   <HandReplayer hand={hand} />
-                  {/* Result */}
-                  <div className={`my-3 text-[14px] font-bold font-mono ${heroWonBb >= 0 ? 'text-green' : 'text-red'}`}>
-                    Hero {heroWonBb >= 0 ? 'wins' : 'loses'} {Math.abs(heroWonBb).toFixed(1)} BB
-                  </div>
+                  <div className="mt-5" />
                 </>
               ) : (
                 <>

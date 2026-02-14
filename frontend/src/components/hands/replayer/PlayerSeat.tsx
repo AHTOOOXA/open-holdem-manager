@@ -1,22 +1,5 @@
 import type { PlayerSnapshot } from './useReplayerState';
 
-const ACTION_COLORS: Record<string, string> = {
-  Fold: 'text-text-muted',
-  Check: 'text-text',
-  Call: 'text-green',
-  Bet: 'text-yellow-400',
-  Raise: 'text-red',
-};
-
-function getActionColor(action: string | null): string {
-  if (!action) return 'text-text-muted';
-  for (const [key, color] of Object.entries(ACTION_COLORS)) {
-    if (action.startsWith(key)) return color;
-  }
-  if (action.startsWith('Won')) return 'text-green';
-  return 'text-text';
-}
-
 export default function PlayerSeat({
   player,
   isActive,
@@ -35,72 +18,62 @@ export default function PlayerSeat({
   const hasCards = player.card1 && player.card2;
 
   const borderClass = isActive
-    ? 'ring-2 ring-primary'
+    ? 'ring-2 ring-white/70'
     : isWinner
     ? 'ring-2 ring-green'
     : player.isHero
-    ? 'border-primary/50'
-    : 'border-border/50';
+    ? 'border-primary/60'
+    : 'border-border/40';
 
-  const opacityClass = isFolded && !isShowdown ? 'opacity-30' : '';
+  const opacityClass = isFolded && !isShowdown ? 'opacity-25' : '';
 
   const stackDisplay = showBb
     ? `${player.stack.toFixed(1)}`
     : `$${(player.stack * bbAmount).toFixed(2)}`;
 
+  // Show tail of username for non-hero (hashes are more distinguishable by suffix)
+  const displayName = player.isHero
+    ? 'Hero'
+    : player.username.length > 8
+    ? '\u2026' + player.username.slice(-6)
+    : player.username;
+
   return (
-    <div className={`flex flex-col items-center gap-0.5 w-[110px] ${opacityClass}`}>
-      {/* Cards */}
-      <div className="flex gap-[2px] h-[32px] mb-0.5">
+    <div className={`flex flex-col items-center gap-0.5 w-[130px] ${opacityClass}`}>
+      {/* Cards — fixed height slot to prevent wobble when cards appear/disappear */}
+      <div className="flex gap-[3px] h-[44px] items-end mb-0.5">
         {isFolded && !isShowdown ? null : hasCards ? (
           <>
             <SeatCard card={player.card1!} />
             <SeatCard card={player.card2!} />
           </>
-        ) : !isFolded ? (
-          <>
-            <SeatCardBack />
-            <SeatCardBack />
-          </>
         ) : null}
       </div>
 
-      {/* Info box */}
-      <div className={`rounded-md border px-2 py-1 text-center w-full ${borderClass} bg-surface`}>
+      {/* Info box — name, position, stack only */}
+      <div className={`rounded-lg border px-2.5 py-1.5 text-center w-full bg-surface/90 backdrop-blur-sm ${borderClass}`}>
         <div className="flex items-center justify-center gap-1">
           <span
-            className={`text-[13px] font-medium truncate max-w-[70px] leading-tight ${
+            className={`text-[14px] font-semibold truncate leading-tight ${
               player.isHero ? 'text-primary' : 'text-text'
             }`}
             title={player.username}
           >
-            {player.isHero ? 'Hero' : player.username}
+            {displayName}
           </span>
-          <span className="text-[10px] font-mono text-text-muted bg-background/60 rounded px-0.5 leading-tight">
+          <span className="text-[11px] font-mono text-text-muted bg-surface-hover rounded px-1 leading-tight">
             {player.position}
           </span>
         </div>
-        <div className="text-[11px] font-mono text-text-muted leading-tight">
+        <div className="text-[13px] font-mono text-text-muted leading-tight">
           {stackDisplay}
         </div>
-        {player.lastAction && (
-          <div className={`text-[11px] font-semibold leading-tight ${getActionColor(player.lastAction)}`}>
-            {player.lastAction}
-          </div>
-        )}
       </div>
-
-      {/* Bet chip */}
-      {player.currentBet > 0 && !isShowdown && (
-        <div className="text-[11px] font-mono font-bold text-yellow-400 bg-background/80 rounded-full px-1.5 py-0.5 border border-yellow-400/30">
-          {showBb ? player.currentBet.toFixed(1) : `$${(player.currentBet * bbAmount).toFixed(2)}`}
-        </div>
-      )}
     </div>
   );
 }
 
-/* Card variants sized for seat view */
+/* ── Card variants sized for seat view ─────────────────────────────── */
 
 const SUIT_BG: Record<string, string> = {
   s: 'oklch(0.268 0.007 34.298)',
@@ -109,28 +82,26 @@ const SUIT_BG: Record<string, string> = {
   c: '#16a34a',
 };
 
+const SUIT_SYMBOL: Record<string, string> = {
+  s: '\u2660',
+  h: '\u2665',
+  d: '\u2666',
+  c: '\u2663',
+};
+
 function SeatCard({ card }: { card: string }) {
   if (!card || card.length < 2) return null;
   const rank = card.slice(0, -1).toUpperCase();
   const suit = card.slice(-1).toLowerCase();
   const bg = SUIT_BG[suit] || 'oklch(0.268 0.007 34.298)';
+  const symbol = SUIT_SYMBOL[suit] || '';
   return (
     <span
-      className="inline-flex items-center justify-center w-[28px] h-[32px] rounded-[3px] text-[16px] font-bold text-white leading-none shrink-0"
+      className="inline-flex flex-col items-center justify-center w-[36px] h-[44px] rounded-[4px] text-white leading-none shrink-0 shadow-md"
       style={{ backgroundColor: bg }}
     >
-      {rank}
-    </span>
-  );
-}
-
-function SeatCardBack() {
-  return (
-    <span
-      className="inline-flex items-center justify-center w-[28px] h-[32px] rounded-[3px] shrink-0 border border-border/60"
-      style={{ backgroundColor: 'oklch(0.22 0.005 260)' }}
-    >
-      <span className="text-[9px] text-text-muted/40 font-bold select-none">?</span>
+      <span className="text-[18px] font-bold leading-none">{rank}</span>
+      <span className="text-[12px] leading-none opacity-80">{symbol}</span>
     </span>
   );
 }
