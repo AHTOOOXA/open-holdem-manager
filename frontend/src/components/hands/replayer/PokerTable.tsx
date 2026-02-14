@@ -7,10 +7,10 @@ import PlayerSeat from './PlayerSeat';
 
 const ACTION_COLORS: Record<string, string> = {
   Fold: 'text-text-muted',
-  Check: 'text-text',
-  Call: 'text-green',
-  Bet: 'text-yellow-400',
-  Raise: 'text-red',
+  Check: 'text-text-muted',
+  Call: 'text-text',
+  Bet: 'text-blue',
+  Raise: 'text-yellow',
   Won: 'text-green',
 };
 

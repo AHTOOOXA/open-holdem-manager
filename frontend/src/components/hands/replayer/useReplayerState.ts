@@ -250,7 +250,7 @@ function buildSnapshots(hand: HandDetail): Snapshot[] {
 
   const finalBoard = buildBoard(hand.board, 'river');
   snapshots.push({
-    pot: 0,
+    pot,
     players: showdownPlayers.map(p => ({ ...p })),
     board: finalBoard.length > 0 ? finalBoard : buildBoard(hand.board, 'flop'),
     activePlayerIdx: null,
