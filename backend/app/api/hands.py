@@ -194,40 +194,41 @@ def list_hands(
     ).fetchall()
 
     actions_map: dict[str, dict[str, dict]] = {}
+    _ACT_MAP = {"raise": "R", "bet": "B", "call": "C", "check": "X", "fold": "F"}
+    _BLIND_TYPES = {"sb", "bb", "ante", "straddle"}
 
-    if action_rows:
-        _ACT_MAP = {"raise": "R", "bet": "B", "call": "C", "check": "X", "fold": "F"}
-        _BLIND_TYPES = {"sb", "bb", "ante", "straddle"}
+    for hid, street, action_type, amount_bb, pid in action_rows:
+        hand_acts = actions_map.setdefault(hid, {
+            s: {"actions": [], "pot": 0} for s in _STREETS
+        })
+        amt_bb_f = float(amount_bb) if amount_bb is not None else 0
+        if action_type in _BLIND_TYPES:
+            hand_acts["preflop"]["pot"] += amt_bb_f
+            continue
+        abbr = _ACT_MAP.get(action_type)
+        if not abbr or street not in hand_acts:
+            continue
+        v = round(amt_bb_f, 1) if amt_bb_f else None
+        hand_acts[street]["actions"].append(ActionItem(a=abbr, v=v, h=(pid == hero_id)))
 
-        for hid, street, action_type, amount_bb, pid in action_rows:
-            hand_acts = actions_map.setdefault(hid, {
-                s: {"actions": [], "pot": 0} for s in _STREETS
-            })
-            amt_bb_f = float(amount_bb) if amount_bb is not None else 0
-            if action_type in _BLIND_TYPES:
-                hand_acts["preflop"]["pot"] += amt_bb_f
-                continue
-            abbr = _ACT_MAP.get(action_type)
-            if not abbr or street not in hand_acts:
-                continue
-            v = round(amt_bb_f, 1) if amt_bb_f else None
-            hand_acts[street]["actions"].append(ActionItem(a=abbr, v=v, h=(pid == hero_id)))
+    # Propagate pot sizes for hands that had DB actions
+    for hid, hand_acts in actions_map.items():
+        running = 0
+        for s in _STREETS:
+            sa = hand_acts[s]
+            street_total = sum(
+                (float(ai.v) if ai.v else 0) for ai in sa["actions"] if ai.a in ("R", "B", "C")
+            )
+            sa["pot"] = round(running + sa.get("pot", 0))
+            running = sa["pot"] + round(street_total)
 
-        # Propagate pot sizes
-        for hid, hand_acts in actions_map.items():
-            running = 0
-            for s in _STREETS:
-                sa = hand_acts[s]
-                street_total = sum(
-                    (float(ai.v) if ai.v else 0) for ai in sa["actions"] if ai.a in ("R", "B", "C")
-                )
-                sa["pot"] = round(running + sa.get("pot", 0))
-                running = sa["pot"] + round(street_total)
-    else:
-        # Fallback: actions table is empty, parse from raw_text
+    # Fallback: parse from raw_text for any hands missing from actions table
+    missing_ids = [hid for hid in hand_ids if hid not in actions_map]
+    if missing_ids:
+        mph = ",".join("?" for _ in missing_ids)
         raw_rows = db.execute(
-            f"SELECT id, raw_text, bb_amount FROM hands WHERE id IN ({ph})",
-            hand_ids,
+            f"SELECT id, raw_text, bb_amount FROM hands WHERE id IN ({mph})",
+            missing_ids,
         ).fetchall()
         for hid, raw_text, bb_amt in raw_rows:
             if not raw_text:

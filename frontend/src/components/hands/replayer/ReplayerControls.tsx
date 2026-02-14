@@ -41,27 +41,22 @@ export default function ReplayerControls({
       switch (e.key) {
         case ' ':
           e.preventDefault();
-          e.stopPropagation();
           onTogglePlay();
           break;
         case 'ArrowLeft':
           e.preventDefault();
-          e.stopPropagation();
           onStepBack();
           break;
         case 'ArrowRight':
           e.preventDefault();
-          e.stopPropagation();
           onStepForward();
           break;
         case 'Home':
           e.preventDefault();
-          e.stopPropagation();
           onGoToStart();
           break;
         case 'End':
           e.preventDefault();
-          e.stopPropagation();
           onGoToEnd();
           break;
       }
@@ -70,8 +65,8 @@ export default function ReplayerControls({
   );
 
   useEffect(() => {
-    document.addEventListener('keydown', handleKey, true);
-    return () => document.removeEventListener('keydown', handleKey, true);
+    document.addEventListener('keydown', handleKey);
+    return () => document.removeEventListener('keydown', handleKey);
   }, [handleKey]);
 
   const progress = totalSteps > 0 ? (currentStep / totalSteps) * 100 : 0;
