@@ -533,7 +533,7 @@ function SessionDetail({ index }: { index: number }) {
                           <CardBoxRow cards={h.flop_cards} />
                         </TableCell>
                         <TableCell className="py-1.5 px-1 text-center font-mono text-[14px] text-text-muted">
-                          {h.flop_cards.length > 0 ? h.flop_pot : ''}
+                          {h.flop_cards.length > 0 ? Math.round(h.flop_pot) : ''}
                         </TableCell>
                         <TableCell className="py-1.5 px-2">
                           <Actions items={h.flop_actions} />
@@ -542,7 +542,7 @@ function SessionDetail({ index }: { index: number }) {
                           {h.turn_card && <CardBox card={h.turn_card} />}
                         </TableCell>
                         <TableCell className="py-1.5 px-1 text-center font-mono text-[14px] text-text-muted">
-                          {h.turn_card ? h.turn_pot : ''}
+                          {h.turn_card ? Math.round(h.turn_pot) : ''}
                         </TableCell>
                         <TableCell className="py-1.5 px-2">
                           <Actions items={h.turn_actions} />
@@ -551,7 +551,7 @@ function SessionDetail({ index }: { index: number }) {
                           {h.river_card && <CardBox card={h.river_card} />}
                         </TableCell>
                         <TableCell className="py-1.5 px-1 text-center font-mono text-[14px] text-text-muted">
-                          {h.river_card ? h.river_pot : ''}
+                          {h.river_card ? Math.round(h.river_pot) : ''}
                         </TableCell>
                         <TableCell className="py-1.5 px-2">
                           <Actions items={h.river_actions} />

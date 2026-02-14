@@ -2,6 +2,7 @@ from fastapi import APIRouter, Query, HTTPException
 from pydantic import BaseModel
 from typing import Optional
 import math
+import re
 
 from app.db import get_db, db_lock, get_read_cursor, get_hero_player_id, get_hero_username
 from app.models import (
@@ -209,7 +210,7 @@ def list_hands(
             abbr = _ACT_MAP.get(action_type)
             if not abbr or street not in hand_acts:
                 continue
-            v = round(amt_bb_f) if amt_bb_f else None
+            v = round(amt_bb_f, 1) if amt_bb_f else None
             hand_acts[street]["actions"].append(ActionItem(a=abbr, v=v, h=(pid == hero_id)))
 
         # Propagate pot sizes
@@ -336,18 +337,41 @@ def get_hand(hand_id: str):
         elif street == "river":
             board.river.append(card)
 
-    # Parse actions from raw text for the detail view
-    ss = parse_actions_from_raw(raw_text, hero_username, bb_amount)
-
     # Build username→position map from player rows
     username_to_position: dict[str, str] = {}
     for pr in player_rows:
         username_to_position[pr[2]] = pr[1]  # pr[2]=username, pr[1]=position
 
+    # Extract blind/ante postings from raw text (before *** HOLE CARDS ***)
+    _RE_BLIND_POST = re.compile(r'^(.+?): posts (small blind|big blind|ante) \$([0-9.]+)')
+    _BLIND_ACTION = {"small blind": "post_sb", "big blind": "post_bb", "ante": "post_ante"}
+    blind_actions: list[HandAction] = []
+    for line in raw_text.split('\n'):
+        line_s = line.strip()
+        if '*** HOLE CARDS ***' in line_s:
+            break
+        m = _RE_BLIND_POST.match(line_s)
+        if m:
+            pname, btype, amt_str = m.group(1), m.group(2), m.group(3)
+            amt_bb = round(float(amt_str) / bb_amount, 2) if bb_amount > 0 else 0
+            is_hero = pname == hero_username
+            blind_actions.append(HandAction(
+                street="preflop",
+                player="Hero" if is_hero else pname,
+                position=username_to_position.get(pname, ""),
+                action=_BLIND_ACTION[btype],
+                amount_bb=amt_bb,
+                is_all_in=False,
+                is_hero=is_hero,
+            ))
+
+    # Parse voluntary actions from raw text
+    ss = parse_actions_from_raw(raw_text, hero_username, bb_amount)
+
+    abbr_to_action = {"R": "raise", "B": "bet", "C": "call", "X": "check", "F": "fold"}
     actions: list[HandAction] = []
     for street_name in ["preflop", "flop", "turn", "river"]:
         for ai in ss[street_name]["actions"]:
-            abbr_to_action = {"R": "raise", "B": "bet", "C": "call", "X": "check", "F": "fold"}
             act_name = abbr_to_action.get(ai.a, ai.a)
             amt_bb = float(ai.v) if ai.v is not None else None
             player_name = ai.p or ("Hero" if ai.h else "")
@@ -361,6 +385,9 @@ def get_hand(hand_id: str):
                 is_all_in=bool(ai.ai),
                 is_hero=ai.h,
             ))
+
+    # Prepend blind postings before voluntary actions
+    actions = blind_actions + actions
 
     # Tags
     tag_rows = db.execute(

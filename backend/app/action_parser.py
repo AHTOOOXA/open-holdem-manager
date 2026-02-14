@@ -53,7 +53,7 @@ def parse_actions_from_raw(raw_text: str, hero_username: str, bb_amount: float):
             if street_name:
                 current_street = street_name
                 street_investments = {}
-                streets[current_street]["pot"] = round(running_pot / bb_amount) if bb_amount > 0 else 0
+                streets[current_street]["pot"] = round(running_pot / bb_amount, 2) if bb_amount > 0 else 0
             elif sm.group(1) in ("SHOWDOWN", "SUMMARY"):
                 current_street = None
             continue
@@ -81,7 +81,7 @@ def parse_actions_from_raw(raw_text: str, hero_username: str, bb_amount: float):
             prev = street_investments.get(player, 0)
             running_pot += to_amt - prev
             street_investments[player] = to_amt
-            v = round(to_amt / bb_amount) if bb_amount > 0 else 0
+            v = round(to_amt / bb_amount, 2) if bb_amount > 0 else 0
             action_item = ActionItem(a="R", v=v, h=is_hero, p=player, ai=all_in)
         else:
             m = RE_BET.match(line)
@@ -91,7 +91,7 @@ def parse_actions_from_raw(raw_text: str, hero_username: str, bb_amount: float):
                 amt = float(amt_str)
                 running_pot += amt
                 street_investments[player] = amt
-                v = round(amt / bb_amount) if bb_amount > 0 else 0
+                v = round(amt / bb_amount, 2) if bb_amount > 0 else 0
                 action_item = ActionItem(a="B", v=v, h=is_hero, p=player, ai=all_in)
             else:
                 m = RE_CALL.match(line)
@@ -101,7 +101,7 @@ def parse_actions_from_raw(raw_text: str, hero_username: str, bb_amount: float):
                     amt = float(amt_str)
                     running_pot += amt
                     street_investments[player] = street_investments.get(player, 0) + amt
-                    v = round(amt / bb_amount) if bb_amount > 0 else 0
+                    v = round(amt / bb_amount, 2) if bb_amount > 0 else 0
                     action_item = ActionItem(a="C", v=v, h=is_hero, p=player, ai=all_in)
                 else:
                     m = RE_CHECK.match(line)

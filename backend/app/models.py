@@ -158,7 +158,7 @@ class HeroStats(BaseModel):
 
 class ActionItem(BaseModel):
     a: str            # R(aise), B(et), C(all), X(check), F(old)
-    v: Optional[int] = None  # amount in BB (rounded), None for X
+    v: Optional[float] = None  # amount in BB, None for X/F
     h: bool = False   # is hero action
     p: Optional[str] = None  # player username (detail view only)
     ai: Optional[bool] = None  # is all-in (detail view only)
@@ -178,13 +178,13 @@ class HandSummary(BaseModel):
     tags: list[str] = []
     preflop_actions: list[ActionItem] = []
     flop_cards: list[str] = []
-    flop_pot: int = 0
+    flop_pot: float = 0
     flop_actions: list[ActionItem] = []
     turn_card: Optional[str] = None
-    turn_pot: int = 0
+    turn_pot: float = 0
     turn_actions: list[ActionItem] = []
     river_card: Optional[str] = None
-    river_pot: int = 0
+    river_pot: float = 0
     river_actions: list[ActionItem] = []
 
 
@@ -631,11 +631,11 @@ class StatDetailHand(BaseModel):
     board_river: Optional[str] = None
     preflop_actions: list[ActionItem] = []
     flop_actions: list[ActionItem] = []
-    flop_pot: int = 0
+    flop_pot: float = 0
     turn_actions: list[ActionItem] = []
-    turn_pot: int = 0
+    turn_pot: float = 0
     river_actions: list[ActionItem] = []
-    river_pot: int = 0
+    river_pot: float = 0
     key_street_actions: list[ActionItem] = []
 
 

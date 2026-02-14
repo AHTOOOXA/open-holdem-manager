@@ -83,6 +83,7 @@ export default function HandExplorer({
   });
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showLegend, setShowLegend] = useState(false);
+  const [bbPrecision, setBbPrecision] = useState<0 | 1>(0);
 
   const searchTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -201,6 +202,15 @@ export default function HandExplorer({
           >
             ?
           </button>
+          <button
+            onClick={() => setBbPrecision(p => p === 0 ? 1 : 0)}
+            className={`text-[11px] font-mono px-1.5 h-[18px] rounded border flex items-center justify-center ${
+              bbPrecision === 1 ? 'border-primary text-primary' : 'border-border text-text-muted hover:text-text'
+            }`}
+            title={`BB precision: ${bbPrecision === 0 ? 'rounded' : '1 decimal'}. Click to toggle.`}
+          >
+            .0
+          </button>
         </div>
         {data && (
           <span className="text-[15px] text-text-muted">
@@ -294,7 +304,7 @@ export default function HandExplorer({
                       </TableCell>
                       {/* Preflop actions — trim leading folds */}
                       <TableCell className="py-1.5 px-2">
-                        <Actions items={h.preflop_actions} trimFolds />
+                        <Actions items={h.preflop_actions} trimFolds precision={bbPrecision} />
                       </TableCell>
                       {/* Flop cards */}
                       <TableCell className="py-1.5 pl-4 pr-2">
@@ -302,11 +312,11 @@ export default function HandExplorer({
                       </TableCell>
                       {/* Flop pot */}
                       <TableCell className="py-1.5 px-1 text-center font-mono text-[14px] text-text-muted">
-                        {h.flop_cards.length > 0 ? h.flop_pot : ''}
+                        {h.flop_cards.length > 0 ? (bbPrecision === 0 ? Math.round(h.flop_pot) : h.flop_pot.toFixed(1).replace(/\.0$/, '')) : ''}
                       </TableCell>
                       {/* Flop actions */}
                       <TableCell className="py-1.5 px-2">
-                        <Actions items={h.flop_actions} />
+                        <Actions items={h.flop_actions} precision={bbPrecision} />
                       </TableCell>
                       {/* Turn card */}
                       <TableCell className="py-1.5 pl-4 pr-2">
@@ -314,11 +324,11 @@ export default function HandExplorer({
                       </TableCell>
                       {/* Turn pot */}
                       <TableCell className="py-1.5 px-1 text-center font-mono text-[14px] text-text-muted">
-                        {h.turn_card ? h.turn_pot : ''}
+                        {h.turn_card ? (bbPrecision === 0 ? Math.round(h.turn_pot) : h.turn_pot.toFixed(1).replace(/\.0$/, '')) : ''}
                       </TableCell>
                       {/* Turn actions */}
                       <TableCell className="py-1.5 px-2">
-                        <Actions items={h.turn_actions} />
+                        <Actions items={h.turn_actions} precision={bbPrecision} />
                       </TableCell>
                       {/* River card */}
                       <TableCell className="py-1.5 pl-4 pr-2">
@@ -326,11 +336,11 @@ export default function HandExplorer({
                       </TableCell>
                       {/* River pot */}
                       <TableCell className="py-1.5 px-1 text-center font-mono text-[14px] text-text-muted">
-                        {h.river_card ? h.river_pot : ''}
+                        {h.river_card ? (bbPrecision === 0 ? Math.round(h.river_pot) : h.river_pot.toFixed(1).replace(/\.0$/, '')) : ''}
                       </TableCell>
                       {/* River actions */}
                       <TableCell className="py-1.5 px-2">
-                        <Actions items={h.river_actions} />
+                        <Actions items={h.river_actions} precision={bbPrecision} />
                       </TableCell>
                       {/* Stakes */}
                       <TableCell className="py-1.5 pl-4 pr-2 font-mono text-[15px] text-text-muted">

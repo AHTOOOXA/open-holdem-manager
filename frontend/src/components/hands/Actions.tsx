@@ -8,7 +8,14 @@ export const ACTION_COLORS: Record<string, string> = {
   F: 'text-text-muted',
 };
 
-export default function Actions({ items, trimFolds }: { items: ActionItem[]; trimFolds?: boolean }) {
+function formatValue(v: number, precision: number): string {
+  if (precision === 0) return Math.round(v).toString();
+  const s = v.toFixed(precision);
+  // Strip trailing zeros after decimal: "6.0" → "6", "3.50" → "3.5"
+  return s.replace(/\.?0+$/, '');
+}
+
+export default function Actions({ items, trimFolds, precision = 0 }: { items: ActionItem[]; trimFolds?: boolean; precision?: number }) {
   if (!items || items.length === 0) return null;
   let display = items;
   if (trimFolds) {
@@ -24,7 +31,7 @@ export default function Actions({ items, trimFolds }: { items: ActionItem[]; tri
           <span
             className={`${ACTION_COLORS[a.a] || 'text-text'} ${a.h ? 'border-b-2 border-dashed border-current pb-[1px]' : ''}`}
           >
-            {a.a}{a.v != null ? a.v : ''}
+            {a.a}{a.v != null ? formatValue(a.v, precision) : ''}
           </span>
         </span>
       ))}

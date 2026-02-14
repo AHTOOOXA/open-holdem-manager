@@ -109,19 +109,24 @@ function buildSnapshots(hand: HandDetail): Snapshot[] {
     actionsByStreet[a.street].push(a);
   }
 
-  // Process blinds from raw actions — preflop actions don't include blinds
-  // We infer blind amounts from positions: SB posts 0.5 BB, BB posts 1 BB
-  const sbPlayer = players.find(p => p.position === 'SB');
-  const bbPlayer = players.find(p => p.position === 'BB');
-  if (sbPlayer) {
-    sbPlayer.stack -= 0.5;
-    sbPlayer.currentBet = 0.5;
-    pot += 0.5;
-  }
-  if (bbPlayer) {
-    bbPlayer.stack -= 1;
-    bbPlayer.currentBet = 1;
-    pot += 1;
+  // Process blind/ante postings from actions to set up initial state
+  const blindTypes = new Set(['post_sb', 'post_bb', 'post_ante']);
+  const preflopActions = actionsByStreet['preflop'] || [];
+  const blindPostings = preflopActions.filter(a => blindTypes.has(a.action));
+  // Remove blind postings from preflop so they aren't processed as regular actions
+  actionsByStreet['preflop'] = preflopActions.filter(a => !blindTypes.has(a.action));
+
+  for (const bp of blindPostings) {
+    const bpName = bp.is_hero
+      ? orderedPlayers.find(p => p.is_hero)?.username
+      : bp.player;
+    const bpIdx = bpName ? nameToIdx[bpName] : undefined;
+    if (bpIdx !== undefined) {
+      const amt = bp.amount_bb ?? 0;
+      players[bpIdx].stack -= amt;
+      players[bpIdx].currentBet += amt;
+      pot += amt;
+    }
   }
 
   // Initial snapshot (before any action)
@@ -138,8 +143,13 @@ function buildSnapshots(hand: HandDetail): Snapshot[] {
   let actionCounter = 0;
   for (const street of STREET_ORDER) {
     const streetActions = actionsByStreet[street] || [];
-    if (street !== 'preflop' && streetActions.length === 0 && buildBoard(hand.board, street).length === 0) {
-      continue; // Street not reached
+    // Skip streets that weren't reached: no actions AND no new cards dealt for this street
+    const streetHasCards = street === 'flop' ? hand.board.flop.length > 0
+      : street === 'turn' ? hand.board.turn.length > 0
+      : street === 'river' ? hand.board.river.length > 0
+      : false;
+    if (street !== 'preflop' && streetActions.length === 0 && !streetHasCards) {
+      continue;
     }
 
     // Street transition snapshot (new board cards revealed)
