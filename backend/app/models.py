@@ -157,9 +157,11 @@ class HeroStats(BaseModel):
 # ── Hand Browser Models ──────────────────────────────────────────────
 
 class ActionItem(BaseModel):
-    a: str            # R(aise), B(et), C(all), X(check)
+    a: str            # R(aise), B(et), C(all), X(check), F(old)
     v: Optional[int] = None  # amount in BB (rounded), None for X
     h: bool = False   # is hero action
+    p: Optional[str] = None  # player username (detail view only)
+    ai: Optional[bool] = None  # is all-in (detail view only)
 
 
 class HandSummary(BaseModel):

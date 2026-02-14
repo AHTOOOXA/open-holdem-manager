@@ -1,0 +1,357 @@
+import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
+import type { HandDetail, HandAction } from '@/lib/api';
+
+// ── Types ────────────────────────────────────────────────────────────
+
+export interface PlayerSnapshot {
+  username: string;
+  position: string;
+  stack: number;       // current stack in BB
+  card1: string | null;
+  card2: string | null;
+  isFolded: boolean;
+  isAllIn: boolean;
+  lastAction: string | null;   // e.g. "raise 6.0 BB"
+  currentBet: number;  // current street bet in BB
+  wonBb: number;
+  isHero: boolean;
+}
+
+export interface Snapshot {
+  pot: number;          // total pot in BB
+  players: PlayerSnapshot[];
+  board: string[];      // revealed community cards
+  activePlayerIdx: number | null;
+  streetLabel: string;  // "Preflop", "Flop", etc.
+  actionIdx: number;    // index in the original actions array (-1 for initial/street-transition)
+  isStreetTransition: boolean;
+}
+
+export interface ReplayerState {
+  snapshots: Snapshot[];
+  currentStep: number;
+  isPlaying: boolean;
+  speed: number;        // multiplier: 0.5, 1, 2, 3
+  play: () => void;
+  pause: () => void;
+  togglePlay: () => void;
+  stepForward: () => void;
+  stepBack: () => void;
+  goToStart: () => void;
+  goToEnd: () => void;
+  goToStep: (step: number) => void;
+  setSpeed: (speed: number) => void;
+  current: Snapshot;
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────
+
+const STREET_ORDER = ['preflop', 'flop', 'turn', 'river'] as const;
+const STREET_LABELS: Record<string, string> = {
+  preflop: 'Preflop',
+  flop: 'Flop',
+  turn: 'Turn',
+  river: 'River',
+};
+
+function buildBoard(board: HandDetail['board'], street: string): string[] {
+  const cards: string[] = [];
+  if (STREET_ORDER.indexOf(street as typeof STREET_ORDER[number]) >= 1) {
+    cards.push(...board.flop);
+  }
+  if (STREET_ORDER.indexOf(street as typeof STREET_ORDER[number]) >= 2) {
+    cards.push(...board.turn);
+  }
+  if (STREET_ORDER.indexOf(street as typeof STREET_ORDER[number]) >= 3) {
+    cards.push(...board.river);
+  }
+  return cards;
+}
+
+// ── Snapshot Builder ─────────────────────────────────────────────────
+
+function buildSnapshots(hand: HandDetail): Snapshot[] {
+  const snapshots: Snapshot[] = [];
+
+  // Order players by seat number, then rotate so hero is at index 0 (bottom center).
+  // This preserves correct relative positions around the table.
+  const bySeat = [...hand.players].sort((a, b) => a.seat - b.seat);
+  const heroIdx = bySeat.findIndex(p => p.is_hero);
+  const orderedPlayers = heroIdx >= 0
+    ? [...bySeat.slice(heroIdx), ...bySeat.slice(0, heroIdx)]
+    : bySeat;
+
+  const initialPlayers: PlayerSnapshot[] = orderedPlayers.map(p => ({
+    username: p.username,
+    position: p.position,
+    stack: p.stack_bb,
+    card1: p.is_hero ? p.card1 : null,
+    card2: p.is_hero ? p.card2 : null,
+    isFolded: false,
+    isAllIn: false,
+    lastAction: null,
+    currentBet: 0,
+    wonBb: p.won_bb,
+    isHero: p.is_hero,
+  }));
+
+  // Build a username→index map for quick lookups
+  const nameToIdx: Record<string, number> = {};
+  orderedPlayers.forEach((p, i) => { nameToIdx[p.username] = i; });
+
+  let pot = 0;
+  let players = initialPlayers.map(p => ({ ...p }));
+
+  // Group actions by street
+  const actionsByStreet: Record<string, HandAction[]> = {};
+  for (const a of hand.actions) {
+    if (!actionsByStreet[a.street]) actionsByStreet[a.street] = [];
+    actionsByStreet[a.street].push(a);
+  }
+
+  // Process blinds from raw actions — preflop actions don't include blinds
+  // We infer blind amounts from positions: SB posts 0.5 BB, BB posts 1 BB
+  const sbPlayer = players.find(p => p.position === 'SB');
+  const bbPlayer = players.find(p => p.position === 'BB');
+  if (sbPlayer) {
+    sbPlayer.stack -= 0.5;
+    sbPlayer.currentBet = 0.5;
+    pot += 0.5;
+  }
+  if (bbPlayer) {
+    bbPlayer.stack -= 1;
+    bbPlayer.currentBet = 1;
+    pot += 1;
+  }
+
+  // Initial snapshot (before any action)
+  snapshots.push({
+    pot,
+    players: players.map(p => ({ ...p })),
+    board: [],
+    activePlayerIdx: null,
+    streetLabel: 'Preflop',
+    actionIdx: -1,
+    isStreetTransition: false,
+  });
+
+  let actionCounter = 0;
+  for (const street of STREET_ORDER) {
+    const streetActions = actionsByStreet[street] || [];
+    if (street !== 'preflop' && streetActions.length === 0 && buildBoard(hand.board, street).length === 0) {
+      continue; // Street not reached
+    }
+
+    // Street transition snapshot (new board cards revealed)
+    if (street !== 'preflop') {
+      // Reset current bets for new street
+      players = players.map(p => ({ ...p, currentBet: 0, lastAction: null }));
+      const board = buildBoard(hand.board, street);
+      snapshots.push({
+        pot,
+        players: players.map(p => ({ ...p })),
+        board,
+        activePlayerIdx: null,
+        streetLabel: STREET_LABELS[street] || street,
+        actionIdx: -1,
+        isStreetTransition: true,
+      });
+    }
+
+    // Process each action
+    for (const action of streetActions) {
+      // Find the player who acted
+      // Actions have player="Hero" for hero and the actual username for villains
+      const playerName = action.is_hero
+        ? orderedPlayers.find(p => p.is_hero)?.username
+        : action.player;
+      const pIdx = playerName ? nameToIdx[playerName] : undefined;
+
+      if (pIdx !== undefined) {
+        const p = players[pIdx];
+        const prevBet = p.currentBet;
+
+        switch (action.action) {
+          case 'fold':
+            p.isFolded = true;
+            p.lastAction = 'Fold';
+            break;
+          case 'check':
+            p.lastAction = 'Check';
+            break;
+          case 'call': {
+            const callAmt = (action.amount_bb ?? 0);
+            p.stack -= callAmt;
+            p.currentBet = prevBet + callAmt;
+            pot += callAmt;
+            p.lastAction = `Call ${callAmt.toFixed(1)}`;
+            break;
+          }
+          case 'bet': {
+            const betAmt = (action.amount_bb ?? 0);
+            p.stack -= betAmt;
+            p.currentBet = betAmt;
+            pot += betAmt;
+            p.lastAction = `Bet ${betAmt.toFixed(1)}`;
+            break;
+          }
+          case 'raise': {
+            // amount_bb is the "to" amount for the raise
+            const raiseToAmt = (action.amount_bb ?? 0);
+            const increment = raiseToAmt - prevBet;
+            p.stack -= increment;
+            p.currentBet = raiseToAmt;
+            pot += increment;
+            p.lastAction = `Raise ${raiseToAmt.toFixed(1)}`;
+            break;
+          }
+        }
+
+        if (action.is_all_in) {
+          p.isAllIn = true;
+          p.lastAction = (p.lastAction || '') + ' all-in';
+        }
+      }
+
+      snapshots.push({
+        pot,
+        players: players.map(p => ({ ...p })),
+        board: buildBoard(hand.board, street),
+        activePlayerIdx: pIdx ?? null,
+        streetLabel: STREET_LABELS[street] || street,
+        actionIdx: actionCounter,
+        isStreetTransition: false,
+      });
+
+      actionCounter++;
+    }
+  }
+
+  // Final showdown snapshot — reveal cards for players who have them
+  const showdownPlayers = players.map((p, i) => {
+    const orig = orderedPlayers[i];
+    return {
+      ...p,
+      card1: orig.card1,
+      card2: orig.card2,
+      lastAction: p.wonBb > 0 ? `Won ${p.wonBb.toFixed(1)}` : p.isFolded ? 'Fold' : null,
+    };
+  });
+
+  const finalBoard = buildBoard(hand.board, 'river');
+  snapshots.push({
+    pot: 0,
+    players: showdownPlayers.map(p => ({ ...p })),
+    board: finalBoard.length > 0 ? finalBoard : buildBoard(hand.board, 'flop'),
+    activePlayerIdx: null,
+    streetLabel: 'Result',
+    actionIdx: -1,
+    isStreetTransition: false,
+  });
+
+  return snapshots;
+}
+
+// ── Hook ─────────────────────────────────────────────────────────────
+
+export function useReplayerState(hand: HandDetail): ReplayerState {
+  const snapshots = useMemo(() => buildSnapshots(hand), [hand]);
+  const [currentStep, setCurrentStep] = useState(0);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [speed, setSpeed] = useState(1);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const maxStep = snapshots.length - 1;
+
+  const clearTimer = useCallback(() => {
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+  }, []);
+
+  const stepForward = useCallback(() => {
+    setCurrentStep(s => Math.min(s + 1, maxStep));
+  }, [maxStep]);
+
+  const stepBack = useCallback(() => {
+    setCurrentStep(s => Math.max(s - 1, 0));
+  }, []);
+
+  const goToStart = useCallback(() => {
+    setCurrentStep(0);
+    setIsPlaying(false);
+    clearTimer();
+  }, [clearTimer]);
+
+  const goToEnd = useCallback(() => {
+    setCurrentStep(maxStep);
+    setIsPlaying(false);
+    clearTimer();
+  }, [maxStep, clearTimer]);
+
+  const goToStep = useCallback((step: number) => {
+    setCurrentStep(Math.max(0, Math.min(step, maxStep)));
+  }, [maxStep]);
+
+  const pause = useCallback(() => {
+    setIsPlaying(false);
+    clearTimer();
+  }, [clearTimer]);
+
+  const play = useCallback(() => {
+    setIsPlaying(true);
+  }, []);
+
+  const togglePlay = useCallback(() => {
+    setIsPlaying(p => !p);
+  }, []);
+
+  // Auto-advance when playing — uses timeout callback (not direct setState in effect body)
+  useEffect(() => {
+    if (!isPlaying || currentStep >= maxStep) {
+      return;
+    }
+
+    const nextSnapshot = snapshots[currentStep + 1];
+    const baseDelay = 800 / speed;
+    const delay = nextSnapshot?.isStreetTransition ? baseDelay * 1.5 : baseDelay;
+
+    timerRef.current = setTimeout(() => {
+      setCurrentStep(s => {
+        const next = s + 1;
+        if (next >= maxStep) {
+          setIsPlaying(false);
+        }
+        return Math.min(next, maxStep);
+      });
+    }, delay);
+
+    return () => clearTimer();
+  }, [isPlaying, currentStep, maxStep, speed, snapshots, clearTimer]);
+
+  // Reset when hand changes
+  const handId = hand.id;
+  useEffect(() => {
+    setCurrentStep(0); // eslint-disable-line react-hooks/set-state-in-effect -- legitimate reset on prop change
+    setIsPlaying(false);
+    clearTimer();
+  }, [handId, clearTimer]);
+
+  return {
+    snapshots,
+    currentStep,
+    isPlaying,
+    speed,
+    play,
+    pause,
+    togglePlay,
+    stepForward,
+    stepBack,
+    goToStart,
+    goToEnd,
+    goToStep,
+    setSpeed,
+    current: snapshots[currentStep] || snapshots[0],
+  };
+}

@@ -3,6 +3,7 @@ import type { HandDetail } from '@/lib/api';
 import { getHandDetail, addTag, removeTag, updateNote } from '@/lib/api';
 import { CardPair } from './CardDisplay';
 import HandActionsDisplay from './HandActions';
+import HandReplayer from './replayer/HandReplayer';
 import TagPill from './TagPill';
 import TagPicker from './TagPicker';
 import { formatStakes } from '@/lib/utils';
@@ -10,6 +11,7 @@ import PlayerTypeBadge from '@/components/PlayerTypeBadge';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import {
   Table,
   TableBody,
@@ -18,6 +20,8 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+
+type ViewMode = 'visual' | 'text' | 'raw';
 
 
 export default function HandDrawer({
@@ -35,13 +39,12 @@ export default function HandDrawer({
 }) {
   const [hand, setHand] = useState<HandDetail | null>(null);
   const [loading, setLoading] = useState(true);
-  const [showRaw, setShowRaw] = useState(false);
+  const [viewMode, setViewMode] = useState<ViewMode>('visual');
   const [note, setNote] = useState('');
   const [noteSaving, setNoteSaving] = useState(false);
 
   const loadHand = useCallback(async () => {
     setLoading(true);
-    setShowRaw(false);
     try {
       const h = await getHandDetail(handId);
       setHand(h);
@@ -61,7 +64,6 @@ export default function HandDrawer({
       if (e.key === 'Escape') onClose();
       else if (e.key === 'j' || e.key === 'ArrowDown') { e.preventDefault(); onNext(); }
       else if (e.key === 'k' || e.key === 'ArrowUp') { e.preventDefault(); onPrev(); }
-      else if (e.key === 'r') setShowRaw((s) => !s);
     }
     document.addEventListener('keydown', handleKey);
     return () => document.removeEventListener('keydown', handleKey);
@@ -97,7 +99,7 @@ export default function HandDrawer({
 
   return (
     <Sheet open={true} onOpenChange={(open) => { if (!open) onClose(); }}>
-      <SheetContent side="right" className="w-full sm:w-[640px] max-w-full p-0 flex flex-col [&>button:first-child]:hidden">
+      <SheetContent side="right" className={`w-full !max-w-none p-0 flex flex-col [&>button:first-child]:hidden ${viewMode === 'visual' ? 'sm:w-[880px]' : 'sm:w-[640px]'}`}>
         {/* Header */}
         <SheetHeader className="px-4 py-2 border-b border-border shrink-0">
           <div className="flex items-center justify-between">
@@ -114,14 +116,16 @@ export default function HandDrawer({
             </div>
             <div className="flex items-center gap-3">
               <SheetTitle className="text-[11px] text-text-muted font-mono font-normal">{handId}</SheetTitle>
-              <Button
-                variant={showRaw ? 'secondary' : 'outline'}
-                size="sm"
-                className={`h-7 text-xs ${showRaw ? 'border-primary text-primary bg-primary/10' : ''}`}
-                onClick={() => setShowRaw(!showRaw)}
+              <ToggleGroup
+                type="single"
+                value={viewMode}
+                onValueChange={(v) => v && setViewMode(v as ViewMode)}
+                className="gap-0"
               >
-                Raw
-              </Button>
+                <ToggleGroupItem value="visual" className="h-7 px-2 text-[11px]">Visual</ToggleGroupItem>
+                <ToggleGroupItem value="text" className="h-7 px-2 text-[11px]">Text</ToggleGroupItem>
+                <ToggleGroupItem value="raw" className="h-7 px-2 text-[11px]">Raw</ToggleGroupItem>
+              </ToggleGroup>
             </div>
           </div>
         </SheetHeader>
@@ -132,72 +136,98 @@ export default function HandDrawer({
             <p className="text-text-muted text-sm">Loading...</p>
           ) : !hand ? (
             <p className="text-text-muted text-sm">Hand not found.</p>
-          ) : showRaw ? (
-            <pre className="text-[12px] font-mono text-text whitespace-pre-wrap break-words bg-background rounded p-3 border border-border">
-              {hand.raw_text || 'No raw text available.'}
-            </pre>
           ) : (
             <>
-              {/* Meta */}
-              <div className="mb-3">
-                <div className="text-[14px] font-semibold text-text">
-                  {formatStakes(hand.stakes)}
-                </div>
-                <div className="text-[12px] text-text-muted">
-                  {new Date(hand.played_at).toLocaleString()}
-                  {' \u2022 '}
-                  {hand.table_size}-max
-                  {hand.table_name && <> {' \u2022 '} {hand.table_name}</>}
-                </div>
-              </div>
+              {/* View mode content */}
+              {viewMode === 'raw' ? (
+                <pre className="text-[12px] font-mono text-text whitespace-pre-wrap break-words bg-background rounded p-3 border border-border">
+                  {hand.raw_text || 'No raw text available.'}
+                </pre>
+              ) : viewMode === 'visual' ? (
+                <>
+                  {/* Meta */}
+                  <div className="mb-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[13px] font-semibold text-text">
+                        {formatStakes(hand.stakes)}
+                      </span>
+                      <span className="text-[11px] text-text-muted">
+                        {new Date(hand.played_at).toLocaleString()}
+                        {' \u2022 '}
+                        {hand.table_size}-max
+                      </span>
+                    </div>
+                  </div>
+                  <HandReplayer hand={hand} />
+                  {/* Result */}
+                  <div className={`my-3 text-[14px] font-bold font-mono ${heroWonBb >= 0 ? 'text-green' : 'text-red'}`}>
+                    Hero {heroWonBb >= 0 ? 'wins' : 'loses'} {Math.abs(heroWonBb).toFixed(1)} BB
+                  </div>
+                </>
+              ) : (
+                <>
+                  {/* Meta */}
+                  <div className="mb-3">
+                    <div className="text-[14px] font-semibold text-text">
+                      {formatStakes(hand.stakes)}
+                    </div>
+                    <div className="text-[12px] text-text-muted">
+                      {new Date(hand.played_at).toLocaleString()}
+                      {' \u2022 '}
+                      {hand.table_size}-max
+                      {hand.table_name && <> {' \u2022 '} {hand.table_name}</>}
+                    </div>
+                  </div>
 
-              {/* Players */}
-              <div className="mb-3">
-                <Table>
-                  <TableHeader>
-                    <TableRow className="text-[12px]">
-                      <TableHead className="py-0.5 px-1 h-auto">Seat</TableHead>
-                      <TableHead className="py-0.5 px-1 h-auto">Pos</TableHead>
-                      <TableHead className="py-0.5 px-1 h-auto">Player</TableHead>
-                      <TableHead className="py-0.5 px-1 h-auto text-right">Stack</TableHead>
-                      <TableHead className="py-0.5 px-1 h-auto">Cards</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {hand.players.map((p) => (
-                      <TableRow
-                        key={p.seat}
-                        className={`text-[12px] ${p.is_hero ? 'bg-primary/5' : ''}`}
-                      >
-                        <TableCell className="py-0.5 px-1 font-mono text-text-muted">{p.seat}</TableCell>
-                        <TableCell className="py-0.5 px-1 font-mono">{p.position}</TableCell>
-                        <TableCell className={`py-0.5 px-1 ${p.is_hero ? 'font-semibold text-primary' : 'text-text'}`}>
-                          <span className="flex items-center gap-1.5">
-                            {p.username}
-                            {!p.is_hero && p.player_type && p.player_type !== 'UNK' && (
-                              <PlayerTypeBadge type={p.player_type} />
-                            )}
-                          </span>
-                        </TableCell>
-                        <TableCell className="py-0.5 px-1 text-right font-mono">{p.stack_bb.toFixed(1)}</TableCell>
-                        <TableCell className="py-0.5 px-1">
-                          <CardPair card1={p.card1} card2={p.card2} />
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
+                  {/* Players */}
+                  <div className="mb-3">
+                    <Table>
+                      <TableHeader>
+                        <TableRow className="text-[12px]">
+                          <TableHead className="py-0.5 px-1 h-auto">Seat</TableHead>
+                          <TableHead className="py-0.5 px-1 h-auto">Pos</TableHead>
+                          <TableHead className="py-0.5 px-1 h-auto">Player</TableHead>
+                          <TableHead className="py-0.5 px-1 h-auto text-right">Stack</TableHead>
+                          <TableHead className="py-0.5 px-1 h-auto">Cards</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {hand.players.map((p) => (
+                          <TableRow
+                            key={p.seat}
+                            className={`text-[12px] ${p.is_hero ? 'bg-primary/5' : ''}`}
+                          >
+                            <TableCell className="py-0.5 px-1 font-mono text-text-muted">{p.seat}</TableCell>
+                            <TableCell className="py-0.5 px-1 font-mono">{p.position}</TableCell>
+                            <TableCell className={`py-0.5 px-1 ${p.is_hero ? 'font-semibold text-primary' : 'text-text'}`}>
+                              <span className="flex items-center gap-1.5">
+                                {p.username}
+                                {!p.is_hero && p.player_type && p.player_type !== 'UNK' && (
+                                  <PlayerTypeBadge type={p.player_type} />
+                                )}
+                              </span>
+                            </TableCell>
+                            <TableCell className="py-0.5 px-1 text-right font-mono">{p.stack_bb.toFixed(1)}</TableCell>
+                            <TableCell className="py-0.5 px-1">
+                              <CardPair card1={p.card1} card2={p.card2} />
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
 
-              {/* Actions */}
-              <HandActionsDisplay actions={hand.actions} board={hand.board} />
+                  {/* Actions */}
+                  <HandActionsDisplay actions={hand.actions} board={hand.board} />
 
-              {/* Result */}
-              <div className={`my-3 text-[14px] font-bold font-mono ${heroWonBb >= 0 ? 'text-green' : 'text-red'}`}>
-                Hero {heroWonBb >= 0 ? 'wins' : 'loses'} {Math.abs(heroWonBb).toFixed(1)} BB
-              </div>
+                  {/* Result */}
+                  <div className={`my-3 text-[14px] font-bold font-mono ${heroWonBb >= 0 ? 'text-green' : 'text-red'}`}>
+                    Hero {heroWonBb >= 0 ? 'wins' : 'loses'} {Math.abs(heroWonBb).toFixed(1)} BB
+                  </div>
+                </>
+              )}
 
-              {/* Tags */}
+              {/* Tags — visible in all view modes */}
               <div className="mb-3">
                 <div className="flex items-center gap-1.5 flex-wrap">
                   {hand.tags.map((t) => (
@@ -211,7 +241,7 @@ export default function HandDrawer({
                 </div>
               </div>
 
-              {/* Notes */}
+              {/* Notes — visible in all view modes */}
               <div>
                 <div className="text-[11px] uppercase tracking-wider text-text-muted mb-1">Notes</div>
                 <Textarea

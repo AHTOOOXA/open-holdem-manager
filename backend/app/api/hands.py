@@ -183,43 +183,57 @@ def list_hands(
         board_map.setdefault(hid, {"flop": [], "turn": [], "river": []})
         board_map[hid][street].append(card)
 
-    # Batch fetch actions from DB instead of parsing raw_text
+    _STREETS = ("preflop", "flop", "turn", "river")
+
+    # Try batch fetch actions from DB
     action_rows = db.execute(
         f"SELECT a.hand_id, a.street, a.action_type, a.amount_bb, a.player_id "
         f"FROM actions a WHERE a.hand_id IN ({ph}) ORDER BY a.hand_id, a.action_order",
         hand_ids,
     ).fetchall()
 
-    _ACT_MAP = {"raise": "R", "bet": "B", "call": "C", "check": "X", "fold": "F"}
-    _BLIND_TYPES = {"sb", "bb", "ante", "straddle"}
-    _STREETS = ("preflop", "flop", "turn", "river")
-
-    # Build per-hand action summaries + pot sizes
     actions_map: dict[str, dict[str, dict]] = {}
-    for hid, street, action_type, amount_bb, pid in action_rows:
-        hand_acts = actions_map.setdefault(hid, {
-            s: {"actions": [], "pot": 0} for s in _STREETS
-        })
-        amt_bb_f = float(amount_bb) if amount_bb is not None else 0
-        if action_type in _BLIND_TYPES:
-            hand_acts["preflop"]["pot"] += amt_bb_f
-            continue
-        abbr = _ACT_MAP.get(action_type)
-        if not abbr or street not in hand_acts:
-            continue
-        v = round(amt_bb_f) if amt_bb_f else None
-        hand_acts[street]["actions"].append(ActionItem(a=abbr, v=v, h=(pid == hero_id)))
 
-    # Propagate pot sizes: pot at flop start = preflop total, etc.
-    for hid, hand_acts in actions_map.items():
-        running = 0
-        for s in _STREETS:
-            sa = hand_acts[s]
-            street_total = sum(
-                (float(ai.v) if ai.v else 0) for ai in sa["actions"] if ai.a in ("R", "B", "C")
-            )
-            sa["pot"] = round(running + sa.get("pot", 0))
-            running = sa["pot"] + round(street_total)
+    if action_rows:
+        _ACT_MAP = {"raise": "R", "bet": "B", "call": "C", "check": "X", "fold": "F"}
+        _BLIND_TYPES = {"sb", "bb", "ante", "straddle"}
+
+        for hid, street, action_type, amount_bb, pid in action_rows:
+            hand_acts = actions_map.setdefault(hid, {
+                s: {"actions": [], "pot": 0} for s in _STREETS
+            })
+            amt_bb_f = float(amount_bb) if amount_bb is not None else 0
+            if action_type in _BLIND_TYPES:
+                hand_acts["preflop"]["pot"] += amt_bb_f
+                continue
+            abbr = _ACT_MAP.get(action_type)
+            if not abbr or street not in hand_acts:
+                continue
+            v = round(amt_bb_f) if amt_bb_f else None
+            hand_acts[street]["actions"].append(ActionItem(a=abbr, v=v, h=(pid == hero_id)))
+
+        # Propagate pot sizes
+        for hid, hand_acts in actions_map.items():
+            running = 0
+            for s in _STREETS:
+                sa = hand_acts[s]
+                street_total = sum(
+                    (float(ai.v) if ai.v else 0) for ai in sa["actions"] if ai.a in ("R", "B", "C")
+                )
+                sa["pot"] = round(running + sa.get("pot", 0))
+                running = sa["pot"] + round(street_total)
+    else:
+        # Fallback: actions table is empty, parse from raw_text
+        raw_rows = db.execute(
+            f"SELECT id, raw_text, bb_amount FROM hands WHERE id IN ({ph})",
+            hand_ids,
+        ).fetchall()
+        for hid, raw_text, bb_amt in raw_rows:
+            if not raw_text:
+                continue
+            bb = float(bb_amt) if bb_amt else 0
+            ss = parse_actions_from_raw(raw_text, hero_username, bb)
+            actions_map[hid] = ss
 
     hands = []
     for r in rows:
@@ -324,19 +338,27 @@ def get_hand(hand_id: str):
 
     # Parse actions from raw text for the detail view
     ss = parse_actions_from_raw(raw_text, hero_username, bb_amount)
+
+    # Build username→position map from player rows
+    username_to_position: dict[str, str] = {}
+    for pr in player_rows:
+        username_to_position[pr[2]] = pr[1]  # pr[2]=username, pr[1]=position
+
     actions: list[HandAction] = []
     for street_name in ["preflop", "flop", "turn", "river"]:
         for ai in ss[street_name]["actions"]:
             abbr_to_action = {"R": "raise", "B": "bet", "C": "call", "X": "check", "F": "fold"}
             act_name = abbr_to_action.get(ai.a, ai.a)
             amt_bb = float(ai.v) if ai.v is not None else None
+            player_name = ai.p or ("Hero" if ai.h else "")
+            position = username_to_position.get(player_name, "")
             actions.append(HandAction(
                 street=street_name,
-                player="Hero" if ai.h else "",
-                position="",
+                player="Hero" if ai.h else player_name,
+                position=position,
                 action=act_name,
                 amount_bb=amt_bb,
-                is_all_in=False,
+                is_all_in=bool(ai.ai),
                 is_hero=ai.h,
             ))
 

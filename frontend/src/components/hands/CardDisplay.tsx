@@ -91,5 +91,16 @@ export function CardBoxRow({ cards }: { cards: string[] }) {
   );
 }
 
+export function CardBack() {
+  return (
+    <span
+      className="inline-flex items-center justify-center w-[30px] h-[34px] rounded-[3px] shrink-0 border border-border/60"
+      style={{ backgroundColor: 'oklch(0.22 0.005 260)' }}
+    >
+      <span className="text-[10px] text-text-muted/40 font-bold select-none">?</span>
+    </span>
+  );
+}
+
 export { SingleCard };
 export default SingleCard;

@@ -12,6 +12,7 @@ RE_BET = re.compile(r"^(.+?): bets \$([0-9.]+)")
 RE_RAISE = re.compile(r"^(.+?): raises \$[0-9.]+ to \$([0-9.]+)")
 RE_BLIND = re.compile(r"^(.+?): posts (?:small blind|big blind|ante) \$([0-9.]+)")
 RE_STREET = re.compile(r"^\*\*\* (HOLE CARDS|FLOP|TURN|RIVER|FIRST FLOP|SHOWDOWN|SUMMARY) \*\*\*")
+RE_ALL_IN = re.compile(r"and is all-in")
 
 STREET_MAP = {
     "HOLE CARDS": "preflop",
@@ -23,7 +24,12 @@ STREET_MAP = {
 
 
 def parse_actions_from_raw(raw_text: str, hero_username: str, bb_amount: float):
-    """Parse raw hand history text and return per-street action summaries + pot sizes."""
+    """Parse raw hand history text and return per-street action summaries + pot sizes.
+
+    Each ActionItem in the returned streets also carries:
+      - `p`: player username (always set)
+      - `ai`: True when action line contains 'and is all-in'
+    """
     streets = {
         "preflop": {"actions": [], "pot": 0},
         "flop": {"actions": [], "pot": 0},
@@ -65,6 +71,7 @@ def parse_actions_from_raw(raw_text: str, hero_username: str, bb_amount: float):
 
         is_hero = False
         action_item = None
+        all_in = bool(RE_ALL_IN.search(line))
 
         m = RE_RAISE.match(line)
         if m:
@@ -75,7 +82,7 @@ def parse_actions_from_raw(raw_text: str, hero_username: str, bb_amount: float):
             running_pot += to_amt - prev
             street_investments[player] = to_amt
             v = round(to_amt / bb_amount) if bb_amount > 0 else 0
-            action_item = ActionItem(a="R", v=v, h=is_hero)
+            action_item = ActionItem(a="R", v=v, h=is_hero, p=player, ai=all_in)
         else:
             m = RE_BET.match(line)
             if m:
@@ -85,7 +92,7 @@ def parse_actions_from_raw(raw_text: str, hero_username: str, bb_amount: float):
                 running_pot += amt
                 street_investments[player] = amt
                 v = round(amt / bb_amount) if bb_amount > 0 else 0
-                action_item = ActionItem(a="B", v=v, h=is_hero)
+                action_item = ActionItem(a="B", v=v, h=is_hero, p=player, ai=all_in)
             else:
                 m = RE_CALL.match(line)
                 if m:
@@ -95,17 +102,19 @@ def parse_actions_from_raw(raw_text: str, hero_username: str, bb_amount: float):
                     running_pot += amt
                     street_investments[player] = street_investments.get(player, 0) + amt
                     v = round(amt / bb_amount) if bb_amount > 0 else 0
-                    action_item = ActionItem(a="C", v=v, h=is_hero)
+                    action_item = ActionItem(a="C", v=v, h=is_hero, p=player, ai=all_in)
                 else:
                     m = RE_CHECK.match(line)
                     if m:
-                        is_hero = m.group(1) == hero_username
-                        action_item = ActionItem(a="X", h=is_hero)
+                        player = m.group(1)
+                        is_hero = player == hero_username
+                        action_item = ActionItem(a="X", h=is_hero, p=player, ai=False)
                     else:
                         m = RE_FOLD.match(line)
                         if m:
-                            is_hero = m.group(1) == hero_username
-                            action_item = ActionItem(a="F", h=is_hero)
+                            player = m.group(1)
+                            is_hero = player == hero_username
+                            action_item = ActionItem(a="F", h=is_hero, p=player, ai=False)
                         else:
                             m = RE_BLIND.match(line)
                             if m:
