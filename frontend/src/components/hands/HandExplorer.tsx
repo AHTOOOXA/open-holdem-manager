@@ -11,7 +11,7 @@ import HandFilters from '@/components/hands/HandFilters';
 import type { FilterState } from '@/components/hands/HandFilters';
 import { QUICK_FILTERS_MAP } from '@/components/hands/HandFilters';
 import { CardBoxPair, CardBoxRow, CardBox } from '@/components/hands/CardDisplay';
-import Actions from '@/components/hands/Actions';
+import Actions, { actionTitle } from '@/components/hands/Actions';
 import TagPill from '@/components/hands/TagPill';
 import Pagination from '@/components/hands/Pagination';
 import HandDrawer from '@/components/hands/HandDrawer';
@@ -261,7 +261,7 @@ export default function HandExplorer({
             <Table>
               <TableHeader>
                 <TableRow className="text-[13px] uppercase tracking-wide">
-                  <TableHead className="py-2 px-2 h-auto">Preflop</TableHead>
+                  <TableHead className="py-2 px-2 h-auto sticky left-0 z-20 bg-background">Preflop</TableHead>
                   <TableHead className="py-2 px-2 h-auto">Actions</TableHead>
                   <TableHead className="py-2 pl-4 pr-2 h-auto">Flop</TableHead>
                   <TableHead className="py-2 px-1 h-auto text-center">Pot</TableHead>
@@ -298,13 +298,17 @@ export default function HandExplorer({
                         selectedId === h.id ? 'bg-primary/10' : 'hover:bg-surface-hover'
                       }`}
                     >
-                      {/* Preflop cards */}
-                      <TableCell className="py-1.5 px-2">
+                      {/* Preflop cards — sticky so context is never lost */}
+                      <TableCell className={`py-1.5 px-2 sticky left-0 z-10 ${
+                        selectedId === h.id ? 'bg-primary/10' : 'bg-background'
+                      }`}>
                         <CardBoxPair card1={h.card1} card2={h.card2} />
                       </TableCell>
                       {/* Preflop actions — trim leading folds */}
                       <TableCell className="py-1.5 px-2">
-                        <Actions items={h.preflop_actions} trimFolds precision={bbPrecision} />
+                        <div className="max-w-[160px] truncate" title={actionTitle(h.preflop_actions, bbPrecision, true)}>
+                          <Actions items={h.preflop_actions} trimFolds precision={bbPrecision} />
+                        </div>
                       </TableCell>
                       {/* Flop cards */}
                       <TableCell className="py-1.5 pl-4 pr-2">
@@ -316,7 +320,9 @@ export default function HandExplorer({
                       </TableCell>
                       {/* Flop actions */}
                       <TableCell className="py-1.5 px-2">
-                        <Actions items={h.flop_actions} precision={bbPrecision} />
+                        <div className="max-w-[130px] truncate" title={actionTitle(h.flop_actions, bbPrecision)}>
+                          <Actions items={h.flop_actions} precision={bbPrecision} />
+                        </div>
                       </TableCell>
                       {/* Turn card */}
                       <TableCell className="py-1.5 pl-4 pr-2">
@@ -328,7 +334,9 @@ export default function HandExplorer({
                       </TableCell>
                       {/* Turn actions */}
                       <TableCell className="py-1.5 px-2">
-                        <Actions items={h.turn_actions} precision={bbPrecision} />
+                        <div className="max-w-[130px] truncate" title={actionTitle(h.turn_actions, bbPrecision)}>
+                          <Actions items={h.turn_actions} precision={bbPrecision} />
+                        </div>
                       </TableCell>
                       {/* River card */}
                       <TableCell className="py-1.5 pl-4 pr-2">
@@ -340,7 +348,9 @@ export default function HandExplorer({
                       </TableCell>
                       {/* River actions */}
                       <TableCell className="py-1.5 px-2">
-                        <Actions items={h.river_actions} precision={bbPrecision} />
+                        <div className="max-w-[130px] truncate" title={actionTitle(h.river_actions, bbPrecision)}>
+                          <Actions items={h.river_actions} precision={bbPrecision} />
+                        </div>
                       </TableCell>
                       {/* Stakes */}
                       <TableCell className="py-1.5 pl-4 pr-2 font-mono text-[15px] text-text-muted">

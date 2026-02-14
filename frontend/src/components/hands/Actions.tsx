@@ -15,6 +15,17 @@ function formatValue(v: number, precision: number): string {
   return s.replace(/\.?0+$/, '');
 }
 
+/** Plain-text summary for title/tooltip (matches trimFolds + precision logic). */
+export function actionTitle(items: ActionItem[], precision: number, trimFolds?: boolean): string {
+  if (!items || items.length === 0) return '';
+  let display = items;
+  if (trimFolds) {
+    const firstNonFold = items.findIndex(a => a.a !== 'F');
+    if (firstNonFold > 0) display = items.slice(firstNonFold);
+  }
+  return display.map(a => `${a.a}${a.v != null ? formatValue(a.v, precision) : ''}`).join(' ');
+}
+
 export default function Actions({ items, trimFolds, precision = 0 }: { items: ActionItem[]; trimFolds?: boolean; precision?: number }) {
   if (!items || items.length === 0) return null;
   let display = items;
