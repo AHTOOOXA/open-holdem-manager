@@ -1,0 +1,16 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Redirecting...</title>
+    <script>
+      // GitHub Pages SPA fallback: redirect path-based URLs to hash-based URLs
+      // e.g. /hand?d=... → /#/hand?d=...
+      var path = window.location.pathname;
+      var search = window.location.search;
+      var hash = '/#' + path + search;
+      window.location.replace(window.location.origin + hash);
+    </script>
+  </head>
+  <body></body>
+</html>

@@ -7,11 +7,13 @@ import HandReplayer from './replayer/HandReplayer';
 import TagPill from './TagPill';
 import TagPicker from './TagPicker';
 import { formatStakes } from '@/lib/utils';
+import { getShareUrl } from '@/lib/hand-codec';
 import PlayerTypeBadge from '@/components/PlayerTypeBadge';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
+import { Share2, Check } from 'lucide-react';
 import {
   Table,
   TableBody,
@@ -58,6 +60,7 @@ export default function HandDrawer({
   const [viewMode, setViewMode] = useState<ViewMode>('visual');
   const [note, setNote] = useState('');
   const [noteSaving, setNoteSaving] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   const loadHand = useCallback(async () => {
     setLoading(true);
@@ -110,6 +113,14 @@ export default function HandDrawer({
     }
   };
 
+  const handleShare = async () => {
+    if (!hand) return;
+    const url = getShareUrl(hand);
+    await navigator.clipboard.writeText(url);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
   const hero = hand?.players.find((p) => p.is_hero);
   const heroWonBb = hero?.won_bb ?? 0;
 
@@ -132,6 +143,15 @@ export default function HandDrawer({
             </div>
             <div className="flex items-center gap-3">
               <SheetTitle className="text-[12px] text-text-muted font-mono font-normal">{handId}</SheetTitle>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 w-8 p-0"
+                onClick={handleShare}
+                title="Copy share link"
+              >
+                {copied ? <Check className="h-4 w-4 text-green" /> : <Share2 className="h-4 w-4" />}
+              </Button>
               <ToggleGroup
                 type="single"
                 value={viewMode}
