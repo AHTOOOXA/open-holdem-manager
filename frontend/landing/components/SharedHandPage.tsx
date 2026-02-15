@@ -59,7 +59,7 @@ export default function SharedHandPage() {
             Open Holdem Manager
           </a>
           <a
-            href="https://github.com/AHTOOOXA/open-holdem-manager/releases/latest"
+            href="/"
             className="px-3 py-1.5 bg-primary text-white rounded-md text-xs font-semibold hover:bg-primary/90 transition-colors"
           >
             Download
@@ -92,7 +92,7 @@ export default function SharedHandPage() {
             Free, open-source poker tracker — no account, no cloud.
           </p>
           <a
-            href="https://github.com/AHTOOOXA/open-holdem-manager/releases/latest"
+            href="/"
             className="px-4 py-1.5 bg-primary text-white rounded-md text-sm font-semibold hover:bg-primary/90 transition-colors shrink-0"
           >
             Download Open Holdem Manager
