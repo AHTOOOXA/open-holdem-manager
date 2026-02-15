@@ -159,6 +159,35 @@ export function decodeHand(encoded: string): HandDetail | null {
   }
 }
 
+// ── Anonymize ─────────────────────────────────────────────────────
+
+export function anonymizeHand(hand: HandDetail): HandDetail {
+  // Build stable name mapping ordered by seat number; hero keeps real name
+  const nameMap = new Map<string, string>();
+  let counter = 1;
+  const sorted = [...hand.players].sort((a, b) => a.seat - b.seat);
+  for (const p of sorted) {
+    if (p.is_hero) {
+      nameMap.set(p.username, p.username);
+    } else {
+      nameMap.set(p.username, `Player ${counter}`);
+      counter++;
+    }
+  }
+
+  const players: HandPlayerDetail[] = hand.players.map((p) => ({
+    ...p,
+    username: nameMap.get(p.username) ?? p.username,
+  }));
+
+  const actions: HandAction[] = hand.actions.map((a) => ({
+    ...a,
+    player: nameMap.get(a.player) ?? a.player,
+  }));
+
+  return { ...hand, players, actions };
+}
+
 const LANDING_ORIGIN = 'https://ohm.antonchaynik.ru';
 
 export function getShareUrl(hand: HandDetail): string {

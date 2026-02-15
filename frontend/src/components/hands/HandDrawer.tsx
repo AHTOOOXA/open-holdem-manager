@@ -7,13 +7,13 @@ import HandReplayer from './replayer/HandReplayer';
 import TagPill from './TagPill';
 import TagPicker from './TagPicker';
 import { formatStakes } from '@/lib/utils';
-import { getShareUrl } from '@/lib/hand-codec';
+import { getShareUrl, anonymizeHand } from '@/lib/hand-codec';
 import PlayerTypeBadge from '@/components/PlayerTypeBadge';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
-import { Share2, Check } from 'lucide-react';
+import { Share2, Check, EyeOff, Eye } from 'lucide-react';
 import {
   Table,
   TableBody,
@@ -61,6 +61,7 @@ export default function HandDrawer({
   const [note, setNote] = useState('');
   const [noteSaving, setNoteSaving] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [anonymized, setAnonymized] = useState(false);
 
   const loadHand = useCallback(async () => {
     setLoading(true);
@@ -115,13 +116,14 @@ export default function HandDrawer({
 
   const handleShare = async () => {
     if (!hand) return;
-    const url = getShareUrl(hand);
+    const url = getShareUrl(anonymized ? anonymizeHand(hand) : hand);
     await navigator.clipboard.writeText(url);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const hero = hand?.players.find((p) => p.is_hero);
+  const displayHand = hand && anonymized ? anonymizeHand(hand) : hand;
+  const hero = displayHand?.players.find((p) => p.is_hero);
   const heroWonBb = hero?.won_bb ?? 0;
 
   return (
@@ -143,6 +145,15 @@ export default function HandDrawer({
             </div>
             <div className="flex items-center gap-3">
               <SheetTitle className="text-[12px] text-text-muted font-mono font-normal">{handId}</SheetTitle>
+              <Button
+                variant="ghost"
+                size="sm"
+                className={`h-8 w-8 p-0 ${anonymized ? 'text-primary' : ''}`}
+                onClick={() => setAnonymized((v) => !v)}
+                title={anonymized ? 'Show real names' : 'Anonymize names'}
+              >
+                {anonymized ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </Button>
               <Button
                 variant="ghost"
                 size="sm"
@@ -188,7 +199,7 @@ export default function HandDrawer({
               ) : viewMode === 'visual' ? (
                 <>
                   <MetaHeader hand={hand} />
-                  <HandReplayer hand={hand} />
+                  <HandReplayer hand={displayHand!} />
                   <div className="mt-4" />
                 </>
 
@@ -209,7 +220,7 @@ export default function HandDrawer({
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {hand.players.map((p) => (
+                        {displayHand!.players.map((p) => (
                           <TableRow
                             key={p.seat}
                             className={`text-[13px] ${p.is_hero ? 'bg-primary/5' : ''}`}
@@ -240,7 +251,7 @@ export default function HandDrawer({
                   </div>
 
                   {/* Actions */}
-                  <HandActionsDisplay actions={hand.actions} board={hand.board} />
+                  <HandActionsDisplay actions={displayHand!.actions} board={displayHand!.board} />
 
                   {/* Result */}
                   <div className={`mt-1 mb-4 text-[14px] font-bold font-mono ${heroWonBb >= 0 ? 'text-green' : 'text-red'}`}>
