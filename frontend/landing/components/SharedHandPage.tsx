@@ -52,48 +52,43 @@ export default function SharedHandPage() {
   const heroWonBb = hero?.won_bb ?? 0;
 
   return (
-    <div className="min-h-screen bg-background text-text">
+    <div className="h-screen bg-background text-text flex flex-col">
       {/* Header */}
-      <header className="border-b border-border bg-surface">
-        <div className="max-w-3xl mx-auto px-4 py-3 flex items-center justify-between">
+      <header className="border-b border-border bg-surface shrink-0">
+        <div className="max-w-7xl mx-auto px-4 py-2 flex items-center justify-between">
           <a href="/#/" className="text-sm font-bold text-primary hover:underline">
             Open Holdem Manager
           </a>
-          <div className="flex items-center gap-2 text-sm text-text-muted">
+          <div className="flex items-center gap-3 text-sm">
             <span className="font-bold text-text">{formatStakes(hand.stakes)}</span>
-            <span>{hand.table_size}-max</span>
+            <span className="text-text-muted">{hand.table_size}-max</span>
+            <a
+              href="https://github.com/AHTOOOXA/open-holdem-manager/releases/latest"
+              className="ml-2 px-3 py-1 bg-primary text-white rounded text-xs font-semibold hover:bg-primary/90 transition-colors"
+            >
+              Download
+            </a>
           </div>
         </div>
       </header>
 
-      {/* Hand content */}
-      <main className="max-w-3xl mx-auto px-4 py-6 space-y-6">
-        {/* Replayer */}
-        <HandReplayer hand={hand} />
+      {/* Two-column layout */}
+      <main className="flex-1 min-h-0 max-w-7xl w-full mx-auto flex gap-4 px-4 py-3">
+        {/* Left: Replayer */}
+        <div className="flex-1 min-w-0 flex flex-col">
+          <HandReplayer hand={hand} />
+        </div>
 
-        {/* Actions text view */}
-        <HandActionsDisplay actions={hand.actions} board={hand.board} />
-
-        {/* Result */}
-        {hero && (
-          <div className={`text-[14px] font-bold font-mono ${heroWonBb >= 0 ? 'text-green' : 'text-red'}`}>
-            Hero {heroWonBb >= 0 ? 'wins' : 'loses'} {Math.abs(heroWonBb).toFixed(1)} BB
-          </div>
-        )}
+        {/* Right: Action log */}
+        <div className="w-[340px] shrink-0 overflow-y-auto border-l border-border pl-4">
+          <HandActionsDisplay actions={hand.actions} board={hand.board} />
+          {hero && (
+            <div className={`mt-2 text-[14px] font-bold font-mono ${heroWonBb >= 0 ? 'text-green' : 'text-red'}`}>
+              Hero {heroWonBb >= 0 ? 'wins' : 'loses'} {Math.abs(heroWonBb).toFixed(1)} BB
+            </div>
+          )}
+        </div>
       </main>
-
-      {/* CTA footer */}
-      <footer className="border-t border-border mt-12 py-8 text-center">
-        <p className="text-text-muted text-sm mb-3">
-          Track your own poker hands for free
-        </p>
-        <a
-          href="https://github.com/AHTOOOXA/open-holdem-manager/releases/latest"
-          className="inline-flex items-center gap-2 px-5 py-2.5 bg-primary text-white rounded-lg font-semibold text-sm hover:bg-primary/90 transition-colors"
-        >
-          Download Open Holdem Manager
-        </a>
-      </footer>
     </div>
   );
 }
