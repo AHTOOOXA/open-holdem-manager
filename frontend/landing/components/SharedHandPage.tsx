@@ -1,6 +1,5 @@
 import { useSearchParams } from 'react-router-dom';
 import { decodeHand } from '@/lib/hand-codec';
-import { formatStakes } from '@/lib/utils';
 import HandReplayer from '@/components/hands/replayer/HandReplayer';
 import HandActionsDisplay from '@/components/hands/HandActions';
 
@@ -55,20 +54,16 @@ export default function SharedHandPage() {
     <div className="h-screen bg-background text-text flex flex-col">
       {/* Header */}
       <header className="border-b border-border bg-surface shrink-0">
-        <div className="max-w-7xl mx-auto px-4 py-2 flex items-center justify-between">
+        <div className="max-w-7xl mx-auto px-4 py-2.5 flex items-center justify-between">
           <a href="/#/" className="text-sm font-bold text-primary hover:underline">
             Open Holdem Manager
           </a>
-          <div className="flex items-center gap-3 text-sm">
-            <span className="font-bold text-text">{formatStakes(hand.stakes)}</span>
-            <span className="text-text-muted">{hand.table_size}-max</span>
-            <a
-              href="https://github.com/AHTOOOXA/open-holdem-manager/releases/latest"
-              className="ml-2 px-3 py-1 bg-primary text-white rounded text-xs font-semibold hover:bg-primary/90 transition-colors"
-            >
-              Download
-            </a>
-          </div>
+          <a
+            href="https://github.com/AHTOOOXA/open-holdem-manager/releases/latest"
+            className="px-3 py-1.5 bg-primary text-white rounded-md text-xs font-semibold hover:bg-primary/90 transition-colors"
+          >
+            Download
+          </a>
         </div>
       </header>
 
@@ -89,6 +84,21 @@ export default function SharedHandPage() {
           )}
         </div>
       </main>
+
+      {/* Footer CTA */}
+      <footer className="border-t border-border bg-surface shrink-0">
+        <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
+          <p className="text-text-muted text-sm">
+            Free, open-source poker tracker — no account, no cloud.
+          </p>
+          <a
+            href="https://github.com/AHTOOOXA/open-holdem-manager/releases/latest"
+            className="px-4 py-1.5 bg-primary text-white rounded-md text-sm font-semibold hover:bg-primary/90 transition-colors shrink-0"
+          >
+            Download Open Holdem Manager
+          </a>
+        </div>
+      </footer>
     </div>
   );
 }
