@@ -16,15 +16,21 @@ function h(type: string, style: Record<string, unknown>, ...children: (SatoriNod
 
 const POSITIONS = ['EP', 'MP', 'CO', 'BTN', 'SB', 'BB'] as const;
 
+interface OgPlayer {
+  position: string;
+  name: string;
+  stackBb: number;
+  cards: [string | null, string | null];
+  wonBb: number;
+  isHero: boolean;
+  isFolded: boolean;
+}
+
 interface OgHandData {
   stakes: string;
   tableSize: number;
-  heroName: string;
-  heroPosition: string;
-  heroCards: [string | null, string | null];
-  heroWonBb: number;
-  board: string[];
-  opponents: { name: string; position: string; cards: [string | null, string | null] }[];
+  players: OgPlayer[];       // hero-first rotation (hero at index 0)
+  board: [string[], string[], string[]]; // [flop, turn, river]
 }
 
 function decodeHandData(encoded: string): OgHandData | null {
@@ -35,54 +41,71 @@ function decodeHandData(encoded: string): OgHandData | null {
     const c = JSON.parse(json);
     if (c.v !== 1) return null;
 
-    const heroIdx = c.p.findIndex((p: number[]) => p[7] === 1);
+    // Fold detection: actionIndex 0 = fold
+    const foldedSet = new Set<number>();
+    for (const a of c.a) {
+      if (a[2] === 0) foldedSet.add(a[1]);
+    }
+
+    // Hero-first rotation (same logic as useReplayerState.ts:76-82)
+    const indexed = c.p.map((p: (string | number | null)[], i: number) => ({ p, i }));
+    indexed.sort(
+      (a: { p: (string | number | null)[] }, b: { p: (string | number | null)[] }) =>
+        (a.p[0] as number) - (b.p[0] as number),
+    );
+    const heroIdx = indexed.findIndex(
+      (item: { p: (string | number | null)[] }) => item.p[7] === 1,
+    );
     if (heroIdx === -1) return null;
-    const hero = c.p[heroIdx];
+    const rotated = [...indexed.slice(heroIdx), ...indexed.slice(0, heroIdx)];
 
-    const opponents = c.p
-      .filter((_: unknown, i: number) => i !== heroIdx)
-      .map((p: (string | number | null)[]) => ({
-        name: p[2] as string,
-        position: POSITIONS[p[1] as number] ?? 'EP',
-        cards: [p[4], p[5]] as [string | null, string | null],
-      }));
+    const players: OgPlayer[] = rotated.map(
+      (item: { p: (string | number | null)[]; i: number }) => ({
+        position: POSITIONS[item.p[1] as number] ?? 'EP',
+        name: item.p[2] as string,
+        stackBb: item.p[3] as number,
+        cards: [item.p[4] as string | null, item.p[5] as string | null],
+        wonBb: item.p[6] as number,
+        isHero: item.p[7] === 1,
+        isFolded: foldedSet.has(item.i),
+      }),
+    );
 
-    return {
-      stakes: c.s,
-      tableSize: c.ts,
-      heroName: hero[2],
-      heroPosition: POSITIONS[hero[1]] ?? 'EP',
-      heroCards: [hero[4], hero[5]],
-      heroWonBb: hero[6],
-      board: [...(c.b[0] ?? []), ...(c.b[1] ?? []), ...(c.b[2] ?? [])],
-      opponents,
-    };
+    const board: [string[], string[], string[]] = [
+      c.b[0] ?? [],
+      c.b[1] ?? [],
+      c.b[2] ?? [],
+    ];
+
+    return { stakes: c.s, tableSize: c.ts, players, board };
   } catch {
     return null;
   }
 }
 
-// ── Card rendering (H2N-style boxes matching CardBox in the app) ────
+// ── Card rendering ──────────────────────────────────────────────────
 
-// Spades lightened for dark bg visibility (app uses oklch 0.268)
-const SUIT_COLORS: Record<string, string> = { s: '#57534e', h: '#dc2626', d: '#2563eb', c: '#16a34a' };
+const SUIT_BG: Record<string, string> = {
+  s: '#57534e', h: '#dc2626', d: '#2563eb', c: '#16a34a',
+};
 const RANK_DISPLAY: Record<string, string> = { T: '10' };
 
-function cardBox(card: string | null, size: 'lg' | 'sm' = 'lg'): SatoriNode {
-  const w = size === 'lg' ? 64 : 48;
-  const ht = size === 'lg' ? 80 : 60;
-  const fs = size === 'lg' ? 32 : 22;
-  const r = size === 'lg' ? 8 : 6;
-
+function cardBox(card: string | null, w: number, ht: number, fs: number, r: number): SatoriNode {
   if (!card || card.length < 2) {
-    return h('div', { display: 'flex', alignItems: 'center', justifyContent: 'center', width: w, height: ht, borderRadius: r, backgroundColor: '#292524', border: '2px solid #44403c', color: '#78716c', fontSize: fs, fontWeight: 600 },
-      '?');
+    return h('div', {
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      width: w, height: ht, borderRadius: r,
+      backgroundColor: '#292524', border: '2px solid #44403c',
+      color: '#78716c', fontSize: fs, fontWeight: 600,
+    }, '?');
   }
   const rank = RANK_DISPLAY[card[0]] ?? card[0];
-  const suit = card[1];
-  const bg = SUIT_COLORS[suit] ?? '#57534e';
-  return h('div', { display: 'flex', alignItems: 'center', justifyContent: 'center', width: w, height: ht, borderRadius: r, backgroundColor: bg, color: '#fff', fontSize: fs, fontWeight: 600 },
-    rank);
+  const bg = SUIT_BG[card[1]] ?? '#57534e';
+  return h('div', {
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    width: w, height: ht, borderRadius: r,
+    backgroundColor: bg, color: '#fff', fontSize: fs, fontWeight: 600,
+  }, rank);
 }
 
 // ── Font ────────────────────────────────────────────────────────────
@@ -96,69 +119,165 @@ async function loadFont(): Promise<ArrayBuffer> {
   return fontCache;
 }
 
+// ── Seat positions (elliptical, hero at bottom) ─────────────────────
+
+function getSeatPositions(count: number): { x: number; y: number }[] {
+  const cx = 600, cy = 305, rx = 380, ry = 185;
+  const seats: { x: number; y: number }[] = [];
+  for (let i = 0; i < count; i++) {
+    const angle = Math.PI / 2 - (2 * Math.PI * i) / count;
+    seats.push({
+      x: Math.round(cx - rx * Math.cos(angle)),
+      y: Math.round(cy + ry * Math.sin(angle)),
+    });
+  }
+  return seats;
+}
+
+// ── Board cards ─────────────────────────────────────────────────────
+
+function renderBoard(board: [string[], string[], string[]]): SatoriNode | false {
+  const [flop, turn, river] = board;
+  if (flop.length === 0 && turn.length === 0 && river.length === 0) return false;
+
+  const CW = 44, CH = 56, GAP = 5, STREET_GAP = 12;
+
+  const items: { card: string; ml: number }[] = [];
+  flop.forEach((c, i) => items.push({ card: c, ml: i > 0 ? GAP : 0 }));
+  if (turn.length > 0) items.push({ card: turn[0], ml: items.length > 0 ? STREET_GAP : 0 });
+  if (river.length > 0) items.push({ card: river[0], ml: items.length > 0 ? STREET_GAP : 0 });
+
+  const totalW = items.length * CW + items.reduce((s, it) => s + it.ml, 0);
+
+  return h('div', {
+    position: 'absolute', display: 'flex',
+    left: 600 - totalW / 2, top: 290 - CH / 2,
+  },
+    ...items.map(it =>
+      h('div', { display: 'flex', marginLeft: it.ml },
+        cardBox(it.card, CW, CH, 22, 5))));
+}
+
+// ── Player seat ─────────────────────────────────────────────────────
+
+function truncName(name: string, isHero: boolean): string {
+  if (isHero) return 'Hero';
+  return name.length > 8 ? `…${name.slice(-6)}` : name;
+}
+
+function renderSeat(player: OgPlayer, pos: { x: number; y: number }, idx: number): SatoriNode {
+  const isHero = idx === 0;
+  const showCards = !!(player.cards[0] && player.cards[1]);
+
+  // Card dimensions
+  const cw = isHero ? 48 : 36;
+  const ch = isHero ? 60 : 44;
+  const cGap = isHero ? 5 : 3;
+  const cFs = isHero ? 24 : 18;
+  const cR = isHero ? 6 : 4;
+
+  // Wrapper size for centering on the ellipse point
+  const wrapW = isHero ? 160 : 120;
+  const wrapH = isHero ? 140 : (showCards ? 110 : 65);
+
+  // Visual styles
+  const isWinner = player.wonBb > 0 && !isHero;
+  const border = isHero
+    ? '2px solid #6366f1'
+    : isWinner ? '2px solid #22c55e' : '1px solid #44403c';
+  const shadow = isHero ? '0 0 12px rgba(99,102,241,0.3)' : undefined;
+  const opacity = !isHero && player.isFolded ? 0.35 : 1;
+  const br = isHero ? 10 : 8;
+
+  const nameStr = truncName(player.name, isHero);
+  const nameColor = isHero ? '#6366f1' : '#a8a29e';
+  const nameFs = isHero ? 14 : 11;
+  const posFs = isHero ? 13 : 11;
+  const isBtn = player.position === 'BTN';
+
+  return h('div', {
+    position: 'absolute', display: 'flex',
+    justifyContent: 'center', alignItems: 'center',
+    left: pos.x - wrapW / 2, top: pos.y - wrapH / 2,
+    width: wrapW, height: wrapH,
+  },
+    h('div', {
+      display: 'flex', flexDirection: 'column', alignItems: 'center',
+      padding: '8px 12px', backgroundColor: '#292524',
+      border, borderRadius: br,
+      ...(shadow ? { boxShadow: shadow } : {}),
+      opacity, gap: 4,
+    },
+      // Cards row
+      showCards && h('div', { display: 'flex', gap: cGap },
+        cardBox(player.cards[0], cw, ch, cFs, cR),
+        cardBox(player.cards[1], cw, ch, cFs, cR)),
+
+      // Position label + dealer button
+      h('div', { display: 'flex', alignItems: 'center', gap: 4 },
+        h('span', { fontSize: posFs, fontWeight: 600, color: '#a8a29e' }, player.position),
+        isBtn && h('div', {
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          width: 18, height: 18, borderRadius: '50%',
+          backgroundColor: '#eab308', color: '#1c1917',
+          fontSize: 10, fontWeight: 700,
+        }, 'D')),
+
+      // Username
+      h('span', { fontSize: nameFs, color: nameColor }, nameStr)));
+}
+
 // ── Image builder ───────────────────────────────────────────────────
 
 function buildImage(hand: OgHandData): SatoriNode {
-  const isWin = hand.heroWonBb >= 0;
+  const hero = hand.players[0];
+  const isWin = hero.wonBb >= 0;
   const resultColor = isWin ? '#22c55e' : '#ef4444';
-  const resultText = `${isWin ? '+' : ''}${hand.heroWonBb.toFixed(1)} BB`;
+  const sign = isWin ? '+' : '';
+  const resultText = `Hero ${isWin ? 'wins' : 'loses'} ${sign}${hero.wonBb.toFixed(1)} BB`;
 
-  const visibleOpponents = hand.opponents
-    .filter(o => o.cards[0] && o.cards[1])
-    .slice(0, 3);
+  const seats = getSeatPositions(hand.players.length);
 
-  return h('div', { display: 'flex', flexDirection: 'column', width: 1200, height: 630, backgroundColor: '#1c1917', padding: '44px 56px', fontFamily: 'Inter', color: '#e7e5e4' },
+  return h('div', {
+    position: 'relative', display: 'flex',
+    width: 1200, height: 630,
+    backgroundColor: '#1c1917', fontFamily: 'Inter', color: '#e7e5e4',
+  },
 
-    // ── Top bar: branding left, stakes right ──
-    h('div', { display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
-      h('span', { color: '#d97706', fontSize: 22, fontWeight: 600 }, 'Open Holdem Manager'),
-      h('div', { display: 'flex', alignItems: 'center', gap: 12 },
-        h('span', { color: '#78716c', fontSize: 18 }, `${hand.tableSize}-max`),
-        h('span', { fontSize: 22, fontWeight: 600 }, hand.stakes))),
+    // Felt oval
+    h('div', {
+      position: 'absolute', display: 'flex',
+      left: 260, top: 130, width: 680, height: 340,
+      borderRadius: '50%',
+      backgroundImage: 'radial-gradient(ellipse at 50% 40%, #1a3a2a, #0f2418)',
+      border: '3px solid #2a4a38',
+      boxShadow: 'inset 0 0 40px rgba(10,30,18,0.6), 0 4px 20px rgba(0,0,0,0.5)',
+    }),
 
-    // ── Divider ──
-    h('div', { display: 'flex', width: '100%', height: 1, backgroundColor: '#292524', marginTop: 20, marginBottom: 28 }),
+    // Board cards
+    renderBoard(hand.board),
 
-    // ── Main content: hero cards + board + result ──
-    h('div', { display: 'flex', flex: 1, gap: 48 },
+    // Player seats
+    ...hand.players.map((p, i) => renderSeat(p, seats[i], i)),
 
-      // Left column: hero cards (big)
-      h('div', { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 },
-        h('div', { display: 'flex', gap: 8 },
-          cardBox(hand.heroCards[0], 'lg'),
-          cardBox(hand.heroCards[1], 'lg')),
-        h('span', { fontSize: 16, color: '#a8a29e' }, `${hand.heroName} (${hand.heroPosition})`)),
+    // Branding bar (top)
+    h('div', {
+      position: 'absolute', display: 'flex',
+      left: 0, top: 0, width: 1200, height: 44,
+      paddingLeft: 32, paddingRight: 32,
+      justifyContent: 'space-between', alignItems: 'center',
+    },
+      h('span', { fontSize: 18, fontWeight: 600, color: '#d97706' }, 'Open Holdem Manager'),
+      h('span', { fontSize: 16, color: '#78716c' }, `${hand.stakes} · ${hand.tableSize}-max`)),
 
-      // Right column: board + result + opponents
-      h('div', { display: 'flex', flexDirection: 'column', flex: 1, gap: 20 },
-
-        // Board
-        hand.board.length > 0
-          ? h('div', { display: 'flex', flexDirection: 'column', gap: 8 },
-              h('span', { fontSize: 14, color: '#78716c', textTransform: 'uppercase' as const, letterSpacing: 1 }, 'Board'),
-              h('div', { display: 'flex', gap: 6 },
-                ...hand.board.map(c => cardBox(c, 'sm'))))
-          : h('div', { display: 'flex' },
-              h('span', { fontSize: 14, color: '#78716c' }, 'No board')),
-
-        // Result
-        h('div', { display: 'flex', alignItems: 'baseline', gap: 12 },
-          h('span', { fontSize: 48, fontWeight: 600, color: resultColor }, resultText),
-          h('span', { fontSize: 20, color: '#a8a29e' }, isWin ? 'won' : 'lost')),
-
-        // Opponents (at bottom of right column)
-        visibleOpponents.length > 0
-          ? h('div', { display: 'flex', marginTop: 'auto', gap: 20 },
-              ...visibleOpponents.map(opp =>
-                h('div', { display: 'flex', alignItems: 'center', gap: 8 },
-                  h('span', { color: '#78716c', fontSize: 13 }, `${opp.name} (${opp.position})`),
-                  h('div', { display: 'flex', gap: 3 },
-                    cardBox(opp.cards[0], 'sm'),
-                    cardBox(opp.cards[1], 'sm')))))
-          : null)),
-
-    // ── Bottom bar ──
-    h('div', { display: 'flex', width: '100%', height: 1, backgroundColor: '#292524', marginTop: 20 }));
+    // Result bar (bottom)
+    h('div', {
+      position: 'absolute', display: 'flex',
+      left: 0, top: 586, width: 1200, height: 44,
+      justifyContent: 'center', alignItems: 'center',
+      borderTop: '1px solid #292524',
+    },
+      h('span', { fontSize: 24, fontWeight: 600, color: resultColor }, resultText)));
 }
 
 // ── Handler ─────────────────────────────────────────────────────────
