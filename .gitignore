@@ -42,6 +42,9 @@ backend/build/
 backend/*.spec
 *.spec
 
+# Vercel
+.vercel/
+
 # Env
 .env
 .env.local

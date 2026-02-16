@@ -1,0 +1,22 @@
+{
+  "buildCommand": "npm run build:landing",
+  "outputDirectory": "dist-landing",
+  "framework": null,
+  "rewrites": [
+    {
+      "source": "/hand",
+      "has": [
+        {
+          "type": "header",
+          "key": "user-agent",
+          "value": "(?i).*(TelegramBot|Twitterbot|facebookexternalhit|LinkedInBot|Discordbot|WhatsApp|Slackbot|Googlebot|bingbot|Applebot).*"
+        }
+      ],
+      "destination": "/api/og"
+    },
+    {
+      "source": "/hand",
+      "destination": "/index.html"
+    }
+  ]
+}

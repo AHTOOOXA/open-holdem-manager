@@ -192,5 +192,5 @@ const LANDING_ORIGIN = 'https://ohm.antonchaynik.ru';
 
 export function getShareUrl(hand: HandDetail): string {
   const encoded = encodeHand(hand);
-  return `${LANDING_ORIGIN}/#/hand?d=${encoded}`;
+  return `${LANDING_ORIGIN}/hand?d=${encoded}`;
 }

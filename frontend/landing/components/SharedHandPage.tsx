@@ -16,7 +16,7 @@ export default function SharedHandPage() {
             This link is missing the hand data parameter.
           </p>
           <a
-            href="/#/"
+            href="/"
             className="inline-block text-primary hover:underline text-sm"
           >
             Go to Open Holdem Manager
@@ -37,7 +37,7 @@ export default function SharedHandPage() {
             Could not decode the hand from this URL. The link may be corrupted.
           </p>
           <a
-            href="/#/"
+            href="/"
             className="inline-block text-primary hover:underline text-sm"
           >
             Go to Open Holdem Manager
@@ -55,7 +55,7 @@ export default function SharedHandPage() {
       {/* Header */}
       <header className="border-b border-border bg-surface shrink-0">
         <div className="max-w-7xl mx-auto px-4 py-2.5 flex items-center justify-between">
-          <a href="/#/" className="text-sm font-bold text-primary hover:underline">
+          <a href="/" className="text-sm font-bold text-primary hover:underline">
             Open Holdem Manager
           </a>
           <a
