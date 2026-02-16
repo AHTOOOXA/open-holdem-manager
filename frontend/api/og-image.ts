@@ -28,9 +28,10 @@ interface OgPlayer {
 
 interface OgHandData {
   stakes: string;
+  bbAmount: number;
   tableSize: number;
-  players: OgPlayer[];       // hero-first rotation (hero at index 0)
-  board: [string[], string[], string[]]; // [flop, turn, river]
+  players: OgPlayer[];
+  board: [string[], string[], string[]];
 }
 
 function decodeHandData(encoded: string): OgHandData | null {
@@ -77,7 +78,7 @@ function decodeHandData(encoded: string): OgHandData | null {
       c.b[2] ?? [],
     ];
 
-    return { stakes: c.s, tableSize: c.ts, players, board };
+    return { stakes: c.s, bbAmount: c.bb, tableSize: c.ts, players, board };
   } catch {
     return null;
   }
@@ -96,7 +97,7 @@ function cardBox(card: string | null, w: number, ht: number, fs: number, r: numb
       display: 'flex', alignItems: 'center', justifyContent: 'center',
       width: w, height: ht, borderRadius: r,
       backgroundColor: '#292524', border: '2px solid #44403c',
-      color: '#78716c', fontSize: fs, fontWeight: 600,
+      color: '#78716c', fontSize: fs, fontWeight: 700,
     }, '?');
   }
   const rank = RANK_DISPLAY[card[0]] ?? card[0];
@@ -104,7 +105,7 @@ function cardBox(card: string | null, w: number, ht: number, fs: number, r: numb
   return h('div', {
     display: 'flex', alignItems: 'center', justifyContent: 'center',
     width: w, height: ht, borderRadius: r,
-    backgroundColor: bg, color: '#fff', fontSize: fs, fontWeight: 600,
+    backgroundColor: bg, color: '#fff', fontSize: fs, fontWeight: 700,
   }, rank);
 }
 
@@ -119,10 +120,20 @@ async function loadFont(): Promise<ArrayBuffer> {
   return fontCache;
 }
 
+// ── Money formatting ────────────────────────────────────────────────
+
+function formatMoney(bb: number, bbAmount: number): string {
+  const dollars = Math.abs(bb * bbAmount);
+  const sign = bb >= 0 ? '+' : '-';
+  return dollars >= 100
+    ? `${sign}$${Math.round(dollars)}`
+    : `${sign}$${dollars.toFixed(2)}`;
+}
+
 // ── Seat positions (elliptical, hero at bottom) ─────────────────────
 
 function getSeatPositions(count: number): { x: number; y: number }[] {
-  const cx = 600, cy = 305, rx = 380, ry = 185;
+  const cx = 600, cy = 290, rx = 370, ry = 175;
   const seats: { x: number; y: number }[] = [];
   for (let i = 0; i < count; i++) {
     const angle = Math.PI / 2 - (2 * Math.PI * i) / count;
@@ -140,7 +151,7 @@ function renderBoard(board: [string[], string[], string[]]): SatoriNode | false 
   const [flop, turn, river] = board;
   if (flop.length === 0 && turn.length === 0 && river.length === 0) return false;
 
-  const CW = 44, CH = 56, GAP = 5, STREET_GAP = 12;
+  const CW = 64, CH = 80, FS = 32, R = 7, GAP = 6, STREET_GAP = 8;
 
   const items: { card: string; ml: number }[] = [];
   flop.forEach((c, i) => items.push({ card: c, ml: i > 0 ? GAP : 0 }));
@@ -151,11 +162,11 @@ function renderBoard(board: [string[], string[], string[]]): SatoriNode | false 
 
   return h('div', {
     position: 'absolute', display: 'flex',
-    left: 600 - totalW / 2, top: 290 - CH / 2,
+    left: 600 - totalW / 2, top: 275 - CH / 2,
   },
     ...items.map(it =>
       h('div', { display: 'flex', marginLeft: it.ml },
-        cardBox(it.card, CW, CH, 22, 5))));
+        cardBox(it.card, CW, CH, FS, R))));
 }
 
 // ── Player seat ─────────────────────────────────────────────────────
@@ -169,30 +180,30 @@ function renderSeat(player: OgPlayer, pos: { x: number; y: number }, idx: number
   const isHero = idx === 0;
   const showCards = !!(player.cards[0] && player.cards[1]);
 
-  // Card dimensions
-  const cw = isHero ? 48 : 36;
-  const ch = isHero ? 60 : 44;
-  const cGap = isHero ? 5 : 3;
-  const cFs = isHero ? 24 : 18;
-  const cR = isHero ? 6 : 4;
+  // Card dimensions — hero ~2x bigger than before
+  const cw = isHero ? 80 : 52;
+  const ch = isHero ? 100 : 66;
+  const cGap = isHero ? 8 : 5;
+  const cFs = isHero ? 40 : 26;
+  const cR = isHero ? 8 : 6;
 
   // Wrapper size for centering on the ellipse point
-  const wrapW = isHero ? 160 : 120;
-  const wrapH = isHero ? 140 : (showCards ? 110 : 65);
+  const wrapW = isHero ? 220 : 150;
+  const wrapH = isHero ? 180 : (showCards ? 135 : 75);
 
   // Visual styles
   const isWinner = player.wonBb > 0 && !isHero;
   const border = isHero
-    ? '2px solid #6366f1'
-    : isWinner ? '2px solid #22c55e' : '1px solid #44403c';
-  const shadow = isHero ? '0 0 12px rgba(99,102,241,0.3)' : undefined;
-  const opacity = !isHero && player.isFolded ? 0.35 : 1;
-  const br = isHero ? 10 : 8;
+    ? '3px solid #6366f1'
+    : isWinner ? '3px solid #22c55e' : '2px solid #44403c';
+  const shadow = isHero ? '0 0 16px rgba(99,102,241,0.4)' : undefined;
+  const opacity = !isHero && player.isFolded ? 0.3 : 1;
+  const br = isHero ? 14 : 10;
 
   const nameStr = truncName(player.name, isHero);
   const nameColor = isHero ? '#6366f1' : '#a8a29e';
-  const nameFs = isHero ? 14 : 11;
-  const posFs = isHero ? 13 : 11;
+  const nameFs = isHero ? 22 : 16;
+  const posFs = isHero ? 20 : 16;
   const isBtn = player.position === 'BTN';
 
   return h('div', {
@@ -203,7 +214,8 @@ function renderSeat(player: OgPlayer, pos: { x: number; y: number }, idx: number
   },
     h('div', {
       display: 'flex', flexDirection: 'column', alignItems: 'center',
-      padding: '8px 12px', backgroundColor: '#292524',
+      padding: isHero ? '12px 18px' : '8px 14px',
+      backgroundColor: '#292524',
       border, borderRadius: br,
       ...(shadow ? { boxShadow: shadow } : {}),
       opacity, gap: 4,
@@ -214,13 +226,13 @@ function renderSeat(player: OgPlayer, pos: { x: number; y: number }, idx: number
         cardBox(player.cards[1], cw, ch, cFs, cR)),
 
       // Position label + dealer button
-      h('div', { display: 'flex', alignItems: 'center', gap: 4 },
-        h('span', { fontSize: posFs, fontWeight: 600, color: '#a8a29e' }, player.position),
+      h('div', { display: 'flex', alignItems: 'center', gap: 5 },
+        h('span', { fontSize: posFs, fontWeight: 700, color: '#a8a29e' }, player.position),
         isBtn && h('div', {
           display: 'flex', alignItems: 'center', justifyContent: 'center',
-          width: 18, height: 18, borderRadius: '50%',
+          width: 24, height: 24, borderRadius: '50%',
           backgroundColor: '#eab308', color: '#1c1917',
-          fontSize: 10, fontWeight: 700,
+          fontSize: 14, fontWeight: 700,
         }, 'D')),
 
       // Username
@@ -233,8 +245,8 @@ function buildImage(hand: OgHandData): SatoriNode {
   const hero = hand.players[0];
   const isWin = hero.wonBb >= 0;
   const resultColor = isWin ? '#22c55e' : '#ef4444';
-  const sign = isWin ? '+' : '';
-  const resultText = `Hero ${isWin ? 'wins' : 'loses'} ${sign}${hero.wonBb.toFixed(1)} BB`;
+  const moneyStr = formatMoney(hero.wonBb, hand.bbAmount);
+  const resultText = `Hero ${isWin ? 'wins' : 'loses'} ${moneyStr}`;
 
   const seats = getSeatPositions(hand.players.length);
 
@@ -247,7 +259,7 @@ function buildImage(hand: OgHandData): SatoriNode {
     // Felt oval
     h('div', {
       position: 'absolute', display: 'flex',
-      left: 260, top: 130, width: 680, height: 340,
+      left: 240, top: 110, width: 720, height: 360,
       borderRadius: '50%',
       backgroundImage: 'radial-gradient(ellipse at 50% 40%, #1a3a2a, #0f2418)',
       border: '3px solid #2a4a38',
@@ -263,21 +275,21 @@ function buildImage(hand: OgHandData): SatoriNode {
     // Branding bar (top)
     h('div', {
       position: 'absolute', display: 'flex',
-      left: 0, top: 0, width: 1200, height: 44,
-      paddingLeft: 32, paddingRight: 32,
+      left: 0, top: 0, width: 1200, height: 52,
+      paddingLeft: 36, paddingRight: 36,
       justifyContent: 'space-between', alignItems: 'center',
     },
-      h('span', { fontSize: 18, fontWeight: 600, color: '#d97706' }, 'Open Holdem Manager'),
-      h('span', { fontSize: 16, color: '#78716c' }, `${hand.stakes} · ${hand.tableSize}-max`)),
+      h('span', { fontSize: 26, fontWeight: 700, color: '#d97706' }, 'Open Holdem Manager'),
+      h('span', { fontSize: 22, fontWeight: 600, color: '#78716c' }, `${hand.stakes} · ${hand.tableSize}-max`)),
 
     // Result bar (bottom)
     h('div', {
       position: 'absolute', display: 'flex',
-      left: 0, top: 586, width: 1200, height: 44,
+      left: 0, top: 572, width: 1200, height: 58,
       justifyContent: 'center', alignItems: 'center',
       borderTop: '1px solid #292524',
     },
-      h('span', { fontSize: 24, fontWeight: 600, color: resultColor }, resultText)));
+      h('span', { fontSize: 40, fontWeight: 700, color: resultColor }, resultText)));
 }
 
 // ── Handler ─────────────────────────────────────────────────────────
