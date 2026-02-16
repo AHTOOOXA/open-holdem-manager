@@ -1,17 +1,64 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { decodeHandData } from './_lib/decode';
-import { parseCard, formatRank, suitSymbol } from './_lib/card-format';
+import { inflateRawSync } from 'node:zlib';
+
+// ── Decode ──────────────────────────────────────────────────────────
+
+const POSITIONS = ['EP', 'MP', 'CO', 'BTN', 'SB', 'BB'] as const;
+
+interface OgHandData {
+  stakes: string;
+  bbAmount: number;
+  tableSize: number;
+  heroPosition: string;
+  heroCards: [string | null, string | null];
+  heroWonBb: number;
+  board: string[];
+}
+
+function decodeHandData(encoded: string): OgHandData | null {
+  try {
+    const padded = encoded.replace(/-/g, '+').replace(/_/g, '/');
+    const compressed = Buffer.from(padded, 'base64');
+    const json = inflateRawSync(compressed).toString('utf-8');
+    const c = JSON.parse(json);
+    if (c.v !== 1) return null;
+
+    const hero = c.p.find((p: number[]) => p[7] === 1);
+    if (!hero) return null;
+
+    return {
+      stakes: c.s,
+      bbAmount: c.bb,
+      tableSize: c.ts,
+      heroPosition: POSITIONS[hero[1]] ?? 'EP',
+      heroCards: [hero[4], hero[5]],
+      heroWonBb: hero[6],
+      board: [...(c.b[0] ?? []), ...(c.b[1] ?? []), ...(c.b[2] ?? [])],
+    };
+  } catch {
+    return null;
+  }
+}
+
+// ── Card formatting ─────────────────────────────────────────────────
+
+const SUIT_SYMBOLS: Record<string, string> = { s: '\u2660', h: '\u2665', d: '\u2666', c: '\u2663' };
+const RANK_DISPLAY: Record<string, string> = { T: '10' };
+
+function formatCardText(card: string | null): string {
+  if (!card || card.length < 2) return '?';
+  const rank = RANK_DISPLAY[card[0]] ?? card[0];
+  const suit = SUIT_SYMBOLS[card[1]] ?? '';
+  return `${rank}${suit}`;
+}
+
+// ── HTML helpers ────────────────────────────────────────────────────
 
 function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-function formatCardText(card: string | null): string {
-  if (!card) return '?';
-  const parsed = parseCard(card);
-  if (!parsed) return '?';
-  return `${formatRank(parsed.rank)}${suitSymbol(parsed.suit)}`;
-}
+// ── Handler ─────────────────────────────────────────────────────────
 
 export default function handler(req: VercelRequest, res: VercelResponse) {
   const d = req.query.d as string | undefined;
