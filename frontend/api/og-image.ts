@@ -98,7 +98,7 @@ let fontCache: ArrayBuffer | null = null;
 
 async function loadFont(): Promise<ArrayBuffer> {
   if (fontCache) return fontCache;
-  const res = await fetch('https://fonts.gstatic.com/s/inter/v18/UcCo3FwrK3iLTcviYwY.ttf');
+  const res = await fetch('https://fonts.gstatic.com/s/inter/v20/UcCO3FwrK3iLTeHuS_nVMrMxCp50SjIw2boKoduKmMEVuGKYMZg.ttf');
   fontCache = await res.arrayBuffer();
   return fontCache;
 }
