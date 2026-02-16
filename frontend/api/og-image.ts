@@ -5,15 +5,11 @@ import { inflateRawSync } from 'node:zlib';
 
 // ── Satori element helper (replaces JSX) ────────────────────────────
 
-type SatoriNode = string | { type: string; props: Record<string, unknown> };
+type SatoriNode = string | number | { type: string; props: Record<string, unknown> };
 
 function h(type: string, style: Record<string, unknown>, ...children: (SatoriNode | SatoriNode[] | false | null | undefined)[]): SatoriNode {
   const flat = children.flat().filter((c): c is SatoriNode => c !== false && c !== null && c !== undefined);
   return { type, props: { style, children: flat.length === 1 ? flat[0] : flat } };
-}
-
-function text(s: string): SatoriNode {
-  return s;
 }
 
 // ── Decode ──────────────────────────────────────────────────────────
@@ -66,30 +62,27 @@ function decodeHandData(encoded: string): OgHandData | null {
   }
 }
 
-// ── Card formatting ─────────────────────────────────────────────────
+// ── Card rendering (H2N-style boxes matching CardBox in the app) ────
 
-const SUIT_COLORS: Record<string, string> = { s: '#3f3b36', h: '#dc2626', d: '#2563eb', c: '#16a34a' };
-const SUIT_SYMBOLS: Record<string, string> = { s: '\u2660', h: '\u2665', d: '\u2666', c: '\u2663' };
+// Spades lightened for dark bg visibility (app uses oklch 0.268)
+const SUIT_COLORS: Record<string, string> = { s: '#57534e', h: '#dc2626', d: '#2563eb', c: '#16a34a' };
 const RANK_DISPLAY: Record<string, string> = { T: '10' };
 
-function suitColor(suit: string): string { return SUIT_COLORS[suit] ?? '#3f3b36'; }
+function cardBox(card: string | null, size: 'lg' | 'sm' = 'lg'): SatoriNode {
+  const w = size === 'lg' ? 64 : 48;
+  const ht = size === 'lg' ? 80 : 60;
+  const fs = size === 'lg' ? 32 : 22;
+  const r = size === 'lg' ? 8 : 6;
 
-function cardElement(card: string | null): SatoriNode {
   if (!card || card.length < 2) {
-    return h('div', { display: 'flex', alignItems: 'center', justifyContent: 'center', width: 52, height: 72, borderRadius: 8, backgroundColor: '#292524', border: '1px solid #44403c', color: '#78716c', fontSize: 24 },
-      text('?'));
+    return h('div', { display: 'flex', alignItems: 'center', justifyContent: 'center', width: w, height: ht, borderRadius: r, backgroundColor: '#292524', border: '2px solid #44403c', color: '#78716c', fontSize: fs, fontWeight: 600 },
+      '?');
   }
   const rank = RANK_DISPLAY[card[0]] ?? card[0];
   const suit = card[1];
-  return h('div', { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', width: 52, height: 72, borderRadius: 8, backgroundColor: suitColor(suit), color: '#fff', fontSize: 20, fontWeight: 600 },
-    h('span', {}, text(rank)),
-    h('span', { fontSize: 18, marginTop: -4 }, text(SUIT_SYMBOLS[suit] ?? '')));
-}
-
-function cardRow(cards: (string | null)[], label?: string): SatoriNode {
-  return h('div', { display: 'flex', alignItems: 'center', gap: 12 },
-    label ? h('span', { color: '#a8a29e', fontSize: 16, width: 56 }, text(label)) : null,
-    h('div', { display: 'flex', gap: 6 }, ...cards.map(c => cardElement(c))));
+  const bg = SUIT_COLORS[suit] ?? '#57534e';
+  return h('div', { display: 'flex', alignItems: 'center', justifyContent: 'center', width: w, height: ht, borderRadius: r, backgroundColor: bg, color: '#fff', fontSize: fs, fontWeight: 600 },
+    rank);
 }
 
 // ── Font ────────────────────────────────────────────────────────────
@@ -106,47 +99,66 @@ async function loadFont(): Promise<ArrayBuffer> {
 // ── Image builder ───────────────────────────────────────────────────
 
 function buildImage(hand: OgHandData): SatoriNode {
-  const resultColor = hand.heroWonBb >= 0 ? '#22c55e' : '#ef4444';
-  const resultText = `Hero ${hand.heroWonBb >= 0 ? 'wins' : 'loses'} ${Math.abs(hand.heroWonBb).toFixed(1)} BB`;
+  const isWin = hand.heroWonBb >= 0;
+  const resultColor = isWin ? '#22c55e' : '#ef4444';
+  const resultText = `${isWin ? '+' : ''}${hand.heroWonBb.toFixed(1)} BB`;
 
   const visibleOpponents = hand.opponents
     .filter(o => o.cards[0] && o.cards[1])
     .slice(0, 3);
 
-  return h('div', { display: 'flex', flexDirection: 'column', width: 1200, height: 630, backgroundColor: '#1c1917', padding: '48px 56px', fontFamily: 'Inter', color: '#e7e5e4' },
-    // Header
+  return h('div', { display: 'flex', flexDirection: 'column', width: 1200, height: 630, backgroundColor: '#1c1917', padding: '44px 56px', fontFamily: 'Inter', color: '#e7e5e4' },
+
+    // ── Top bar: branding left, stakes right ──
     h('div', { display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
-      h('div', { display: 'flex', alignItems: 'center', gap: 16 },
-        h('span', { color: '#d97706', fontSize: 24, fontWeight: 600 }, text('Open Holdem Manager'))),
-      h('div', { display: 'flex', alignItems: 'center', gap: 16 },
-        h('span', { color: '#a8a29e', fontSize: 20 }, text(`${hand.tableSize}-max`)),
-        h('span', { fontSize: 24, fontWeight: 600 }, text(hand.stakes)))),
-    // Hero
-    h('div', { display: 'flex', flexDirection: 'column', marginTop: 40, gap: 16 },
+      h('span', { color: '#d97706', fontSize: 22, fontWeight: 600 }, 'Open Holdem Manager'),
       h('div', { display: 'flex', alignItems: 'center', gap: 12 },
-        h('span', { fontSize: 20, fontWeight: 600 }, text(hand.heroName)),
-        h('span', { color: '#a8a29e', fontSize: 18 }, text(`(${hand.heroPosition})`))),
-      cardRow([hand.heroCards[0], hand.heroCards[1]], 'Hero')),
-    // Board
-    h('div', { display: 'flex', flexDirection: 'column', marginTop: 36, gap: 12 },
-      hand.board.length > 0
-        ? cardRow(hand.board, 'Board')
-        : h('div', { display: 'flex', alignItems: 'center', gap: 12 },
-            h('span', { color: '#a8a29e', fontSize: 16, width: 56 }, text('Board')),
-            h('span', { color: '#78716c', fontSize: 18 }, text('No board')))),
-    // Result
-    h('div', { display: 'flex', marginTop: 36 },
-      h('span', { fontSize: 36, fontWeight: 600, color: resultColor }, text(resultText))),
-    // Opponents
-    visibleOpponents.length > 0
-      ? h('div', { display: 'flex', marginTop: 'auto', gap: 24 },
-          ...visibleOpponents.map(opp =>
-            h('div', { display: 'flex', alignItems: 'center', gap: 8 },
-              h('span', { color: '#78716c', fontSize: 14 }, text(`${opp.name} (${opp.position})`)),
-              h('div', { display: 'flex', gap: 4 },
-                cardElement(opp.cards[0]),
-                cardElement(opp.cards[1])))))
-      : null);
+        h('span', { color: '#78716c', fontSize: 18 }, `${hand.tableSize}-max`),
+        h('span', { fontSize: 22, fontWeight: 600 }, hand.stakes))),
+
+    // ── Divider ──
+    h('div', { display: 'flex', width: '100%', height: 1, backgroundColor: '#292524', marginTop: 20, marginBottom: 28 }),
+
+    // ── Main content: hero cards + board + result ──
+    h('div', { display: 'flex', flex: 1, gap: 48 },
+
+      // Left column: hero cards (big)
+      h('div', { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 },
+        h('div', { display: 'flex', gap: 8 },
+          cardBox(hand.heroCards[0], 'lg'),
+          cardBox(hand.heroCards[1], 'lg')),
+        h('span', { fontSize: 16, color: '#a8a29e' }, `${hand.heroName} (${hand.heroPosition})`)),
+
+      // Right column: board + result + opponents
+      h('div', { display: 'flex', flexDirection: 'column', flex: 1, gap: 20 },
+
+        // Board
+        hand.board.length > 0
+          ? h('div', { display: 'flex', flexDirection: 'column', gap: 8 },
+              h('span', { fontSize: 14, color: '#78716c', textTransform: 'uppercase' as const, letterSpacing: 1 }, 'Board'),
+              h('div', { display: 'flex', gap: 6 },
+                ...hand.board.map(c => cardBox(c, 'sm'))))
+          : h('div', { display: 'flex' },
+              h('span', { fontSize: 14, color: '#78716c' }, 'No board')),
+
+        // Result
+        h('div', { display: 'flex', alignItems: 'baseline', gap: 12 },
+          h('span', { fontSize: 48, fontWeight: 600, color: resultColor }, resultText),
+          h('span', { fontSize: 20, color: '#a8a29e' }, isWin ? 'won' : 'lost')),
+
+        // Opponents (at bottom of right column)
+        visibleOpponents.length > 0
+          ? h('div', { display: 'flex', marginTop: 'auto', gap: 20 },
+              ...visibleOpponents.map(opp =>
+                h('div', { display: 'flex', alignItems: 'center', gap: 8 },
+                  h('span', { color: '#78716c', fontSize: 13 }, `${opp.name} (${opp.position})`),
+                  h('div', { display: 'flex', gap: 3 },
+                    cardBox(opp.cards[0], 'sm'),
+                    cardBox(opp.cards[1], 'sm')))))
+          : null)),
+
+    // ── Bottom bar ──
+    h('div', { display: 'flex', width: '100%', height: 1, backgroundColor: '#292524', marginTop: 20 }));
 }
 
 // ── Handler ─────────────────────────────────────────────────────────
