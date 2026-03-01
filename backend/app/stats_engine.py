@@ -484,3 +484,56 @@ def compute_hero_stats(
         date_from=date_from, date_to=date_to, last_n=last_n,
         workspace_id=workspace_id,
     )
+
+
+def compute_population_stats(
+    db: duckdb.DuckDBPyConnection,
+    workspace_id: int,
+    exclude_player_id: int | None = None,
+    min_hands: int = 100,
+    stakes: str | None = None,
+    game_mode: str | None = None,
+) -> HeroStats:
+    """Compute aggregated population stats (all players except hero).
+
+    Uses a CTE to filter eligible players by min_hands, then runs
+    the standard aggregation query over their hands.
+    """
+    # Build the eligible players CTE
+    cte_where = "h2.workspace_id = ?"
+    cte_params: list = [workspace_id]
+    if exclude_player_id:
+        cte_where += " AND hp2.player_id != ?"
+        cte_params.append(exclude_player_id)
+
+    # Main WHERE for the aggregation
+    where = "h.workspace_id = ?"
+    main_params: list = [workspace_id]
+    if exclude_player_id:
+        where += " AND hp.player_id != ?"
+        main_params.append(exclude_player_id)
+    if stakes:
+        cte_where += " AND h2.stakes = ?"
+        cte_params.append(stakes)
+        where += " AND h.stakes = ?"
+        main_params.append(stakes)
+    if game_mode is not None:
+        cte_where += " AND h2.game_mode = ?"
+        cte_params.append(game_mode)
+        where += " AND h.game_mode = ?"
+        main_params.append(game_mode)
+
+    cte = f"""WITH eligible AS (
+        SELECT hp2.player_id FROM hand_players hp2
+        JOIN hands h2 ON hp2.hand_id = h2.id AND hp2.workspace_id = h2.workspace_id
+        WHERE {cte_where}
+        GROUP BY hp2.player_id HAVING COUNT(*) >= ?
+    )
+    """
+    cte_params.append(min_hands)
+
+    where += " AND hp.player_id IN (SELECT player_id FROM eligible)"
+    full_sql = cte + _AGG_SQL.format(where=where)
+    all_params = cte_params + main_params
+
+    return _compute_stats_from_query(db, where, all_params, sql_override=full_sql)

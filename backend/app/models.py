@@ -714,6 +714,7 @@ class PeriodStats(BaseModel):
     win_rate_bb100: float | None
     win_rate_ev_bb100: float | None
     stats: HeroStats
+    player_count: int | None = None  # for population mode
 
 
 class CompareResponse(BaseModel):

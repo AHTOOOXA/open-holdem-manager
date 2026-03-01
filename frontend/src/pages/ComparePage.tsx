@@ -1,14 +1,14 @@
 import { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useWorkspace } from '@/contexts/WorkspaceContext';
+import type { Workspace } from '@/contexts/WorkspaceContext';
 import { useFilterOptions } from '@/hooks/useFilterOptions';
-import type { HeroStats, StatValue, PositionalStats } from '@/lib/api';
-import { BENCHMARKS, getStatHealth } from '@/lib/benchmarks';
-import type { BenchmarkRange } from '@/lib/benchmarks';
-import { Card, CardContent, CardHeader } from '@/components/ui/card';
+import type { HeroStats } from '@/lib/api';
+import { Card, CardContent } from '@/components/ui/card';
 import { DatePicker } from '@/components/ui/date-picker';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import {
   Select,
   SelectContent,
@@ -16,17 +16,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
+import CompareTable from '@/components/stats/CompareTable';
 import { formatStakes } from '@/lib/utils';
 
 const BASE = '/api';
+
+type CompareMode = 'periods' | 'population' | 'workspace';
 
 interface PeriodStats {
   date_from: string;
@@ -35,6 +30,7 @@ interface PeriodStats {
   win_rate_bb100: number | null;
   win_rate_ev_bb100: number | null;
   stats: HeroStats;
+  player_count?: number | null;
 }
 
 interface CompareResponse {
@@ -42,40 +38,35 @@ interface CompareResponse {
   period_b: PeriodStats;
 }
 
+// ── API ──────────────────────────────────────────────────────────────
+
 async function fetchCompare(params: {
   workspace_id: number;
-  period_a_from: string;
-  period_a_to: string;
-  period_b_from: string;
+  mode: CompareMode;
+  period_a_from?: string;
+  period_a_to?: string;
+  period_b_from?: string;
   period_b_to?: string;
+  workspace_id_b?: number;
   stakes?: string;
   game_mode?: string;
 }): Promise<CompareResponse> {
   const sp = new URLSearchParams();
   sp.set('workspace_id', String(params.workspace_id));
-  sp.set('period_a_from', params.period_a_from);
-  sp.set('period_a_to', params.period_a_to);
-  sp.set('period_b_from', params.period_b_from);
+  sp.set('mode', params.mode);
+  if (params.period_a_from) sp.set('period_a_from', params.period_a_from);
+  if (params.period_a_to) sp.set('period_a_to', params.period_a_to);
+  if (params.period_b_from) sp.set('period_b_from', params.period_b_from);
   if (params.period_b_to) sp.set('period_b_to', params.period_b_to);
+  if (params.workspace_id_b != null) sp.set('workspace_id_b', String(params.workspace_id_b));
   if (params.stakes) sp.set('stakes', params.stakes);
-  if (params.game_mode) sp.set('game_mode', params.game_mode);
+  if (params.game_mode) sp.set('game_mode', params.game_mode === '__reg__' ? '' : params.game_mode);
   const res = await fetch(`${BASE}/compare/stats?${sp}`);
   if (!res.ok) throw new Error('Compare failed');
   return res.json();
 }
 
-// Stat row definition for the compare table
-interface StatRow {
-  key: string;
-  label: string;
-  getValue: (stats: HeroStats) => StatValue;
-  benchmark?: BenchmarkRange;
-}
-
-interface StatGroup {
-  label: string;
-  rows: StatRow[];
-}
+// ── Helpers ──────────────────────────────────────────────────────────
 
 function formatCpDate(iso: string): string {
   const d = new Date(iso);
@@ -86,99 +77,24 @@ function formatCpDate(iso: string): string {
   return time !== '00:00' ? `${date} ${time}` : date;
 }
 
-function sv(ps: PositionalStats): StatValue {
-  return ps.total;
-}
-
-const STAT_GROUPS: StatGroup[] = [
-  {
-    label: 'Preflop',
-    rows: [
-      { key: 'vpip', label: 'VPIP', getValue: (s) => sv(s.vpip) },
-      { key: 'pfr', label: 'PFR', getValue: (s) => sv(s.pfr) },
-      { key: 'open_raise', label: 'Open Raise', getValue: (s) => sv(s.open_raise) },
-      { key: 'three_bet', label: '3-Bet', getValue: (s) => sv(s.three_bet) },
-      { key: 'fold_to_3bet', label: 'Fold to 3-Bet', getValue: (s) => sv(s.fold_to_3bet) },
-      { key: 'four_bet', label: '4-Bet', getValue: (s) => sv(s.four_bet) },
-      { key: 'fold_to_4bet', label: 'Fold to 4-Bet', getValue: (s) => sv(s.fold_to_4bet) },
-      { key: 'limp', label: 'Limp', getValue: (s) => sv(s.limp) },
-      { key: 'squeeze', label: 'Squeeze', getValue: (s) => s.squeeze },
-      { key: 'steal', label: 'Steal', getValue: (s) => sv(s.steal) },
-    ],
-  },
-  {
-    label: 'Postflop',
-    rows: [
-      { key: 'cbet_flop', label: 'C-Bet Flop', getValue: (s) => sv(s.cbet_flop) },
-      { key: 'cbet_turn', label: 'C-Bet Turn', getValue: (s) => sv(s.cbet_turn) },
-      { key: 'cbet_river', label: 'C-Bet River', getValue: (s) => sv(s.cbet_river) },
-      { key: 'fold_to_cbet_flop', label: 'Fold to CBet Flop', getValue: (s) => sv(s.fold_to_cbet_flop) },
-      { key: 'fold_to_cbet_turn', label: 'Fold to CBet Turn', getValue: (s) => sv(s.fold_to_cbet_turn) },
-    ],
-  },
-  {
-    label: 'Aggression',
-    rows: [
-      { key: 'af_flop', label: 'AF Flop', getValue: (s) => s.af_flop },
-      { key: 'af_turn', label: 'AF Turn', getValue: (s) => s.af_turn },
-      { key: 'af_river', label: 'AF River', getValue: (s) => s.af_river },
-      { key: 'afq_flop', label: 'AFq Flop', getValue: (s) => s.afq_flop },
-      { key: 'afq_turn', label: 'AFq Turn', getValue: (s) => s.afq_turn },
-      { key: 'afq_river', label: 'AFq River', getValue: (s) => s.afq_river },
-    ],
-  },
-  {
-    label: 'Showdown',
-    rows: [
-      { key: 'wtsd', label: 'WTSD', getValue: (s) => s.wtsd },
-      { key: 'wsd', label: 'W$SD', getValue: (s) => s.wsd },
-      { key: 'wwsf', label: 'WWSF', getValue: (s) => s.wwsf },
-    ],
-  },
-];
-
-// Add benchmarks to rows
-for (const group of STAT_GROUPS) {
-  for (const row of group.rows) {
-    const bm = BENCHMARKS[row.key];
-    if (bm) row.benchmark = bm.total;
-  }
-}
-
-function fmtPct(v: number | null): string {
-  if (v === null) return '—';
-  return `${v.toFixed(1)}%`;
-}
-
-function fmtDelta(a: number | null, b: number | null): { text: string; value: number | null } {
-  if (a === null || b === null) return { text: '—', value: null };
-  const d = b - a;
-  const sign = d > 0 ? '+' : '';
-  return { text: `${sign}${d.toFixed(1)}`, value: d };
-}
-
-function getDeltaColor(
-  delta: number | null,
-  benchmark: BenchmarkRange | undefined,
-  bValue: number | null,
-): string {
-  if (delta === null || !benchmark || bValue === null) return 'text-text-muted';
-  const healthB = getStatHealth(bValue, benchmark);
-  if (healthB.status === 'green') return 'text-green';
-  if (healthB.status === 'red') return 'text-red';
-  return 'text-yellow';
-}
+// ── Main Component ───────────────────────────────────────────────────
 
 export default function ComparePage() {
-  const { activeWorkspaceId, checkpoints } = useWorkspace();
+  const { activeWorkspaceId, activeWorkspace, workspaces, checkpoints } = useWorkspace();
   const { data: filterOpts } = useFilterOptions();
 
-  // Period A dates
+  // Mode
+  const [mode, setMode] = useState<CompareMode>('periods');
+
+  // Periods mode
   const [aFrom, setAFrom] = useState('');
   const [aTo, setATo] = useState('');
-  // Period B dates
   const [bFrom, setBFrom] = useState('');
   const [bTo, setBTo] = useState('');
+
+  // Workspace mode
+  const [wsIdB, setWsIdB] = useState<number | null>(null);
+
   // Shared filters
   const [stakes, setStakes] = useState('');
   const [gameMode, setGameMode] = useState('');
@@ -205,21 +121,40 @@ export default function ComparePage() {
     }
   };
 
-  const canCompare = aFrom || aTo;
+  // Can we run the query?
+  const canCompare = mode === 'periods'
+    ? !!(aFrom || aTo)
+    : mode === 'population'
+      ? true
+      : wsIdB != null;
 
-  const { data, isPending } = useQuery({
-    queryKey: ['compare', activeWorkspaceId, aFrom, aTo, bFrom, bTo, stakes, gameMode],
-    queryFn: () =>
-      fetchCompare({
-        workspace_id: activeWorkspaceId,
+  const queryParams = useMemo(() => {
+    const base = {
+      workspace_id: activeWorkspaceId,
+      mode,
+      stakes: stakes || undefined,
+      game_mode: gameMode || undefined,
+    };
+    if (mode === 'periods') {
+      return {
+        ...base,
         period_a_from: aFrom || '2000-01-01',
         period_a_to: aTo || new Date().toISOString().slice(0, 10),
         period_b_from: bFrom || '2000-01-01',
         period_b_to: bTo || undefined,
-        stakes: stakes || undefined,
-        game_mode: gameMode || undefined,
-      }),
-    enabled: !!canCompare,
+      };
+    }
+    if (mode === 'workspace') {
+      return { ...base, workspace_id_b: wsIdB ?? undefined };
+    }
+    // population
+    return base;
+  }, [activeWorkspaceId, mode, aFrom, aTo, bFrom, bTo, wsIdB, stakes, gameMode]);
+
+  const { data, isPending } = useQuery({
+    queryKey: ['compare', queryParams],
+    queryFn: () => fetchCompare(queryParams as Parameters<typeof fetchCompare>[0]),
+    enabled: canCompare,
   });
 
   const pa = data?.period_a;
@@ -227,11 +162,34 @@ export default function ComparePage() {
 
   const lowSample = pa && pb && (pa.hands < 10000 || pb.hands < 10000);
 
+  // Labels for the compare table
+  const labels = useMemo(() => {
+    if (mode === 'periods') return { a: 'Period A', b: 'Period B' };
+    if (mode === 'population') return { a: 'Hero', b: 'Population' };
+    // workspace
+    const nameA = activeWorkspace?.name || 'Workspace A';
+    const wsB = workspaces.find((w) => w.id === wsIdB);
+    const nameB = wsB?.name || 'Workspace B';
+    return { a: nameA, b: nameB };
+  }, [mode, activeWorkspace, workspaces, wsIdB]);
+
   return (
     <div className="max-w-5xl mx-auto space-y-3">
-      {/* Shared filters */}
+      {/* Mode selector */}
       <Card className="gap-0 py-0">
         <CardContent className="px-3 py-2 flex flex-wrap items-center gap-3">
+          <ToggleGroup
+            type="single"
+            value={mode}
+            onValueChange={(v) => { if (v) setMode(v as CompareMode); }}
+            className="h-8"
+          >
+            <ToggleGroupItem value="periods" className="h-7 px-3 text-xs">Periods</ToggleGroupItem>
+            <ToggleGroupItem value="population" className="h-7 px-3 text-xs">vs Population</ToggleGroupItem>
+            <ToggleGroupItem value="workspace" className="h-7 px-3 text-xs">vs Workspace</ToggleGroupItem>
+          </ToggleGroup>
+          <div className="h-4 w-px bg-border" />
+          {/* Shared filters */}
           {filterOpts && filterOpts.stakes.length > 0 && (
             <Select
               value={stakes || '__all__'}
@@ -269,42 +227,112 @@ export default function ComparePage() {
         </CardContent>
       </Card>
 
-      {/* Period selectors */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <PeriodCard
-          label="Period A"
-          variant="a"
-          dateFrom={aFrom}
-          dateTo={aTo}
-          onDateFromChange={setAFrom}
-          onDateToChange={setATo}
-          checkpoints={sortedCheckpoints}
-          onQuickSelect={handleQuickA}
-          summary={pa}
-        />
-        <PeriodCard
-          label="Period B"
-          variant="b"
-          dateFrom={bFrom}
-          dateTo={bTo}
-          onDateFromChange={setBFrom}
-          onDateToChange={setBTo}
-          checkpoints={sortedCheckpoints}
-          onQuickSelect={handleQuickB}
-          summary={pb}
-        />
-      </div>
+      {/* Mode-specific controls */}
+      {mode === 'periods' && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <PeriodCard
+            label="Period A"
+            variant="a"
+            dateFrom={aFrom}
+            dateTo={aTo}
+            onDateFromChange={setAFrom}
+            onDateToChange={setATo}
+            checkpoints={sortedCheckpoints}
+            onQuickSelect={handleQuickA}
+            summary={pa}
+          />
+          <PeriodCard
+            label="Period B"
+            variant="b"
+            dateFrom={bFrom}
+            dateTo={bTo}
+            onDateFromChange={setBFrom}
+            onDateToChange={setBTo}
+            checkpoints={sortedCheckpoints}
+            onQuickSelect={handleQuickB}
+            summary={pb}
+          />
+        </div>
+      )}
+
+      {mode === 'population' && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <SummaryCard
+            label="Hero"
+            variant="a"
+            info={activeWorkspace ? `${activeWorkspace.hero_username} @ ${activeWorkspace.name}` : undefined}
+            hands={pa?.hands}
+            winRate={pa?.win_rate_bb100}
+          />
+          <SummaryCard
+            label="Population"
+            variant="b"
+            info={pb?.player_count != null ? `${pb.player_count.toLocaleString()} players` : undefined}
+            hands={pb?.hands}
+            winRate={pb?.win_rate_bb100}
+          />
+        </div>
+      )}
+
+      {mode === 'workspace' && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <WorkspaceCard
+            label="Workspace A"
+            variant="a"
+            workspace={activeWorkspace}
+            summary={pa}
+          />
+          <Card className="gap-0 py-0 border-l-2 border-l-emerald-500">
+            <CardContent className="p-3 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-semibold">Workspace B</span>
+                {pb && (
+                  <div className="flex items-center gap-2">
+                    <Badge variant="outline" className="text-[10px] font-mono">
+                      {pb.hands.toLocaleString()} hands
+                    </Badge>
+                    {pb.win_rate_bb100 !== null && (
+                      <Badge
+                        variant="outline"
+                        className={`text-[10px] font-mono ${pb.win_rate_bb100 >= 0 ? 'text-green' : 'text-red'}`}
+                      >
+                        {pb.win_rate_bb100.toFixed(2)} bb/100
+                      </Badge>
+                    )}
+                  </div>
+                )}
+              </div>
+              <Select
+                value={wsIdB != null ? String(wsIdB) : '__none__'}
+                onValueChange={(v) => setWsIdB(v === '__none__' ? null : parseInt(v, 10))}
+              >
+                <SelectTrigger className="h-8 text-sm">
+                  <SelectValue placeholder="Select workspace..." />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">Select workspace...</SelectItem>
+                  {workspaces.map((ws) => (
+                    <SelectItem key={ws.id} value={String(ws.id)}>
+                      {ws.name} ({ws.hero_username})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </CardContent>
+          </Card>
+        </div>
+      )}
 
       {/* Sample size warning */}
       {lowSample && (
         <Alert>
           <AlertDescription className="text-xs">
-            One or both periods have fewer than 10,000 hands. Results may not be statistically significant.
+            One or both sides have fewer than 10,000 hands. Results may not be statistically significant.
           </AlertDescription>
         </Alert>
       )}
 
-      {/* Compare table */}
+      {/* Loading state */}
       {isPending && canCompare && (
         <Card className="gap-0 py-0">
           <CardContent className="p-6 text-center text-text-muted text-sm">
@@ -313,86 +341,31 @@ export default function ComparePage() {
         </Card>
       )}
 
+      {/* Comparison table */}
       {pa && pb && (
-        <div className="space-y-3">
-          {STAT_GROUPS.map((group) => (
-            <Card key={group.label} className="overflow-hidden gap-0 py-0">
-              <CardHeader className="px-3 py-1.5">
-                <h2 className="text-xs font-semibold text-text">{group.label}</h2>
-              </CardHeader>
-              <div className="overflow-x-auto">
-                <Table style={{ tableLayout: 'fixed', width: '100%' }}>
-                  <colgroup>
-                    <col style={{ width: '25%' }} />
-                    <col style={{ width: '15%' }} />
-                    <col style={{ width: '10%' }} />
-                    <col style={{ width: '15%' }} />
-                    <col style={{ width: '10%' }} />
-                    <col style={{ width: '12%' }} />
-                    <col style={{ width: '13%' }} />
-                  </colgroup>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="px-3 py-1.5 h-auto text-[11px]">Stat</TableHead>
-                      <TableHead className="px-3 py-1.5 h-auto text-[11px] text-right">Period A</TableHead>
-                      <TableHead className="px-3 py-1.5 h-auto text-[11px] text-right text-text-muted">n</TableHead>
-                      <TableHead className="px-3 py-1.5 h-auto text-[11px] text-right">Period B</TableHead>
-                      <TableHead className="px-3 py-1.5 h-auto text-[11px] text-right text-text-muted">n</TableHead>
-                      <TableHead className="px-3 py-1.5 h-auto text-[11px] text-right">Delta</TableHead>
-                      <TableHead className="px-3 py-1.5 h-auto text-[11px] text-center">Range</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {group.rows.map((row) => {
-                      const valA = row.getValue(pa.stats);
-                      const valB = row.getValue(pb.stats);
-                      const delta = fmtDelta(valA.value, valB.value);
-                      const deltaColor = getDeltaColor(delta.value, row.benchmark, valB.value);
-                      const lowN = (valA.sample < 50 && valA.sample > 0) || (valB.sample < 50 && valB.sample > 0);
-
-                      return (
-                        <TableRow key={row.key} className="hover:bg-surface-hover">
-                          <TableCell className="px-3 py-1.5 text-sm font-medium">
-                            {row.label}
-                          </TableCell>
-                          <TableCell className="px-3 py-1.5 text-right font-mono text-sm">
-                            {fmtPct(valA.value)}
-                          </TableCell>
-                          <TableCell className="px-3 py-1.5 text-right font-mono text-xs text-text-muted">
-                            {valA.sample > 0 ? valA.sample.toLocaleString() : '—'}
-                          </TableCell>
-                          <TableCell className="px-3 py-1.5 text-right font-mono text-sm">
-                            {fmtPct(valB.value)}
-                          </TableCell>
-                          <TableCell className="px-3 py-1.5 text-right font-mono text-xs text-text-muted">
-                            {valB.sample > 0 ? valB.sample.toLocaleString() : '—'}
-                          </TableCell>
-                          <TableCell className={`px-3 py-1.5 text-right font-mono text-sm ${lowN ? 'text-text-muted' : deltaColor}`}>
-                            {delta.text}
-                          </TableCell>
-                          <TableCell className="px-3 py-1.5 text-center text-xs text-text-muted">
-                            {row.benchmark ? `${row.benchmark.low}–${row.benchmark.high}` : '—'}
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
-                  </TableBody>
-                </Table>
-              </div>
-            </Card>
-          ))}
-        </div>
+        <CompareTable
+          statsA={pa.stats}
+          statsB={pb.stats}
+          labelA={labels.a}
+          labelB={labels.b}
+        />
       )}
 
+      {/* Empty state */}
       {!canCompare && (
         <Card className="gap-0 py-0">
           <CardContent className="p-8 text-center text-text-muted text-sm">
-            Select date ranges for both periods to compare your stats.
-            {sortedCheckpoints.length > 0 && (
-              <span className="block mt-1">
-                Use checkpoints for quick before/after comparisons.
-              </span>
+            {mode === 'periods' && (
+              <>
+                Select date ranges for both periods to compare your stats.
+                {sortedCheckpoints.length > 0 && (
+                  <span className="block mt-1">
+                    Use checkpoints for quick before/after comparisons.
+                  </span>
+                )}
+              </>
             )}
+            {mode === 'workspace' && 'Select a workspace to compare against.'}
           </CardContent>
         </Card>
       )}
@@ -483,6 +456,100 @@ function PeriodCard({
             placeholder="To"
             className="h-8 text-sm flex-1"
           />
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ── Summary Card ─────────────────────────────────────────────────────
+
+function SummaryCard({
+  label,
+  variant,
+  info,
+  hands,
+  winRate,
+}: {
+  label: string;
+  variant: 'a' | 'b';
+  info?: string;
+  hands?: number;
+  winRate?: number | null;
+}) {
+  const borderColor = variant === 'a' ? 'border-l-blue-500' : 'border-l-emerald-500';
+
+  return (
+    <Card className={`gap-0 py-0 border-l-2 ${borderColor}`}>
+      <CardContent className="p-3">
+        <div className="flex items-center justify-between">
+          <div>
+            <span className="text-sm font-semibold">{label}</span>
+            {info && <span className="text-xs text-text-muted ml-2">{info}</span>}
+          </div>
+          {hands != null && (
+            <div className="flex items-center gap-2">
+              <Badge variant="outline" className="text-[10px] font-mono">
+                {hands.toLocaleString()} hands
+              </Badge>
+              {winRate !== null && winRate !== undefined && (
+                <Badge
+                  variant="outline"
+                  className={`text-[10px] font-mono ${winRate >= 0 ? 'text-green' : 'text-red'}`}
+                >
+                  {winRate.toFixed(2)} bb/100
+                </Badge>
+              )}
+            </div>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ── Workspace Card ───────────────────────────────────────────────────
+
+function WorkspaceCard({
+  label,
+  variant,
+  workspace,
+  summary,
+}: {
+  label: string;
+  variant: 'a' | 'b';
+  workspace: Workspace | null;
+  summary?: PeriodStats;
+}) {
+  const borderColor = variant === 'a' ? 'border-l-blue-500' : 'border-l-emerald-500';
+
+  return (
+    <Card className={`gap-0 py-0 border-l-2 ${borderColor}`}>
+      <CardContent className="p-3">
+        <div className="flex items-center justify-between">
+          <div>
+            <span className="text-sm font-semibold">{label}</span>
+            {workspace && (
+              <span className="text-xs text-text-muted ml-2">
+                {workspace.name} ({workspace.hero_username})
+              </span>
+            )}
+          </div>
+          {summary && (
+            <div className="flex items-center gap-2">
+              <Badge variant="outline" className="text-[10px] font-mono">
+                {summary.hands.toLocaleString()} hands
+              </Badge>
+              {summary.win_rate_bb100 !== null && (
+                <Badge
+                  variant="outline"
+                  className={`text-[10px] font-mono ${summary.win_rate_bb100 >= 0 ? 'text-green' : 'text-red'}`}
+                >
+                  {summary.win_rate_bb100.toFixed(2)} bb/100
+                </Badge>
+              )}
+            </div>
+          )}
         </div>
       </CardContent>
     </Card>
