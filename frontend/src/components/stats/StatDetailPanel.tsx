@@ -1,38 +1,24 @@
 import { useQuery } from '@tanstack/react-query';
 import { getStatDetailHands } from '@/lib/api';
-import type { HeroStats } from '@/lib/api';
 import { queryKeys } from '@/lib/query-keys';
 import { getStatDisplayName } from '@/lib/stat-registry';
-import AnalysisWidgets from '@/components/stats/widgets/AnalysisWidgets';
 import HandExplorer from '@/components/hands/HandExplorer';
 
 interface StatDetailPanelProps {
   statKey: string;
   position?: string;
-  onPositionChange: (pos: string | undefined) => void;
   filterParams: {
     stakes?: string;
     game_mode?: string;
     date_from?: string;
     date_to?: string;
   };
-  heroStats?: HeroStats;
-  page: number;
-  perPage: number;
-  onPageChange: (p: number) => void;
-  onPerPageChange: (pp: number) => void;
 }
 
 export default function StatDetailPanel({
   statKey,
   position,
-  onPositionChange,
   filterParams,
-  heroStats,
-  page,
-  perPage,
-  onPageChange,
-  onPerPageChange,
 }: StatDetailPanelProps) {
   const displayName = getStatDisplayName(statKey);
   const posLabel = position ? ` ${position.toUpperCase()}` : '';
@@ -63,9 +49,6 @@ export default function StatDetailPanel({
     ? ((statData.action_count / statData.opportunity_count) * 100).toFixed(1)
     : null;
 
-  // Suppress lint warnings for props used by parent for external state management
-  void page; void perPage; void onPageChange; void onPerPageChange;
-
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
@@ -80,16 +63,7 @@ export default function StatDetailPanel({
         </div>
       </div>
 
-      {/* Analysis Widgets */}
-      <AnalysisWidgets
-        statKey={statKey}
-        heroStats={heroStats}
-        filterParams={filterParams}
-        position={position}
-        onPositionChange={onPositionChange}
-      />
-
-      {/* Hand list via HandExplorer */}
+      {/* Hand list */}
       <HandExplorer
         key={`${statKey}-${position ?? ''}`}
         fixedParams={{

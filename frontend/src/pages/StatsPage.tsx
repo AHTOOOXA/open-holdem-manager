@@ -24,9 +24,7 @@ import StatsCard from '@/components/stats/StatsCard';
 // ── Detail View ─────────────────────────────────────────────────────
 
 function StatsDetailView({ statKey }: { statKey: string }) {
-  const [searchParams, setSearchParams] = useSearchParams();
-  const [page, setPage] = useState(1);
-  const [perPage, setPerPage] = useState(25);
+  const [searchParams] = useSearchParams();
 
   const position = searchParams.get('pos') ?? undefined;
 
@@ -37,41 +35,12 @@ function StatsDetailView({ statKey }: { statKey: string }) {
     date_to: searchParams.get('date_to') ?? undefined,
   }), [searchParams]);
 
-  const statsQueryParams = useMemo(() => ({
-    ...filterParams,
-    last_n: searchParams.get('last_n') ? parseInt(searchParams.get('last_n')!, 10) : undefined,
-  }), [filterParams, searchParams]);
-
-  const { data: heroStats } = useQuery({
-    queryKey: queryKeys.stats.hero(statsQueryParams),
-    queryFn: () => getHeroStats(statsQueryParams),
-  });
-
-  const handlePositionChange = useCallback((pos: string | undefined) => {
-    setSearchParams((prev) => {
-      const next = new URLSearchParams(prev);
-      if (pos) {
-        next.set('pos', pos);
-      } else {
-        next.delete('pos');
-      }
-      return next;
-    }, { replace: true });
-    setPage(1);
-  }, [setSearchParams]);
-
   return (
     <div className="h-[calc(100vh-6rem)]">
       <StatDetailPanel
         statKey={statKey}
         position={position}
-        onPositionChange={handlePositionChange}
         filterParams={filterParams}
-        heroStats={heroStats}
-        page={page}
-        perPage={perPage}
-        onPageChange={setPage}
-        onPerPageChange={setPerPage}
       />
     </div>
   );
