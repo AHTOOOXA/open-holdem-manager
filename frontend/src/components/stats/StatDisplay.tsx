@@ -28,6 +28,8 @@ export interface CellDef {
   position?: string;
   decimals?: number;
   colorFn?: (v: number) => ColorClass;
+  /** Delta vs compare stats (e.g. population - hero). Rendered as (+X) / (-X) */
+  delta?: number | null;
 }
 
 // ── Constants ────────────────────────────────────────────────────────
@@ -96,6 +98,18 @@ export function fmtStat(
   return { text: formatted, color: 'text-text' };
 }
 
+// ── Delta Badge ─────────────────────────────────────────────────────
+
+function DeltaBadge({ delta, decimals = 0 }: { delta: number; decimals?: number }) {
+  const sign = delta > 0 ? '+' : '';
+  const formatted = decimals > 0 ? delta.toFixed(decimals) : Math.round(delta).toString();
+  return (
+    <span className="ml-1 text-[10px] text-text-muted font-normal">
+      ({sign}{formatted})
+    </span>
+  );
+}
+
 // ── Drift Arrow ──────────────────────────────────────────────────────
 
 export function DriftArrow({ drift, statKey }: { drift: DriftStat; statKey?: string }) {
@@ -142,6 +156,7 @@ export function StatCell({
   drillKey,
   position,
   decimals,
+  delta,
   defaultDecimals = 1,
   colorFn,
   driftMap,
@@ -174,6 +189,7 @@ export function StatCell({
       {text}
       {sub && <sub className="text-[9px] ml-0.5 text-text-muted select-none">{sub}</sub>}
       {drift && <DriftArrow drift={drift} statKey={statKey} />}
+      {delta != null && <DeltaBadge delta={delta} decimals={effectiveDecimals} />}
     </span>
   );
 
@@ -338,6 +354,12 @@ export function KVGrid({
   );
 }
 
+/** Compute delta between two StatValues (a - b). Returns null if either is missing. */
+export function svDelta(a: StatValue | undefined, b: StatValue | undefined): number | null {
+  if (a?.value == null || b?.value == null) return null;
+  return Math.round((a.value - b.value) * 10) / 10;
+}
+
 /** Build positional row from PositionalStats */
 export function posRow(
   label: string,
@@ -346,6 +368,7 @@ export function posRow(
   positions: ('total' | 'ep' | 'mp' | 'co' | 'btn' | 'sb' | 'bb')[] = ['total', 'ep', 'mp', 'co', 'btn', 'sb', 'bb'],
   drillKey?: string,
   groupEnd?: boolean,
+  comparePs?: PositionalStats,
 ) {
   if (!ps) {
     return {
@@ -356,17 +379,21 @@ export function posRow(
   }
   return {
     label,
-    cells: positions.map((p) => ({ sv: ps[p], statKey, position: p, drillKey })),
+    cells: positions.map((p) => ({
+      sv: ps[p], statKey, position: p, drillKey,
+      delta: comparePs ? svDelta(ps[p], comparePs[p]) : undefined,
+    })),
     groupEnd,
   };
 }
 
 /** Inline stat value for the missed-cbet / showdown sections */
-export function InlineStat({ sv, statKey, drillKey, position, defaultDecimals = 1, driftMap, onStatClick }: {
+export function InlineStat({ sv, statKey, drillKey, position, delta, defaultDecimals = 1, driftMap, onStatClick }: {
   sv: StatValue | undefined;
   statKey?: string;
   drillKey?: string;
   position?: string;
+  delta?: number | null;
   defaultDecimals?: number;
   driftMap?: Map<string, DriftStat>;
   onStatClick?: (key: string, position?: string) => void;
@@ -394,6 +421,7 @@ export function InlineStat({ sv, statKey, drillKey, position, defaultDecimals = 
       {text}
       {sub && <sub className="text-[9px] ml-0.5 text-text-muted select-none">{sub}</sub>}
       {drift && <DriftArrow drift={drift} statKey={statKey} />}
+      {delta != null && <DeltaBadge delta={delta} decimals={defaultDecimals} />}
     </span>
   );
 

@@ -5,6 +5,8 @@ from pydantic import BaseModel
 from typing import Optional
 
 from app.db import get_read_cursor, get_hero_player_id
+from app.models import HeroStats
+from app.stats_engine import _AGG_SQL, _compute_stats_from_query
 
 router = APIRouter()
 
@@ -161,6 +163,48 @@ def population_overview(
         date_min=row[2].isoformat() if row and row[2] else None,
         date_max=row[3].isoformat() if row and row[3] else None,
     )
+
+
+# ── Full Stats (HeroStats-shaped) ──────────────────────────────────
+
+
+@router.get("/population/full-stats", response_model=HeroStats)
+def population_full_stats(
+    stakes: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    min_hands: int = Query(20, ge=0),
+    exclude_hero: bool = Query(True),
+    player_type: Optional[str] = None,
+    workspace_id: int = Query(1),
+    exclude_identity_ids: Optional[str] = None,
+    exclude_tags: Optional[str] = None,
+):
+    db = get_read_cursor()
+    where_sql, params, having_sql = _build_where(
+        stakes, date_from, date_to, min_hands, exclude_hero,
+        player_type, db, workspace_id, exclude_identity_ids, exclude_tags,
+    )
+
+    # Build eligible-players CTE, then run standard _AGG_SQL
+    eligible_cte = f"""WITH eligible AS (
+        SELECT hp.player_id
+        FROM hand_players hp
+        JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
+        JOIN players p ON p.id = hp.player_id
+        LEFT JOIN player_classifications pc ON pc.player_id = p.id
+        WHERE 1=1 {where_sql}
+        GROUP BY hp.player_id
+        {having_sql}
+    )
+    """
+
+    main_where = f"1=1 {where_sql} AND hp.player_id IN (SELECT player_id FROM eligible)"
+    full_sql = eligible_cte + _AGG_SQL.format(where=main_where)
+    # params used twice: once for CTE, once for main WHERE
+    all_params = params + params
+
+    return _compute_stats_from_query(db, main_where, all_params, sql_override=full_sql)
 
 
 # ── Preflop ─────────────────────────────────────────────────────────

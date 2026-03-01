@@ -1238,6 +1238,13 @@ export async function getPopulationOverview(params?: PopulationFilterParams): Pr
   return res.json();
 }
 
+export async function getPopulationFullStats(params?: PopulationFilterParams): Promise<HeroStats> {
+  const sp = _buildPopParams(params);
+  const res = await fetch(`${BASE}/population/full-stats?${sp}`);
+  if (!res.ok) throw new Error(`Population full stats failed: ${res.statusText}`);
+  return res.json();
+}
+
 export async function getPopulationPreflop(params?: PopulationFilterParams): Promise<PreflopResponse> {
   const sp = _buildPopParams(params);
   const res = await fetch(`${BASE}/population/preflop?${sp}`);

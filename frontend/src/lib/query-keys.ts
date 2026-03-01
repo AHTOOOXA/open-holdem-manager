@@ -41,6 +41,7 @@ export const queryKeys = {
 
   population: {
     overview: (filters: Record<string, unknown> | object) => ['population', 'overview', filters] as const,
+    fullStats: (filters: Record<string, unknown> | object) => ['population', 'full-stats', filters] as const,
     preflop: (filters: Record<string, unknown> | object) => ['population', 'preflop', filters] as const,
     segments: (filters: Record<string, unknown> | object) => ['population', 'segments', filters] as const,
     postflop: (filters: Record<string, unknown> | object) => ['population', 'postflop', filters] as const,
