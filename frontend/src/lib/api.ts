@@ -1,5 +1,20 @@
 const BASE = '/api';
 
+// ── Workspace ID injection ──────────────────────────────────────────
+
+let _getWorkspaceId: () => number = () => {
+  const stored = localStorage.getItem('ohm_active_workspace_id');
+  return stored ? parseInt(stored, 10) : 1;
+};
+
+export function setWorkspaceIdGetter(fn: () => number) {
+  _getWorkspaceId = fn;
+}
+
+function _addWorkspaceParam(sp: URLSearchParams) {
+  sp.set('workspace_id', String(_getWorkspaceId()));
+}
+
 /** Translate game_mode filter: '__reg__' → '' (empty = Regular), undefined → skip */
 function setGameModeParam(sp: URLSearchParams, gameMode: string | undefined) {
   if (gameMode !== undefined) {
@@ -175,7 +190,9 @@ export async function uploadFiles(files: File[]): Promise<ImportResult> {
   for (const f of files) {
     form.append('files', f);
   }
-  const res = await fetch(`${BASE}/import/files`, { method: 'POST', body: form });
+  const sp = new URLSearchParams();
+  _addWorkspaceParam(sp);
+  const res = await fetch(`${BASE}/import/files?${sp}`, { method: 'POST', body: form });
   if (!res.ok) throw new Error(`Import failed: ${res.statusText}`);
   return res.json();
 }
@@ -188,7 +205,9 @@ export async function uploadFilesStream(
   for (const f of files) {
     form.append('files', f);
   }
-  const res = await fetch(`${BASE}/import/files/stream`, { method: 'POST', body: form });
+  const sp = new URLSearchParams();
+  _addWorkspaceParam(sp);
+  const res = await fetch(`${BASE}/import/files/stream?${sp}`, { method: 'POST', body: form });
   if (!res.ok) {
     const body = await res.text().catch(() => '');
     throw new Error(`Import failed: ${res.status} ${res.statusText}${body ? ` — ${body}` : ''}`);
@@ -246,6 +265,7 @@ export async function getHeroStats(params?: {
   if (params?.date_from) sp.set('date_from', params.date_from);
   if (params?.date_to) sp.set('date_to', params.date_to);
   if (params?.last_n) sp.set('last_n', String(params.last_n));
+  _addWorkspaceParam(sp);
   const res = await fetch(`${BASE}/stats/hero?${sp}`);
   if (!res.ok) throw new Error(`Stats failed: ${res.statusText}`);
   return res.json();
@@ -264,19 +284,24 @@ export async function getGraphData(params?: {
   if (params?.date_from) sp.set('date_from', params.date_from);
   if (params?.date_to) sp.set('date_to', params.date_to);
   if (params?.last_n) sp.set('last_n', String(params.last_n));
+  _addWorkspaceParam(sp);
   const res = await fetch(`${BASE}/reports/graph?${sp}`);
   if (!res.ok) throw new Error(`Graph failed: ${res.statusText}`);
   return res.json();
 }
 
 export async function getSettings(): Promise<Settings> {
-  const res = await fetch(`${BASE}/settings`);
+  const sp = new URLSearchParams();
+  _addWorkspaceParam(sp);
+  const res = await fetch(`${BASE}/settings?${sp}`);
   if (!res.ok) throw new Error(`Settings failed: ${res.statusText}`);
   return res.json();
 }
 
 export async function updateSettings(settings: Settings): Promise<Settings> {
-  const res = await fetch(`${BASE}/settings`, {
+  const sp = new URLSearchParams();
+  _addWorkspaceParam(sp);
+  const res = await fetch(`${BASE}/settings?${sp}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(settings),
@@ -420,19 +445,24 @@ export async function getHands(params?: HandListParams): Promise<HandListRespons
   }
   if (params?.stat_key) sp.set('stat_key', params.stat_key);
   if (params?.player_id) sp.set('player_id', String(params.player_id));
+  _addWorkspaceParam(sp);
   const res = await fetch(`${BASE}/hands?${sp}`);
   if (!res.ok) throw new Error(`Hands failed: ${res.statusText}`);
   return res.json();
 }
 
 export async function getHandDetail(handId: string): Promise<HandDetail> {
-  const res = await fetch(`${BASE}/hands/${encodeURIComponent(handId)}`);
+  const sp = new URLSearchParams();
+  _addWorkspaceParam(sp);
+  const res = await fetch(`${BASE}/hands/${encodeURIComponent(handId)}?${sp}`);
   if (!res.ok) throw new Error(`Hand detail failed: ${res.statusText}`);
   return res.json();
 }
 
 export async function addTag(handId: string, tag: string): Promise<void> {
-  const res = await fetch(`${BASE}/hands/${encodeURIComponent(handId)}/tags`, {
+  const sp = new URLSearchParams();
+  _addWorkspaceParam(sp);
+  const res = await fetch(`${BASE}/hands/${encodeURIComponent(handId)}/tags?${sp}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ tag }),
@@ -441,20 +471,26 @@ export async function addTag(handId: string, tag: string): Promise<void> {
 }
 
 export async function removeTag(handId: string, tag: string): Promise<void> {
-  const res = await fetch(`${BASE}/hands/${encodeURIComponent(handId)}/tags/${encodeURIComponent(tag)}`, {
+  const sp = new URLSearchParams();
+  _addWorkspaceParam(sp);
+  const res = await fetch(`${BASE}/hands/${encodeURIComponent(handId)}/tags/${encodeURIComponent(tag)}?${sp}`, {
     method: 'DELETE',
   });
   if (!res.ok) throw new Error(`Remove tag failed: ${res.statusText}`);
 }
 
 export async function getTags(): Promise<TagCount[]> {
-  const res = await fetch(`${BASE}/tags`);
+  const sp = new URLSearchParams();
+  _addWorkspaceParam(sp);
+  const res = await fetch(`${BASE}/tags?${sp}`);
   if (!res.ok) throw new Error(`Tags failed: ${res.statusText}`);
   return res.json();
 }
 
 export async function updateNote(handId: string, note: string): Promise<void> {
-  const res = await fetch(`${BASE}/hands/${encodeURIComponent(handId)}/note`, {
+  const sp = new URLSearchParams();
+  _addWorkspaceParam(sp);
+  const res = await fetch(`${BASE}/hands/${encodeURIComponent(handId)}/note?${sp}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ note }),
@@ -463,7 +499,9 @@ export async function updateNote(handId: string, note: string): Promise<void> {
 }
 
 export async function deleteNote(handId: string): Promise<void> {
-  const res = await fetch(`${BASE}/hands/${encodeURIComponent(handId)}/note`, {
+  const sp = new URLSearchParams();
+  _addWorkspaceParam(sp);
+  const res = await fetch(`${BASE}/hands/${encodeURIComponent(handId)}/note?${sp}`, {
     method: 'DELETE',
   });
   if (!res.ok) throw new Error(`Delete note failed: ${res.statusText}`);
@@ -505,6 +543,7 @@ export async function getRangeStats(params?: {
   setGameModeParam(sp, params?.game_mode);
   if (params?.date_from) sp.set('date_from', params.date_from);
   if (params?.date_to) sp.set('date_to', params.date_to);
+  _addWorkspaceParam(sp);
   const res = await fetch(`${BASE}/stats/range?${sp}`);
   if (!res.ok) throw new Error(`Range stats failed: ${res.statusText}`);
   return res.json();
@@ -569,7 +608,9 @@ export interface ResultsBreakdown {
 }
 
 export async function getFilterOptions(): Promise<FilterOptions> {
-  const res = await fetch(`${BASE}/reports/filter-options`);
+  const sp = new URLSearchParams();
+  _addWorkspaceParam(sp);
+  const res = await fetch(`${BASE}/reports/filter-options?${sp}`);
   if (!res.ok) throw new Error(`Filter options failed: ${res.statusText}`);
   return res.json();
 }
@@ -587,6 +628,7 @@ export async function getResultsBreakdown(params?: {
   if (params?.date_from) sp.set('date_from', params.date_from);
   if (params?.date_to) sp.set('date_to', params.date_to);
   if (params?.last_n) sp.set('last_n', String(params.last_n));
+  _addWorkspaceParam(sp);
   const res = await fetch(`${BASE}/reports/breakdown?${sp}`);
   if (!res.ok) throw new Error(`Breakdown failed: ${res.statusText}`);
   return res.json();
@@ -661,6 +703,7 @@ export async function getCashDropStats(params?: {
   if (params?.stakes) sp.set('stakes', params.stakes);
   if (params?.date_from) sp.set('date_from', params.date_from);
   if (params?.date_to) sp.set('date_to', params.date_to);
+  _addWorkspaceParam(sp);
   const res = await fetch(`${BASE}/reports/cash-drop?${sp}`);
   if (!res.ok) throw new Error(`Cash drop stats failed: ${res.statusText}`);
   return res.json();
@@ -738,13 +781,17 @@ export interface SessionDetailResponse {
 }
 
 export async function getSessions(): Promise<SessionListResponse> {
-  const res = await fetch(`${BASE}/sessions`);
+  const sp = new URLSearchParams();
+  _addWorkspaceParam(sp);
+  const res = await fetch(`${BASE}/sessions?${sp}`);
   if (!res.ok) throw new Error(`Sessions failed: ${res.statusText}`);
   return res.json();
 }
 
 export async function getSessionDetail(index: number): Promise<SessionDetailResponse> {
-  const res = await fetch(`${BASE}/sessions/${index}`);
+  const sp = new URLSearchParams();
+  _addWorkspaceParam(sp);
+  const res = await fetch(`${BASE}/sessions/${index}?${sp}`);
   if (!res.ok) throw new Error(`Session detail failed: ${res.statusText}`);
   return res.json();
 }
@@ -809,6 +856,7 @@ export async function getStatDetailHands(
   if (params?.date_to) sp.set('date_to', params.date_to);
   if (params?.page) sp.set('page', String(params.page));
   if (params?.per_page) sp.set('per_page', String(params.per_page));
+  _addWorkspaceParam(sp);
   const res = await fetch(`${BASE}/stats/detail/${encodeURIComponent(statKey)}/hands?${sp}`, { signal });
   if (!res.ok) throw new Error(`Stat detail failed: ${res.statusText}`);
   return res.json();
@@ -862,6 +910,7 @@ export async function getStatTrend(
   if (params?.date_from) sp.set('date_from', params.date_from);
   if (params?.date_to) sp.set('date_to', params.date_to);
   if (params?.bucket_size) sp.set('bucket_size', String(params.bucket_size));
+  _addWorkspaceParam(sp);
   const res = await fetch(`${BASE}/stats/detail/${encodeURIComponent(statKey)}/trend?${sp}`, { signal });
   if (!res.ok) throw new Error(`Trend failed: ${res.statusText}`);
   return res.json();
@@ -884,6 +933,7 @@ export async function getStatAnalysis(
   if (params?.game_mode !== undefined) sp.set('game_mode', params.game_mode === '__reg__' ? '' : params.game_mode);
   if (params?.date_from) sp.set('date_from', params.date_from);
   if (params?.date_to) sp.set('date_to', params.date_to);
+  _addWorkspaceParam(sp);
   const res = await fetch(`${BASE}/stats/detail/${encodeURIComponent(statKey)}/analysis?${sp}`, { signal });
   if (!res.ok) throw new Error(`Analysis failed: ${res.statusText}`);
   return res.json();
@@ -921,6 +971,7 @@ export async function getDrift(params?: {
   setGameModeParam(sp, params?.game_mode);
   if (params?.date_from) sp.set('date_from', params.date_from);
   if (params?.date_to) sp.set('date_to', params.date_to);
+  _addWorkspaceParam(sp);
   const res = await fetch(`${BASE}/reports/drift?${sp}`);
   if (!res.ok) throw new Error(`Drift failed: ${res.statusText}`);
   return res.json();
@@ -994,13 +1045,16 @@ export async function getPlayers(params?: PlayerListParams): Promise<PlayerListR
   if (params?.sort_dir) sp.set('sort_dir', params.sort_dir);
   if (params?.page) sp.set('page', String(params.page));
   if (params?.per_page) sp.set('per_page', String(params.per_page));
+  _addWorkspaceParam(sp);
   const res = await fetch(`${BASE}/players?${sp}`);
   if (!res.ok) throw new Error(`Players failed: ${res.statusText}`);
   return res.json();
 }
 
 export async function getPlayer(playerId: number): Promise<PlayerHeader> {
-  const res = await fetch(`${BASE}/players/${playerId}`);
+  const sp = new URLSearchParams();
+  _addWorkspaceParam(sp);
+  const res = await fetch(`${BASE}/players/${playerId}?${sp}`);
   if (!res.ok) throw new Error(`Player failed: ${res.statusText}`);
   return res.json();
 }
@@ -1018,19 +1072,24 @@ export async function getPlayerStats(playerId: number, params?: {
   setGameModeParam(sp, params?.game_mode);
   if (params?.date_from) sp.set('date_from', params.date_from);
   if (params?.date_to) sp.set('date_to', params.date_to);
+  _addWorkspaceParam(sp);
   const res = await fetch(`${BASE}/players/${playerId}/stats?${sp}`);
   if (!res.ok) throw new Error(`Player stats failed: ${res.statusText}`);
   return res.json();
 }
 
 export async function getHeadToHead(playerId: number): Promise<HeadToHeadResponse> {
-  const res = await fetch(`${BASE}/players/${playerId}/head-to-head`);
+  const sp = new URLSearchParams();
+  _addWorkspaceParam(sp);
+  const res = await fetch(`${BASE}/players/${playerId}/head-to-head?${sp}`);
   if (!res.ok) throw new Error(`H2H failed: ${res.statusText}`);
   return res.json();
 }
 
 export async function updatePlayerNotes(playerId: number, data: { notes?: string; color_tag?: string }): Promise<void> {
-  const res = await fetch(`${BASE}/players/${playerId}/notes`, {
+  const sp = new URLSearchParams();
+  _addWorkspaceParam(sp);
+  const res = await fetch(`${BASE}/players/${playerId}/notes?${sp}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
@@ -1154,6 +1213,8 @@ export interface PopulationFilterParams {
   min_hands?: number;
   exclude_hero?: boolean;
   player_type?: string;
+  exclude_identity_ids?: string;
+  exclude_tags?: string;
 }
 
 function _buildPopParams(params?: PopulationFilterParams): URLSearchParams {
@@ -1164,6 +1225,9 @@ function _buildPopParams(params?: PopulationFilterParams): URLSearchParams {
   if (params?.min_hands !== undefined) sp.set('min_hands', String(params.min_hands));
   if (params?.exclude_hero !== undefined) sp.set('exclude_hero', String(params.exclude_hero));
   if (params?.player_type) sp.set('player_type', params.player_type);
+  if (params?.exclude_identity_ids) sp.set('exclude_identity_ids', params.exclude_identity_ids);
+  if (params?.exclude_tags) sp.set('exclude_tags', params.exclude_tags);
+  _addWorkspaceParam(sp);
   return sp;
 }
 
@@ -1224,12 +1288,16 @@ export async function getPopulationComparison(params?: PopulationFilterParams): 
 }
 
 export async function clearDatabase(): Promise<void> {
-  const res = await fetch(`${BASE}/import/clear`, { method: 'POST' });
+  const sp = new URLSearchParams();
+  _addWorkspaceParam(sp);
+  const res = await fetch(`${BASE}/import/clear?${sp}`, { method: 'POST' });
   if (!res.ok) throw new Error(`Clear failed: ${res.statusText}`);
 }
 
 export async function exportDb(): Promise<void> {
-  const res = await fetch(`${BASE}/import/export`);
+  const sp = new URLSearchParams();
+  _addWorkspaceParam(sp);
+  const res = await fetch(`${BASE}/import/export?${sp}`);
   if (!res.ok) throw new Error(`Export failed: ${res.statusText}`);
   const blob = await res.blob();
   const disposition = res.headers.get('Content-Disposition');
@@ -1246,7 +1314,9 @@ export async function exportDb(): Promise<void> {
 export async function importDb(file: File): Promise<{ status: string; hands: number }> {
   const form = new FormData();
   form.append('file', file);
-  const res = await fetch(`${BASE}/import/database`, { method: 'POST', body: form });
+  const sp = new URLSearchParams();
+  _addWorkspaceParam(sp);
+  const res = await fetch(`${BASE}/import/database?${sp}`, { method: 'POST', body: form });
   if (!res.ok) {
     const body = await res.text().catch(() => '');
     throw new Error(`Import DB failed: ${res.status} ${res.statusText}${body ? ` — ${body}` : ''}`);
@@ -1255,7 +1325,9 @@ export async function importDb(file: File): Promise<{ status: string; hands: num
 }
 
 export async function rebuildHands(): Promise<{ status: string; total?: number }> {
-  const res = await fetch(`${BASE}/import/rebuild`, { method: 'POST' });
+  const sp = new URLSearchParams();
+  _addWorkspaceParam(sp);
+  const res = await fetch(`${BASE}/import/rebuild?${sp}`, { method: 'POST' });
   if (!res.ok) {
     const body = await res.text().catch(() => '');
     throw new Error(`Rebuild failed: ${res.status} ${res.statusText}${body ? ` — ${body}` : ''}`);
@@ -1382,6 +1454,7 @@ function _buildStatParams(params?: StatFilterParams): URLSearchParams {
   if (params?.game_mode !== undefined) sp.set('game_mode', params.game_mode === '__reg__' ? '' : params.game_mode);
   if (params?.date_from) sp.set('date_from', params.date_from);
   if (params?.date_to) sp.set('date_to', params.date_to);
+  _addWorkspaceParam(sp);
   return sp;
 }
 
@@ -1445,5 +1518,188 @@ export async function getStatRange(statKey: string, params?: StatFilterParams, s
   const sp = _buildStatParams(params);
   const res = await fetch(`${BASE}/stats/detail/${encodeURIComponent(statKey)}/range?${sp}`, { signal });
   if (!res.ok) throw new Error(`Stat range failed: ${res.statusText}`);
+  return res.json();
+}
+
+// ── Workspace & Checkpoint Types ─────────────────────────────────────
+
+export interface Workspace {
+  id: number;
+  name: string;
+  hero_username: string;
+  hero_site: string;
+  description: string | null;
+  color: string | null;
+  hand_count: number;
+  date_range: { min: string | null; max: string | null };
+  created_at: string;
+}
+
+export interface Checkpoint {
+  id: number;
+  workspace_id: number;
+  name: string;
+  checkpoint_at: string;
+  note: string | null;
+  created_at: string;
+}
+
+// ── Workspace CRUD ───────────────────────────────────────────────────
+
+export async function getWorkspaces(): Promise<Workspace[]> {
+  const res = await fetch(`${BASE}/workspaces`);
+  if (!res.ok) throw new Error('Failed to fetch workspaces');
+  return res.json();
+}
+
+export async function createWorkspace(data: { name: string; hero_username?: string; hero_site?: string; description?: string; color?: string }): Promise<Workspace> {
+  const res = await fetch(`${BASE}/workspaces`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) throw new Error('Failed to create workspace');
+  return res.json();
+}
+
+export async function updateWorkspace(id: number, data: Partial<{ name: string; hero_username: string; hero_site: string; description: string; color: string }>): Promise<Workspace> {
+  const res = await fetch(`${BASE}/workspaces/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) throw new Error('Failed to update workspace');
+  return res.json();
+}
+
+export async function deleteWorkspace(id: number): Promise<void> {
+  const res = await fetch(`${BASE}/workspaces/${id}`, { method: 'DELETE' });
+  if (!res.ok) throw new Error('Failed to delete workspace');
+}
+
+// ── Checkpoint CRUD ──────────────────────────────────────────────────
+
+export async function getCheckpoints(workspaceId: number): Promise<Checkpoint[]> {
+  const res = await fetch(`${BASE}/workspaces/${workspaceId}/checkpoints`);
+  if (!res.ok) throw new Error('Failed to fetch checkpoints');
+  return res.json();
+}
+
+export async function createCheckpoint(workspaceId: number, data: { name: string; checkpoint_at?: string; note?: string }): Promise<Checkpoint> {
+  const res = await fetch(`${BASE}/workspaces/${workspaceId}/checkpoints`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) throw new Error('Failed to create checkpoint');
+  return res.json();
+}
+
+export async function updateCheckpoint(workspaceId: number, id: number, data: Partial<{ name: string; checkpoint_at: string; note: string }>): Promise<Checkpoint> {
+  const res = await fetch(`${BASE}/workspaces/${workspaceId}/checkpoints/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) throw new Error('Failed to update checkpoint');
+  return res.json();
+}
+
+export async function deleteCheckpoint(workspaceId: number, id: number): Promise<void> {
+  const res = await fetch(`${BASE}/workspaces/${workspaceId}/checkpoints/${id}`, { method: 'DELETE' });
+  if (!res.ok) throw new Error('Failed to delete checkpoint');
+}
+
+// ── Identity & Alias Types ──────────────────────────────────────────
+
+export interface Alias {
+  id: number;
+  identity_id: number;
+  workspace_id: number;
+  player_id: number;
+  username: string;
+  workspace_name: string;
+}
+
+export interface Identity {
+  id: number;
+  display_name: string;
+  notes: string | null;
+  color: string | null;
+  tags: string[];
+  aliases: Alias[];
+  total_hands: number;
+  created_at: string;
+}
+
+// ── Identity CRUD ───────────────────────────────────────────────────
+
+export async function getIdentities(): Promise<Identity[]> {
+  const res = await fetch(`${BASE}/identities`);
+  if (!res.ok) throw new Error('Failed to fetch identities');
+  return res.json();
+}
+
+export async function createIdentity(data: { display_name: string; notes?: string; color?: string; tags?: string[] }): Promise<Identity> {
+  const res = await fetch(`${BASE}/identities`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) throw new Error('Failed to create identity');
+  return res.json();
+}
+
+export async function getIdentity(id: number): Promise<Identity> {
+  const res = await fetch(`${BASE}/identities/${id}`);
+  if (!res.ok) throw new Error('Failed to fetch identity');
+  return res.json();
+}
+
+export async function updateIdentity(id: number, data: Partial<{ display_name: string; notes: string; color: string; tags: string[] }>): Promise<Identity> {
+  const res = await fetch(`${BASE}/identities/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) throw new Error('Failed to update identity');
+  return res.json();
+}
+
+export async function deleteIdentity(id: number): Promise<void> {
+  const res = await fetch(`${BASE}/identities/${id}`, { method: 'DELETE' });
+  if (!res.ok) throw new Error('Failed to delete identity');
+}
+
+export async function addAlias(identityId: number, data: { workspace_id: number; player_id: number }): Promise<Identity> {
+  const res = await fetch(`${BASE}/identities/${identityId}/aliases`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) throw new Error('Failed to add alias');
+  return res.json();
+}
+
+export async function removeAlias(identityId: number, aliasId: number): Promise<void> {
+  const res = await fetch(`${BASE}/identities/${identityId}/aliases/${aliasId}`, { method: 'DELETE' });
+  if (!res.ok) throw new Error('Failed to remove alias');
+}
+
+export async function getIdentityStats(identityId: number, params?: {
+  position?: string;
+  stakes?: string;
+  game_mode?: string;
+  date_from?: string;
+  date_to?: string;
+}): Promise<HeroStats> {
+  const sp = new URLSearchParams();
+  setPositionParam(sp, params?.position);
+  if (params?.stakes) sp.set('stakes', params.stakes);
+  setGameModeParam(sp, params?.game_mode);
+  if (params?.date_from) sp.set('date_from', params.date_from);
+  if (params?.date_to) sp.set('date_to', params.date_to);
+  const res = await fetch(`${BASE}/identities/${identityId}/stats?${sp}`);
+  if (!res.ok) throw new Error('Failed to fetch identity stats');
   return res.json();
 }

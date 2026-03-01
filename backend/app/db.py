@@ -86,23 +86,28 @@ def db_lock() -> threading.Lock:
     return _lock
 
 
-def get_hero_player_id(db) -> int | None:
-    """Shared hero player ID lookup — single query, used by all endpoints."""
+def get_hero_player_id(db, workspace_id: int = 1) -> int | None:
+    """Shared hero player ID lookup from workspace table, used by all endpoints."""
     row = db.execute(
-        "SELECT p.id FROM players p "
-        "WHERE p.username = COALESCE((SELECT value FROM settings WHERE key = 'hero_username'), 'Hero') "
-        "AND p.site_id = COALESCE("
-        "  (SELECT s.id FROM sites s WHERE s.code = COALESCE("
-        "    (SELECT value FROM settings WHERE key = 'hero_site'), 'GG'))"
-        ", 1)"
+        "SELECT hero_username, hero_site FROM workspaces WHERE id = ?",
+        [workspace_id],
     ).fetchone()
-    return row[0] if row else None
+    if not row:
+        return None
+    hero_username, hero_site = row
+    player = db.execute(
+        "SELECT id FROM players WHERE username = ? "
+        "AND site_id = (SELECT id FROM sites WHERE code = ?)",
+        [hero_username, hero_site],
+    ).fetchone()
+    return player[0] if player else None
 
 
-def get_hero_username(db) -> str:
-    """Get hero username from settings."""
+def get_hero_username(db, workspace_id: int = 1) -> str:
+    """Get hero username from workspace table."""
     row = db.execute(
-        "SELECT value FROM settings WHERE key = 'hero_username'"
+        "SELECT hero_username FROM workspaces WHERE id = ?",
+        [workspace_id],
     ).fetchone()
     return row[0] if row else "Hero"
 
@@ -165,7 +170,7 @@ def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
     conn.execute("""
         CREATE TABLE IF NOT EXISTS hand_players (
             id INTEGER PRIMARY KEY,
-            hand_id VARCHAR REFERENCES hands(id),
+            hand_id VARCHAR ,
             player_id INTEGER REFERENCES players(id),
             seat INTEGER NOT NULL,
             position VARCHAR NOT NULL,
@@ -281,7 +286,7 @@ def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
     conn.execute("""
         CREATE TABLE IF NOT EXISTS actions (
             id INTEGER PRIMARY KEY,
-            hand_id VARCHAR REFERENCES hands(id),
+            hand_id VARCHAR ,
             player_id INTEGER REFERENCES players(id),
             street VARCHAR NOT NULL,
             action_order INTEGER NOT NULL,
@@ -296,7 +301,7 @@ def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
     """)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS board_cards (
-            hand_id VARCHAR REFERENCES hands(id),
+            hand_id VARCHAR ,
             street VARCHAR NOT NULL,
             card VARCHAR NOT NULL,
             card_order INTEGER NOT NULL
@@ -310,7 +315,7 @@ def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
     """)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS hand_tags (
-            hand_id VARCHAR REFERENCES hands(id),
+            hand_id VARCHAR ,
             tag VARCHAR NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY (hand_id, tag)
@@ -318,7 +323,7 @@ def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
     """)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS hand_notes (
-            hand_id VARCHAR PRIMARY KEY REFERENCES hands(id),
+            hand_id VARCHAR PRIMARY KEY ,
             note TEXT NOT NULL,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
@@ -329,12 +334,17 @@ def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
             player_type VARCHAR NOT NULL DEFAULT 'UNK'
         )
     """)
-    conn.execute("""
-        INSERT OR IGNORE INTO settings VALUES ('hero_username', 'Hero')
-    """)
-    conn.execute("""
-        INSERT OR IGNORE INTO settings VALUES ('hero_site', 'GG')
-    """)
+    # Seed hero settings only for pre-workspace databases (new DBs get them via workspace)
+    migrated = conn.execute(
+        "SELECT 1 FROM settings WHERE key = 'workspace_migration'"
+    ).fetchone()
+    if not migrated:
+        conn.execute("""
+            INSERT OR IGNORE INTO settings VALUES ('hero_username', 'Hero')
+        """)
+        conn.execute("""
+            INSERT OR IGNORE INTO settings VALUES ('hero_site', 'GG')
+        """)
 
     # Migrations for existing databases
     for col, default in [
@@ -432,8 +442,256 @@ def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
             conn.execute(f"DROP SEQUENCE IF EXISTS {seq}")
             conn.execute(f"CREATE SEQUENCE {seq} START {max_id + 1}")
 
+    # Workspace migration
+    _migrate_to_workspaces(conn)
+
+    # Player identities migration
+    _migrate_to_identities(conn)
+
+    # Remove analysis_views (feature removed)
+    conn.execute("DROP TABLE IF EXISTS analysis_views")
+    conn.execute("DROP SEQUENCE IF EXISTS seq_views")
+    conn.execute("DELETE FROM settings WHERE key = 'views_migration'")
+
+    # Allow same hand ID across workspaces (needed for composite key migration)
+    _migrate_hands_composite_key(conn)
+
+    # Add workspace_id to child tables for workspace-scoped JOINs
+    _migrate_child_workspace_id(conn)
+
     # Check stat version — trigger rebuild if outdated
     _check_stat_version(conn)
+
+
+def _migrate_to_workspaces(conn: duckdb.DuckDBPyConnection) -> None:
+    """Create workspaces + checkpoints tables and migrate existing data.
+
+    Idempotent — checks the 'workspace_migration' setting key before running.
+    Moves hero_username/hero_site from settings into the default workspace row.
+    """
+    row = conn.execute(
+        "SELECT value FROM settings WHERE key = 'workspace_migration'"
+    ).fetchone()
+    if row is not None:
+        # Already migrated — ensure tables exist (e.g. fresh DB that set the flag)
+        return
+
+    logger.info("Running workspace migration...")
+
+    # 1. Create workspaces table
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS workspaces (
+            id INTEGER PRIMARY KEY,
+            name VARCHAR NOT NULL UNIQUE,
+            hero_username VARCHAR NOT NULL DEFAULT 'Hero',
+            hero_site VARCHAR NOT NULL DEFAULT 'GG',
+            description TEXT,
+            color VARCHAR,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    conn.execute("CREATE SEQUENCE IF NOT EXISTS seq_workspaces START 2")
+
+    # 2. Read existing hero settings
+    hero_row = conn.execute(
+        "SELECT value FROM settings WHERE key = 'hero_username'"
+    ).fetchone()
+    hero_username = hero_row[0] if hero_row else 'Hero'
+
+    site_row = conn.execute(
+        "SELECT value FROM settings WHERE key = 'hero_site'"
+    ).fetchone()
+    hero_site = site_row[0] if site_row else 'GG'
+
+    # 3. Insert default workspace (id=1)
+    conn.execute(
+        "INSERT OR IGNORE INTO workspaces (id, name, hero_username, hero_site) "
+        "VALUES (1, 'My Game', ?, ?)",
+        [hero_username, hero_site],
+    )
+
+    # 4. Add workspace_id column to hands table
+    try:
+        conn.execute("ALTER TABLE hands ADD COLUMN workspace_id INTEGER DEFAULT 1")
+    except duckdb.CatalogException:
+        pass  # Column already exists
+
+    # 5. Backfill any NULL workspace_id values
+    conn.execute("UPDATE hands SET workspace_id = 1 WHERE workspace_id IS NULL")
+
+    # 6. Create indexes on hands.workspace_id
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_hands_workspace_id ON hands(workspace_id, id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_hands_workspace ON hands(workspace_id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_hands_workspace_played ON hands(workspace_id, played_at)"
+    )
+
+    # 7. Create checkpoints table
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS checkpoints (
+            id INTEGER PRIMARY KEY,
+            workspace_id INTEGER NOT NULL REFERENCES workspaces(id),
+            name VARCHAR NOT NULL,
+            checkpoint_at TIMESTAMP NOT NULL,
+            note TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    conn.execute("CREATE SEQUENCE IF NOT EXISTS seq_checkpoints START 1")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_checkpoints_workspace ON checkpoints(workspace_id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_checkpoints_at ON checkpoints(workspace_id, checkpoint_at)"
+    )
+
+    # 8. Remove hero settings from settings table (now in workspaces)
+    conn.execute("DELETE FROM settings WHERE key IN ('hero_username', 'hero_site')")
+
+    # 9. Mark migration as complete
+    conn.execute(
+        "INSERT OR REPLACE INTO settings VALUES ('workspace_migration', '1')"
+    )
+
+    logger.info("Workspace migration complete.")
+
+
+def _migrate_to_identities(conn: duckdb.DuckDBPyConnection) -> None:
+    """Create player_identities + player_aliases tables.
+
+    Idempotent — checks the 'identities_migration' setting key before running.
+    """
+    row = conn.execute(
+        "SELECT value FROM settings WHERE key = 'identities_migration'"
+    ).fetchone()
+    if row is not None:
+        return
+
+    logger.info("Running identities migration...")
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS player_identities (
+            id INTEGER PRIMARY KEY,
+            display_name VARCHAR NOT NULL,
+            notes TEXT,
+            color VARCHAR,
+            tags VARCHAR DEFAULT '[]',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    conn.execute("CREATE SEQUENCE IF NOT EXISTS seq_identities START 1")
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS player_aliases (
+            id INTEGER PRIMARY KEY,
+            identity_id INTEGER NOT NULL REFERENCES player_identities(id),
+            workspace_id INTEGER NOT NULL REFERENCES workspaces(id),
+            player_id INTEGER NOT NULL REFERENCES players(id),
+            UNIQUE(workspace_id, player_id)
+        )
+    """)
+    conn.execute("CREATE SEQUENCE IF NOT EXISTS seq_aliases START 1")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_aliases_identity ON player_aliases(identity_id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_aliases_player ON player_aliases(player_id)"
+    )
+
+    conn.execute(
+        "INSERT OR REPLACE INTO settings VALUES ('identities_migration', '1')"
+    )
+    logger.info("Identities migration complete.")
+
+
+def _migrate_child_workspace_id(conn: duckdb.DuckDBPyConnection) -> None:
+    """Add workspace_id to child tables so JOINs are workspace-scoped.
+
+    Without this, hand_players JOIN hands ON hand_id crosses workspace
+    boundaries when the same hand exists in multiple workspaces.
+    """
+    row = conn.execute(
+        "SELECT value FROM settings WHERE key = 'child_workspace_id'"
+    ).fetchone()
+    if row is not None:
+        return
+
+    logger.info("Adding workspace_id to child tables...")
+
+    for table in ("hand_players", "actions", "board_cards", "hand_tags", "hand_notes"):
+        try:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN workspace_id INTEGER")
+        except duckdb.CatalogException:
+            pass  # column already exists
+
+        # Backfill from hands table
+        conn.execute(f"""
+            UPDATE {table} SET workspace_id = (
+                SELECT MIN(h.workspace_id) FROM hands h WHERE h.id = {table}.hand_id
+            )
+            WHERE workspace_id IS NULL
+        """)
+
+    conn.execute(
+        "INSERT OR REPLACE INTO settings VALUES ('child_workspace_id', '1')"
+    )
+    logger.info("Child table workspace_id migration complete.")
+
+
+def _migrate_hands_composite_key(conn: duckdb.DuckDBPyConnection) -> None:
+    """Change hands PK from (id) to unique(workspace_id, id).
+
+    This allows the same hand to exist in multiple workspaces.
+    Recreates the table via CREATE TABLE AS SELECT (drops the single-column PK),
+    then adds a composite unique index.
+    """
+    row = conn.execute(
+        "SELECT value FROM settings WHERE key = 'hands_composite_key'"
+    ).fetchone()
+    if row is not None:
+        return
+
+    logger.info("Migrating hands table to composite key (workspace_id, id)...")
+
+    # DuckDB doesn't support ALTER TABLE DROP CONSTRAINT, so we must
+    # recreate child tables (without FK) to release the hands PK dependency.
+    for child in ("hand_players", "actions", "board_cards", "hand_tags", "hand_notes"):
+        conn.execute(f"CREATE TABLE _{child}_tmp AS SELECT * FROM {child}")
+        conn.execute(f"DROP TABLE {child}")
+        conn.execute(f"ALTER TABLE _{child}_tmp RENAME TO {child}")
+
+    conn.execute("DROP TABLE IF EXISTS _hands_tmp")
+    conn.execute("CREATE TABLE _hands_tmp AS SELECT * FROM hands")
+    conn.execute("DROP TABLE hands")
+    conn.execute("ALTER TABLE _hands_tmp RENAME TO hands")
+
+    # Recreate all indexes (table recreation wiped them)
+    conn.execute("CREATE UNIQUE INDEX uq_hands_workspace_id ON hands(workspace_id, id)")
+    conn.execute("CREATE INDEX idx_hands_workspace ON hands(workspace_id)")
+    conn.execute("CREATE INDEX idx_hands_workspace_played ON hands(workspace_id, played_at)")
+    conn.execute("CREATE INDEX idx_hands_played_at ON hands(played_at)")
+    conn.execute("CREATE INDEX idx_hands_stakes ON hands(stakes)")
+    conn.execute("CREATE INDEX idx_hands_game_mode ON hands(game_mode)")
+    conn.execute("CREATE INDEX idx_h_played_stakes ON hands(played_at, stakes)")
+    conn.execute("CREATE INDEX idx_hp_hand_id ON hand_players(hand_id)")
+    conn.execute("CREATE INDEX idx_hp_player_id ON hand_players(player_id)")
+    conn.execute("CREATE INDEX idx_hp_position ON hand_players(position)")
+    conn.execute("CREATE INDEX idx_hp_player_hand ON hand_players(player_id, hand_id)")
+    conn.execute("CREATE INDEX idx_hp_hand_player ON hand_players(hand_id, player_id)")
+    conn.execute("CREATE INDEX idx_hp_player_position ON hand_players(player_id, position)")
+    conn.execute("CREATE INDEX idx_actions_hand_id ON actions(hand_id)")
+    conn.execute("CREATE INDEX idx_hand_tags_hand_id ON hand_tags(hand_id)")
+    conn.execute("CREATE INDEX idx_hand_tags_tag ON hand_tags(tag)")
+    conn.execute("CREATE INDEX idx_board_cards_hand_id ON board_cards(hand_id)")
+
+    conn.execute(
+        "INSERT OR REPLACE INTO settings VALUES ('hands_composite_key', '1')"
+    )
+    logger.info("Hands composite key migration complete.")
 
 
 def get_rebuild_status() -> dict:

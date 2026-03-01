@@ -1,4 +1,5 @@
 import { useImport } from '@/contexts/ImportContext';
+import { useWorkspace } from '@/contexts/WorkspaceContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -6,6 +7,7 @@ import { Button } from '@/components/ui/button';
 
 export default function ImportOverlay() {
   const { phase, fileInfo, progress, result, error, dismiss } = useImport();
+  const { workspaces, activeWorkspace } = useWorkspace();
 
   if (phase === 'idle' || phase === 'rebuilding') return null;
 
@@ -17,6 +19,21 @@ export default function ImportOverlay() {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm">
       <Card className="w-full max-w-md mx-4">
+        <CardContent className="pb-0">
+          <div className="flex items-center justify-center gap-2 py-2 bg-surface rounded-lg text-sm">
+            <span className="text-text-muted">Importing into:</span>
+            <span className="font-medium">{activeWorkspace?.name ?? 'My Game'}</span>
+            {activeWorkspace?.color && (
+              <span className="w-2 h-2 rounded-full" style={{ background: activeWorkspace.color }} />
+            )}
+          </div>
+          {workspaces.length > 1 && (
+            <p className="text-xs text-text-muted text-center mt-1">
+              Wrong workspace? Switch in the sidebar first.
+            </p>
+          )}
+        </CardContent>
+
         {/* Uploading */}
         {phase === 'uploading' && (
           <>

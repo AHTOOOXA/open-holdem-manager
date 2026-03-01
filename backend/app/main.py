@@ -9,7 +9,7 @@ from starlette.formparsers import MultiPartParser
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.db import get_db, close_db, get_read_cursor, get_rebuild_status, init_request_cursors, cleanup_request_cursors
-from app.api import import_hands, stats, reports, settings, hands, cash_drop, sessions, players, population
+from app.api import import_hands, stats, reports, settings, hands, cash_drop, sessions, players, population, workspaces, checkpoints, compare, identities
 
 MultiPartParser.max_part_size = 50 * 1024 * 1024  # 50MB
 
@@ -46,6 +46,10 @@ app.include_router(cash_drop.router, prefix="/api")
 app.include_router(sessions.router, prefix="/api")
 app.include_router(players.router, prefix="/api")
 app.include_router(population.router, prefix="/api")
+app.include_router(workspaces.router, prefix="/api", tags=["workspaces"])
+app.include_router(checkpoints.router, prefix="/api", tags=["checkpoints"])
+app.include_router(compare.router, prefix="/api", tags=["compare"])
+app.include_router(identities.router, prefix="/api", tags=["identities"])
 
 
 @app.on_event("startup")
@@ -59,7 +63,7 @@ def shutdown():
 
 
 @app.get("/api/health")
-def health():
+def health(workspace_id: int = 1):
     rebuild = get_rebuild_status()
     if rebuild["active"]:
         # Skip DB query during rebuild — the write transaction blocks read cursors
@@ -73,7 +77,9 @@ def health():
             },
         }
     try:
-        row = get_read_cursor().execute("SELECT COUNT(*) FROM hands").fetchone()
+        row = get_read_cursor().execute(
+            "SELECT COUNT(*) FROM hands WHERE workspace_id = ?", [workspace_id]
+        ).fetchone()
         hand_count = row[0] if row else 0
     except Exception:
         hand_count = 0

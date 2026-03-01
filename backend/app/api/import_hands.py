@@ -82,12 +82,13 @@ def _create_indexes(db: duckdb.DuckDBPyConnection) -> None:
 _HANDS_COLS = (
     "id", "site_id", "played_at", "game_type", "game_mode", "stakes",
     "sb_amount", "bb_amount", "table_name", "table_size", "button_seat", "raw_text",
-    "cash_drop_received",
+    "cash_drop_received", "workspace_id",
 )
 _HP_BASE_COLS = (
     "id", "hand_id", "player_id", "seat", "position",
     "stack", "stack_bb", "card1", "card2",
     "won", "won_bb", "rake", "rake_bb", "jackpot", "jackpot_bb", "all_in_ev_bb",
+    "workspace_id",
 )
 _STAT_FLAG_KEYS = (
     "vpip", "pfr", "three_bet", "three_bet_opp", "three_bet_opp_ip", "four_bet", "four_bet_opp",
@@ -113,7 +114,7 @@ _STAT_FLAG_KEYS = (
     "pot_type", "is_multiway",
 )
 _HP_ALL_COLS = _HP_BASE_COLS + _STAT_FLAG_KEYS
-_BOARD_COLS = ("hand_id", "street", "card", "card_order")
+_BOARD_COLS = ("hand_id", "street", "card", "card_order", "workspace_id")
 
 
 def reset_import_cache() -> None:
@@ -283,6 +284,7 @@ def _build_batch_arrays(
     db: duckdb.DuckDBPyConnection,
     prepared: list[tuple[ParsedHand, dict, tuple]],
     rebuild: bool = False,
+    workspace_id: int = 1,
 ) -> tuple[pa.Table | None, pa.Table | None, pa.Table | None]:
     """Build PyArrow tables from a batch of (parsed, player_stats, financials) tuples.
 
@@ -328,6 +330,7 @@ def _build_batch_arrays(
             hands_cols["button_seat"].append(parsed.button_seat)
             hands_cols["raw_text"].append(parsed.raw_text)
             hands_cols["cash_drop_received"].append(float(parsed.cash_drop_received))
+            hands_cols["workspace_id"].append(workspace_id)
 
         for s in parsed.seats:
             uname = s["username"]
@@ -368,6 +371,7 @@ def _build_batch_arrays(
             hp_cols["jackpot"].append(jackpot)
             hp_cols["jackpot_bb"].append(jackpot_bb)
             hp_cols["all_in_ev_bb"].append(ev_bb)
+            hp_cols["workspace_id"].append(workspace_id)
 
             # Append stat flags
             for k in _STAT_FLAG_KEYS:
@@ -379,6 +383,7 @@ def _build_batch_arrays(
                 board_cols["street"].append(street)
                 board_cols["card"].append(card)
                 board_cols["card_order"].append(i + 1)
+                board_cols["workspace_id"].append(workspace_id)
 
     pa_hands = pa.table(hands_cols) if hands_cols and hands_cols["id"] else None
     pa_hp = pa.table(hp_cols) if hp_cols["id"] else None
@@ -419,6 +424,7 @@ def _flush_batch(
     prepared: list[tuple[ParsedHand, dict, tuple]],
     rebuild: bool = False,
     in_transaction: bool = False,
+    workspace_id: int = 1,
 ) -> tuple[int, int, list[str]]:
     """Bulk-insert a batch of (parsed, player_stats, financials) tuples using PyArrow column-oriented inserts.
 
@@ -430,7 +436,7 @@ def _flush_batch(
         return 0, 0, []
 
     try:
-        pa_hands, pa_hp, pa_board = _build_batch_arrays(db, prepared, rebuild=rebuild)
+        pa_hands, pa_hp, pa_board = _build_batch_arrays(db, prepared, rebuild=rebuild, workspace_id=workspace_id)
         _insert_arrays(db, pa_hands, pa_hp, pa_board, in_transaction=in_transaction)
         return len(prepared), 0, []
     except Exception as e:
@@ -454,14 +460,14 @@ def finalize_import(db: duckdb.DuckDBPyConnection) -> None:
     batch_update_player_types(db)
 
 
-def insert_parsed_hand(db: duckdb.DuckDBPyConnection, parsed: ParsedHand) -> str:
+def insert_parsed_hand(db: duckdb.DuckDBPyConnection, parsed: ParsedHand, workspace_id: int = 1) -> str:
     """Insert a single parsed hand. Computes stats internally.
 
     Kept for backward compatibility (used by tests).
     """
     player_stats = compute_stat_flags(parsed)
     financials = _compute_financials(parsed)
-    imported, errors, details = _flush_batch(db, [(parsed, player_stats, financials)])
+    imported, errors, details = _flush_batch(db, [(parsed, player_stats, financials)], workspace_id=workspace_id)
     if errors:
         raise RuntimeError(details[0])
     return parsed.hand_id
@@ -532,18 +538,18 @@ def _parse_batch(
 
 
 @router.post("/import/files", response_model=ImportResult)
-async def import_files(files: list[UploadFile] = File(...)):
+async def import_files(files: list[UploadFile] = File(...), workspace_id: int = 1):
     files_data = [(f.filename or "", await f.read()) for f in files]
     text_contents = _read_uploads(files_data)
 
     with db_lock():
         db = get_db()
-        result = _process_hands(db, text_contents)
+        result = _process_hands(db, text_contents, workspace_id=workspace_id)
     return result
 
 
 @router.post("/import/files/stream")
-async def import_files_stream(files: list[UploadFile] = File(...)):
+async def import_files_stream(files: list[UploadFile] = File(...), workspace_id: int = 1):
     files_data = [(f.filename or "", await f.read()) for f in files]
     text_contents = _read_uploads(files_data)
 
@@ -578,7 +584,7 @@ async def import_files_stream(files: list[UploadFile] = File(...)):
             t_equity = 0.0
             t_db = 0.0
 
-            # Bulk duplicate check
+            # Bulk duplicate check (scoped to workspace)
             all_ids = [extract_hand_id(h) for h in all_hands]
             existing_ids: set[str] = set()
             valid_ids = [hid for hid in all_ids if hid is not None]
@@ -587,7 +593,8 @@ async def import_files_stream(files: list[UploadFile] = File(...)):
                     batch = valid_ids[j:j + 500]
                     placeholders = ",".join(["?"] * len(batch))
                     rows = db.execute(
-                        f"SELECT id FROM hands WHERE id IN ({placeholders})", batch
+                        f"SELECT id FROM hands WHERE workspace_id = ? AND id IN ({placeholders})",
+                        [workspace_id] + batch,
                     ).fetchall()
                     existing_ids.update(r[0] for r in rows)
 
@@ -635,7 +642,7 @@ async def import_files_stream(files: list[UploadFile] = File(...)):
                     # Flush current batch to DB
                     if batch_prepared:
                         t0 = time.perf_counter()
-                        imp, errs, details = _flush_batch(db, batch_prepared, in_transaction=True)
+                        imp, errs, details = _flush_batch(db, batch_prepared, in_transaction=True, workspace_id=workspace_id)
                         t_db += time.perf_counter() - t0
                         imported += imp
                         errors += errs
@@ -685,7 +692,7 @@ async def import_files_stream(files: list[UploadFile] = File(...)):
     return StreamingResponse(generate(), media_type="application/x-ndjson")
 
 
-def _process_hands(db, text_contents: list[str]) -> ImportResult:
+def _process_hands(db, text_contents: list[str], workspace_id: int = 1) -> ImportResult:
     """Process hands from text contents (non-streaming)."""
     total_imported = 0
     total_duplicates = 0
@@ -709,7 +716,8 @@ def _process_hands(db, text_contents: list[str]) -> ImportResult:
             batch = valid_ids[j:j + 500]
             placeholders = ",".join(["?"] * len(batch))
             rows = db.execute(
-                f"SELECT id FROM hands WHERE id IN ({placeholders})", batch
+                f"SELECT id FROM hands WHERE workspace_id = ? AND id IN ({placeholders})",
+                [workspace_id] + batch,
             ).fetchall()
             existing_ids.update(r[0] for r in rows)
 
@@ -742,14 +750,14 @@ def _process_hands(db, text_contents: list[str]) -> ImportResult:
             error_details.append(f"Hand parse error: {str(e)}")
 
         if len(pending) >= BATCH_SIZE:
-            imp, errs, details = _flush_batch(db, pending, in_transaction=True)
+            imp, errs, details = _flush_batch(db, pending, in_transaction=True, workspace_id=workspace_id)
             total_imported += imp
             total_errors += errs
             error_details.extend(details)
             pending = []
 
     if pending:
-        imp, errs, details = _flush_batch(db, pending, in_transaction=True)
+        imp, errs, details = _flush_batch(db, pending, in_transaction=True, workspace_id=workspace_id)
         total_imported += imp
         total_errors += errs
         error_details.extend(details)
@@ -767,7 +775,7 @@ def _process_hands(db, text_contents: list[str]) -> ImportResult:
 
 
 @router.post("/import/rebuild")
-async def rebuild_hands():
+async def rebuild_hands(workspace_id: int = 1):
     """Re-parse all hands from stored raw_text in a background thread.
 
     Returns immediately. Poll GET /api/health for progress.
@@ -780,7 +788,9 @@ async def rebuild_hands():
         return {"status": "already_running"}
 
     db = get_db()
-    total = db.execute("SELECT COUNT(*) FROM hands").fetchone()[0]
+    total = db.execute(
+        "SELECT COUNT(*) FROM hands WHERE workspace_id = ?", [workspace_id]
+    ).fetchone()[0]
     if total == 0:
         return {"status": "empty"}
 
@@ -884,15 +894,31 @@ def _run_rebuild_sync(db, on_progress: 'Callable[[int, int], None] | None' = Non
 
 
 @router.post("/import/clear")
-async def clear_hands():
+async def clear_hands(workspace_id: int = 1):
     with db_lock():
         db = get_db()
-        db.execute("DELETE FROM player_classifications")
-        db.execute("DELETE FROM actions")
-        db.execute("DELETE FROM board_cards")
-        db.execute("DELETE FROM hand_players")
-        db.execute("DELETE FROM hands")
-        db.execute("DELETE FROM players")
+        # Delete data scoped to workspace
+        db.execute(
+            "DELETE FROM hand_tags WHERE hand_id IN (SELECT id FROM hands WHERE workspace_id = ?)",
+            [workspace_id],
+        )
+        db.execute(
+            "DELETE FROM hand_notes WHERE hand_id IN (SELECT id FROM hands WHERE workspace_id = ?)",
+            [workspace_id],
+        )
+        db.execute(
+            "DELETE FROM board_cards WHERE hand_id IN (SELECT id FROM hands WHERE workspace_id = ?)",
+            [workspace_id],
+        )
+        db.execute(
+            "DELETE FROM actions WHERE hand_id IN (SELECT id FROM hands WHERE workspace_id = ?)",
+            [workspace_id],
+        )
+        db.execute(
+            "DELETE FROM hand_players WHERE hand_id IN (SELECT id FROM hands WHERE workspace_id = ?)",
+            [workspace_id],
+        )
+        db.execute("DELETE FROM hands WHERE workspace_id = ?", [workspace_id])
         reset_import_cache()
     return {"status": "ok"}
 

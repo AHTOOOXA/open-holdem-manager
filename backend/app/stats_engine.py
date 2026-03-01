@@ -165,59 +165,25 @@ SELECT
     SUM(CASE WHEN hp.saw_flop AND CAST(COALESCE(hp.won_bb, 0) AS DOUBLE) > 0 THEN 1 ELSE 0 END) as wwsf
 
 FROM hand_players hp
-JOIN hands h ON hp.hand_id = h.id
+JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
 WHERE {where}
 GROUP BY hp.position
 """
 
 
-def compute_player_stats(
+def _compute_stats_from_query(
     db: duckdb.DuckDBPyConnection,
-    player_id: int,
-    position: str | None = None,
-    stakes: str | None = None,
-    game_mode: str | None = None,
-    date_from: str | None = None,
-    date_to: str | None = None,
-    last_n: int | None = None,
+    where: str,
+    params: list,
+    *,
+    sql_override: str | None = None,
 ) -> HeroStats:
-    """Compute full stats for any player by player_id."""
-    where = "hp.player_id = ?"
-    params: list = [player_id]
+    """Compute HeroStats from a pre-built WHERE clause (shared core logic).
 
-    if position:
-        where += " AND hp.position = ?"
-        params.append(position)
-    if stakes:
-        where += " AND h.stakes = ?"
-        params.append(stakes)
-    if game_mode is not None:
-        where += " AND h.game_mode = ?"
-        params.append(game_mode)
-    if date_from:
-        where += " AND h.played_at >= ?"
-        params.append(date_from)
-    if date_to:
-        where += " AND h.played_at <= ?"
-        params.append(date_to)
-
-    if last_n:
-        cte_where = where
-        cte_params = list(params)
-        cte = f"""WITH recent_hands AS (
-            SELECT h.id FROM hand_players hp
-            JOIN hands h ON hp.hand_id = h.id
-            WHERE {cte_where}
-            ORDER BY h.played_at DESC, h.id DESC
-            LIMIT {int(last_n)}
-        )
-        """
-        where += " AND h.id IN (SELECT id FROM recent_hands)"
-        params = cte_params + params
-        sql = cte + _AGG_SQL.format(where=where)
-    else:
-        sql = _AGG_SQL.format(where=where)
-
+    If sql_override is provided, it is used as the full SQL instead of
+    formatting _AGG_SQL with the where clause (used for CTE queries).
+    """
+    sql = sql_override or _AGG_SQL.format(where=where)
     rows = db.execute(sql, params).fetchall()
     if not rows:
         return HeroStats()
@@ -440,6 +406,60 @@ def compute_player_stats(
     return stats
 
 
+def compute_player_stats(
+    db: duckdb.DuckDBPyConnection,
+    player_id: int,
+    position: str | None = None,
+    stakes: str | None = None,
+    game_mode: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    last_n: int | None = None,
+    workspace_id: int | None = None,
+) -> HeroStats:
+    """Compute full stats for any player by player_id."""
+    where = "hp.player_id = ?"
+    params: list = [player_id]
+
+    if workspace_id is not None:
+        where += " AND h.workspace_id = ?"
+        params.append(workspace_id)
+
+    if position:
+        where += " AND hp.position = ?"
+        params.append(position)
+    if stakes:
+        where += " AND h.stakes = ?"
+        params.append(stakes)
+    if game_mode is not None:
+        where += " AND h.game_mode = ?"
+        params.append(game_mode)
+    if date_from:
+        where += " AND h.played_at >= ?"
+        params.append(date_from)
+    if date_to:
+        where += " AND h.played_at <= ?"
+        params.append(date_to)
+
+    if last_n:
+        cte_where = where
+        cte_params = list(params)
+        cte = f"""WITH recent_hands AS (
+            SELECT h.id FROM hand_players hp
+            JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
+            WHERE {cte_where}
+            ORDER BY h.played_at DESC, h.id DESC
+            LIMIT {int(last_n)}
+        )
+        """
+        where += " AND h.id IN (SELECT id FROM recent_hands)"
+        params = cte_params + params
+        full_sql = cte + _AGG_SQL.format(where=where)
+        return _compute_stats_from_query(db, where, params, sql_override=full_sql)
+
+    return _compute_stats_from_query(db, where, params)
+
+
 def compute_hero_stats(
     db: duckdb.DuckDBPyConnection,
     hero_username: str,
@@ -449,6 +469,7 @@ def compute_hero_stats(
     date_from: str | None = None,
     date_to: str | None = None,
     last_n: int | None = None,
+    workspace_id: int | None = None,
 ) -> HeroStats:
     """Compute stats for hero by username. Thin wrapper around compute_player_stats."""
     player = db.execute(
@@ -461,4 +482,5 @@ def compute_hero_stats(
         db, player[0],
         position=position, stakes=stakes, game_mode=game_mode,
         date_from=date_from, date_to=date_to, last_n=last_n,
+        workspace_id=workspace_id,
     )

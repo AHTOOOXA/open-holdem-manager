@@ -15,6 +15,7 @@ import {
 import {
   getGraphData,
   getResultsBreakdown,
+  createCheckpoint,
 } from '@/lib/api';
 import type {
   GraphPoint,
@@ -24,6 +25,7 @@ import type {
   PositionBreakdown,
 } from '@/lib/api';
 import { useFilterOptions } from '@/hooks/useFilterOptions';
+import { useWorkspace } from '@/contexts/WorkspaceContext';
 import { queryKeys } from '@/lib/query-keys';
 import { getPresetDates } from '@/lib/date-presets';
 import type { DatePreset } from '@/lib/date-presets';
@@ -184,6 +186,18 @@ export default function GraphPage() {
   const [activePreset, setActivePreset] = useState<DatePreset>('all');
   const [lastN, setLastN] = useState<string>('');
 
+  // Checkpoints
+  const { checkpoints, activeWorkspaceId, refetchCheckpoints } = useWorkspace();
+  const [checkpointId, setCheckpointId] = useState<string | null>(null);
+  const [showCheckpoints, setShowCheckpoints] = useState<boolean>(() => {
+    try {
+      const stored = localStorage.getItem('ohm_show_checkpoints');
+      return stored === null ? true : stored === 'true';
+    } catch {
+      return true;
+    }
+  });
+
   // Display toggles
   const [unit, setUnit] = useState<'bb' | 'usd'>('bb');
   const [lines, setLines] = useState<Set<LineToggle>>(new Set(['ev', 'showdown', 'sessions']));
@@ -238,16 +252,36 @@ export default function GraphPage() {
     const dates = getPresetDates(preset);
     setDateFrom(dates.date_from ?? '');
     setDateTo(dates.date_to ?? '');
+    setCheckpointId(null);
   };
 
   const handleDateFromChange = (v: string) => {
     setDateFrom(v);
     setActivePreset('all');
+    setCheckpointId(null);
   };
 
   const handleDateToChange = (v: string) => {
     setDateTo(v);
     setActivePreset('all');
+  };
+
+  const handleCheckpointChange = (id: string | null) => {
+    setCheckpointId(id);
+    if (id) {
+      const cp = checkpoints.find((c) => String(c.id) === id);
+      if (cp) {
+        setDateFrom(cp.checkpoint_at.slice(0, 19));
+        setActivePreset('all');
+      }
+    } else {
+      setDateFrom('');
+    }
+  };
+
+  const handleCreateCheckpoint = async (data: { name: string; checkpoint_at: string; note?: string }) => {
+    await createCheckpoint(activeWorkspaceId, data);
+    await refetchCheckpoints();
   };
 
   const hasEVData = useMemo(() => data.some(d => d.cumulative_ev_bb !== d.cumulative_bb), [data]);
@@ -297,6 +331,31 @@ export default function GraphPage() {
       };
     });
   }, [chartData, lines, variance]);
+
+  // Checkpoint reference lines — map each checkpoint to the nearest graph data point
+  const checkpointLines = useMemo(() => {
+    if (!showCheckpoints || checkpoints.length === 0 || data.length === 0) return [];
+    const firstTime = new Date(data[0].played_at).getTime();
+    const lastTime = new Date(data[data.length - 1].played_at).getTime();
+    return checkpoints
+      .map(cp => {
+        const cpTime = new Date(cp.checkpoint_at).getTime();
+        // Skip if outside the graph's date range
+        if (cpTime < firstTime || cpTime > lastTime) return null;
+        // Find nearest data point by timestamp
+        let bestIdx = 0;
+        let bestDiff = Math.abs(cpTime - new Date(data[0].played_at).getTime());
+        for (let i = 1; i < data.length; i++) {
+          const diff = Math.abs(cpTime - new Date(data[i].played_at).getTime());
+          if (diff < bestDiff) {
+            bestDiff = diff;
+            bestIdx = i;
+          }
+        }
+        return { handNumber: data[bestIdx].hand_number, name: cp.name, id: cp.id };
+      })
+      .filter((x): x is { handNumber: number; name: string; id: number } => x !== null);
+  }, [showCheckpoints, checkpoints, data]);
 
   // Helpers
   const clr = (v: number) => v >= 0 ? 'text-green' : 'text-red';
@@ -378,6 +437,10 @@ export default function GraphPage() {
       activePreset={activePreset}
       onPresetChange={handlePreset}
       filterOptions={filterOpts ?? null}
+      checkpointId={checkpointId}
+      onCheckpointChange={handleCheckpointChange}
+      checkpoints={checkpoints}
+      onCreateCheckpoint={handleCreateCheckpoint}
     >
       {/* Last N hands */}
       <div className="flex items-center gap-1.5">
@@ -406,6 +469,19 @@ export default function GraphPage() {
       {toggleBtn('rake', 'Rake', LINE_COLORS.rake)}
       {toggleBtn('ci', 'CI', LINE_COLORS.ci, !!variance)}
       {toggleBtn('sessions', 'Sessions', LINE_COLORS.session, sessions.length > 1)}
+      {checkpoints.length > 0 && (
+        <Toggle
+          size="sm"
+          pressed={showCheckpoints}
+          onPressedChange={(v) => {
+            setShowCheckpoints(v);
+            localStorage.setItem('ohm_show_checkpoints', String(v));
+          }}
+          className="h-7 text-xs"
+        >
+          Checkpoints
+        </Toggle>
+      )}
     </div>
   );
 
@@ -530,6 +606,21 @@ export default function GraphPage() {
                     position: 'top',
                     fill: 'oklch(0.553 0.013 58.071)',
                     fontSize: 9,
+                  }}
+                />
+              ))}
+              {checkpointLines.map(cp => (
+                <ReferenceLine
+                  key={`checkpoint-${cp.id}`}
+                  x={cp.handNumber}
+                  stroke="var(--color-text-muted)"
+                  strokeDasharray="4 4"
+                  strokeWidth={1}
+                  label={{
+                    value: cp.name,
+                    position: 'insideTopRight',
+                    fill: 'var(--color-text-muted)',
+                    fontSize: 10,
                   }}
                 />
               ))}

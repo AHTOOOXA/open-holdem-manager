@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Query
-from app.db import get_read_cursor
+from app.db import get_read_cursor, get_hero_username
 from collections import defaultdict
 from app.models import (
     CashDropResponse, CashDropSummary, CashDropTypeBreakdown,
@@ -14,10 +14,10 @@ def _pct(num: int, den: int) -> float | None:
     return round(num / den * 100, 1) if den > 0 else None
 
 
-def _build_filters(stakes, date_from, date_to):
+def _build_filters(stakes, date_from, date_to, workspace_id=1):
     """Build hand-level filter clauses and params."""
-    clauses = ""
-    params: list = []
+    clauses = " AND h.workspace_id = ?"
+    params: list = [workspace_id]
     if stakes:
         clauses += " AND h.stakes = ?"
         params.append(stakes)
@@ -35,12 +35,10 @@ def get_cash_drop_stats(
     stakes: str | None = Query(None),
     date_from: str | None = Query(None),
     date_to: str | None = Query(None),
+    workspace_id: int = Query(1),
 ):
     db = get_read_cursor()
-    row = db.execute(
-        "SELECT value FROM settings WHERE key = 'hero_username'"
-    ).fetchone()
-    hero_username = row[0] if row else "Hero"
+    hero_username = get_hero_username(db, workspace_id)
 
     player = db.execute(
         "SELECT id FROM players WHERE username = ? AND site_id = 1",
@@ -66,7 +64,7 @@ def get_cash_drop_stats(
         return empty
 
     player_id = player[0]
-    hand_filters, hand_params = _build_filters(stakes, date_from, date_to)
+    hand_filters, hand_params = _build_filters(stakes, date_from, date_to, workspace_id)
 
     # ── 1. Financial summary ──────────────────────────────────────
     fin_row = db.execute(f"""
@@ -80,7 +78,7 @@ def get_cash_drop_stats(
             SUM(CASE WHEN h.cash_drop_received > 0
                 THEN h.cash_drop_received / h.table_size ELSE 0 END)
         FROM hand_players hp
-        JOIN hands h ON hp.hand_id = h.id
+        JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
         WHERE hp.player_id = ? {hand_filters}
     """, [player_id] + hand_params).fetchone()
 
@@ -96,7 +94,7 @@ def get_cash_drop_stats(
         avg_bb_row = db.execute(f"""
             SELECT AVG(h.bb_amount)
             FROM hand_players hp
-            JOIN hands h ON hp.hand_id = h.id
+            JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
             WHERE hp.jackpot > 0 AND hp.won > 0
               AND hp.player_id = ? {hand_filters}
         """, [player_id] + hand_params).fetchone()
@@ -125,7 +123,7 @@ def get_cash_drop_stats(
             SUM(CASE WHEN hp.went_to_showdown THEN 1 ELSE 0 END),
             SUM(CASE WHEN hp.won_at_showdown THEN 1 ELSE 0 END)
         FROM hand_players hp
-        JOIN hands h ON hp.hand_id = h.id
+        JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
         WHERE hp.player_id = ?
           AND h.cash_drop_received > 0
           {hand_filters}
@@ -176,7 +174,7 @@ def get_cash_drop_stats(
             COUNT(*) as cnt,
             SUM(h.cash_drop_received) as total_usd
         FROM hand_players hp
-        JOIN hands h ON hp.hand_id = h.id
+        JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
         WHERE hp.player_id = ?
           AND h.cash_drop_received > 0
           {hand_filters}
@@ -210,7 +208,7 @@ def get_cash_drop_stats(
             SUM(CASE WHEN hp2.won_at_showdown THEN 1 ELSE 0 END),
             AVG(hp2.won_bb)
         FROM hand_players hp2
-        JOIN hands h ON hp2.hand_id = h.id
+        JOIN hands h ON hp2.hand_id = h.id AND hp2.workspace_id = h.workspace_id
         WHERE hp2.player_id != ?
           AND h.cash_drop_received > 0
           {hand_filters}
@@ -254,7 +252,7 @@ def get_cash_drop_stats(
                hp2.call_open_raise,
                hp2.preflop_allin_raise, hp2.preflop_allin_call
         FROM hands h
-        JOIN hand_players hp2 ON hp2.hand_id = h.id
+        JOIN hand_players hp2 ON hp2.hand_id = h.id AND hp2.workspace_id = h.workspace_id
         WHERE h.cash_drop_received > 0
           AND hp2.player_id != ?
           AND hp2.card1 IS NOT NULL AND hp2.card2 IS NOT NULL

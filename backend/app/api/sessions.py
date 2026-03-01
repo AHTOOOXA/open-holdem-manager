@@ -13,6 +13,7 @@ from datetime import datetime
 router = APIRouter()
 
 # SQL CTE that assigns a session index to each hand based on 10-min gaps
+# Parameterized: first ? = player_id, second ? = workspace_id
 _SESSION_CTE = """
 WITH ordered_hands AS (
     SELECT h.id AS hand_id, h.played_at, h.stakes, h.bb_amount,
@@ -28,8 +29,8 @@ WITH ordered_hands AS (
                 OVER (ORDER BY h.played_at, h.id) > INTERVAL '10 minutes'
                 THEN 1 ELSE 0 END AS new_session
     FROM hand_players hp
-    JOIN hands h ON hp.hand_id = h.id
-    WHERE hp.player_id = ?
+    JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
+    WHERE hp.player_id = ? AND h.workspace_id = ?
 ),
 sessioned AS (
     SELECT *, SUM(new_session) OVER (ORDER BY played_at, hand_id) AS session_idx
@@ -46,9 +47,9 @@ def _safe_pct(num, den):
 
 
 @router.get("/sessions", response_model=SessionListResponse)
-def get_sessions():
+def get_sessions(workspace_id: int = 1):
     db = get_read_cursor()
-    player_id = get_hero_player_id(db)
+    player_id = get_hero_player_id(db, workspace_id)
     if not player_id:
         return SessionListResponse(sessions=[], total=0)
 
@@ -69,7 +70,7 @@ def get_sessions():
         FROM sessioned
         GROUP BY session_idx
         ORDER BY session_idx DESC
-    """, [player_id]).fetchall()
+    """, [player_id, workspace_id]).fetchall()
 
     summaries = []
     for r in rows:
@@ -100,9 +101,9 @@ def get_sessions():
 
 
 @router.get("/sessions/{session_index}", response_model=SessionDetailResponse)
-def get_session_detail(session_index: int):
+def get_session_detail(session_index: int, workspace_id: int = 1):
     db = get_read_cursor()
-    player_id = get_hero_player_id(db)
+    player_id = get_hero_player_id(db, workspace_id)
     if not player_id:
         raise HTTPException(status_code=404, detail="Hero not found")
 
@@ -138,7 +139,7 @@ def get_session_detail(session_index: int):
               + COALESCE(flop_calls, 0) + COALESCE(flop_checks, 0) + COALESCE(flop_folds, 0)) AS flop_total
         FROM sessioned
         WHERE session_idx = ?
-    """, [player_id, session_index]).fetchone()
+    """, [player_id, workspace_id, session_index]).fetchone()
 
     if not agg or agg[0] == 0:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -200,7 +201,7 @@ def get_session_detail(session_index: int):
         FROM sessioned
         WHERE session_idx = ?
         ORDER BY played_at, hand_id
-    """, [player_id, session_index]).fetchall()
+    """, [player_id, workspace_id, session_index]).fetchall()
 
     graph = []
     cum_bb = cum_ev_bb = cum_sd_bb = cum_nsd_bb = 0.0
@@ -246,7 +247,7 @@ def get_session_detail(session_index: int):
               AND CAST(won_bb AS DOUBLE) {'> 0' if order_dir == 'DESC' else '< 0'}
             ORDER BY CAST(won_bb AS DOUBLE) {order_dir}
             LIMIT 5
-        """, [player_id, session_index]).fetchall()
+        """, [player_id, workspace_id, session_index]).fetchall()
         result = []
         for r in bh_rows:
             pa = r[1].isoformat() if isinstance(r[1], datetime) else str(r[1])

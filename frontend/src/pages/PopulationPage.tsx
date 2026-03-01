@@ -9,6 +9,7 @@ import {
   getPopulationShowdown,
   getPopulationHuVsMw,
   getPopulationComparison,
+  getIdentities,
 } from '@/lib/api';
 import type { PopulationFilterParams, PositionStat } from '@/lib/api';
 import { queryKeys } from '@/lib/query-keys';
@@ -17,6 +18,7 @@ import SegmentComparison from '@/components/population/SegmentComparison';
 import EmptyState from '@/components/EmptyState';
 import { Input } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/checkbox';
+import { Shield } from 'lucide-react';
 import {
   Table,
   TableBody,
@@ -77,14 +79,39 @@ function Section({ title, defaultOpen = true, children }: { title: string; defau
   );
 }
 
+const WELL_KNOWN_TAGS = ['me', 'student', 'reg', 'fish', 'coach'] as const;
+const TAG_COLORS: Record<string, string> = {
+  me: 'bg-primary/20 text-primary border-primary/30',
+  student: 'bg-blue-500/20 text-blue-400 border-blue-500/30',
+  reg: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30',
+  fish: 'bg-green/20 text-green border-green/30',
+  coach: 'bg-purple-500/20 text-purple-400 border-purple-500/30',
+};
+
 export default function PopulationPage() {
   const [minHands, setMinHands] = useState(20);
   const [excludeHero, setExcludeHero] = useState(true);
   const [showComparison, setShowComparison] = useState(false);
+  const [excludeTags, setExcludeTags] = useState<Set<string>>(new Set());
+
+  const { data: identities } = useQuery({
+    queryKey: queryKeys.identities.list,
+    queryFn: getIdentities,
+  });
+
+  const toggleExcludeTag = (tag: string) => {
+    setExcludeTags((prev) => {
+      const next = new Set(prev);
+      if (next.has(tag)) next.delete(tag);
+      else next.add(tag);
+      return next;
+    });
+  };
 
   const filterParams: PopulationFilterParams = {
     min_hands: minHands,
     exclude_hero: excludeHero,
+    exclude_tags: excludeTags.size > 0 ? Array.from(excludeTags).join(',') : undefined,
   };
 
   const { data: overview, isPending: overviewLoading } = useQuery({
@@ -139,7 +166,7 @@ export default function PopulationPage() {
   return (
     <div>
       {/* Filters */}
-      <div className="flex items-center gap-4 mb-4 flex-wrap">
+      <div className="flex items-center gap-4 mb-3 flex-wrap">
         <div className="flex items-center gap-1.5">
           <span className="text-[12px] text-text-muted">Min hands:</span>
           <Input
@@ -165,6 +192,37 @@ export default function PopulationPage() {
           <span className="text-[12px] text-text-muted">Show Hero Comparison</span>
         </label>
       </div>
+
+      {/* Exclusion bar */}
+      {identities && identities.length > 0 && (
+        <div className="flex items-center gap-2 mb-4 flex-wrap">
+          <div className="flex items-center gap-1.5 text-[12px] text-text-muted">
+            <Shield className="w-3.5 h-3.5" />
+            <span>Exclude:</span>
+          </div>
+          {WELL_KNOWN_TAGS.map((tag) => {
+            const hasIdentities = identities.some((id) => id.tags.includes(tag));
+            if (!hasIdentities) return null;
+            const isActive = excludeTags.has(tag);
+            return (
+              <button
+                key={tag}
+                onClick={() => toggleExcludeTag(tag)}
+                className={`text-[11px] px-2 py-0.5 rounded-full border transition-colors ${
+                  isActive
+                    ? TAG_COLORS[tag] || 'bg-surface-hover border-border'
+                    : 'border-border text-text-muted hover:text-text hover:border-text-muted'
+                }`}
+              >
+                {tag}
+                {isActive && (
+                  <span className="ml-1 text-[10px]">{identities.filter((id) => id.tags.includes(tag)).reduce((s, id) => s + id.aliases.length, 0)}</span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {/* Overview */}
       <div className="flex items-center gap-6 mb-4 text-[14px]">

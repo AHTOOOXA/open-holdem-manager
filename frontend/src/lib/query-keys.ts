@@ -56,4 +56,11 @@ export const queryKeys = {
     stats: (id: number, filters: Record<string, unknown> | object) => ['players', 'stats', id, filters] as const,
     h2h: (id: number) => ['players', 'h2h', id] as const,
   },
+
+  identities: {
+    list: ['identities', 'list'] as const,
+    detail: (id: number) => ['identities', 'detail', id] as const,
+    stats: (id: number, filters: Record<string, unknown> | object) => ['identities', 'stats', id, filters] as const,
+  },
+
 };

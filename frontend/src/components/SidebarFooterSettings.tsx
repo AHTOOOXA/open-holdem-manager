@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { Settings, RefreshCw, Trash2, Download, Upload, RotateCw, ExternalLink, ArrowDownToLine } from 'lucide-react';
 import { useImport } from '@/contexts/ImportContext';
+import { useWorkspace } from '@/contexts/WorkspaceContext';
 import { SidebarFooter, SidebarMenu, SidebarMenuItem, SidebarMenuButton } from '@/components/ui/sidebar';
 import { Input } from '@/components/ui/input';
 import {
@@ -13,7 +14,10 @@ import {
 } from '@/components/ui/dropdown-menu';
 
 export default function SidebarFooterSettings() {
-  const { settings, handCount, phase, updateHeroName, startRebuild, clearDb, exportDatabase, importDatabase } = useImport();
+  const { phase, updateHeroName, startRebuild, clearDb, exportDatabase, importDatabase } = useImport();
+  const { activeWorkspace } = useWorkspace();
+  const heroUsername = activeWorkspace?.hero_username ?? null;
+  const handCount = activeWorkspace?.hand_count ?? 0;
   const [editing, setEditing] = useState(false);
   const [nameInput, setNameInput] = useState('');
   const dbFileRef = useRef<HTMLInputElement>(null);
@@ -33,7 +37,7 @@ export default function SidebarFooterSettings() {
   }, []);
 
   const startEdit = () => {
-    setNameInput(settings?.hero_username || '');
+    setNameInput(heroUsername || '');
     setEditing(true);
   };
 
@@ -68,7 +72,7 @@ export default function SidebarFooterSettings() {
               onClick={startEdit}
             >
               <div className="min-w-0">
-                <div className="text-xs font-medium truncate">{settings?.hero_username || 'Set hero name'}</div>
+                <div className="text-xs font-medium truncate">{heroUsername || 'Set hero name'}</div>
                 <div className="text-[10px] text-text-muted">{handCount.toLocaleString()} hands</div>
               </div>
             </div>

@@ -650,3 +650,113 @@ class StatDetailHandsResponse(BaseModel):
     page: int
     per_page: int
     total_pages: int
+
+
+# ── Workspace Models ──────────────────────────────────────────────
+
+class WorkspaceResponse(BaseModel):
+    id: int
+    name: str
+    hero_username: str
+    hero_site: str
+    description: str | None = None
+    color: str | None = None
+    hand_count: int = 0
+    date_range: dict[str, str | None] = {}  # {"min": "2026-01-15", "max": "2026-02-16"}
+    created_at: datetime
+
+
+class CreateWorkspace(BaseModel):
+    name: str
+    hero_username: str = "Hero"
+    hero_site: str = "GG"
+    description: str | None = None
+    color: str | None = None
+
+
+class UpdateWorkspace(BaseModel):
+    name: str | None = None
+    hero_username: str | None = None
+    hero_site: str | None = None
+    description: str | None = None
+    color: str | None = None
+
+
+# ── Checkpoint Models ─────────────────────────────────────────────
+
+class CheckpointResponse(BaseModel):
+    id: int
+    workspace_id: int
+    name: str
+    checkpoint_at: datetime
+    note: str | None = None
+    created_at: datetime
+
+
+class CreateCheckpoint(BaseModel):
+    name: str
+    checkpoint_at: datetime | None = None  # defaults to now
+    note: str | None = None
+
+
+class UpdateCheckpoint(BaseModel):
+    name: str | None = None
+    checkpoint_at: datetime | None = None
+    note: str | None = None
+
+
+# ── Compare Models ───────────────────────────────────────────────
+
+class PeriodStats(BaseModel):
+    date_from: str
+    date_to: str | None
+    hands: int
+    win_rate_bb100: float | None
+    win_rate_ev_bb100: float | None
+    stats: HeroStats
+
+
+class CompareResponse(BaseModel):
+    period_a: PeriodStats
+    period_b: PeriodStats
+
+
+# ── Identity Models ─────────────────────────────────────────────
+
+class AliasResponse(BaseModel):
+    id: int
+    identity_id: int
+    workspace_id: int
+    player_id: int
+    username: str
+    workspace_name: str
+
+
+class IdentityResponse(BaseModel):
+    id: int
+    display_name: str
+    notes: str | None = None
+    color: str | None = None
+    tags: list[str] = []
+    aliases: list[AliasResponse] = []
+    total_hands: int = 0
+    created_at: datetime
+
+
+class CreateIdentity(BaseModel):
+    display_name: str
+    notes: str | None = None
+    color: str | None = None
+    tags: list[str] = []
+
+
+class UpdateIdentity(BaseModel):
+    display_name: str | None = None
+    notes: str | None = None
+    color: str | None = None
+    tags: list[str] | None = None
+
+
+class AddAlias(BaseModel):
+    workspace_id: int
+    player_id: int

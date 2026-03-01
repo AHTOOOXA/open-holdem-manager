@@ -16,7 +16,9 @@ interface DatePickerProps {
 export function DatePicker({ value, onChange, placeholder = 'Pick date', className }: DatePickerProps) {
   const [open, setOpen] = React.useState(false);
 
-  const date = value ? parse(value, 'yyyy-MM-dd', new Date()) : undefined;
+  // Accept both 'yyyy-MM-dd' and full ISO datetime strings (slice to date portion)
+  const dateStr = value ? value.slice(0, 10) : undefined;
+  const date = dateStr ? parse(dateStr, 'yyyy-MM-dd', new Date()) : undefined;
 
   const handleSelect = (d: Date | undefined) => {
     onChange?.(d ? format(d, 'yyyy-MM-dd') : '');

@@ -3,7 +3,7 @@ import statistics
 from typing import Optional
 
 from fastapi import APIRouter, Query, HTTPException, Path
-from app.db import get_read_cursor, get_hero_player_id
+from app.db import get_read_cursor, get_hero_player_id, get_hero_username
 from app.models import (
     HeroStats, ComboStats, RangeResponse, StatDetailHand, StatDetailHandsResponse,
     TrendPoint, StatTrendResponse, ResponseDistribution, StatAnalysisResponse,
@@ -48,16 +48,14 @@ def get_hero_stats(
     date_from: str | None = Query(None),
     date_to: str | None = Query(None),
     last_n: int | None = Query(None, gt=0),
+    workspace_id: int = Query(1),
 ):
     db = get_read_cursor()
-    row = db.execute(
-        "SELECT value FROM settings WHERE key = 'hero_username'"
-    ).fetchone()
-    hero_username = row[0] if row else "Hero"
+    hero_username = get_hero_username(db, workspace_id)
 
     return compute_hero_stats(db, hero_username, position=position, stakes=stakes,
                               game_mode=game_mode, date_from=date_from, date_to=date_to,
-                              last_n=last_n)
+                              last_n=last_n, workspace_id=workspace_id)
 
 
 @router.get("/stats/range", response_model=RangeResponse)
@@ -67,12 +65,10 @@ def get_range_stats(
     game_mode: str | None = Query(None),
     date_from: str | None = Query(None),
     date_to: str | None = Query(None),
+    workspace_id: int = Query(1),
 ):
     db = get_read_cursor()
-    row = db.execute(
-        "SELECT value FROM settings WHERE key = 'hero_username'"
-    ).fetchone()
-    hero_username = row[0] if row else "Hero"
+    hero_username = get_hero_username(db, workspace_id)
 
     player = db.execute(
         "SELECT id FROM players WHERE username = ? AND site_id = 1",
@@ -89,11 +85,12 @@ def get_range_stats(
                hp.vpip, hp.pfr, hp.three_bet,
                hp.saw_flop, hp.went_to_showdown, hp.won_at_showdown
         FROM hand_players hp
-        JOIN hands h ON hp.hand_id = h.id
+        JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
         WHERE hp.player_id = ?
+          AND h.workspace_id = ?
           AND hp.card1 IS NOT NULL AND hp.card2 IS NOT NULL
     """
-    params: list = [player_id]
+    params: list = [player_id, workspace_id]
 
     if position:
         query += " AND hp.position = ?"
@@ -116,10 +113,11 @@ def get_range_stats(
     # Also get total hands for context (including folded pre without seeing cards)
     total_query = """
         SELECT COUNT(*) FROM hand_players hp
-        JOIN hands h ON hp.hand_id = h.id
+        JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
         WHERE hp.player_id = ?
+          AND h.workspace_id = ?
     """
-    total_params: list = [player_id]
+    total_params: list = [player_id, workspace_id]
     if position:
         total_query += " AND hp.position = ?"
         total_params.append(position.upper())
@@ -198,13 +196,14 @@ def get_stat_detail_hands(
     date_to: str | None = Query(None),
     page: int = Query(1, ge=1),
     per_page: int = Query(25, ge=1, le=100),
+    workspace_id: int = Query(1),
 ):
     entry = STAT_REGISTRY.get(stat_key)
     if not entry:
         raise HTTPException(status_code=404, detail=f"Unknown stat key: {stat_key}")
 
     db = get_read_cursor()
-    player_id = get_hero_player_id(db)
+    player_id = get_hero_player_id(db, workspace_id)
     if not player_id:
         return StatDetailHandsResponse(
             stat_key=stat_key, stat_name=entry["name"],
@@ -226,8 +225,8 @@ def get_stat_detail_hands(
         action_expr = f"hp.{action_flag} = TRUE"
 
     # Build WHERE clauses
-    where_parts = ["hp.player_id = ?"]
-    params: list = [player_id]
+    where_parts = ["hp.player_id = ?", "h.workspace_id = ?"]
+    params: list = [player_id, workspace_id]
 
     # Opportunity filter: which hands are eligible for this stat
     if opp_sql:
@@ -264,7 +263,7 @@ def get_stat_detail_hands(
         SELECT COUNT(*),
                SUM(CASE WHEN {action_expr} THEN 1 ELSE 0 END)
         FROM hand_players hp
-        JOIN hands h ON hp.hand_id = h.id
+        JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
         WHERE {where_sql}
     """
     row = db.execute(count_query, params).fetchone()
@@ -278,10 +277,7 @@ def get_stat_detail_hands(
     offset = (page - 1) * per_page
 
     # Get hero username for action parsing
-    hero_row = db.execute(
-        "SELECT value FROM settings WHERE key = 'hero_username'"
-    ).fetchone()
-    hero_username = hero_row[0] if hero_row else "Hero"
+    hero_username = get_hero_username(db, workspace_id)
 
     # Compute key street for this stat
     key_street = get_key_street(stat_key)
@@ -292,7 +288,7 @@ def get_stat_detail_hands(
                ({action_expr}) AS action_taken, hp.won_bb, h.stakes,
                hp.all_in_ev_bb, h.bb_amount, h.raw_text
         FROM hand_players hp
-        JOIN hands h ON hp.hand_id = h.id
+        JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
         WHERE {list_where_sql}
         ORDER BY h.played_at DESC
         LIMIT ? OFFSET ?
@@ -390,13 +386,14 @@ def get_stat_trend(
     date_from: str | None = Query(None),
     date_to: str | None = Query(None),
     bucket_size: int | None = Query(None, ge=10, le=5000),
+    workspace_id: int = Query(1),
 ):
     entry = STAT_REGISTRY.get(stat_key)
     if not entry:
         raise HTTPException(status_code=404, detail=f"Unknown stat key: {stat_key}")
 
     db = get_read_cursor()
-    player_id = get_hero_player_id(db)
+    player_id = get_hero_player_id(db, workspace_id)
     if not player_id:
         return StatTrendResponse(stat_key=stat_key, overall_pct=0, points=[])
 
@@ -409,8 +406,8 @@ def get_stat_trend(
         action_expr = f"hp.{action_flag} = TRUE"
 
     # Build WHERE
-    where_parts = ["hp.player_id = ?"]
-    params: list = [player_id]
+    where_parts = ["hp.player_id = ?", "h.workspace_id = ?"]
+    params: list = [player_id, workspace_id]
 
     opp_flag = entry.get("opp_flag")
     opp_sql = entry.get("opp_sql")
@@ -448,7 +445,7 @@ def get_stat_trend(
     # Step 1: Get overall rate to compute adaptive bucket size
     count_query = f"""
         SELECT COUNT(*), SUM(CASE WHEN {action_expr} THEN 1 ELSE 0 END)
-        FROM hand_players hp JOIN hands h ON hp.hand_id = h.id
+        FROM hand_players hp JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
         WHERE {where_sql}
     """
     cnt_row = db.execute(count_query, params).fetchone()
@@ -477,7 +474,7 @@ def get_stat_trend(
                 ROW_NUMBER() OVER (ORDER BY h.played_at ASC, h.id ASC) AS rn,
                 CASE WHEN {action_expr} THEN 1.0 ELSE 0.0 END AS action_taken
             FROM hand_players hp
-            JOIN hands h ON hp.hand_id = h.id
+            JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
             WHERE {where_sql}
         ),
         rolled AS (
@@ -541,18 +538,19 @@ def get_stat_analysis(
     game_mode: str | None = Query(None),
     date_from: str | None = Query(None),
     date_to: str | None = Query(None),
+    workspace_id: int = Query(1),
 ):
     decomp = RESPONSE_DECOMPOSITION.get(stat_key)
     if not decomp:
         return StatAnalysisResponse(stat_key=stat_key)
 
     db = get_read_cursor()
-    player_id = get_hero_player_id(db)
+    player_id = get_hero_player_id(db, workspace_id)
     if not player_id:
         return StatAnalysisResponse(stat_key=stat_key)
 
-    where_parts = ["hp.player_id = ?", f"({decomp['opp_sql']})"]
-    params: list = [player_id]
+    where_parts = ["hp.player_id = ?", "h.workspace_id = ?", f"({decomp['opp_sql']})"]
+    params: list = [player_id, workspace_id]
 
     if position:
         where_parts.append("hp.position = ?")
@@ -578,7 +576,7 @@ def get_stat_analysis(
             SUM(CASE WHEN {decomp['raise_sql']} THEN 1 ELSE 0 END) AS raise_count,
             COUNT(*) AS total
         FROM hand_players hp
-        JOIN hands h ON hp.hand_id = h.id
+        JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
         WHERE {where_sql}
     """
     row = db.execute(query, params).fetchone()
@@ -613,10 +611,11 @@ def _build_filter_where(
     game_mode: str | None,
     date_from: str | None,
     date_to: str | None,
+    workspace_id: int = 1,
 ) -> tuple[str, list]:
     """Return (where_sql, params) for hero-filtered queries."""
-    parts = ["hp.player_id = ?"]
-    params: list = [player_id]
+    parts = ["hp.player_id = ?", "h.workspace_id = ?"]
+    params: list = [player_id, workspace_id]
     if position:
         parts.append("hp.position = ?")
         params.append(position.upper())
@@ -645,17 +644,18 @@ def get_ev_breakdown(
     game_mode: str | None = Query(None),
     date_from: str | None = Query(None),
     date_to: str | None = Query(None),
+    workspace_id: int = Query(1),
 ):
     config = EV_BREAKDOWN_CONFIG.get(stat_key)
     if not config:
         raise HTTPException(status_code=404, detail=f"No EV breakdown config for: {stat_key}")
 
     db = get_read_cursor()
-    player_id = get_hero_player_id(db)
+    player_id = get_hero_player_id(db, workspace_id)
     if not player_id:
         return EvBreakdownResponse(stat_key=stat_key, scenarios=[], overall_bb_per_100=0, overall_hands=0)
 
-    base_where, base_params = _build_filter_where(player_id, position, stakes, game_mode, date_from, date_to)
+    base_where, base_params = _build_filter_where(player_id, position, stakes, game_mode, date_from, date_to, workspace_id)
 
     scenarios = []
     overall_won = 0.0
@@ -667,7 +667,7 @@ def get_ev_breakdown(
                    COUNT(*),
                    SUM(CAST(hp.won_bb AS DOUBLE))
             FROM hand_players hp
-            JOIN hands h ON hp.hand_id = h.id
+            JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
             WHERE {base_where} AND ({scenario_sql})
         """
         row = db.execute(q, base_params).fetchone()
@@ -698,6 +698,7 @@ def get_sizing(
     game_mode: str | None = Query(None),
     date_from: str | None = Query(None),
     date_to: str | None = Query(None),
+    workspace_id: int = Query(1),
 ):
     config = SIZING_CONFIG.get(stat_key)
     if not config:
@@ -705,17 +706,17 @@ def get_sizing(
 
     flag_filter, action_filter = config
     db = get_read_cursor()
-    player_id = get_hero_player_id(db)
+    player_id = get_hero_player_id(db, workspace_id)
     if not player_id:
         return SizingResponse(buckets=[], avg_size_bb=None, median_size_bb=None, total=0)
 
-    base_where, base_params = _build_filter_where(player_id, position, stakes, game_mode, date_from, date_to)
+    base_where, base_params = _build_filter_where(player_id, position, stakes, game_mode, date_from, date_to, workspace_id)
 
     q = f"""
         SELECT a.amount_bb
         FROM actions a
         JOIN hand_players hp ON a.hand_id = hp.hand_id AND a.player_id = hp.player_id
-        JOIN hands h ON hp.hand_id = h.id
+        JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
         WHERE {base_where} AND ({flag_filter})
           AND a.street = 'preflop' AND ({action_filter})
           AND a.amount_bb IS NOT NULL
@@ -754,24 +755,25 @@ def get_fold_equity(
     game_mode: str | None = Query(None),
     date_from: str | None = Query(None),
     date_to: str | None = Query(None),
+    workspace_id: int = Query(1),
 ):
     config = FOLD_EQUITY_CONFIG.get(stat_key)
     if not config:
         raise HTTPException(status_code=404, detail=f"No fold equity config for: {stat_key}")
 
     db = get_read_cursor()
-    player_id = get_hero_player_id(db)
+    player_id = get_hero_player_id(db, workspace_id)
     if not player_id:
         return FoldEquityResponse(fold_pct=0, fold_count=0, total=0)
 
-    base_where, base_params = _build_filter_where(player_id, position, stakes, game_mode, date_from, date_to)
+    base_where, base_params = _build_filter_where(player_id, position, stakes, game_mode, date_from, date_to, workspace_id)
 
     q = f"""
         SELECT
             SUM(CASE WHEN ({config}) AND hp.saw_flop IS NOT TRUE THEN 1 ELSE 0 END),
             SUM(CASE WHEN ({config}) THEN 1 ELSE 0 END)
         FROM hand_players hp
-        JOIN hands h ON hp.hand_id = h.id
+        JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
         WHERE {base_where}
     """
     row = db.execute(q, base_params).fetchone()
@@ -792,17 +794,18 @@ def get_by_context(
     game_mode: str | None = Query(None),
     date_from: str | None = Query(None),
     date_to: str | None = Query(None),
+    workspace_id: int = Query(1),
 ):
     config = BY_CONTEXT_CONFIG.get(stat_key)
     if not config:
         raise HTTPException(status_code=404, detail=f"No by-context config for: {stat_key}")
 
     db = get_read_cursor()
-    player_id = get_hero_player_id(db)
+    player_id = get_hero_player_id(db, workspace_id)
     if not player_id:
         return ByContextResponse(dimension=config["dimension"], buckets=[])
 
-    base_where, base_params = _build_filter_where(player_id, position, stakes, game_mode, date_from, date_to)
+    base_where, base_params = _build_filter_where(player_id, position, stakes, game_mode, date_from, date_to, workspace_id)
 
     join_clause = config["join"]
     group_expr = config["group_expr"]
@@ -815,7 +818,7 @@ def get_by_context(
             SUM(CASE WHEN {action_sql} THEN 1 ELSE 0 END) AS actions,
             COUNT(*) AS opportunities
         FROM hand_players hp
-        JOIN hands h ON hp.hand_id = h.id
+        JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
         {join_clause}
         WHERE {base_where} AND ({opp_sql})
         GROUP BY ctx
@@ -844,17 +847,18 @@ def get_composition(
     game_mode: str | None = Query(None),
     date_from: str | None = Query(None),
     date_to: str | None = Query(None),
+    workspace_id: int = Query(1),
 ):
     config = COMPOSITION_CONFIG.get(stat_key)
     if not config:
         raise HTTPException(status_code=404, detail=f"No composition config for: {stat_key}")
 
     db = get_read_cursor()
-    player_id = get_hero_player_id(db)
+    player_id = get_hero_player_id(db, workspace_id)
     if not player_id:
         return CompositionResponse(slices=[], total=0)
 
-    base_where, base_params = _build_filter_where(player_id, position, stakes, game_mode, date_from, date_to)
+    base_where, base_params = _build_filter_where(player_id, position, stakes, game_mode, date_from, date_to, workspace_id)
 
     # Build one SUM per component
     sums = ", ".join(f"SUM(CASE WHEN {sql} THEN 1 ELSE 0 END)" for _, sql in config)
@@ -863,7 +867,7 @@ def get_composition(
     q = f"""
         SELECT {sums}, COUNT(*)
         FROM hand_players hp
-        JOIN hands h ON hp.hand_id = h.id
+        JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
         WHERE {base_where} AND ({meta_flag})
     """
     row = db.execute(q, base_params).fetchone()
@@ -889,22 +893,23 @@ def get_money(
     game_mode: str | None = Query(None),
     date_from: str | None = Query(None),
     date_to: str | None = Query(None),
+    workspace_id: int = Query(1),
 ):
     config = MONEY_CONFIG.get(stat_key)
     if not config:
         raise HTTPException(status_code=404, detail=f"No money config for: {stat_key}")
 
     db = get_read_cursor()
-    player_id = get_hero_player_id(db)
+    player_id = get_hero_player_id(db, workspace_id)
     if not player_id:
         return MoneyResponse(total_bb=0, hands=0, bb_per_100=0)
 
-    base_where, base_params = _build_filter_where(player_id, position, stakes, game_mode, date_from, date_to)
+    base_where, base_params = _build_filter_where(player_id, position, stakes, game_mode, date_from, date_to, workspace_id)
 
     q = f"""
         SELECT SUM(CAST(hp.won_bb AS DOUBLE)), COUNT(*)
         FROM hand_players hp
-        JOIN hands h ON hp.hand_id = h.id
+        JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
         WHERE {base_where} AND ({config})
     """
     row = db.execute(q, base_params).fetchone()
@@ -925,17 +930,18 @@ def get_postflop_bridge(
     game_mode: str | None = Query(None),
     date_from: str | None = Query(None),
     date_to: str | None = Query(None),
+    workspace_id: int = Query(1),
 ):
     config = POSTFLOP_BRIDGE_CONFIG.get(stat_key)
     if not config:
         raise HTTPException(status_code=404, detail=f"No postflop bridge config for: {stat_key}")
 
     db = get_read_cursor()
-    player_id = get_hero_player_id(db)
+    player_id = get_hero_player_id(db, workspace_id)
     if not player_id:
         return PostflopBridgeResponse(cbet_pct=None, cbet_count=0, cbet_opp=0, avg_spr=None)
 
-    base_where, base_params = _build_filter_where(player_id, position, stakes, game_mode, date_from, date_to)
+    base_where, base_params = _build_filter_where(player_id, position, stakes, game_mode, date_from, date_to, workspace_id)
     filter_sql = config["filter"]
     pot_estimate = config["pot_estimate"]
 
@@ -945,7 +951,7 @@ def get_postflop_bridge(
             SUM(CASE WHEN hp.cbet_flop_opp THEN 1 ELSE 0 END),
             AVG(CAST(hp.stack_bb AS DOUBLE))
         FROM hand_players hp
-        JOIN hands h ON hp.hand_id = h.id
+        JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
         WHERE {base_where} AND ({filter_sql})
     """
     row = db.execute(q, base_params).fetchone()
@@ -968,17 +974,18 @@ def get_continuing_range(
     game_mode: str | None = Query(None),
     date_from: str | None = Query(None),
     date_to: str | None = Query(None),
+    workspace_id: int = Query(1),
 ):
     decomp = RESPONSE_DECOMPOSITION.get(stat_key)
     if not decomp:
         raise HTTPException(status_code=404, detail=f"No continuing range config for: {stat_key}")
 
     db = get_read_cursor()
-    player_id = get_hero_player_id(db)
+    player_id = get_hero_player_id(db, workspace_id)
     if not player_id:
         return ContinuingRangeResponse(combos=[], total_hands=0)
 
-    base_where, base_params = _build_filter_where(player_id, position, stakes, game_mode, date_from, date_to)
+    base_where, base_params = _build_filter_where(player_id, position, stakes, game_mode, date_from, date_to, workspace_id)
 
     q = f"""
         SELECT hp.card1, hp.card2,
@@ -988,7 +995,7 @@ def get_continuing_range(
                    ELSE 'call'
                END AS response
         FROM hand_players hp
-        JOIN hands h ON hp.hand_id = h.id
+        JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
         WHERE {base_where} AND ({decomp['opp_sql']})
           AND hp.card1 IS NOT NULL AND hp.card2 IS NOT NULL
     """
@@ -1024,13 +1031,14 @@ def get_stat_range(
     game_mode: str | None = Query(None),
     date_from: str | None = Query(None),
     date_to: str | None = Query(None),
+    workspace_id: int = Query(1),
 ):
     entry = STAT_REGISTRY.get(stat_key)
     if not entry:
         raise HTTPException(status_code=404, detail=f"Unknown stat key: {stat_key}")
 
     db = get_read_cursor()
-    player_id = get_hero_player_id(db)
+    player_id = get_hero_player_id(db, workspace_id)
     if not player_id:
         return StatRangeResponse()
 
@@ -1046,7 +1054,7 @@ def get_stat_range(
     else:
         action_expr = f"hp.{action_flag} = TRUE"
 
-    base_where, base_params = _build_filter_where(player_id, position, stakes, game_mode, date_from, date_to)
+    base_where, base_params = _build_filter_where(player_id, position, stakes, game_mode, date_from, date_to, workspace_id)
 
     # Add opportunity filter
     opp_parts = [base_where]
@@ -1070,7 +1078,7 @@ def get_stat_range(
                SUM(CASE WHEN {action_expr} THEN COALESCE(hp.all_in_ev_bb, hp.won_bb) ELSE 0 END) AS ev_bb,
                SUM(hp.won_bb) AS total_won_bb
         FROM hand_players hp
-        JOIN hands h ON hp.hand_id = h.id
+        JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
         WHERE {where}
         GROUP BY hp.card1, hp.card2
     """

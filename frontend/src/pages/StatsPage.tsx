@@ -1,9 +1,10 @@
 import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
-import { getHeroStats } from '@/lib/api';
+import { getHeroStats, createCheckpoint } from '@/lib/api';
 import type { PositionalStats, StatValue, DriftStat } from '@/lib/api';
 import { useFilterOptions } from '@/hooks/useFilterOptions';
+import { useWorkspace } from '@/contexts/WorkspaceContext';
 import { queryKeys } from '@/lib/query-keys';
 import { getPresetDates } from '@/lib/date-presets';
 import type { DatePreset } from '@/lib/date-presets';
@@ -510,6 +511,8 @@ function StatsListView() {
   const [dateTo, setDateTo] = useState<string>('');
   const [activePreset, setActivePreset] = useState<DatePreset>('all');
   const [lastN, setLastN] = useState<string>('');
+  const [checkpointId, setCheckpointId] = useState<string | null>(null);
+  const { checkpoints, activeWorkspaceId, refetchCheckpoints } = useWorkspace();
 
   // Debounce lastN
   const [debouncedLastN, setDebouncedLastN] = useState<string>('');
@@ -563,16 +566,36 @@ function StatsListView() {
     const dates = getPresetDates(preset);
     setDateFrom(dates.date_from ?? '');
     setDateTo(dates.date_to ?? '');
+    setCheckpointId(null);
   };
 
   const handleDateFromChange = (v: string) => {
     setDateFrom(v);
     setActivePreset('all');
+    setCheckpointId(null);
   };
 
   const handleDateToChange = (v: string) => {
     setDateTo(v);
     setActivePreset('all');
+  };
+
+  const handleCheckpointChange = (id: string | null) => {
+    setCheckpointId(id);
+    if (id) {
+      const cp = checkpoints.find((c) => String(c.id) === id);
+      if (cp) {
+        setDateFrom(cp.checkpoint_at.slice(0, 19));
+        setActivePreset('all');
+      }
+    } else {
+      setDateFrom('');
+    }
+  };
+
+  const handleCreateCheckpoint = async (data: { name: string; checkpoint_at: string; note?: string }) => {
+    await createCheckpoint(activeWorkspaceId, data);
+    await refetchCheckpoints();
   };
 
   const hasFilters = !!(stakes || gameMode || dateFrom || dateTo || lastN);
@@ -590,6 +613,10 @@ function StatsListView() {
       activePreset={activePreset}
       onPresetChange={handlePreset}
       filterOptions={filterOpts ?? null}
+      checkpointId={checkpointId}
+      onCheckpointChange={handleCheckpointChange}
+      checkpoints={checkpoints}
+      onCreateCheckpoint={handleCreateCheckpoint}
     >
       {/* Last N hands */}
       <div className="flex items-center gap-1.5">

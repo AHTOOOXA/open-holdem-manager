@@ -1,8 +1,9 @@
 import { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { getCashDropStats } from '@/lib/api';
+import { getCashDropStats, createCheckpoint } from '@/lib/api';
 import type { CashDropRangeCategory, ComboStats } from '@/lib/api';
 import { useFilterOptions } from '@/hooks/useFilterOptions';
+import { useWorkspace } from '@/contexts/WorkspaceContext';
 import { queryKeys } from '@/lib/query-keys';
 import FilterBar from '@/components/FilterBar';
 import EmptyState from '@/components/EmptyState';
@@ -110,9 +111,26 @@ export default function CashDropPage() {
   const [stakes, setStakes] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
+  const [checkpointId, setCheckpointId] = useState<string | null>(null);
+  const { checkpoints, activeWorkspaceId, refetchCheckpoints } = useWorkspace();
 
   // Shared filter options
   const { data: filterOpts } = useFilterOptions();
+
+  const handleCheckpointChange = (id: string | null) => {
+    setCheckpointId(id);
+    if (id) {
+      const cp = checkpoints.find((c) => String(c.id) === id);
+      if (cp) setDateFrom(cp.checkpoint_at.slice(0, 19));
+    } else {
+      setDateFrom('');
+    }
+  };
+
+  const handleCreateCheckpoint = async (data: { name: string; checkpoint_at: string; note?: string }) => {
+    await createCheckpoint(activeWorkspaceId, data);
+    await refetchCheckpoints();
+  };
 
   // Cash drop data query
   const cashDropParams = useMemo(() => ({
@@ -138,11 +156,15 @@ export default function CashDropPage() {
         onStakesChange={setStakes}
         showGameMode={false}
         dateFrom={dateFrom}
-        onDateFromChange={setDateFrom}
+        onDateFromChange={(v) => { setDateFrom(v); setCheckpointId(null); }}
         dateTo={dateTo}
         onDateToChange={setDateTo}
         showDatePresets={false}
         filterOptions={filterOpts ?? null}
+        checkpointId={checkpointId}
+        onCheckpointChange={handleCheckpointChange}
+        checkpoints={checkpoints}
+        onCreateCheckpoint={handleCreateCheckpoint}
       />
 
       {loading && !data ? (

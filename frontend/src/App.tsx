@@ -12,6 +12,7 @@ import {
   BreadcrumbSeparator,
 } from '@/components/ui/breadcrumb';
 import { ImportProvider } from '@/contexts/ImportContext';
+import { WorkspaceProvider } from '@/contexts/WorkspaceContext';
 import ImportOverlay from '@/components/ImportOverlay';
 import DragDropOverlay from '@/components/DragDropOverlay';
 import AppSidebar from '@/components/AppSidebar';
@@ -27,7 +28,9 @@ import SessionsPage from './pages/SessionsPage';
 import PlayersPage from './pages/PlayersPage';
 import PlayerProfilePage from './pages/PlayerProfilePage';
 import PopulationPage from './pages/PopulationPage';
-
+import WorkspaceSettingsPage from './pages/WorkspaceSettingsPage';
+import ComparePage from './pages/ComparePage';
+import IdentityDetailPage from './pages/IdentityDetailPage';
 const PAGE_LABELS: Record<string, string> = {
   '/stats': 'Stats',
   '/range': 'Range',
@@ -37,6 +40,8 @@ const PAGE_LABELS: Record<string, string> = {
   '/cash-drop': 'Cash Drop',
   '/players': 'Players',
   '/population': 'Population',
+  '/compare': 'Compare',
+  '/settings': 'Settings',
 };
 
 function AppBreadcrumb() {
@@ -61,7 +66,15 @@ function AppBreadcrumb() {
     segments.push({ label: getStatDisplayName(parts[1]) });
   } else if (parts.length > 1 && topPath === '/players') {
     segments.push({ label: topLabel, href: topPath });
-    segments.push({ label: `Player #${parts[1]}` });
+    if (parts[1] === 'identity' && parts[2]) {
+      segments.push({ label: `Identity #${parts[2]}` });
+    } else {
+      segments.push({ label: `Player #${parts[1]}` });
+    }
+  } else if (parts.length > 1 && topPath === '/settings') {
+    segments.push({ label: topLabel });
+    const subLabels: Record<string, string> = { workspaces: 'Workspaces' };
+    segments.push({ label: subLabels[parts[1]] ?? parts[1] });
   } else {
     segments.push({ label: topLabel });
   }
@@ -92,6 +105,7 @@ function AppBreadcrumb() {
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
+    <WorkspaceProvider>
     <BrowserRouter>
       <ImportProvider>
         <SidebarProvider>
@@ -114,8 +128,11 @@ export default function App() {
                 <Route path="/sessions/:sessionIndex" element={<SessionsPage />} />
                 <Route path="/cash-drop" element={<CashDropPage />} />
                 <Route path="/players" element={<PlayersPage />} />
+                <Route path="/players/identity/:identityId" element={<IdentityDetailPage />} />
                 <Route path="/players/:playerId" element={<PlayerProfilePage />} />
                 <Route path="/population" element={<PopulationPage />} />
+                <Route path="/compare" element={<ComparePage />} />
+                <Route path="/settings/workspaces" element={<WorkspaceSettingsPage />} />
                 <Route path="*" element={<Navigate to="/graph" replace />} />
               </Routes>
             </main>
@@ -127,6 +144,7 @@ export default function App() {
         <DragDropOverlay />
       </ImportProvider>
     </BrowserRouter>
+    </WorkspaceProvider>
     </QueryClientProvider>
   );
 }

@@ -1,4 +1,4 @@
-import { BarChart3, Grid3X3, TrendingUp, List, DollarSign, FolderUp, Clock, Users, PieChart } from 'lucide-react';
+import { BarChart3, Grid3X3, TrendingUp, List, DollarSign, FolderUp, Clock, Users, PieChart, ArrowLeftRight } from 'lucide-react';
 import { NavLink, useLocation } from 'react-router-dom';
 import {
   Sidebar,
@@ -13,6 +13,7 @@ import {
   SidebarSeparator,
 } from '@/components/ui/sidebar';
 import SidebarFooterSettings from '@/components/SidebarFooterSettings';
+import WorkspaceSwitcher from '@/components/WorkspaceSwitcher';
 import { useImport } from '@/contexts/ImportContext';
 
 const navItems = [
@@ -22,6 +23,10 @@ const navItems = [
   { to: '/sessions', label: 'Sessions', icon: Clock },
   { to: '/hands', label: 'Hands', icon: List },
   { to: '/cash-drop', label: 'Cash Drop', icon: DollarSign },
+];
+
+const toolItems = [
+  { to: '/compare', label: 'Compare', icon: ArrowLeftRight },
 ];
 
 const opponentItems = [
@@ -35,11 +40,12 @@ export default function AppSidebar() {
 
   return (
     <Sidebar collapsible="icon">
-      <SidebarHeader className="px-3 py-4 group-data-[collapsible=icon]:px-1.5">
+      <SidebarHeader className="py-3 pb-1 group-data-[collapsible=icon]:px-1.5">
         <NavLink to="/graph" className="flex items-center gap-2 text-primary font-bold text-lg group-data-[collapsible=icon]:justify-center">
           <span className="text-xl leading-none">♠</span>
           <span className="group-data-[collapsible=icon]:hidden">OHM</span>
         </NavLink>
+        <WorkspaceSwitcher />
       </SidebarHeader>
       <SidebarContent>
         <SidebarGroup>
@@ -53,6 +59,26 @@ export default function AppSidebar() {
               </SidebarMenuItem>
               <SidebarSeparator className="my-1" />
               {navItems.map((item) => {
+                const isActive = location.pathname.startsWith(item.to);
+                return (
+                  <SidebarMenuItem key={item.to}>
+                    <SidebarMenuButton asChild isActive={isActive} tooltip={item.label}>
+                      <NavLink to={item.to}>
+                        <item.icon />
+                        <span>{item.label}</span>
+                      </NavLink>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                );
+              })}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+        <SidebarGroup>
+          <SidebarGroupLabel>Tools</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {toolItems.map((item) => {
                 const isActive = location.pathname.startsWith(item.to);
                 return (
                   <SidebarMenuItem key={item.to}>

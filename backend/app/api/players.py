@@ -41,6 +41,7 @@ def list_players(
     sort_dir: str = Query("desc"),
     page: int = Query(1, ge=1),
     per_page: int = Query(50, ge=1, le=200),
+    workspace_id: int = Query(1),
 ):
     db = get_read_cursor()
 
@@ -66,13 +67,14 @@ def list_players(
             SELECT p.id
             FROM players p
             JOIN hand_players hp ON hp.player_id = p.id
+            JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
             LEFT JOIN player_classifications pc ON pc.player_id = p.id
-            WHERE 1=1 {where_sql}
+            WHERE h.workspace_id = ? {where_sql}
             GROUP BY p.id
             HAVING COUNT(*) >= ?
         ) t
     """
-    count_params = list(params) + [min_hands]
+    count_params = [workspace_id] + list(params) + [min_hands]
     total = db.execute(count_sql, count_params).fetchone()[0]
     total_pages = max(1, math.ceil(total / per_page))
 
@@ -112,14 +114,15 @@ def list_players(
             MAX(p.last_seen) as last_seen
         FROM players p
         JOIN hand_players hp ON hp.player_id = p.id
+        JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
         LEFT JOIN player_classifications pc ON pc.player_id = p.id
-        WHERE 1=1 {where_sql}
+        WHERE h.workspace_id = ? {where_sql}
         GROUP BY p.id, p.username, COALESCE(pc.player_type, 'UNK')
         HAVING COUNT(*) >= ?
         ORDER BY {sort_col} {direction} NULLS LAST
         LIMIT ? OFFSET ?
     """
-    main_params = list(params) + [min_hands, per_page, offset]
+    main_params = [workspace_id] + list(params) + [min_hands, per_page, offset]
     rows = db.execute(main_sql, main_params).fetchall()
 
     if not rows:
@@ -134,10 +137,10 @@ def list_players(
     stakes_rows = db.execute(f"""
         SELECT hp.player_id, h.stakes
         FROM hand_players hp
-        JOIN hands h ON h.id = hp.hand_id
-        WHERE hp.player_id IN ({ph})
+        JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
+        WHERE hp.player_id IN ({ph}) AND h.workspace_id = ?
         GROUP BY hp.player_id, h.stakes
-    """, player_ids).fetchall()
+    """, player_ids + [workspace_id]).fetchall()
 
     stakes_map: dict[int, list[str]] = {}
     for pid, stk in stakes_rows:
@@ -182,7 +185,7 @@ class PlayerHeader(BaseModel):
 
 
 @router.get("/players/{player_id}", response_model=PlayerHeader)
-def get_player(player_id: int):
+def get_player(player_id: int, workspace_id: int = Query(1)):
     db = get_read_cursor()
 
     row = db.execute(
@@ -197,16 +200,18 @@ def get_player(player_id: int):
         raise HTTPException(status_code=404, detail="Player not found")
 
     hands = db.execute(
-        "SELECT COUNT(*) FROM hand_players WHERE player_id = ?",
-        [player_id],
+        "SELECT COUNT(*) FROM hand_players hp "
+        "JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id "
+        "WHERE hp.player_id = ? AND h.workspace_id = ?",
+        [player_id, workspace_id],
     ).fetchone()[0]
 
     stakes_rows = db.execute("""
         SELECT DISTINCT h.stakes
-        FROM hand_players hp JOIN hands h ON h.id = hp.hand_id
-        WHERE hp.player_id = ?
+        FROM hand_players hp JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
+        WHERE hp.player_id = ? AND h.workspace_id = ?
         ORDER BY h.stakes
-    """, [player_id]).fetchall()
+    """, [player_id, workspace_id]).fetchall()
 
     return PlayerHeader(
         id=row[0],
@@ -263,6 +268,7 @@ def get_player_stats(
     game_mode: Optional[str] = None,
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
+    workspace_id: int = Query(1),
 ):
     db = get_read_cursor()
     if not db.execute("SELECT 1 FROM players WHERE id = ?", [player_id]).fetchone():
@@ -271,6 +277,7 @@ def get_player_stats(
         db, player_id,
         position=position, stakes=stakes, game_mode=game_mode,
         date_from=date_from, date_to=date_to,
+        workspace_id=workspace_id,
     )
 
 
@@ -291,9 +298,9 @@ class HeadToHeadResponse(BaseModel):
 
 
 @router.get("/players/{player_id}/head-to-head", response_model=HeadToHeadResponse)
-def get_head_to_head(player_id: int):
+def get_head_to_head(player_id: int, workspace_id: int = Query(1)):
     db = get_read_cursor()
-    hero_id = get_hero_player_id(db)
+    hero_id = get_hero_player_id(db, workspace_id)
     if hero_id is None:
         return HeadToHeadResponse(rows=[], total_hands=0, total_won_bb=0, overall_bb_per_100=0)
 
@@ -304,11 +311,12 @@ def get_head_to_head(player_id: int):
             COUNT(*) as hands,
             SUM(CAST(COALESCE(hero.won_bb, 0) AS DOUBLE)) as hero_won_bb
         FROM hand_players hero
-        JOIN hand_players opp ON opp.hand_id = hero.hand_id AND opp.player_id = ?
-        WHERE hero.player_id = ?
+        JOIN hand_players opp ON opp.hand_id = hero.hand_id AND opp.workspace_id = hero.workspace_id AND opp.player_id = ?
+        JOIN hands h ON hero.hand_id = h.id AND hero.workspace_id = h.workspace_id
+        WHERE hero.player_id = ? AND h.workspace_id = ?
         GROUP BY hero.position
         ORDER BY hero.position
-    """, [player_id, hero_id]).fetchall()
+    """, [player_id, hero_id, workspace_id]).fetchall()
 
     if not rows:
         return HeadToHeadResponse(rows=[], total_hands=0, total_won_bb=0, overall_bb_per_100=0)

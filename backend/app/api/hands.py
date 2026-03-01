@@ -31,15 +31,17 @@ def list_hands(
     stat_flag: list[str] | None = Query(None),
     stat_key: Optional[str] = Query(None),
     player_id: Optional[int] = Query(None),
+    workspace_id: int = Query(1),
 ):
     db = get_read_cursor()
-    hero_id = get_hero_player_id(db)
+    hero_id = get_hero_player_id(db, workspace_id)
     if hero_id is None:
         return HandListResponse(hands=[], total=0, page=1, per_page=per_page, total_pages=0)
 
-    hero_username = get_hero_username(db)
+    hero_username = get_hero_username(db, workspace_id)
     params: list = [hero_id]
-    where_clauses: list[str] = []
+    where_clauses: list[str] = ["h.workspace_id = ?"]
+    params.append(workspace_id)
 
     if position:
         positions = [p.strip().upper() for p in position.split(",") if p.strip()]
@@ -70,12 +72,12 @@ def list_hands(
         tag_list = [t.strip() for t in tags.split(",") if t.strip()]
         if "untagged" in [t.lower() for t in tag_list]:
             where_clauses.append(
-                "NOT EXISTS (SELECT 1 FROM hand_tags ht2 WHERE ht2.hand_id = h.id)"
+                "NOT EXISTS (SELECT 1 FROM hand_tags ht2 WHERE ht2.hand_id = h.id AND ht2.workspace_id = h.workspace_id)"
             )
         else:
             ph = ",".join("?" for _ in tag_list)
             where_clauses.append(
-                f"EXISTS (SELECT 1 FROM hand_tags ht2 WHERE ht2.hand_id = h.id AND ht2.tag IN ({ph}))"
+                f"EXISTS (SELECT 1 FROM hand_tags ht2 WHERE ht2.hand_id = h.id AND ht2.workspace_id = h.workspace_id AND ht2.tag IN ({ph}))"
             )
             params.extend(tag_list)
 
@@ -88,7 +90,7 @@ def list_hands(
 
     if player_id is not None:
         where_clauses.append(
-            "EXISTS (SELECT 1 FROM hand_players hp2 WHERE hp2.hand_id = h.id AND hp2.player_id = ?)"
+            "EXISTS (SELECT 1 FROM hand_players hp2 WHERE hp2.hand_id = h.id AND hp2.workspace_id = h.workspace_id AND hp2.player_id = ?)"
         )
         params.append(player_id)
 
@@ -130,7 +132,7 @@ def list_hands(
     count_sql = f"""
         SELECT COUNT(*)
         FROM hands h
-        JOIN hand_players hp ON hp.hand_id = h.id AND hp.player_id = ?
+        JOIN hand_players hp ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id AND hp.player_id = ?
         WHERE 1=1 {where_sql}
     """
     total = db.execute(count_sql, params).fetchone()[0]
@@ -151,7 +153,7 @@ def list_hands(
                hp.position, hp.card1, hp.card2, hp.won_bb,
                hp.all_in_ev_bb
         FROM hands h
-        JOIN hand_players hp ON hp.hand_id = h.id AND hp.player_id = ?
+        JOIN hand_players hp ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id AND hp.player_id = ?
         WHERE 1=1 {where_sql}
         ORDER BY {sort_col} {sort_dir}, h.played_at DESC
         LIMIT ? OFFSET ?
@@ -167,8 +169,8 @@ def list_hands(
 
     # Batch fetch tags
     tag_rows = db.execute(
-        f"SELECT hand_id, tag FROM hand_tags WHERE hand_id IN ({ph})",
-        hand_ids,
+        f"SELECT hand_id, tag FROM hand_tags WHERE hand_id IN ({ph}) AND workspace_id = ?",
+        hand_ids + [workspace_id],
     ).fetchall()
     tags_map: dict[str, list[str]] = {}
     for hid, tag in tag_rows:
@@ -176,8 +178,8 @@ def list_hands(
 
     # Batch fetch board cards by street
     board_rows = db.execute(
-        f"SELECT hand_id, street, card FROM board_cards WHERE hand_id IN ({ph}) ORDER BY hand_id, card_order",
-        hand_ids,
+        f"SELECT hand_id, street, card FROM board_cards WHERE hand_id IN ({ph}) AND workspace_id = ? ORDER BY hand_id, card_order",
+        hand_ids + [workspace_id],
     ).fetchall()
     board_map: dict[str, dict[str, list[str]]] = {}
     for hid, street, card in board_rows:
@@ -280,15 +282,15 @@ def list_hands(
 # ── Hand detail ──────────────────────────────────────────────────────
 
 @router.get("/hands/{hand_id}", response_model=HandDetail)
-def get_hand(hand_id: str):
+def get_hand(hand_id: str, workspace_id: int = Query(1)):
     db = get_read_cursor()
-    hero_id = get_hero_player_id(db)
-    hero_username = get_hero_username(db)
+    hero_id = get_hero_player_id(db, workspace_id)
+    hero_username = get_hero_username(db, workspace_id)
 
     hand_row = db.execute(
         "SELECT id, played_at, stakes, bb_amount, table_name, table_size, raw_text "
-        "FROM hands WHERE id = ?",
-        [hand_id],
+        "FROM hands WHERE id = ? AND workspace_id = ?",
+        [hand_id, workspace_id],
     ).fetchone()
     if not hand_row:
         raise HTTPException(status_code=404, detail="Hand not found")
@@ -392,15 +394,15 @@ def get_hand(hand_id: str):
 
     # Tags
     tag_rows = db.execute(
-        "SELECT tag FROM hand_tags WHERE hand_id = ? ORDER BY created_at",
-        [hand_id],
+        "SELECT tag FROM hand_tags WHERE hand_id = ? AND workspace_id = ? ORDER BY created_at",
+        [hand_id, workspace_id],
     ).fetchall()
     tag_list = [t[0] for t in tag_rows]
 
     # Note
     note_row = db.execute(
-        "SELECT note FROM hand_notes WHERE hand_id = ?",
-        [hand_id],
+        "SELECT note FROM hand_notes WHERE hand_id = ? AND workspace_id = ?",
+        [hand_id, workspace_id],
     ).fetchone()
     note = note_row[0] if note_row else None
 
@@ -427,34 +429,38 @@ class TagBody(BaseModel):
 
 
 @router.post("/hands/{hand_id}/tags")
-def add_tag(hand_id: str, body: TagBody):
+def add_tag(hand_id: str, body: TagBody, workspace_id: int = Query(1)):
     with db_lock():
         db = get_db()
-        if not db.execute("SELECT 1 FROM hands WHERE id = ?", [hand_id]).fetchone():
+        if not db.execute("SELECT 1 FROM hands WHERE id = ? AND workspace_id = ?", [hand_id, workspace_id]).fetchone():
             raise HTTPException(status_code=404, detail="Hand not found")
         db.execute(
-            "INSERT OR IGNORE INTO hand_tags (hand_id, tag) VALUES (?, ?)",
-            [hand_id, body.tag.strip()],
+            "INSERT OR IGNORE INTO hand_tags (hand_id, tag, workspace_id) VALUES (?, ?, ?)",
+            [hand_id, body.tag.strip(), workspace_id],
         )
         return {"status": "ok"}
 
 
 @router.delete("/hands/{hand_id}/tags/{tag}")
-def remove_tag(hand_id: str, tag: str):
+def remove_tag(hand_id: str, tag: str, workspace_id: int = Query(1)):
     with db_lock():
         db = get_db()
         db.execute(
-            "DELETE FROM hand_tags WHERE hand_id = ? AND tag = ?",
-            [hand_id, tag],
+            "DELETE FROM hand_tags WHERE hand_id = ? AND tag = ? AND workspace_id = ?",
+            [hand_id, tag, workspace_id],
         )
         return {"status": "ok"}
 
 
 @router.get("/tags", response_model=list[TagCount])
-def list_tags():
+def list_tags(workspace_id: int = Query(1)):
     db = get_read_cursor()
     rows = db.execute(
-        "SELECT tag, COUNT(*) as cnt FROM hand_tags GROUP BY tag ORDER BY cnt DESC"
+        "SELECT ht.tag, COUNT(*) as cnt FROM hand_tags ht "
+        "JOIN hands h ON ht.hand_id = h.id AND ht.workspace_id = h.workspace_id "
+        "WHERE h.workspace_id = ? "
+        "GROUP BY ht.tag ORDER BY cnt DESC",
+        [workspace_id],
     ).fetchall()
     return [TagCount(tag=r[0], count=r[1]) for r in rows]
 
@@ -466,30 +472,30 @@ class NoteBody(BaseModel):
 
 
 @router.put("/hands/{hand_id}/note")
-def update_note(hand_id: str, body: NoteBody):
+def update_note(hand_id: str, body: NoteBody, workspace_id: int = Query(1)):
     with db_lock():
         db = get_db()
-        if not db.execute("SELECT 1 FROM hands WHERE id = ?", [hand_id]).fetchone():
+        if not db.execute("SELECT 1 FROM hands WHERE id = ? AND workspace_id = ?", [hand_id, workspace_id]).fetchone():
             raise HTTPException(status_code=404, detail="Hand not found")
         existing = db.execute(
-            "SELECT 1 FROM hand_notes WHERE hand_id = ?", [hand_id]
+            "SELECT 1 FROM hand_notes WHERE hand_id = ? AND workspace_id = ?", [hand_id, workspace_id]
         ).fetchone()
         if existing:
             db.execute(
-                "UPDATE hand_notes SET note = ?, updated_at = CURRENT_TIMESTAMP WHERE hand_id = ?",
-                [body.note, hand_id],
+                "UPDATE hand_notes SET note = ?, updated_at = CURRENT_TIMESTAMP WHERE hand_id = ? AND workspace_id = ?",
+                [body.note, hand_id, workspace_id],
             )
         else:
             db.execute(
-                "INSERT INTO hand_notes (hand_id, note) VALUES (?, ?)",
-                [hand_id, body.note],
+                "INSERT INTO hand_notes (hand_id, note, workspace_id) VALUES (?, ?, ?)",
+                [hand_id, body.note, workspace_id],
             )
         return {"status": "ok"}
 
 
 @router.delete("/hands/{hand_id}/note")
-def delete_note(hand_id: str):
+def delete_note(hand_id: str, workspace_id: int = Query(1)):
     with db_lock():
         db = get_db()
-        db.execute("DELETE FROM hand_notes WHERE hand_id = ?", [hand_id])
+        db.execute("DELETE FROM hand_notes WHERE hand_id = ? AND workspace_id = ?", [hand_id, workspace_id])
         return {"status": "ok"}

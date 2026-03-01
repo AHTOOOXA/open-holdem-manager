@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Query
-from app.db import get_read_cursor, get_hero_player_id
+from app.db import get_read_cursor, get_hero_player_id, get_hero_username
 from app.models import GraphPoint, GraphResponse, VarianceStats, SessionMarker, FilterOptions, StakeBreakdown, MonthBreakdown, PositionBreakdown, ResultsBreakdown, DriftStat, DriftResponse
 import math
 from datetime import datetime, timedelta
@@ -17,12 +17,10 @@ def get_graph(
     date_from: str | None = Query(None),
     date_to: str | None = Query(None),
     last_n: int | None = Query(None, gt=0),
+    workspace_id: int = Query(1),
 ):
     db = get_read_cursor()
-    row = db.execute(
-        "SELECT value FROM settings WHERE key = 'hero_username'"
-    ).fetchone()
-    hero_username = row[0] if row else "Hero"
+    hero_username = get_hero_username(db, workspace_id)
 
     player = db.execute(
         "SELECT id FROM players WHERE username = ? AND site_id = 1",
@@ -43,10 +41,11 @@ def get_graph(
                COALESCE(hp.jackpot_bb, 0),
                COALESCE(hp.jackpot, 0)
         FROM hand_players hp
-        JOIN hands h ON hp.hand_id = h.id
+        JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
         WHERE hp.player_id = ?
+          AND h.workspace_id = ?
     """
-    params: list = [player_id]
+    params: list = [player_id, workspace_id]
 
     if stakes:
         query += " AND h.stakes = ?"
@@ -172,9 +171,11 @@ def get_graph(
 
 
 @router.get("/reports/filter-options", response_model=FilterOptions)
-def get_filter_options():
+def get_filter_options(
+    workspace_id: int = Query(1),
+):
     db = get_read_cursor()
-    player_id = get_hero_player_id(db)
+    player_id = get_hero_player_id(db, workspace_id)
     if not player_id:
         return FilterOptions()
 
@@ -182,32 +183,32 @@ def get_filter_options():
         """
         SELECT DISTINCT h.stakes
         FROM hand_players hp
-        JOIN hands h ON hp.hand_id = h.id
-        WHERE hp.player_id = ?
+        JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
+        WHERE hp.player_id = ? AND h.workspace_id = ?
         ORDER BY h.stakes
         """,
-        [player_id],
+        [player_id, workspace_id],
     ).fetchall()
 
     game_mode_rows = db.execute(
         """
         SELECT DISTINCT h.game_mode
         FROM hand_players hp
-        JOIN hands h ON hp.hand_id = h.id
-        WHERE hp.player_id = ?
+        JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
+        WHERE hp.player_id = ? AND h.workspace_id = ?
         ORDER BY h.game_mode
         """,
-        [player_id],
+        [player_id, workspace_id],
     ).fetchall()
 
     date_row = db.execute(
         """
         SELECT MIN(h.played_at), MAX(h.played_at)
         FROM hand_players hp
-        JOIN hands h ON hp.hand_id = h.id
-        WHERE hp.player_id = ?
+        JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
+        WHERE hp.player_id = ? AND h.workspace_id = ?
         """,
-        [player_id],
+        [player_id, workspace_id],
     ).fetchone()
 
     stakes = [r[0] for r in stakes_rows]
@@ -227,14 +228,15 @@ def get_breakdown(
     date_from: str | None = Query(None),
     date_to: str | None = Query(None),
     last_n: int | None = Query(None, gt=0),
+    workspace_id: int = Query(1),
 ):
     db = get_read_cursor()
-    player_id = get_hero_player_id(db)
+    player_id = get_hero_player_id(db, workspace_id)
     if not player_id:
         return ResultsBreakdown()
 
-    where = "hp.player_id = ?"
-    params: list = [player_id]
+    where = "hp.player_id = ? AND h.workspace_id = ?"
+    params: list = [player_id, workspace_id]
     if stakes:
         where += " AND h.stakes = ?"
         params.append(stakes)
@@ -255,7 +257,7 @@ def get_breakdown(
         last_n_cte = f"""
         WITH recent_hands AS (
             SELECT h.id FROM hand_players hp
-            JOIN hands h ON hp.hand_id = h.id
+            JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
             WHERE {where}
             ORDER BY h.played_at DESC, h.id DESC
             LIMIT {int(last_n)}
@@ -289,7 +291,7 @@ def get_breakdown(
                COALESCE(hp.jackpot_bb, 0) AS jackpot_bb_v,
                COALESCE(hp.jackpot, 0) AS jackpot_usd_v
         FROM hand_players hp
-        JOIN hands h ON hp.hand_id = h.id
+        JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
         WHERE {where}
     )
     """
@@ -442,15 +444,16 @@ def get_drift(
     game_mode: str | None = Query(None),
     date_from: str | None = Query(None),
     date_to: str | None = Query(None),
+    workspace_id: int = Query(1),
 ):
     db = get_read_cursor()
-    player_id = get_hero_player_id(db)
+    player_id = get_hero_player_id(db, workspace_id)
     if not player_id:
         return DriftResponse()
 
     # Build shared WHERE clause
-    where = "hp.player_id = ?"
-    params: list = [player_id]
+    where = "hp.player_id = ? AND h.workspace_id = ?"
+    params: list = [player_id, workspace_id]
     if stakes:
         where += " AND h.stakes = ?"
         params.append(stakes)
@@ -466,7 +469,7 @@ def get_drift(
 
     # Get total hand count
     total_count = db.execute(
-        f"SELECT COUNT(*) FROM hand_players hp JOIN hands h ON hp.hand_id = h.id WHERE {where}",
+        f"SELECT COUNT(*) FROM hand_players hp JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id WHERE {where}",
         params,
     ).fetchone()[0]
 
@@ -503,7 +506,7 @@ def get_drift(
             SUM(hp.flop_bets + hp.flop_raises) FILTER (WHERE hp.saw_flop),
             SUM(hp.flop_bets + hp.flop_raises + hp.flop_calls + hp.flop_checks + hp.flop_folds) FILTER (WHERE hp.saw_flop)
         FROM hand_players hp
-        JOIN hands h ON hp.hand_id = h.id
+        JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
         WHERE {where}
         """,
         params,
@@ -582,7 +585,7 @@ def get_drift(
             WITH recent AS (
                 SELECT {', '.join(expr + f' AS c{i}' for i, (_, expr) in enumerate(stats_in_group))}
                 FROM hand_players hp
-                JOIN hands h ON hp.hand_id = h.id
+                JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
                 WHERE {where} {opp_filter}
                 ORDER BY h.played_at DESC, h.id DESC
                 LIMIT ?
@@ -630,7 +633,7 @@ def get_drift(
             WITH recent AS (
                 SELECT hp.flop_bets + hp.flop_raises AS num,
                        hp.flop_bets + hp.flop_raises + hp.flop_calls + hp.flop_checks + hp.flop_folds AS den
-                FROM hand_players hp JOIN hands h ON hp.hand_id = h.id
+                FROM hand_players hp JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
                 WHERE {where} AND hp.saw_flop = true
                 ORDER BY h.played_at DESC, h.id DESC
                 LIMIT ?
