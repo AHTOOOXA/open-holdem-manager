@@ -1,13 +1,17 @@
 import { useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { getPlayer, getPlayerStats, getHeadToHead, updatePlayerNotes } from '@/lib/api';
-import type { HeroStats, PositionalStats, StatValue } from '@/lib/api';
+import { getPlayer, getPlayerStats, getHeroStats, getHeadToHead, updatePlayerNotes } from '@/lib/api';
+import type { HeroStats } from '@/lib/api';
 import { queryKeys } from '@/lib/query-keys';
 import PlayerTypeBadge from '@/components/PlayerTypeBadge';
 import HandExplorer from '@/components/hands/HandExplorer';
+import StatsCard from '@/components/stats/StatsCard';
 import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
+import { Card, CardContent } from '@/components/ui/card';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
+import { TooltipProvider } from '@/components/ui/tooltip';
 import { formatRelativeDate } from '@/lib/utils';
 import {
   Table,
@@ -18,120 +22,50 @@ import {
   TableRow,
 } from '@/components/ui/table';
 
-const POSITIONS = ['EP', 'MP', 'CO', 'BTN', 'SB', 'BB'] as const;
-
-function fmt(sv: StatValue | undefined, decimals = 0): string {
-  if (!sv || sv.sample === 0 || sv.value === null || sv.value === undefined) return '\u2014';
-  return decimals > 0 ? sv.value.toFixed(decimals) : Math.round(sv.value).toString();
-}
-
-function fmtColor(sv: StatValue | undefined): string {
-  if (!sv || sv.sample === 0 || sv.value === null) return 'text-text-muted';
-  return 'text-text';
-}
-
-function PosRow({ label, stat, decimals = 0 }: { label: string; stat: PositionalStats; decimals?: number }) {
-  return (
-    <TableRow className="text-[13px]">
-      <TableCell className="py-1 px-2 font-medium text-text-muted">{label}</TableCell>
-      <TableCell className={`py-1 px-2 text-center font-mono font-semibold ${fmtColor(stat.total)}`}>
-        {fmt(stat.total, decimals)}
-      </TableCell>
-      {POSITIONS.map((p) => {
-        const sv = stat[p.toLowerCase() as keyof PositionalStats] as StatValue;
-        return (
-          <TableCell key={p} className={`py-1 px-2 text-center font-mono ${fmtColor(sv)}`}>
-            {fmt(sv, decimals)}
-          </TableCell>
-        );
-      })}
-    </TableRow>
-  );
-}
-
-function SVRow({ label, sv, decimals = 0 }: { label: string; sv: StatValue; decimals?: number }) {
-  return (
-    <TableRow className="text-[13px]">
-      <TableCell className="py-1 px-2 font-medium text-text-muted">{label}</TableCell>
-      <TableCell className={`py-1 px-2 text-center font-mono ${fmtColor(sv)}`} colSpan={7}>
-        {fmt(sv, decimals)}{sv.sample > 0 ? ` (${sv.sample})` : ''}
-      </TableCell>
-    </TableRow>
-  );
-}
-
 function StatsTab({ stats }: { stats: HeroStats }) {
+  const [decimals, setDecimals] = useState<0 | 1>(0);
+
+  const { data: heroStats } = useQuery({
+    queryKey: queryKeys.stats.hero({}),
+    queryFn: () => getHeroStats(),
+  });
+
+  const wr = stats.win_rate_bb100;
+  const wrEv = stats.win_rate_ev_bb100;
+  const wrColor = wr !== null ? (wr >= 0 ? 'text-green' : 'text-red') : 'text-text-muted';
+  const wrEvColor = wrEv !== null ? (wrEv >= 0 ? 'text-green' : 'text-red') : 'text-text-muted';
+
   return (
-    <div className="space-y-4">
-      {/* Summary */}
-      <div className="flex items-center gap-6 text-[14px]">
-        <span className="text-text-muted">Hands: <span className="font-mono text-text">{stats.hands.toLocaleString()}</span></span>
-        <span className="text-text-muted">
-          Win rate:{' '}
-          <span className={`font-mono font-semibold ${(stats.win_rate_bb100 ?? 0) >= 0 ? 'text-green' : 'text-red'}`}>
-            {stats.win_rate_bb100 !== null ? `${stats.win_rate_bb100.toFixed(2)} bb/100` : '\u2014'}
-          </span>
-        </span>
-        <span className="text-text-muted">
-          EV:{' '}
-          <span className={`font-mono ${(stats.win_rate_ev_bb100 ?? 0) >= 0 ? 'text-green' : 'text-red'}`}>
-            {stats.win_rate_ev_bb100 !== null ? `${stats.win_rate_ev_bb100.toFixed(2)} bb/100` : '\u2014'}
-          </span>
-        </span>
+    <TooltipProvider delayDuration={200}>
+      <div className="space-y-2">
+        <Card className="gap-0 py-0">
+          <CardContent className="px-3 py-1.5 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <span className="text-sm text-text-muted">{stats.hands.toLocaleString()} hands</span>
+              <span className={`text-sm font-bold font-mono ${wrColor}`}>
+                {wr !== null ? `${wr >= 0 ? '+' : ''}${wr.toFixed(2)} bb/100` : '\u2014'}
+              </span>
+              <span className={`text-sm font-bold font-mono ${wrEvColor}`}>
+                EV {wrEv !== null ? `${wrEv >= 0 ? '+' : ''}${wrEv.toFixed(2)}` : '\u2014'}
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-text-muted">Precision</span>
+              <ToggleGroup
+                type="single"
+                value={String(decimals)}
+                onValueChange={(v) => { if (v) setDecimals(Number(v) as 0 | 1); }}
+                className="h-8"
+              >
+                <ToggleGroupItem value="0" className="h-7 px-2 text-xs font-mono">0</ToggleGroupItem>
+                <ToggleGroupItem value="1" className="h-7 px-2 text-xs font-mono">0.0</ToggleGroupItem>
+              </ToggleGroup>
+            </div>
+          </CardContent>
+        </Card>
+        <StatsCard stats={stats} decimals={decimals} compareStats={heroStats} />
       </div>
-
-      {/* Positional stats table */}
-      <div className="overflow-x-auto">
-        <Table>
-          <TableHeader>
-            <TableRow className="text-[12px] uppercase tracking-wide">
-              <TableHead className="py-1 px-2 h-auto w-32">Stat</TableHead>
-              <TableHead className="py-1 px-2 h-auto text-center">Total</TableHead>
-              {POSITIONS.map((p) => (
-                <TableHead key={p} className="py-1 px-2 h-auto text-center">{p}</TableHead>
-              ))}
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {/* Preflop */}
-            <TableRow><TableCell colSpan={8} className="py-1 px-2 text-[11px] uppercase tracking-wider text-text-muted bg-surface/50 font-semibold">Preflop</TableCell></TableRow>
-            <PosRow label="VPIP" stat={stats.vpip} />
-            <PosRow label="PFR" stat={stats.pfr} />
-            <PosRow label="Open Raise" stat={stats.open_raise} />
-            <PosRow label="3-Bet" stat={stats.three_bet} />
-            <PosRow label="4-Bet" stat={stats.four_bet} />
-            <PosRow label="Fold to 3-Bet" stat={stats.fold_to_3bet} />
-            <PosRow label="Fold to 4-Bet" stat={stats.fold_to_4bet} />
-            <PosRow label="Call Open" stat={stats.call_open_raise} />
-            <PosRow label="Limp" stat={stats.limp} />
-
-            {/* Steal */}
-            <TableRow><TableCell colSpan={8} className="py-1 px-2 text-[11px] uppercase tracking-wider text-text-muted bg-surface/50 font-semibold">Steal</TableCell></TableRow>
-            <PosRow label="Steal" stat={stats.steal} />
-            <PosRow label="vs Steal Fold" stat={stats.vs_steal_fold} />
-            <PosRow label="vs Steal Call" stat={stats.vs_steal_call} />
-            <PosRow label="vs Steal 3-Bet" stat={stats.vs_steal_3bet} />
-
-            {/* Postflop */}
-            <TableRow><TableCell colSpan={8} className="py-1 px-2 text-[11px] uppercase tracking-wider text-text-muted bg-surface/50 font-semibold">Postflop</TableCell></TableRow>
-            <PosRow label="C-Bet Flop" stat={stats.cbet_flop} />
-            <PosRow label="C-Bet Turn" stat={stats.cbet_turn} />
-            <PosRow label="Fold to CB Flop" stat={stats.fold_to_cbet_flop} />
-            <PosRow label="Fold to CB Turn" stat={stats.fold_to_cbet_turn} />
-
-            {/* Aggression / Showdown */}
-            <TableRow><TableCell colSpan={8} className="py-1 px-2 text-[11px] uppercase tracking-wider text-text-muted bg-surface/50 font-semibold">Aggression / Showdown</TableCell></TableRow>
-            <SVRow label="AF Flop" sv={stats.af_flop} decimals={2} />
-            <SVRow label="AF Turn" sv={stats.af_turn} decimals={2} />
-            <SVRow label="AF River" sv={stats.af_river} decimals={2} />
-            <SVRow label="AFq Flop" sv={stats.afq_flop} />
-            <SVRow label="WTSD" sv={stats.wtsd} />
-            <SVRow label="WSD" sv={stats.wsd} />
-            <SVRow label="WWSF" sv={stats.wwsf} />
-          </TableBody>
-        </Table>
-      </div>
-    </div>
+    </TooltipProvider>
   );
 }
 
