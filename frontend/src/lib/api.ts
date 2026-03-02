@@ -341,6 +341,8 @@ export interface HandSummary {
   card2: string | null;
   won_bb: number;
   all_in_ev_bb: number;
+  rit_boards: number;
+  is_cashout: boolean;
   tags: string[];
   preflop_actions: ActionItem[];
   flop_cards: string[];
@@ -400,6 +402,9 @@ export interface HandDetail {
   raw_text: string | null;
   players: HandPlayerDetail[];
   board: BoardCards;
+  extra_boards: BoardCards[];
+  rit_boards: number;
+  is_cashout: boolean;
   actions: HandAction[];
   tags: string[];
   note: string | null;
@@ -1701,6 +1706,7 @@ export async function getIdentityStats(identityId: number, params?: {
   date_to?: string;
 }): Promise<HeroStats> {
   const sp = new URLSearchParams();
+  _addWorkspaceParam(sp);
   setPositionParam(sp, params?.position);
   if (params?.stakes) sp.set('stakes', params.stakes);
   setGameModeParam(sp, params?.game_mode);
@@ -1708,5 +1714,47 @@ export async function getIdentityStats(identityId: number, params?: {
   if (params?.date_to) sp.set('date_to', params.date_to);
   const res = await fetch(`${BASE}/identities/${identityId}/stats?${sp}`);
   if (!res.ok) throw new Error('Failed to fetch identity stats');
+  return res.json();
+}
+
+// ── Compare Stats ─────────────────────────────────────────────────────
+
+export interface PeriodStats {
+  date_from: string;
+  date_to: string | null;
+  hands: number;
+  win_rate_bb100: number | null;
+  win_rate_ev_bb100: number | null;
+  stats: HeroStats;
+  player_count?: number | null;
+}
+
+export interface CompareResponse {
+  period_a: PeriodStats;
+  period_b: PeriodStats;
+}
+
+export async function fetchCompareStats(params: {
+  mode: string;
+  period_a_from?: string;
+  period_a_to?: string;
+  period_b_from?: string;
+  period_b_to?: string;
+  workspace_id_b?: number;
+  stakes?: string;
+  game_mode?: string;
+}): Promise<CompareResponse> {
+  const sp = new URLSearchParams();
+  _addWorkspaceParam(sp);
+  sp.set('mode', params.mode);
+  if (params.period_a_from) sp.set('period_a_from', params.period_a_from);
+  if (params.period_a_to) sp.set('period_a_to', params.period_a_to);
+  if (params.period_b_from) sp.set('period_b_from', params.period_b_from);
+  if (params.period_b_to) sp.set('period_b_to', params.period_b_to);
+  if (params.workspace_id_b != null) sp.set('workspace_id_b', String(params.workspace_id_b));
+  if (params.stakes) sp.set('stakes', params.stakes);
+  if (params.game_mode) sp.set('game_mode', params.game_mode === '__reg__' ? '' : params.game_mode);
+  const res = await fetch(`${BASE}/compare/stats?${sp}`);
+  if (!res.ok) throw new Error('Compare failed');
   return res.json();
 }

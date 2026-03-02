@@ -68,7 +68,7 @@ def list_players(
             FROM players p
             JOIN hand_players hp ON hp.player_id = p.id
             JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
-            LEFT JOIN player_classifications pc ON pc.player_id = p.id
+            LEFT JOIN player_classifications pc ON pc.player_id = p.id AND pc.workspace_id = h.workspace_id
             WHERE h.workspace_id = ? {where_sql}
             GROUP BY p.id
             HAVING COUNT(*) >= ?
@@ -115,7 +115,7 @@ def list_players(
         FROM players p
         JOIN hand_players hp ON hp.player_id = p.id
         JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
-        LEFT JOIN player_classifications pc ON pc.player_id = p.id
+        LEFT JOIN player_classifications pc ON pc.player_id = p.id AND pc.workspace_id = h.workspace_id
         WHERE h.workspace_id = ? {where_sql}
         GROUP BY p.id, p.username, COALESCE(pc.player_type, 'UNK')
         HAVING COUNT(*) >= ?
@@ -192,9 +192,9 @@ def get_player(player_id: int, workspace_id: int = Query(1)):
         "SELECT p.id, p.username, COALESCE(pc.player_type, 'UNK'), "
         "p.notes, p.color_tag, p.first_seen, p.last_seen "
         "FROM players p "
-        "LEFT JOIN player_classifications pc ON pc.player_id = p.id "
+        "LEFT JOIN player_classifications pc ON pc.player_id = p.id AND pc.workspace_id = ? "
         "WHERE p.id = ?",
-        [player_id],
+        [workspace_id, player_id],
     ).fetchone()
     if not row:
         raise HTTPException(status_code=404, detail="Player not found")

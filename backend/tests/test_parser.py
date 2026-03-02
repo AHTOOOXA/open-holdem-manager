@@ -44,11 +44,11 @@ def _get_player_won(db, hand_id: str, username: str) -> float:
     return float(row[0]) if row else None
 
 
-def _get_board_cards(db, hand_id: str) -> dict:
-    """Get board cards grouped by street."""
+def _get_board_cards(db, hand_id: str, board_number: int = 1) -> dict:
+    """Get board cards grouped by street for a specific board number."""
     rows = db.execute(
-        "SELECT street, card FROM board_cards WHERE hand_id = ? ORDER BY street, card_order",
-        [hand_id],
+        "SELECT street, card FROM board_cards WHERE hand_id = ? AND board_number = ? ORDER BY street, card_order",
+        [hand_id, board_number],
     ).fetchall()
     result = {"flop": [], "turn": [], "river": []}
     for street, card in rows:
@@ -275,17 +275,115 @@ class TestRunItTwice:
         assert board["turn"] == ["7s"]
         assert board["river"] == ["2h"]
 
-    def test_rit_second_board_lines_skipped(self, db):
-        """SECOND board lines should not interfere with parsing."""
+    def test_rit_second_board_lines_parsed(self, db):
+        """SECOND board lines should be parsed into extra_boards."""
         text = (FIXTURES / "run_it_twice.txt").read_text()
         parsed = parse_hand_history(text)
+
+        # Parser detects RIT
+        assert parsed.rit_boards == 2
+        assert len(parsed.extra_boards) == 1
+        assert parsed.extra_boards[0]["flop"] == ["Jh", "8c", "4d"]
+        assert parsed.extra_boards[0]["turn"] == ["Ts"]
+        assert parsed.extra_boards[0]["river"] == ["Ah"]
+        assert parsed.is_cashout is False
+
         hand_id = insert_parsed_hand(db, parsed)
 
-        # Should not raise any errors and hand should be stored
+        # DB has board_number=2 rows
+        board2_rows = db.execute(
+            "SELECT street, card FROM board_cards WHERE hand_id = ? AND board_number = 2 ORDER BY card_order",
+            [hand_id],
+        ).fetchall()
+        assert len(board2_rows) == 5
+        assert [r[1] for r in board2_rows if r[0] == "flop"] == ["Jh", "8c", "4d"]
+        assert [r[1] for r in board2_rows if r[0] == "turn"] == ["Ts"]
+        assert [r[1] for r in board2_rows if r[0] == "river"] == ["Ah"]
+
+        # hands table has rit_boards=2
         row = db.execute(
-            "SELECT id FROM hands WHERE id = ?", [hand_id]
+            "SELECT rit_boards, is_cashout FROM hands WHERE id = ?", [hand_id]
         ).fetchone()
-        assert row is not None
+        assert row[0] == 2
+        assert row[1] is False
+
+
+class TestEVCashout:
+    """Test parsing of EV Cashout hands."""
+
+    CASHOUT_HAND = """\
+Poker Hand #RC9900009999: Hold'em No Limit ($0.25/$0.50) - 2026/01/25 12:00:00
+Table 'RushAndCash9900009' 6-max Seat #1 is the button
+Seat 1: Hero ($50.00 in chips)
+Seat 2: Player2 ($48.00 in chips)
+Seat 3: Player3 ($52.00 in chips)
+Seat 4: Player4 ($50.00 in chips)
+Seat 5: Player5 ($50.00 in chips)
+Seat 6: Player6 ($50.00 in chips)
+Player2: posts small blind $0.25
+Player3: posts big blind $0.50
+*** HOLE CARDS ***
+Dealt to Hero [As Kd]
+Player4: folds
+Player5: folds
+Player6: folds
+Hero: raises $1.25 to $1.25
+Player2: folds
+Player3: calls $0.75
+*** FLOP *** [Qs 8d 3h]
+Player3: checks
+Hero: bets $1.50
+Player3: calls $1.50
+*** TURN *** [Qs 8d 3h] [Ah]
+Player3: checks
+Hero: bets $3.00
+Player3: raises $10.00 to $10.00 and is all-in
+Hero: calls $7.00
+Hero Chooses to EV Cashout
+Hero Receives Cashout of $25.50
+*** RIVER *** [Qs 8d 3h Ah] [2c]
+*** SHOWDOWN ***
+Player3: shows [Qh Qd]
+*** SUMMARY ***
+Total pot $25.50 | Rake $1.25 | Jackpot $0.25 | Bingo $0 | Fortune $0 | Tax $0
+Board [Qs 8d 3h Ah 2c]
+Seat 1: Hero (button) showed [As Kd] and won ($25.50) with a pair of Aces
+Seat 2: Player2 (small blind) folded before Flop
+Seat 3: Player3 (big blind) showed [Qh Qd] and lost
+Seat 4: Player4 folded before Flop (didn't bet)
+Seat 5: Player5 folded before Flop (didn't bet)
+Seat 6: Player6 folded before Flop (didn't bet)
+"""
+
+    def test_cashout_detected(self, db):
+        """is_cashout=True when hand has EV Cashout lines."""
+        parsed = parse_hand_history(self.CASHOUT_HAND)
+        assert parsed.is_cashout is True
+        assert parsed.rit_boards == 1
+        assert parsed.extra_boards == []
+
+        hand_id = insert_parsed_hand(db, parsed)
+
+        row = db.execute(
+            "SELECT rit_boards, is_cashout FROM hands WHERE id = ?", [hand_id]
+        ).fetchone()
+        assert row[0] == 1
+        assert row[1] is True
+
+    def test_cashout_financials(self, db):
+        """Cashout hand financials are correct."""
+        parsed = parse_hand_history(self.CASHOUT_HAND)
+        hand_id = insert_parsed_hand(db, parsed)
+
+        hero_won = _get_hero_won(db, hand_id)
+        # Hero invested: raise to 1.25 + bet 1.50 + call 7.00 = already in street
+        # preflop: raise to 1.25 (invested 1.25)
+        # flop: bet 1.50 (invested 2.75)
+        # turn: bet 3.00, call 7.00 → raise 10.00 by P3, hero calls 7.00 (total turn 10.00)
+        # Total invested: 1.25 + 1.50 + 10.00 = 12.75
+        # Collected: 25.50
+        # Net = 25.50 - 12.75 = 12.75
+        assert hero_won == pytest.approx(12.75, abs=0.01)
 
 
 class TestOpenRaiseOpp:

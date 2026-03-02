@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useCallback, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { getWorkspaces, getCheckpoints } from '@/lib/api';
 
 export interface Workspace {
   id: number;
@@ -47,18 +48,6 @@ function getStoredWorkspaceId(): number {
   return 1;
 }
 
-async function fetchWorkspaces(): Promise<Workspace[]> {
-  const res = await fetch('/api/workspaces');
-  if (!res.ok) throw new Error('Failed to fetch workspaces');
-  return res.json();
-}
-
-async function fetchCheckpoints(workspaceId: number): Promise<Checkpoint[]> {
-  const res = await fetch(`/api/workspaces/${workspaceId}/checkpoints`);
-  if (!res.ok) throw new Error('Failed to fetch checkpoints');
-  return res.json();
-}
-
 const WorkspaceContext = createContext<WorkspaceContextValue | null>(null);
 
 function useWorkspace() {
@@ -76,12 +65,12 @@ function WorkspaceProvider({ children }: { children: ReactNode }) {
 
   const workspacesQuery = useQuery({
     queryKey: ['workspaces'],
-    queryFn: fetchWorkspaces,
+    queryFn: getWorkspaces,
   });
 
   const checkpointsQuery = useQuery({
     queryKey: ['checkpoints', activeWorkspaceId],
-    queryFn: () => fetchCheckpoints(activeWorkspaceId),
+    queryFn: () => getCheckpoints(activeWorkspaceId),
   });
 
   const workspaces = workspacesQuery.data ?? [];

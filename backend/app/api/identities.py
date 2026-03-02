@@ -44,12 +44,13 @@ def _build_identity(db, identity_id: int) -> IdentityResponse | None:
         for a in aliases_rows
     ]
 
-    # Total hands across all aliases
+    # Total hands across all aliases (deduplicate by hand_id so the same
+    # physical hand imported into multiple workspaces is only counted once)
     if aliases:
         player_ids = [a.player_id for a in aliases]
         ph = ",".join("?" for _ in player_ids)
         total = db.execute(
-            f"SELECT COUNT(*) FROM hand_players WHERE player_id IN ({ph})",
+            f"SELECT COUNT(DISTINCT hand_id) FROM hand_players WHERE player_id IN ({ph})",
             player_ids,
         ).fetchone()[0]
     else:
@@ -266,10 +267,18 @@ def _compute_identity_stats(
     date_from: str | None = None,
     date_to: str | None = None,
 ) -> HeroStats:
-    """Compute aggregated stats across multiple player IDs (no workspace filter)."""
-    from app.stats_engine import _compute_stats_from_query
+    """Compute aggregated stats across multiple player IDs.
+
+    Deduplicates by (hand_id, player_id) so the same physical hand imported
+    into multiple workspaces is only counted once.  We pick one row per
+    (hand_id, player_id) via MIN(workspace_id), then run the standard
+    aggregation query over those unique rows.
+    """
+    from app.stats_engine import _compute_stats_from_query, _AGG_SQL
 
     ph = ",".join("?" for _ in player_ids)
+
+    # Build WHERE parts for the dedup CTE (filter on hand_players + hands)
     where_parts = [f"hp.player_id IN ({ph})"]
     params: list = list(player_ids)
 
@@ -290,4 +299,26 @@ def _compute_identity_stats(
         params.append(date_to + " 23:59:59")
 
     where_sql = " AND ".join(where_parts)
-    return _compute_stats_from_query(db, where_sql, params)
+
+    # CTE picks one workspace per (hand_id, player_id) to deduplicate
+    # across workspaces that contain the same physical hand.
+    dedup_cte = f"""WITH dedup AS (
+        SELECT hp.hand_id, hp.player_id, MIN(hp.workspace_id) AS ws
+        FROM hand_players hp
+        JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
+        WHERE {where_sql}
+        GROUP BY hp.hand_id, hp.player_id
+    )
+    """
+
+    # The main aggregation re-joins hand_players using the dedup key
+    # so only one row per (hand_id, player_id) is aggregated.
+    dedup_where = (
+        "EXISTS (SELECT 1 FROM dedup d "
+        "WHERE d.hand_id = hp.hand_id AND d.player_id = hp.player_id "
+        "AND d.ws = hp.workspace_id)"
+    )
+    full_sql = dedup_cte + _AGG_SQL.format(where=dedup_where)
+
+    # params are used once (in the CTE); the main query references the CTE
+    return _compute_stats_from_query(db, dedup_where, params, sql_override=full_sql)

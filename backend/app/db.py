@@ -10,7 +10,7 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 # Bump this when stat_flags.py or parser logic changes to trigger auto-rebuild.
-STAT_VERSION = 1
+STAT_VERSION = 2
 
 _data_dir = os.environ.get("OHM_DATA_DIR")
 if _data_dir:
@@ -164,6 +164,8 @@ def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
             button_seat INTEGER,
             raw_text TEXT,
             cash_drop_received DECIMAL DEFAULT 0,
+            rit_boards INTEGER NOT NULL DEFAULT 1,
+            is_cashout BOOLEAN NOT NULL DEFAULT FALSE,
             imported_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
@@ -304,7 +306,8 @@ def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
             hand_id VARCHAR ,
             street VARCHAR NOT NULL,
             card VARCHAR NOT NULL,
-            card_order INTEGER NOT NULL
+            card_order INTEGER NOT NULL,
+            board_number INTEGER NOT NULL DEFAULT 1
         )
     """)
     conn.execute("""
@@ -330,8 +333,10 @@ def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
     """)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS player_classifications (
-            player_id INTEGER PRIMARY KEY,
-            player_type VARCHAR NOT NULL DEFAULT 'UNK'
+            player_id INTEGER NOT NULL,
+            workspace_id INTEGER NOT NULL DEFAULT 1,
+            player_type VARCHAR NOT NULL DEFAULT 'UNK',
+            PRIMARY KEY (player_id, workspace_id)
         )
     """)
     # Seed hero settings only for pre-workspace databases (new DBs get them via workspace)
@@ -394,11 +399,19 @@ def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
     for col, default in [
         ("cash_drop_received", "DECIMAL DEFAULT 0"),
         ("game_mode", "VARCHAR DEFAULT ''"),
+        ("rit_boards", "INTEGER DEFAULT 1"),
+        ("is_cashout", "BOOLEAN DEFAULT FALSE"),
     ]:
         try:
             conn.execute(f"ALTER TABLE hands ADD COLUMN {col} {default}")
         except duckdb.CatalogException:
             pass
+
+    # Migration for board_cards table
+    try:
+        conn.execute("ALTER TABLE board_cards ADD COLUMN board_number INTEGER DEFAULT 1")
+    except duckdb.CatalogException:
+        pass
 
     # Backfill game_mode: RC* hands → Fast Fold, everything else → ''
     try:
@@ -458,6 +471,15 @@ def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
 
     # Add workspace_id to child tables for workspace-scoped JOINs
     _migrate_child_workspace_id(conn)
+
+    # Fix duplicated child rows from incorrect workspace_id backfill
+    _fix_child_workspace_duplicates(conn)
+
+    # Fix hand_tags and hand_notes missed by the original dedup fix
+    _fix_child_workspace_duplicates_v2(conn)
+
+    # Add workspace_id to player_classifications for workspace-scoped classification
+    _migrate_player_classifications_workspace(conn)
 
     # Check stat version — trigger rebuild if outdated
     _check_stat_version(conn)
@@ -640,6 +662,293 @@ def _migrate_child_workspace_id(conn: duckdb.DuckDBPyConnection) -> None:
         "INSERT OR REPLACE INTO settings VALUES ('child_workspace_id', '1')"
     )
     logger.info("Child table workspace_id migration complete.")
+
+
+def _fix_child_workspace_duplicates(conn: duckdb.DuckDBPyConnection) -> None:
+    """Fix child rows that were all assigned to workspace 1 by the backfill.
+
+    The _migrate_child_workspace_id backfill used MIN(h.workspace_id) which
+    set ALL child rows to workspace_id=1, even those belonging to workspace 2+.
+    For each hand existing in N workspaces, child tables have N× rows all in ws1.
+
+    Fix: use ROW_NUMBER to identify duplicate rows per natural key and reassign
+    the Nth copy to the Nth workspace (ordered by row id).
+    """
+    row = conn.execute(
+        "SELECT value FROM settings WHERE key = 'fix_child_ws_dups'"
+    ).fetchone()
+    if row is not None:
+        return
+
+    # Find hands that exist in multiple workspaces
+    multi_ws = conn.execute("""
+        SELECT id FROM hands GROUP BY id HAVING COUNT(DISTINCT workspace_id) > 1
+    """).fetchall()
+    if not multi_ws:
+        conn.execute(
+            "INSERT OR REPLACE INTO settings VALUES ('fix_child_ws_dups', '1')"
+        )
+        return
+
+    logger.info("Fixing %d hands with duplicated child rows across workspaces...", len(multi_ws))
+
+    # Build ordered workspace list per hand_id
+    ws_map = conn.execute("""
+        SELECT id, workspace_id FROM hands
+        WHERE id IN (SELECT id FROM hands GROUP BY id HAVING COUNT(DISTINCT workspace_id) > 1)
+        ORDER BY id, workspace_id
+    """).fetchall()
+    # hand_id → [ws1, ws2, ...]  (ordered)
+    hand_ws: dict[str, list[int]] = {}
+    for hid, wid in ws_map:
+        hand_ws.setdefault(hid, []).append(wid)
+
+    # Fix hand_players: partition by (hand_id, seat), order by id
+    # Row N gets workspace = Nth workspace for that hand
+    dup_hp = conn.execute("""
+        SELECT hp.id, hp.hand_id,
+               ROW_NUMBER() OVER (PARTITION BY hp.hand_id, hp.seat ORDER BY hp.id) as rn
+        FROM hand_players hp
+        WHERE hp.workspace_id = 1
+          AND hp.hand_id IN (SELECT id FROM hands GROUP BY id HAVING COUNT(DISTINCT workspace_id) > 1)
+    """).fetchall()
+
+    hp_updates: dict[int, list[int]] = {}  # workspace_id → [hp.id, ...]
+    for hp_id, hid, rn in dup_hp:
+        ws_list = hand_ws.get(hid, [1])
+        target_ws = ws_list[rn - 1] if rn <= len(ws_list) else ws_list[-1]
+        if target_ws != 1:
+            hp_updates.setdefault(target_ws, []).append(hp_id)
+
+    for ws_id, ids in hp_updates.items():
+        # Batch update in chunks
+        for i in range(0, len(ids), 500):
+            chunk = ids[i:i + 500]
+            ph = ",".join(str(x) for x in chunk)
+            conn.execute(f"UPDATE hand_players SET workspace_id = {ws_id} WHERE id IN ({ph})")
+    logger.info("  Fixed %d hand_players rows", sum(len(v) for v in hp_updates.values()))
+
+    # Fix board_cards (no id column — use delete+reinsert approach):
+    # 1. Deduplicate: keep one row per natural key in workspace 1
+    # 2. Insert copies for each additional workspace
+    multi_hand_ids = list(hand_ws.keys())
+    if multi_hand_ids:
+        # Collect distinct board data for these hands
+        bc_data = conn.execute("""
+            SELECT DISTINCT hand_id, street, card, card_order, board_number
+            FROM board_cards
+            WHERE workspace_id = 1
+              AND hand_id IN (SELECT id FROM hands GROUP BY id HAVING COUNT(DISTINCT workspace_id) > 1)
+            ORDER BY hand_id, board_number, card_order
+        """).fetchall()
+
+        # Delete all board_cards for these hands (both original and duplicates)
+        conn.execute("""
+            DELETE FROM board_cards
+            WHERE hand_id IN (SELECT id FROM hands GROUP BY id HAVING COUNT(DISTINCT workspace_id) > 1)
+        """)
+
+        # Re-insert with correct workspace_ids — one copy per workspace
+        bc_count = 0
+        for hid, street, card, card_order, board_number in bc_data:
+            for ws_id in hand_ws.get(hid, [1]):
+                conn.execute(
+                    "INSERT INTO board_cards (hand_id, street, card, card_order, board_number, workspace_id) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    [hid, street, card, card_order, board_number, ws_id],
+                )
+                if ws_id != 1:
+                    bc_count += 1
+        logger.info("  Fixed board_cards: reinserted for %d non-ws1 rows", bc_count)
+
+    # Fix actions (has id column, same approach as hand_players)
+    dup_act = conn.execute("""
+        SELECT a.id, a.hand_id,
+               ROW_NUMBER() OVER (
+                   PARTITION BY a.hand_id, a.action_order ORDER BY a.id
+               ) as rn
+        FROM actions a
+        WHERE a.workspace_id = 1
+          AND a.hand_id IN (SELECT id FROM hands GROUP BY id HAVING COUNT(DISTINCT workspace_id) > 1)
+    """).fetchall()
+
+    act_updates: dict[int, list[int]] = {}
+    for act_id, hid, rn in dup_act:
+        ws_list = hand_ws.get(hid, [1])
+        target_ws = ws_list[rn - 1] if rn <= len(ws_list) else ws_list[-1]
+        if target_ws != 1:
+            act_updates.setdefault(target_ws, []).append(act_id)
+
+    for ws_id, ids in act_updates.items():
+        for i in range(0, len(ids), 500):
+            chunk = ids[i:i + 500]
+            ph = ",".join(str(x) for x in chunk)
+            conn.execute(f"UPDATE actions SET workspace_id = {ws_id} WHERE id IN ({ph})")
+    logger.info("  Fixed %d actions rows", sum(len(v) for v in act_updates.values()))
+
+    conn.execute(
+        "INSERT OR REPLACE INTO settings VALUES ('fix_child_ws_dups', '1')"
+    )
+    logger.info("Child workspace duplicate fix complete.")
+
+
+def _fix_child_workspace_duplicates_v2(conn: duckdb.DuckDBPyConnection) -> None:
+    """Fix hand_tags and hand_notes that were missed by the original dedup fix.
+
+    The original _fix_child_workspace_duplicates only corrected hand_players,
+    board_cards, and actions. Tags and notes for hands in workspace 2+ remain
+    stranded with workspace_id=1.
+
+    Both hand_tags and hand_notes lack an id column, so we use the
+    delete+reinsert approach (same as board_cards in the original fix).
+    """
+    row = conn.execute(
+        "SELECT value FROM settings WHERE key = 'fix_child_ws_dups_v2'"
+    ).fetchone()
+    if row is not None:
+        return
+
+    # Find hands that exist in multiple workspaces
+    multi_ws = conn.execute("""
+        SELECT id FROM hands GROUP BY id HAVING COUNT(DISTINCT workspace_id) > 1
+    """).fetchall()
+    if not multi_ws:
+        conn.execute(
+            "INSERT OR REPLACE INTO settings VALUES ('fix_child_ws_dups_v2', '1')"
+        )
+        return
+
+    logger.info("Fixing %d hands with duplicated hand_tags/hand_notes across workspaces...", len(multi_ws))
+
+    # Build ordered workspace list per hand_id
+    ws_map = conn.execute("""
+        SELECT id, workspace_id FROM hands
+        WHERE id IN (SELECT id FROM hands GROUP BY id HAVING COUNT(DISTINCT workspace_id) > 1)
+        ORDER BY id, workspace_id
+    """).fetchall()
+    hand_ws: dict[str, list[int]] = {}
+    for hid, wid in ws_map:
+        hand_ws.setdefault(hid, []).append(wid)
+
+    # Fix hand_tags (no id column — delete+reinsert approach, same as board_cards)
+    tag_data = conn.execute("""
+        SELECT DISTINCT hand_id, tag, created_at
+        FROM hand_tags
+        WHERE workspace_id = 1
+          AND hand_id IN (SELECT id FROM hands GROUP BY id HAVING COUNT(DISTINCT workspace_id) > 1)
+        ORDER BY hand_id, tag
+    """).fetchall()
+
+    if tag_data:
+        conn.execute("""
+            DELETE FROM hand_tags
+            WHERE hand_id IN (SELECT id FROM hands GROUP BY id HAVING COUNT(DISTINCT workspace_id) > 1)
+        """)
+
+        tag_count = 0
+        for hid, tag, created_at in tag_data:
+            for ws_id in hand_ws.get(hid, [1]):
+                conn.execute(
+                    "INSERT INTO hand_tags (hand_id, tag, created_at, workspace_id) "
+                    "VALUES (?, ?, ?, ?)",
+                    [hid, tag, created_at, ws_id],
+                )
+                if ws_id != 1:
+                    tag_count += 1
+        logger.info("  Fixed hand_tags: reinserted for %d non-ws1 rows", tag_count)
+
+    # Fix hand_notes (no id column — delete+reinsert approach)
+    note_data = conn.execute("""
+        SELECT DISTINCT hand_id, note, updated_at
+        FROM hand_notes
+        WHERE workspace_id = 1
+          AND hand_id IN (SELECT id FROM hands GROUP BY id HAVING COUNT(DISTINCT workspace_id) > 1)
+        ORDER BY hand_id
+    """).fetchall()
+
+    if note_data:
+        conn.execute("""
+            DELETE FROM hand_notes
+            WHERE hand_id IN (SELECT id FROM hands GROUP BY id HAVING COUNT(DISTINCT workspace_id) > 1)
+        """)
+
+        note_count = 0
+        for hid, note, updated_at in note_data:
+            for ws_id in hand_ws.get(hid, [1]):
+                conn.execute(
+                    "INSERT INTO hand_notes (hand_id, note, updated_at, workspace_id) "
+                    "VALUES (?, ?, ?, ?)",
+                    [hid, note, updated_at, ws_id],
+                )
+                if ws_id != 1:
+                    note_count += 1
+        logger.info("  Fixed hand_notes: reinserted for %d non-ws1 rows", note_count)
+
+    conn.execute(
+        "INSERT OR REPLACE INTO settings VALUES ('fix_child_ws_dups_v2', '1')"
+    )
+    logger.info("Child workspace duplicate fix v2 (tags+notes) complete.")
+
+
+def _migrate_player_classifications_workspace(conn: duckdb.DuckDBPyConnection) -> None:
+    """Add workspace_id to player_classifications for workspace-scoped classification.
+
+    Recreates the table with (player_id, workspace_id) composite PK.
+    Existing rows get workspace_id=1. After migration, batch_update_player_types
+    will recompute per-workspace classifications.
+    """
+    row = conn.execute(
+        "SELECT value FROM settings WHERE key = 'pc_workspace_migration'"
+    ).fetchone()
+    if row is not None:
+        return
+
+    logger.info("Migrating player_classifications to workspace-scoped schema...")
+
+    # Check if old schema (no workspace_id column)
+    cols = conn.execute(
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_name = 'player_classifications'"
+    ).fetchall()
+    col_names = {c[0] for c in cols}
+
+    if "workspace_id" not in col_names:
+        # Recreate table with new schema (DuckDB can't add to PK)
+        conn.execute(
+            "CREATE TABLE _pc_tmp AS "
+            "SELECT player_id, 1 AS workspace_id, player_type "
+            "FROM player_classifications"
+        )
+        conn.execute("DROP TABLE player_classifications")
+        conn.execute("""
+            CREATE TABLE player_classifications (
+                player_id INTEGER NOT NULL,
+                workspace_id INTEGER NOT NULL DEFAULT 1,
+                player_type VARCHAR NOT NULL DEFAULT 'UNK',
+                PRIMARY KEY (player_id, workspace_id)
+            )
+        """)
+        conn.execute(
+            "INSERT INTO player_classifications "
+            "SELECT player_id, workspace_id, player_type FROM _pc_tmp"
+        )
+        conn.execute("DROP TABLE _pc_tmp")
+
+        # Duplicate classifications for each workspace that has hands
+        workspace_ids = conn.execute(
+            "SELECT DISTINCT workspace_id FROM hands WHERE workspace_id != 1"
+        ).fetchall()
+        for (ws_id,) in workspace_ids:
+            conn.execute(
+                "INSERT OR IGNORE INTO player_classifications (player_id, workspace_id, player_type) "
+                "SELECT player_id, ?, player_type FROM player_classifications WHERE workspace_id = 1",
+                [ws_id],
+            )
+
+    conn.execute(
+        "INSERT OR REPLACE INTO settings VALUES ('pc_workspace_migration', '1')"
+    )
+    logger.info("Player classifications workspace migration complete.")
 
 
 def _migrate_hands_composite_key(conn: duckdb.DuckDBPyConnection) -> None:

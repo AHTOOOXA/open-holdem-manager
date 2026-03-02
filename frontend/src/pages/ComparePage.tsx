@@ -3,7 +3,8 @@ import { useQuery } from '@tanstack/react-query';
 import { useWorkspace } from '@/contexts/WorkspaceContext';
 import type { Workspace } from '@/contexts/WorkspaceContext';
 import { useFilterOptions } from '@/hooks/useFilterOptions';
-import type { HeroStats } from '@/lib/api';
+import { fetchCompareStats } from '@/lib/api';
+import type { PeriodStats } from '@/lib/api';
 import { Card, CardContent } from '@/components/ui/card';
 import { DatePicker } from '@/components/ui/date-picker';
 import { Badge } from '@/components/ui/badge';
@@ -19,52 +20,7 @@ import {
 import CompareTable from '@/components/stats/CompareTable';
 import { formatStakes } from '@/lib/utils';
 
-const BASE = '/api';
-
 type CompareMode = 'periods' | 'population' | 'workspace';
-
-interface PeriodStats {
-  date_from: string;
-  date_to: string | null;
-  hands: number;
-  win_rate_bb100: number | null;
-  win_rate_ev_bb100: number | null;
-  stats: HeroStats;
-  player_count?: number | null;
-}
-
-interface CompareResponse {
-  period_a: PeriodStats;
-  period_b: PeriodStats;
-}
-
-// ── API ──────────────────────────────────────────────────────────────
-
-async function fetchCompare(params: {
-  workspace_id: number;
-  mode: CompareMode;
-  period_a_from?: string;
-  period_a_to?: string;
-  period_b_from?: string;
-  period_b_to?: string;
-  workspace_id_b?: number;
-  stakes?: string;
-  game_mode?: string;
-}): Promise<CompareResponse> {
-  const sp = new URLSearchParams();
-  sp.set('workspace_id', String(params.workspace_id));
-  sp.set('mode', params.mode);
-  if (params.period_a_from) sp.set('period_a_from', params.period_a_from);
-  if (params.period_a_to) sp.set('period_a_to', params.period_a_to);
-  if (params.period_b_from) sp.set('period_b_from', params.period_b_from);
-  if (params.period_b_to) sp.set('period_b_to', params.period_b_to);
-  if (params.workspace_id_b != null) sp.set('workspace_id_b', String(params.workspace_id_b));
-  if (params.stakes) sp.set('stakes', params.stakes);
-  if (params.game_mode) sp.set('game_mode', params.game_mode === '__reg__' ? '' : params.game_mode);
-  const res = await fetch(`${BASE}/compare/stats?${sp}`);
-  if (!res.ok) throw new Error('Compare failed');
-  return res.json();
-}
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -130,7 +86,6 @@ export default function ComparePage() {
 
   const queryParams = useMemo(() => {
     const base = {
-      workspace_id: activeWorkspaceId,
       mode,
       stakes: stakes || undefined,
       game_mode: gameMode || undefined,
@@ -149,11 +104,11 @@ export default function ComparePage() {
     }
     // population
     return base;
-  }, [activeWorkspaceId, mode, aFrom, aTo, bFrom, bTo, wsIdB, stakes, gameMode]);
+  }, [mode, aFrom, aTo, bFrom, bTo, wsIdB, stakes, gameMode]);
 
   const { data, isPending } = useQuery({
-    queryKey: ['compare', queryParams],
-    queryFn: () => fetchCompare(queryParams as Parameters<typeof fetchCompare>[0]),
+    queryKey: ['compare', activeWorkspaceId, queryParams],
+    queryFn: () => fetchCompareStats(queryParams as Parameters<typeof fetchCompareStats>[0]),
     enabled: canCompare,
   });
 

@@ -151,7 +151,7 @@ def list_hands(
     main_sql = f"""
         SELECT h.id, h.played_at, h.stakes, h.bb_amount,
                hp.position, hp.card1, hp.card2, hp.won_bb,
-               hp.all_in_ev_bb
+               hp.all_in_ev_bb, h.rit_boards, h.is_cashout
         FROM hands h
         JOIN hand_players hp ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id AND hp.player_id = ?
         WHERE 1=1 {where_sql}
@@ -176,9 +176,9 @@ def list_hands(
     for hid, tag in tag_rows:
         tags_map.setdefault(hid, []).append(tag)
 
-    # Batch fetch board cards by street
+    # Batch fetch board cards by street (Board 1 only for list view)
     board_rows = db.execute(
-        f"SELECT hand_id, street, card FROM board_cards WHERE hand_id IN ({ph}) AND workspace_id = ? ORDER BY hand_id, card_order",
+        f"SELECT hand_id, street, card FROM board_cards WHERE hand_id IN ({ph}) AND workspace_id = ? AND board_number = 1 ORDER BY hand_id, card_order",
         hand_ids + [workspace_id],
     ).fetchall()
     board_map: dict[str, dict[str, list[str]]] = {}
@@ -191,8 +191,8 @@ def list_hands(
     # Try batch fetch actions from DB
     action_rows = db.execute(
         f"SELECT a.hand_id, a.street, a.action_type, a.amount_bb, a.player_id "
-        f"FROM actions a WHERE a.hand_id IN ({ph}) ORDER BY a.hand_id, a.action_order",
-        hand_ids,
+        f"FROM actions a WHERE a.hand_id IN ({ph}) AND a.workspace_id = ? ORDER BY a.hand_id, a.action_order",
+        hand_ids + [workspace_id],
     ).fetchall()
 
     actions_map: dict[str, dict[str, dict]] = {}
@@ -229,8 +229,8 @@ def list_hands(
     if missing_ids:
         mph = ",".join("?" for _ in missing_ids)
         raw_rows = db.execute(
-            f"SELECT id, raw_text, bb_amount FROM hands WHERE id IN ({mph})",
-            missing_ids,
+            f"SELECT id, raw_text, bb_amount FROM hands WHERE id IN ({mph}) AND workspace_id = ?",
+            missing_ids + [workspace_id],
         ).fetchall()
         for hid, raw_text, bb_amt in raw_rows:
             if not raw_text:
@@ -257,6 +257,8 @@ def list_hands(
             card2=r[6],
             won_bb=float(r[7]),
             all_in_ev_bb=float(r[8]) if r[8] is not None else float(r[7]),
+            rit_boards=int(r[9]) if r[9] is not None else 1,
+            is_cashout=bool(r[10]) if r[10] is not None else False,
             tags=tags_map.get(hid, []),
             preflop_actions=hand_acts["preflop"]["actions"],
             flop_cards=board["flop"],
@@ -288,7 +290,8 @@ def get_hand(hand_id: str, workspace_id: int = Query(1)):
     hero_username = get_hero_username(db, workspace_id)
 
     hand_row = db.execute(
-        "SELECT id, played_at, stakes, bb_amount, table_name, table_size, raw_text "
+        "SELECT id, played_at, stakes, bb_amount, table_name, table_size, raw_text, "
+        "rit_boards, is_cashout "
         "FROM hands WHERE id = ? AND workspace_id = ?",
         [hand_id, workspace_id],
     ).fetchone()
@@ -304,10 +307,10 @@ def get_hand(hand_id: str, workspace_id: int = Query(1)):
         "hp.won_bb, hp.player_id, COALESCE(pc.player_type, 'UNK') "
         "FROM hand_players hp "
         "JOIN players p ON p.id = hp.player_id "
-        "LEFT JOIN player_classifications pc ON pc.player_id = p.id "
-        "WHERE hp.hand_id = ? "
+        "LEFT JOIN player_classifications pc ON pc.player_id = p.id AND pc.workspace_id = hp.workspace_id "
+        "WHERE hp.hand_id = ? AND hp.workspace_id = ? "
         "ORDER BY hp.seat",
-        [hand_id],
+        [hand_id, workspace_id],
     ).fetchall()
 
     players = []
@@ -326,19 +329,29 @@ def get_hand(hand_id: str, workspace_id: int = Query(1)):
             player_type=pr[8] or "UNK",
         ))
 
-    # Board cards
+    # Board cards — group by board_number (1=primary, 2+=extra boards)
     board_rows = db.execute(
-        "SELECT street, card FROM board_cards WHERE hand_id = ? ORDER BY card_order",
-        [hand_id],
+        "SELECT street, card, board_number FROM board_cards WHERE hand_id = ? AND workspace_id = ? ORDER BY board_number, card_order",
+        [hand_id, workspace_id],
     ).fetchall()
     board = BoardCards()
-    for street, card in board_rows:
+    extra_boards_map: dict[int, BoardCards] = {}
+    for street, card, bn in board_rows:
+        if bn == 1:
+            target = board
+        else:
+            if bn not in extra_boards_map:
+                extra_boards_map[bn] = BoardCards()
+            target = extra_boards_map[bn]
         if street == "flop":
-            board.flop.append(card)
+            target.flop.append(card)
         elif street == "turn":
-            board.turn.append(card)
+            target.turn.append(card)
         elif street == "river":
-            board.river.append(card)
+            target.river.append(card)
+    extra_boards_list = [extra_boards_map[k] for k in sorted(extra_boards_map.keys())]
+    rit_boards = int(hand_row[7]) if hand_row[7] is not None else 1
+    is_cashout = bool(hand_row[8]) if hand_row[8] is not None else False
 
     # Build username→position map from player rows
     username_to_position: dict[str, str] = {}
@@ -416,6 +429,9 @@ def get_hand(hand_id: str, workspace_id: int = Query(1)):
         raw_text=raw_text,
         players=players,
         board=board,
+        extra_boards=extra_boards_list,
+        rit_boards=rit_boards,
+        is_cashout=is_cashout,
         actions=actions,
         tags=tag_list,
         note=note,

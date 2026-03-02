@@ -307,8 +307,8 @@ def get_stat_detail_hands(
     hand_ids = [r[0] for r in rows]
     ph = ",".join("?" for _ in hand_ids)
     board_rows = db.execute(
-        f"SELECT hand_id, street, card FROM board_cards WHERE hand_id IN ({ph}) ORDER BY hand_id, card_order",
-        hand_ids,
+        f"SELECT hand_id, street, card FROM board_cards WHERE hand_id IN ({ph}) AND workspace_id = ? ORDER BY hand_id, card_order",
+        hand_ids + [workspace_id],
     ).fetchall()
     board_map: dict[str, dict[str, list[str]]] = {}
     for hid, street, card in board_rows:
@@ -715,7 +715,7 @@ def get_sizing(
     q = f"""
         SELECT a.amount_bb
         FROM actions a
-        JOIN hand_players hp ON a.hand_id = hp.hand_id AND a.player_id = hp.player_id
+        JOIN hand_players hp ON a.hand_id = hp.hand_id AND a.player_id = hp.player_id AND a.workspace_id = hp.workspace_id
         JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
         WHERE {base_where} AND ({flag_filter})
           AND a.street = 'preflop' AND ({action_filter})

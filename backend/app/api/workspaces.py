@@ -185,24 +185,24 @@ def delete_workspace(workspace_id: int):
             placeholders = ",".join("?" for _ in hand_ids)
 
             db.execute(
-                f"DELETE FROM hand_notes WHERE hand_id IN ({placeholders})",
-                hand_ids,
+                f"DELETE FROM hand_notes WHERE hand_id IN ({placeholders}) AND workspace_id = ?",
+                hand_ids + [workspace_id],
             )
             db.execute(
-                f"DELETE FROM hand_tags WHERE hand_id IN ({placeholders})",
-                hand_ids,
+                f"DELETE FROM hand_tags WHERE hand_id IN ({placeholders}) AND workspace_id = ?",
+                hand_ids + [workspace_id],
             )
             db.execute(
-                f"DELETE FROM board_cards WHERE hand_id IN ({placeholders})",
-                hand_ids,
+                f"DELETE FROM board_cards WHERE hand_id IN ({placeholders}) AND workspace_id = ?",
+                hand_ids + [workspace_id],
             )
             db.execute(
-                f"DELETE FROM actions WHERE hand_id IN ({placeholders})",
-                hand_ids,
+                f"DELETE FROM actions WHERE hand_id IN ({placeholders}) AND workspace_id = ?",
+                hand_ids + [workspace_id],
             )
             db.execute(
-                f"DELETE FROM hand_players WHERE hand_id IN ({placeholders})",
-                hand_ids,
+                f"DELETE FROM hand_players WHERE hand_id IN ({placeholders}) AND workspace_id = ?",
+                hand_ids + [workspace_id],
             )
             db.execute(
                 f"DELETE FROM hands WHERE workspace_id = ?", [workspace_id]

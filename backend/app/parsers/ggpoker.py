@@ -50,6 +50,9 @@ class ParsedHand:
     bb_player: str | None
     raw_text: str
     cash_drop_received: Decimal = _ZERO
+    extra_boards: list[dict[str, list[str]]] = field(default_factory=list)
+    rit_boards: int = 1       # 1=normal, 2=RIT, 3=RIT3
+    is_cashout: bool = False
 
 
 # Position labels for 6-max (clockwise from BTN)
@@ -66,13 +69,12 @@ POSITIONS_BY_COUNT = {
     9: ["BTN", "SB", "BB", "UTG", "UTG1", "EP", "MP", "HJ", "CO"],
 }
 
-# Single combined skip regex (12 patterns → 1 search per line)
+# Single combined skip regex (patterns → 1 search per line)
 RE_SKIP = re.compile(
     r"is disconnected|has timed out|is sitting out|is connected|"
     r"has returned|Cashout:|was removed from the table|said,|"
     r"leaves the table|joins the table|"
     r"\*\*\* (?:FIRST|SECOND) BOARD \*\*\*|"
-    r"\*\*\* (?:SECOND|THIRD) (?:FLOP|TURN|RIVER) \*\*\*|"
     r"\*\*\* (?:SECOND|THIRD) SHOWDOWN \*\*\*|"
     r"^Hand was run"
 )
@@ -152,6 +154,13 @@ RE_SHOWED = re.compile(
 RE_FLOP = re.compile(r"\*\*\* (?:FIRST )?FLOP \*\*\* \[(.+?)\]")
 RE_TURN = re.compile(r"\*\*\* (?:FIRST )?TURN \*\*\* \[.+?\] \[(\w{2})\]")
 RE_RIVER = re.compile(r"\*\*\* (?:FIRST )?RIVER \*\*\* \[.+?\] \[(\w{2})\]")
+RE_SECOND_FLOP  = re.compile(r"\*\*\* SECOND FLOP \*\*\* \[(.+?)\]")
+RE_SECOND_TURN  = re.compile(r"\*\*\* SECOND TURN \*\*\* \[.+?\] \[(\w{2})\]")
+RE_SECOND_RIVER = re.compile(r"\*\*\* SECOND RIVER \*\*\* \[.+?\] \[(\w{2})\]")
+RE_THIRD_FLOP   = re.compile(r"\*\*\* THIRD FLOP \*\*\* \[(.+?)\]")
+RE_THIRD_TURN   = re.compile(r"\*\*\* THIRD TURN \*\*\* \[.+?\] \[(\w{2})\]")
+RE_THIRD_RIVER  = re.compile(r"\*\*\* THIRD RIVER \*\*\* \[.+?\] \[(\w{2})\]")
+RE_CASHOUT      = re.compile(r"Chooses to EV Cashout|Receives Cashout")
 RE_SHOWDOWN = re.compile(r"\*\*\* (?:FIRST )?SHOW\s?DOWN \*\*\*")
 RE_SUMMARY = re.compile(r"\*\*\* SUMMARY \*\*\*")
 RE_DOES_NOT_SHOW = re.compile(r"^(.+?): does not show hand")
@@ -340,6 +349,9 @@ def parse_hand_history(hand_text: str) -> ParsedHand:
     actions_by_street = {"preflop": [], "flop": [], "turn": [], "river": []}
     current_street = "preflop"
     board_cards = {"flop": [], "turn": [], "river": []}
+    _board2: dict[str, list[str]] = {"flop": [], "turn": [], "river": []}
+    _board3: dict[str, list[str]] = {"flop": [], "turn": [], "river": []}
+    is_cashout = False
     uncalled_returns = {}  # username -> amount
     collected = {}  # username -> total amount collected
     total_rake = _ZERO
@@ -386,6 +398,40 @@ def parse_hand_history(hand_text: str) -> ParsedHand:
             current_street = "river"
             board_cards["river"] = [m.group(1)]
             continue
+
+        # Second board (Run It Twice)
+        m = RE_SECOND_FLOP.match(line)
+        if m:
+            _board2["flop"] = m.group(1).split()
+            continue
+        m = RE_SECOND_TURN.match(line)
+        if m:
+            _board2["turn"] = [m.group(1)]
+            continue
+        m = RE_SECOND_RIVER.match(line)
+        if m:
+            _board2["river"] = [m.group(1)]
+            continue
+
+        # Third board (Run It Three Times)
+        m = RE_THIRD_FLOP.match(line)
+        if m:
+            _board3["flop"] = m.group(1).split()
+            continue
+        m = RE_THIRD_TURN.match(line)
+        if m:
+            _board3["turn"] = [m.group(1)]
+            continue
+        m = RE_THIRD_RIVER.match(line)
+        if m:
+            _board3["river"] = [m.group(1)]
+            continue
+
+        # EV Cashout detection
+        if RE_CASHOUT.search(line):
+            is_cashout = True
+            continue
+
         if RE_SHOWDOWN.match(line):
             in_showdown = True
             continue
@@ -615,6 +661,15 @@ def parse_hand_history(hand_text: str) -> ParsedHand:
                 })
             continue
 
+    # Assemble extra boards from RIT data
+    # A board is non-empty if ANY street has cards (RIT can start at flop, turn, or river)
+    extra_boards: list[dict[str, list[str]]] = []
+    if _board2["flop"] or _board2["turn"] or _board2["river"]:
+        extra_boards.append(_board2)
+    if _board3["flop"] or _board3["turn"] or _board3["river"]:
+        extra_boards.append(_board3)
+    rit_boards = 1 + len(extra_boards)
+
     return ParsedHand(
         hand_id=hand_id,
         site_id=SITE_ID,
@@ -641,4 +696,7 @@ def parse_hand_history(hand_text: str) -> ParsedHand:
         bb_player=bb_player,
         cash_drop_received=cash_drop_received,
         raw_text=hand_text,
+        extra_boards=extra_boards,
+        rit_boards=rit_boards,
+        is_cashout=is_cashout,
     )

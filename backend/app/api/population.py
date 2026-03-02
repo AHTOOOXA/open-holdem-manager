@@ -147,7 +147,7 @@ def population_overview(
             FROM hand_players hp
             JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
             JOIN players p ON p.id = hp.player_id
-            LEFT JOIN player_classifications pc ON pc.player_id = p.id
+            LEFT JOIN player_classifications pc ON pc.player_id = p.id AND pc.workspace_id = h.workspace_id
             WHERE 1=1 {where_sql}
             GROUP BY hp.player_id
             {having_sql}
@@ -192,7 +192,7 @@ def population_full_stats(
         FROM hand_players hp
         JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
         JOIN players p ON p.id = hp.player_id
-        LEFT JOIN player_classifications pc ON pc.player_id = p.id
+        LEFT JOIN player_classifications pc ON pc.player_id = p.id AND pc.workspace_id = h.workspace_id
         WHERE 1=1 {where_sql}
         GROUP BY hp.player_id
         {having_sql}
@@ -255,7 +255,7 @@ def population_preflop(
             FROM hand_players hp
             JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
             JOIN players p ON p.id = hp.player_id
-            LEFT JOIN player_classifications pc ON pc.player_id = p.id
+            LEFT JOIN player_classifications pc ON pc.player_id = p.id AND pc.workspace_id = h.workspace_id
             WHERE 1=1 {where_sql}
             GROUP BY hp.player_id
             {having_sql}
@@ -280,8 +280,9 @@ def population_preflop(
         JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
         JOIN eligible e ON e.player_id = hp.player_id
         WHERE hp.position IN ('EP','MP','CO','BTN','SB','BB')
+          AND h.workspace_id = ?
         GROUP BY hp.position
-    """, params).fetchall()
+    """, params + [workspace_id]).fetchall()
 
     # Build position maps
     pos_data: dict[str, dict] = {}
@@ -387,7 +388,7 @@ def population_segments(
             FROM hand_players hp
             JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
             JOIN players p ON p.id = hp.player_id
-            LEFT JOIN player_classifications pc ON pc.player_id = p.id
+            LEFT JOIN player_classifications pc ON pc.player_id = p.id AND pc.workspace_id = h.workspace_id
             WHERE 1=1 {where_sql}
             GROUP BY hp.player_id, COALESCE(pc.player_type, 'UNK')
             {having_sql}
@@ -469,7 +470,7 @@ def population_postflop(
             FROM hand_players hp
             JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
             JOIN players p ON p.id = hp.player_id
-            LEFT JOIN player_classifications pc ON pc.player_id = p.id
+            LEFT JOIN player_classifications pc ON pc.player_id = p.id AND pc.workspace_id = h.workspace_id
             WHERE 1=1 {where_sql}
             GROUP BY hp.player_id
             {having_sql}
@@ -498,7 +499,8 @@ def population_postflop(
         FROM hand_players hp
         JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
         JOIN eligible e ON e.player_id = hp.player_id
-    """, params).fetchone()
+        WHERE h.workspace_id = ?
+    """, params + [workspace_id]).fetchone()
 
     if not rows:
         return PostflopResponse(lines=[])
@@ -561,7 +563,7 @@ def population_pot_types(
             FROM hand_players hp
             JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
             JOIN players p ON p.id = hp.player_id
-            LEFT JOIN player_classifications pc ON pc.player_id = p.id
+            LEFT JOIN player_classifications pc ON pc.player_id = p.id AND pc.workspace_id = h.workspace_id
             WHERE 1=1 {where_sql}
             GROUP BY hp.player_id
             {having_sql}
@@ -578,9 +580,10 @@ def population_pot_types(
         FROM hand_players hp
         JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
         JOIN eligible e ON e.player_id = hp.player_id
+        WHERE h.workspace_id = ?
         GROUP BY COALESCE(hp.pot_type, 'SRP')
         ORDER BY hands DESC
-    """, params).fetchall()
+    """, params + [workspace_id]).fetchall()
 
     def pct(c, o):
         return round(float(c) / float(o) * 100, 1) if o and o > 0 else None
@@ -636,7 +639,7 @@ def population_showdown(
             FROM hand_players hp
             JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
             JOIN players p ON p.id = hp.player_id
-            LEFT JOIN player_classifications pc ON pc.player_id = p.id
+            LEFT JOIN player_classifications pc ON pc.player_id = p.id AND pc.workspace_id = h.workspace_id
             WHERE 1=1 {where_sql}
             GROUP BY hp.player_id
             {having_sql}
@@ -655,8 +658,9 @@ def population_showdown(
         JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
         JOIN eligible e ON e.player_id = hp.player_id
         WHERE hp.position IN ('EP','MP','CO','BTN','SB','BB')
+          AND h.workspace_id = ?
         GROUP BY hp.position
-    """, params).fetchall()
+    """, params + [workspace_id]).fetchall()
 
     def pct(c, o):
         return round(float(c) / float(o) * 100, 1) if o and o > 0 else None
@@ -690,7 +694,8 @@ def population_showdown(
         FROM hand_players hp
         JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
         JOIN eligible e ON e.player_id = hp.player_id
-    """, params).fetchone()
+        WHERE h.workspace_id = ?
+    """, params + [workspace_id]).fetchone()
 
     af_f = round(float(agg[0]) / float(agg[1]), 2) if agg and agg[1] and agg[1] > 0 else None
     af_t = round(float(agg[2]) / float(agg[3]), 2) if agg and agg[3] and agg[3] > 0 else None
@@ -743,7 +748,7 @@ def population_hu_vs_mw(
             FROM hand_players hp
             JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
             JOIN players p ON p.id = hp.player_id
-            LEFT JOIN player_classifications pc ON pc.player_id = p.id
+            LEFT JOIN player_classifications pc ON pc.player_id = p.id AND pc.workspace_id = h.workspace_id
             WHERE 1=1 {where_sql}
             GROUP BY hp.player_id
             {having_sql}
@@ -763,8 +768,9 @@ def population_hu_vs_mw(
         JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
         JOIN eligible e ON e.player_id = hp.player_id
         WHERE hp.saw_flop = true
+          AND h.workspace_id = ?
         GROUP BY CASE WHEN COALESCE(hp.is_multiway, false) THEN 'Multiway' ELSE 'Heads-Up' END
-    """, params).fetchall()
+    """, params + [workspace_id]).fetchall()
 
     def pct(c, o):
         return round(float(c) / float(o) * 100, 1) if o and o > 0 else None
@@ -816,7 +822,7 @@ def population_comparison(
             FROM hand_players hp
             JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
             JOIN players p ON p.id = hp.player_id
-            LEFT JOIN player_classifications pc ON pc.player_id = p.id
+            LEFT JOIN player_classifications pc ON pc.player_id = p.id AND pc.workspace_id = h.workspace_id
             WHERE 1=1 {where_sql}
             GROUP BY hp.player_id
             {having_sql}
@@ -837,7 +843,8 @@ def population_comparison(
         FROM hand_players hp
         JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
         JOIN eligible e ON e.player_id = hp.player_id
-    """, params).fetchone()
+        WHERE h.workspace_id = ?
+    """, params + [workspace_id]).fetchone()
 
     # Get hero stats
     hero = None

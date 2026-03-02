@@ -175,6 +175,8 @@ class HandSummary(BaseModel):
     card2: Optional[str] = None
     won_bb: float
     all_in_ev_bb: float = 0
+    rit_boards: int = 1
+    is_cashout: bool = False
     tags: list[str] = []
     preflop_actions: list[ActionItem] = []
     flop_cards: list[str] = []
@@ -234,6 +236,9 @@ class HandDetail(BaseModel):
     raw_text: Optional[str] = None
     players: list[HandPlayerDetail] = []
     board: BoardCards = BoardCards()
+    extra_boards: list[BoardCards] = []
+    rit_boards: int = 1
+    is_cashout: bool = False
     actions: list[HandAction] = []
     tags: list[str] = []
     note: Optional[str] = None
