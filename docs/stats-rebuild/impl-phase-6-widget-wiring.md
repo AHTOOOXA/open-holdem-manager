@@ -586,36 +586,36 @@ Verify these endpoints return 200 (not 404) for newly configured stats:
 
 ```bash
 # EV Breakdown
-curl -s localhost:8000/api/stats/detail/steal/ev-breakdown | jq .stat_key
-curl -s localhost:8000/api/stats/detail/cbet_flop/ev-breakdown | jq .stat_key
-curl -s localhost:8000/api/stats/detail/went_to_showdown/ev-breakdown | jq .stat_key
-curl -s localhost:8000/api/stats/detail/donk_bet_flop/ev-breakdown | jq .stat_key
-curl -s localhost:8000/api/stats/detail/af_flop/ev-breakdown | jq .stat_key
+curl -s localhost:4243/api/stats/detail/steal/ev-breakdown | jq .stat_key
+curl -s localhost:4243/api/stats/detail/cbet_flop/ev-breakdown | jq .stat_key
+curl -s localhost:4243/api/stats/detail/went_to_showdown/ev-breakdown | jq .stat_key
+curl -s localhost:4243/api/stats/detail/donk_bet_flop/ev-breakdown | jq .stat_key
+curl -s localhost:4243/api/stats/detail/af_flop/ev-breakdown | jq .stat_key
 
 # By Context
-curl -s localhost:8000/api/stats/detail/steal/by-context | jq .dimension
-curl -s localhost:8000/api/stats/detail/cbet_flop/by-context | jq .dimension
-curl -s localhost:8000/api/stats/detail/went_to_showdown/by-context | jq .dimension
-curl -s localhost:8000/api/stats/detail/afq_flop/by-context | jq .dimension
+curl -s localhost:4243/api/stats/detail/steal/by-context | jq .dimension
+curl -s localhost:4243/api/stats/detail/cbet_flop/by-context | jq .dimension
+curl -s localhost:4243/api/stats/detail/went_to_showdown/by-context | jq .dimension
+curl -s localhost:4243/api/stats/detail/afq_flop/by-context | jq .dimension
 
 # Fold Equity
-curl -s localhost:8000/api/stats/detail/steal/fold-equity | jq .fold_pct
-curl -s localhost:8000/api/stats/detail/cbet_river/fold-equity | jq .fold_pct
-curl -s localhost:8000/api/stats/detail/iso_raise/fold-equity | jq .fold_pct
+curl -s localhost:4243/api/stats/detail/steal/fold-equity | jq .fold_pct
+curl -s localhost:4243/api/stats/detail/cbet_river/fold-equity | jq .fold_pct
+curl -s localhost:4243/api/stats/detail/iso_raise/fold-equity | jq .fold_pct
 
 # Postflop Bridge
-curl -s localhost:8000/api/stats/detail/steal/postflop-bridge | jq .cbet_pct
-curl -s localhost:8000/api/stats/detail/call_steal/postflop-bridge | jq .cbet_pct
+curl -s localhost:4243/api/stats/detail/steal/postflop-bridge | jq .cbet_pct
+curl -s localhost:4243/api/stats/detail/call_steal/postflop-bridge | jq .cbet_pct
 
 # Sizing (requires street fix)
-curl -s localhost:8000/api/stats/detail/cbet_flop/sizing | jq .total
-curl -s localhost:8000/api/stats/detail/cbet_turn/sizing | jq .total
+curl -s localhost:4243/api/stats/detail/cbet_flop/sizing | jq .total
+curl -s localhost:4243/api/stats/detail/cbet_turn/sizing | jq .total
 
 # Response Decomposition (analysis endpoint)
-curl -s localhost:8000/api/stats/detail/cbet_flop/analysis | jq .response_distribution
+curl -s localhost:4243/api/stats/detail/cbet_flop/analysis | jq .response_distribution
 
 # Composition
-curl -s localhost:8000/api/stats/detail/wwsf/composition | jq .total
+curl -s localhost:4243/api/stats/detail/wwsf/composition | jq .total
 ```
 
 ### Regression checks

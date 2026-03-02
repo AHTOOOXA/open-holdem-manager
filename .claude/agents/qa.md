@@ -32,11 +32,11 @@ Before running any checks:
 
 2. **Check backend health**:
    ```bash
-   curl -sf http://localhost:8000/api/health
+   curl -sf http://localhost:4243/api/health
    ```
    If this fails, report FAIL and stop — the backend is not running.
 
-3. **Connect to browser**: Use `list_pages` to find the page at `localhost:5173`. If no page is found, report FAIL and stop — the frontend is not open in Chrome.
+3. **Connect to browser**: Use `list_pages` to find the page at `localhost:4242`. If no page is found, report FAIL and stop — the frontend is not open in Chrome.
 
 4. **Select the page** with `select_page` and set viewport:
    ```
@@ -45,10 +45,10 @@ Before running any checks:
 
 5. **Probe data state** — curl these endpoints and store counts for conditional checks:
    ```bash
-   curl -sf http://localhost:8000/api/health                          # hand_count, phase
-   curl -sf http://localhost:8000/api/workspaces                      # workspace list
-   curl -sf "http://localhost:8000/api/workspaces/1/checkpoints"      # checkpoint list
-   curl -sf http://localhost:8000/api/identities                      # identity list
+   curl -sf http://localhost:4243/api/health                          # hand_count, phase
+   curl -sf http://localhost:4243/api/workspaces                      # workspace list
+   curl -sf "http://localhost:4243/api/workspaces/1/checkpoints"      # checkpoint list
+   curl -sf http://localhost:4243/api/identities                      # identity list
    ```
    Store: `HAND_COUNT`, `WORKSPACE_COUNT`, `CHECKPOINT_COUNT`, `IDENTITY_COUNT`.
 

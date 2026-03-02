@@ -585,11 +585,11 @@ Purpose-built dashboards for common spots instead of raw stat tables:
 ┌─────────────────────────────────────────────────────┐
 │                 React Frontend                       │
 │    (React 19, TypeScript 5.9, Vite 7, Tailwind v4) │
-│              localhost:5173 (dev)                    │
+│              localhost:4242 (dev)                    │
 ├─────────────────────────────────────────────────────┤
 │              Python 3.12+ Backend                    │
 │   (FastAPI, DuckDB, PyArrow, eval7, Pydantic)       │
-│              localhost:8000                          │
+│              localhost:4243                          │
 ├─────────────────────────────────────────────────────┤
 │                   DuckDB                             │
 │           (single file: data/poker.duckdb)          │
@@ -632,7 +632,7 @@ holdem-manager/
 │   │       ├── GraphPage.tsx    # Results dashboard (graph, stat cards, breakdowns)
 │   │       └── HandsPage.tsx    # Hand browser with filtering, tagging, detail drawer
 │   ├── package.json
-│   └── vite.config.ts          # React plugin, Tailwind v4 plugin, API proxy to :8000
+│   └── vite.config.ts          # React plugin, Tailwind v4 plugin, API proxy to :4243
 ├── backend/
 │   ├── app/
 │   │   ├── main.py             # FastAPI app, CORS, startup, health

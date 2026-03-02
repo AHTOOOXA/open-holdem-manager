@@ -6,7 +6,7 @@ from app.main import app
 
 def main():
     parser = argparse.ArgumentParser(description="OHM Backend Server")
-    parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument("--port", type=int, default=4243)
     parser.add_argument("--host", type=str, default="127.0.0.1")
     args = parser.parse_args()
 

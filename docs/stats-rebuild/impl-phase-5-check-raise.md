@@ -399,7 +399,7 @@ After deploying all changes, a rebuild is required to backfill the 6 new columns
 
 ```bash
 # Via API
-curl -X POST http://localhost:8000/api/import/rebuild
+curl -X POST http://localhost:4243/api/import/rebuild
 
 # Or via the Upload page "Rebuild" button in the UI
 ```

@@ -525,7 +525,7 @@ Fold to CBet Flop | 42%  | 38% | 40% | 44% | 46% | 45% | 40%
 ### Backend
 
 - [ ] `cd backend && python -m pytest tests/test_parser.py -v` -- all existing tests pass
-- [ ] Start backend: `cd backend && uvicorn app.main:app --reload --port 8000`
+- [ ] Start backend: `cd backend && uvicorn app.main:app --reload --port 4243`
 - [ ] `GET /api/stats/hero` returns the four new `StatValue` fields: `cbet_flop_srp`, `cbet_flop_3bp`, `fold_cbet_flop_srp`, `fold_cbet_flop_3bp`
 - [ ] Each new field has `value` (float or null) and `sample` (int) properties
 - [ ] `cbet_flop_srp.sample + cbet_flop_3bp.sample == cbet_flop.total.sample` (SRP + 3BP opportunities = total c-bet opportunities)

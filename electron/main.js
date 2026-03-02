@@ -316,7 +316,7 @@ app.whenReady().then(async () => {
 
     if (isDev) {
       // Dev: Vite dev server should already be running
-      url = 'http://localhost:5173';
+      url = 'http://localhost:4242';
     } else {
       // Production: start backend on a random free port
       const port = await findFreePort();

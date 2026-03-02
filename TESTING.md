@@ -11,12 +11,12 @@ Comprehensive test plan for Workspaces, Checkpoints, Compare, Player Identities,
 ### 1.1 First launch on clean DB
 - [ ] Delete `data/poker.duckdb` if present
 - [ ] Run `make dev`
-- [ ] Verify app loads at `localhost:5173` with no errors
+- [ ] Verify app loads at `localhost:4242` with no errors
 - [ ] Verify default workspace "My Game" exists in sidebar switcher
 - [ ] Verify default view "My Stats" exists in sidebar switcher
 - [ ] Navigate to `/settings/workspaces` — confirm one workspace card with hero "Hero"
 - [ ] Navigate to `/settings/views` — confirm one view card "My Stats" (Single Player)
-- [ ] Check Swagger at `localhost:8000/docs` — all new endpoints listed
+- [ ] Check Swagger at `localhost:4243/docs` — all new endpoints listed
 
 ### 1.2 Migration from existing DB (if available)
 - [x] Start with a pre-existing `poker.duckdb` that has hands but no workspaces table

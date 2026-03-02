@@ -22,7 +22,7 @@ Local poker hand history tracker for GGPoker Rush & Cash. Parses hand histories,
 
 ```bash
 make setup    # install deps
-make dev      # starts backend (port 8000) + frontend (port 5173)
+make dev      # starts backend (port 4243) + frontend (port 4242)
 ```
 
 ## Tech Stack

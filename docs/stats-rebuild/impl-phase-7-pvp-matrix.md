@@ -627,7 +627,7 @@ Single-row strip. BB defends least vs EP opens (strongest range) and most vs SB 
 ### Backend
 
 1. `cd backend && python -m pytest tests/test_parser.py -v` -- all tests pass (no parser/stat_flags changes)
-2. Start backend: `cd backend && uvicorn app.main:app --reload --port 8000`
+2. Start backend: `cd backend && uvicorn app.main:app --reload --port 4243`
 3. `GET /api/stats/detail/three_bet/pvp-matrix` returns `PvpMatrixResponse` with cells containing `hero_pos`, `villain_pos`, `actions`, `opportunities`, `pct`
 4. `GET /api/stats/detail/three_bet/pvp-matrix?position=BB` returns cells where `hero_pos` is always `BB`
 5. `GET /api/stats/detail/three_bet/pvp-matrix?stakes=$0.05/$0.10` returns filtered results

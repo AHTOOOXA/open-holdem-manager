@@ -16,23 +16,23 @@ A local poker hand history tracker (like Hand2Note / HoldemManager) for GGPoker 
 
 ```bash
 make setup        # install deps: pip install -r requirements.txt && npm install
-make dev          # starts backend (port 8000) + frontend (port 5173)
+make dev          # starts backend (port 4243) + frontend (port 4242)
 make backend      # backend only
 make frontend     # frontend only
 ```
 
-Backend: `cd backend && uvicorn app.main:app --reload --port 8000`
+Backend: `cd backend && uvicorn app.main:app --reload --port 4243`
 Frontend: `cd frontend && npm run dev`
 Electron dev: `make electron-dev` (starts backend + frontend + Electron window)
 Electron build: `make electron-build` (builds .dmg/.exe via PyInstaller + electron-builder)
 Landing page: `make landing` (dev server) or `cd frontend && npm run build:landing` (build to `dist-landing/`)
 Tests: `cd backend && python -m pytest tests/test_parser.py -v`
 Lint: `cd frontend && npm run lint`
-API docs: http://localhost:8000/docs (FastAPI auto-generated Swagger)
+API docs: http://localhost:4243/docs (FastAPI auto-generated Swagger)
 
 ## Frontend Config
 
-- Vite proxies `/api` requests to `http://localhost:8000` (see `frontend/vite.config.ts`)
+- Vite proxies `/api` requests to `http://localhost:4243` (see `frontend/vite.config.ts`)
 - Path alias: `@/` maps to `./src/` (configured in `tsconfig.app.json`)
 - Dark theme defined via Tailwind `@theme` in `frontend/src/index.css` — custom CSS vars: `--color-background`, `--color-surface`, `--color-primary` (indigo #6366f1), `--color-green`, `--color-red`, etc.
 
@@ -136,7 +136,7 @@ Player cache (`_player_cache`, `_next_*_id`) lives in `import_hands.py`. Call `r
 
 ### Architecture
 
-**Dev**: backend (port 8000) + frontend (port 5173) run separately, Electron opens `localhost:5173`, CORS enabled.
+**Dev**: backend (port 4243) + frontend (port 4242) run separately, Electron opens `localhost:4242`, CORS enabled.
 **Prod**: Electron finds free port, spawns PyInstaller backend, backend serves built frontend via `OHM_STATIC_DIR`, single origin.
 
 ### Environment Variables
