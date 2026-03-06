@@ -9,6 +9,7 @@ import TagPicker from './TagPicker';
 import { formatStakes } from '@/lib/utils';
 import { getShareUrl, anonymizeHand } from '@/lib/hand-codec';
 import PlayerTypeBadge from '@/components/PlayerTypeBadge';
+import { RitBadge, CashoutBadge } from '@/components/hands/HandTypeBadge';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -38,6 +39,8 @@ function MetaHeader({ hand }: { hand: HandDetail }) {
         {hand.table_size}-max
         {hand.table_name && <>{' \u2022 '}{hand.table_name}</>}
       </span>
+      {hand.rit_boards > 1 && <RitBadge boards={hand.rit_boards} />}
+      {hand.is_cashout && <CashoutBadge />}
     </div>
   );
 }
@@ -251,11 +254,12 @@ export default function HandDrawer({
                   </div>
 
                   {/* Actions */}
-                  <HandActionsDisplay actions={displayHand!.actions} board={displayHand!.board} />
+                  <HandActionsDisplay actions={displayHand!.actions} board={displayHand!.board} extraBoards={displayHand!.extra_boards} />
 
                   {/* Result */}
                   <div className={`mt-1 mb-4 text-[14px] font-bold font-mono ${heroWonBb >= 0 ? 'text-green' : 'text-red'}`}>
                     Hero {heroWonBb >= 0 ? 'wins' : 'loses'} {Math.abs(heroWonBb).toFixed(1)} BB
+                    {hand.is_cashout && <span className="text-amber-400 ml-1">(EV Cashout)</span>}
                   </div>
                 </>
               )}

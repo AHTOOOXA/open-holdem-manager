@@ -1,5 +1,16 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
-import type { HandDetail, HandAction } from '@/lib/api';
+import type { HandDetail, HandAction, BoardCards } from '@/lib/api';
+
+/**
+ * Build per-slot extra board cards from BoardCards, inheriting shared cards from Board 1.
+ * Returns an array of 5 cards (or fewer if board is shorter).
+ */
+function buildFullExtraBoard(board1Cards: string[], extraBoard: BoardCards): string[] {
+  const flop = extraBoard.flop.length > 0 ? extraBoard.flop : board1Cards.slice(0, 3);
+  const turn = extraBoard.turn.length > 0 ? extraBoard.turn : board1Cards.slice(3, 4);
+  const river = extraBoard.river.length > 0 ? extraBoard.river : board1Cards.slice(4, 5);
+  return [...flop, ...turn, ...river];
+}
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -13,14 +24,16 @@ export interface PlayerSnapshot {
   isAllIn: boolean;
   lastAction: string | null;   // e.g. "raise 6.0 BB"
   currentBet: number;  // current street bet in BB
-  wonBb: number;
+  wonBb: number;       // net result in BB
+  collectedBb: number; // gross collected in BB (0 during action steps, filled at Result)
   isHero: boolean;
 }
 
 export interface Snapshot {
   pot: number;          // total pot in BB
   players: PlayerSnapshot[];
-  board: string[];      // revealed community cards
+  board: string[];      // revealed community cards (always Board 1)
+  board2Cards?: Record<number, string>;  // slot index → Board 2 card for diverging slots (RIT)
   activePlayerIdx: number | null;
   streetLabel: string;  // "Preflop", "Flop", etc.
   actionIdx: number;    // index in the original actions array (-1 for initial/street-transition)
@@ -92,6 +105,7 @@ function buildSnapshots(hand: HandDetail): Snapshot[] {
     lastAction: null,
     currentBet: 0,
     wonBb: p.won_bb,
+    collectedBb: 0,
     isHero: p.is_hero,
   }));
 
@@ -237,22 +251,97 @@ function buildSnapshots(hand: HandDetail): Snapshot[] {
     }
   }
 
-  // Final showdown snapshot — reveal cards for players who have them
-  const showdownPlayers = players.map((p, i) => {
+  // RIT transition players — reveal cards, clear action/bet state
+  const ritPlayers = players.map((p, i) => {
     const orig = orderedPlayers[i];
     return {
       ...p,
       card1: orig.card1,
       card2: orig.card2,
-      lastAction: p.wonBb > 0 ? `Won ${p.wonBb.toFixed(1)}` : p.isFolded ? 'Fold' : null,
+      lastAction: null,
+      currentBet: 0,
+    };
+  });
+
+  // Result players — reveal cards + show gross collected for all collectors
+  const showdownPlayers = players.map((p, i) => {
+    const orig = orderedPlayers[i];
+    const investedBb = orig.stack_bb - p.stack;
+    const collectedBb = Math.max(0, p.wonBb + investedBb);
+    return {
+      ...p,
+      card1: orig.card1,
+      card2: orig.card2,
+      collectedBb,
+      currentBet: 0,
+      lastAction: collectedBb > 0 ? `Won ${collectedBb.toFixed(1)}` : p.isFolded ? 'Fold' : null,
     };
   });
 
   const finalBoard = buildBoard(hand.board, 'river');
+  const resultBoard = finalBoard.length > 0 ? finalBoard : buildBoard(hand.board, 'flop');
+
+  // RIT transition snapshots — animate each extra board street-by-street
+  // board always stays as Board 1; board2Cards accumulates Board 2 diverging slots
+  let ritBoard2Cards: Record<number, string> | undefined;
+
+  if (hand.extra_boards && hand.extra_boards.length > 0) {
+    for (let ebIdx = 0; ebIdx < hand.extra_boards.length; ebIdx++) {
+      const extraBoard = hand.extra_boards[ebIdx];
+      const fullExtra = buildFullExtraBoard(resultBoard, extraBoard);
+      const boardLabel = hand.extra_boards.length > 1 ? ` (${ebIdx + 2})` : ' (2)';
+
+      // Find diverging slots grouped by street
+      const diverging: { slotIdx: number; board2Card: string; street: string }[] = [];
+      for (let s = 0; s < Math.min(resultBoard.length, fullExtra.length); s++) {
+        if (fullExtra[s] !== resultBoard[s]) {
+          const street = s < 3 ? 'Flop' : s === 3 ? 'Turn' : 'River';
+          diverging.push({ slotIdx: s, board2Card: fullExtra[s], street });
+        }
+      }
+
+      if (diverging.length === 0) continue;
+
+      // Group by street, preserving order
+      const streetGroups: { street: string; slots: { slotIdx: number; board2Card: string }[] }[] = [];
+      for (const d of diverging) {
+        const last = streetGroups[streetGroups.length - 1];
+        if (last && last.street === d.street) {
+          last.slots.push(d);
+        } else {
+          streetGroups.push({ street: d.street, slots: [d] });
+        }
+      }
+
+      // Accumulate board2Cards progressively across streets
+      const acc: Record<number, string> = ritBoard2Cards ? { ...ritBoard2Cards } : {};
+
+      for (const group of streetGroups) {
+        for (const slot of group.slots) {
+          acc[slot.slotIdx] = slot.board2Card;
+        }
+
+        snapshots.push({
+          pot,
+          players: ritPlayers.map(p => ({ ...p })),
+          board: resultBoard,
+          board2Cards: { ...acc },
+          activePlayerIdx: null,
+          streetLabel: `${group.street}${boardLabel}`,
+          actionIdx: -1,
+          isStreetTransition: true,
+        });
+      }
+
+      ritBoard2Cards = { ...acc };
+    }
+  }
+
   snapshots.push({
     pot,
     players: showdownPlayers.map(p => ({ ...p })),
-    board: finalBoard.length > 0 ? finalBoard : buildBoard(hand.board, 'flop'),
+    board: resultBoard,
+    board2Cards: ritBoard2Cards,
     activePlayerIdx: null,
     streetLabel: 'Result',
     actionIdx: -1,

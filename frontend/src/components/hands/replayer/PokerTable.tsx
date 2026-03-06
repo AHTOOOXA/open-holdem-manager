@@ -61,10 +61,12 @@ export default function PokerTable({
   snapshot,
   showBb,
   bbAmount,
+  isCashout,
 }: {
   snapshot: Snapshot;
   showBb: boolean;
   bbAmount: number;
+  isCashout?: boolean;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
@@ -86,8 +88,6 @@ export default function PokerTable({
   const H = Math.round(W * 0.55);
   const seats = getSeatPositions(playerCount, W, H);
   const isShowdown = snapshot.streetLabel === 'Result';
-
-  const btnIdx = snapshot.players.findIndex(p => p.position === 'BTN');
 
   const potDisplay = snapshot.pot > 0
     ? showBb ? `${snapshot.pot.toFixed(1)} BB` : `$${(snapshot.pot * bbAmount).toFixed(2)}`
@@ -113,16 +113,41 @@ export default function PokerTable({
 
           {/* Center: board cards + pot */}
           <div className="absolute left-1/2 top-[52%] -translate-x-1/2 -translate-y-1/2 flex flex-col items-center gap-1.5 z-10">
-            {snapshot.board.length > 0 && (
-              <div className="flex gap-[3px]">
-                {snapshot.board.map((c, i) => (
-                  <BoardCard key={i} card={c} />
-                ))}
-              </div>
-            )}
+            {/* Board cards — two-row layout for RIT hands */}
+            {snapshot.board.length > 0 && (() => {
+              const hasBoard2 = snapshot.board2Cards && Object.keys(snapshot.board2Cards).length > 0;
+              if (!hasBoard2) {
+                return (
+                  <div className="flex gap-[3px]">
+                    {snapshot.board.map((card, i) => <BoardCard key={i} card={card} />)}
+                  </div>
+                );
+              }
+              return (
+                <div className="flex flex-col items-center gap-1">
+                  {/* Board 1 row — full cards for all slots */}
+                  <div className="flex gap-[3px]">
+                    {snapshot.board.map((card, i) => <BoardCard key={i} card={card} />)}
+                  </div>
+                  {/* Board 2 row — only diverging slots, spacers for shared */}
+                  <div className="flex gap-[3px]">
+                    {snapshot.board.map((_, i) => {
+                      const b2 = snapshot.board2Cards![i];
+                      if (!b2) return <span key={i} className="w-[42px] h-[52px]" />;
+                      return <BoardCard key={i} card={b2} />;
+                    })}
+                  </div>
+                </div>
+              );
+            })()}
             {potDisplay && (
               <div className="text-[15px] font-mono font-bold text-text bg-black/50 rounded-full px-4 py-0.5 backdrop-blur-sm">
                 {potDisplay}
+              </div>
+            )}
+            {isCashout && (
+              <div className="text-[11px] font-semibold px-2 py-px rounded bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                EV Cashout
               </div>
             )}
           </div>
@@ -137,7 +162,7 @@ export default function PokerTable({
             // Determine what to show
             let showOverlay: boolean;
             if (isShowdown) {
-              showOverlay = player.wonBb > 0;
+              showOverlay = player.collectedBb > 0;
             } else {
               if (player.isFolded) return null;
               showOverlay = player.lastAction !== null || player.currentBet > 0;
@@ -187,13 +212,13 @@ export default function PokerTable({
                       {betDisplay}
                     </span>
                   )}
-                  {/* Showdown won */}
-                  {isShowdown && player.wonBb > 0 && (
+                  {/* Showdown collected */}
+                  {isShowdown && player.collectedBb > 0 && (
                     <span
                       className="text-[13px] font-bold text-green leading-tight"
                       style={{ textShadow: '0 1px 3px rgba(0,0,0,0.9)' }}
                     >
-                      Won {showBb ? player.wonBb.toFixed(1) : `$${(player.wonBb * bbAmount).toFixed(2)}`}
+                      Won {showBb ? player.collectedBb.toFixed(1) : `$${(player.collectedBb * bbAmount).toFixed(2)}`}
                     </span>
                   )}
                 </div>

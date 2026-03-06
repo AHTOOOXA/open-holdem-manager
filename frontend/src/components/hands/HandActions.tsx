@@ -62,12 +62,29 @@ function StreetSection({
   );
 }
 
+function ExtraBoardSection({ label, board }: { label: string; board: BoardCards }) {
+  const allCards = [...board.flop, ...board.turn, ...board.river];
+  if (allCards.length === 0) return null;
+  return (
+    <div className="mb-3">
+      <div className="flex items-center gap-3 mb-1.5 pb-1 border-b border-border/30">
+        <span className="text-[12px] font-bold uppercase tracking-wider text-teal-400">
+          {label}
+        </span>
+        <CardBoxRow cards={allCards} />
+      </div>
+    </div>
+  );
+}
+
 export default function HandActionsDisplay({
   actions,
   board,
+  extraBoards,
 }: {
   actions: HandAction[];
   board: BoardCards;
+  extraBoards?: BoardCards[];
 }) {
   const streets: { key: string; label: string; cards: string[]; reached: boolean }[] = [
     { key: 'preflop', label: 'Preflop', cards: [], reached: true },
@@ -85,6 +102,9 @@ export default function HandActionsDisplay({
           actions={actions.filter((a) => a.street === s.key)}
           boardCards={s.cards}
         />
+      ))}
+      {extraBoards && extraBoards.map((eb, i) => (
+        <ExtraBoardSection key={`board-${i + 2}`} label={`Board ${i + 2}`} board={eb} />
       ))}
     </div>
   );

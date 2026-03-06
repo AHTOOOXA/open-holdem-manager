@@ -13,14 +13,31 @@ export default function HandReplayer({ hand }: { hand: HandDetail }) {
 
   return (
     <div className="space-y-2">
+      {/* RIT / Cashout indicator banners */}
+      {(hand.rit_boards > 1 || hand.is_cashout) && (
+        <div className="flex gap-2">
+          {hand.rit_boards > 1 && (
+            <div className="text-[12px] font-semibold px-2.5 py-0.5 rounded bg-teal-500/15 text-teal-400 border border-teal-500/25">
+              {hand.rit_boards === 2 ? 'Run It Twice' : `Run It ${hand.rit_boards} Times`}
+            </div>
+          )}
+          {hand.is_cashout && (
+            <div className="text-[12px] font-semibold px-2.5 py-0.5 rounded bg-amber-500/15 text-amber-400 border border-amber-500/25">
+              EV Cashout Hand
+            </div>
+          )}
+        </div>
+      )}
       <PokerTable
         snapshot={replayer.current}
         showBb={showBb}
         bbAmount={hand.bb_amount}
+        isCashout={hand.is_cashout}
       />
       {/* Result summary */}
       <div className={`text-[14px] font-bold font-mono ${heroWonBb >= 0 ? 'text-green' : 'text-red'}`}>
         Hero {heroWonBb >= 0 ? 'wins' : 'loses'} {Math.abs(heroWonBb).toFixed(1)} BB
+        {hand.is_cashout && <span className="text-amber-400 ml-1">(EV Cashout)</span>}
       </div>
       <ReplayerControls
         currentStep={replayer.currentStep}

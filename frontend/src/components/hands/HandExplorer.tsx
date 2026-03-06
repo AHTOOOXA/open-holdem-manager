@@ -11,6 +11,7 @@ import HandFilters from '@/components/hands/HandFilters';
 import type { FilterState } from '@/components/hands/HandFilters';
 import { QUICK_FILTERS_MAP } from '@/components/hands/HandFilters';
 import { CardBoxPair, CardBoxRow, CardBox } from '@/components/hands/CardDisplay';
+import { RitBadge, CashoutBadge } from '@/components/hands/HandTypeBadge';
 import Actions, { actionTitle } from '@/components/hands/Actions';
 import TagPill from '@/components/hands/TagPill';
 import Pagination from '@/components/hands/Pagination';
@@ -302,7 +303,15 @@ export default function HandExplorer({
                       <TableCell className={`py-1.5 px-2 sticky left-0 z-10 ${
                         selectedId === h.id ? 'bg-primary/10' : 'bg-background'
                       }`}>
-                        <CardBoxPair card1={h.card1} card2={h.card2} />
+                        <div className="flex flex-col gap-0.5">
+                          <CardBoxPair card1={h.card1} card2={h.card2} />
+                          {(h.rit_boards > 1 || h.is_cashout) && (
+                            <div className="flex items-center gap-0.5">
+                              {h.rit_boards > 1 && <RitBadge boards={h.rit_boards} />}
+                              {h.is_cashout && <CashoutBadge />}
+                            </div>
+                          )}
+                        </div>
                       </TableCell>
                       {/* Preflop actions — trim leading folds */}
                       <TableCell className="py-1.5 px-2">
