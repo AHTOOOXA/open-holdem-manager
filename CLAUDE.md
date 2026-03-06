@@ -84,6 +84,22 @@ electron/
 
 package.json             # Root — Electron, electron-builder, build scripts
 electron-builder.yml     # Packages .dmg (macOS), .exe/NSIS (Windows), .AppImage (Linux)
+
+docs/
+  vision/                  # Long-lived strategy & architecture
+    PRODUCT-VISION.md      #   "PostHog for Poker" concept, NL query engine, showcase examples
+    EXTENSIBILITY.md       #   Plugin architecture, API layers, security model, plugin ideas
+    MARKET-ANALYSIS.md     #   Market research, competitive analysis, monetization
+  specs/                   # Active implementation specs for unbuilt features
+    MULTI-SITE-PARSERS-PRD.md  #   Parser interface, per-site formats, rollout plan
+    REDO-RIT-CASHOUT.md    #   RIT/Cashout rework spec
+    REWORK_SUBSTATS.md     #   Stat detail subpage rework
+    stats-page-redesign.md #   Stats page layout redesign
+    stat-detail-panel.md   #   Per-stat detail panel contents
+    og-image-redesign.md   #   OG image poker table scene
+  archive/                 # Shipped/superseded specs (kept for history)
+
+ROADMAP.md               # Integrated product + marketing roadmap (references docs/ for details)
 ```
 
 ## Database Schema (DuckDB)
