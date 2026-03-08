@@ -6,14 +6,14 @@ Returns a ParsedHand dataclass — does NOT write to DB or compute stat flags.
 """
 
 import re
-from dataclasses import dataclass, field
 from decimal import Decimal
 from datetime import datetime
 
-SITE_ID = 1  # GGPoker
+from app.parsers.common import ParsedHand, _ZERO, _assign_positions, POSITIONS_BY_COUNT
 
-# Module-level constants to avoid per-call allocation
-_ZERO = Decimal("0")
+SITE_ID = 1
+SITE_CODE = "GG"
+SITE_NAME = "GGPoker"
 _STANDARD_BB = [
     Decimal("0.02"), Decimal("0.05"), Decimal("0.10"), Decimal("0.20"),
     Decimal("0.25"), Decimal("0.50"), Decimal("1"), Decimal("2"),
@@ -204,52 +204,6 @@ def _detect_bb(
     return _snap_to_nearest_standard(bb) if bb not in _STANDARD_BB_SET else bb
 
 
-@dataclass
-class ParsedHand:
-    """Output of parsing a single hand history. Contains all extracted data."""
-    hand_id: str
-    site_id: int
-    played_at: datetime
-    game_type: str
-    game_mode: str  # "Rush & Cash" or "Regular"
-    stakes: str
-    sb_amount: Decimal
-    bb_amount: Decimal
-    table_name: str
-    table_size: int
-    button_seat: int
-    seats: list[dict]  # [{seat, username, stack, position}]
-    actions_by_street: dict[str, list[dict]]
-    board_cards: dict[str, list[str]]
-    hero_cards: dict[str, tuple[str, str]]
-    uncalled_returns: dict[str, Decimal]
-    collected: dict[str, Decimal]
-    total_rake: Decimal
-    total_jackpot: Decimal
-    went_to_showdown_players: set[str]
-    in_showdown: bool
-    sb_player: str | None
-    bb_player: str | None
-    raw_text: str
-    cash_drop_received: Decimal = _ZERO
-    extra_boards: list[dict[str, list[str]]] = field(default_factory=list)
-    rit_boards: int = 1       # 1=normal, 2=RIT, 3=RIT3
-    is_cashout: bool = False
-
-
-# Position labels for 6-max (clockwise from BTN)
-POSITIONS_6MAX = ["BTN", "SB", "BB", "EP", "MP", "CO"]
-# For fewer players, trim from the middle positions
-POSITIONS_BY_COUNT = {
-    2: ["BTN", "BB"],
-    3: ["BTN", "SB", "BB"],
-    4: ["BTN", "SB", "BB", "CO"],
-    5: ["BTN", "SB", "BB", "MP", "CO"],
-    6: ["BTN", "SB", "BB", "EP", "MP", "CO"],
-    7: ["BTN", "SB", "BB", "EP", "MP", "HJ", "CO"],
-    8: ["BTN", "SB", "BB", "UTG", "EP", "MP", "HJ", "CO"],
-    9: ["BTN", "SB", "BB", "UTG", "UTG1", "EP", "MP", "HJ", "CO"],
-}
 
 # Single combined skip regex (patterns → 1 search per line)
 RE_SKIP = re.compile(
@@ -354,51 +308,20 @@ def _should_skip(line: str) -> bool:
     return RE_SKIP.search(line) is not None
 
 
-def _assign_positions(seats: list[dict], button_seat: int, table_size: int) -> None:
-    """Assign position labels to seated players based on button seat.
+def detect(sample: str) -> bool:
+    """Check if this content is a GGPoker hand history."""
+    return bool(re.search(r'Poker Hand #(?:RC|TM|HD)', sample))
 
-    Sorts players clockwise from button and assigns positions.
-    seats is a list of dicts with 'seat' key, mutated to add 'position'.
-    """
-    if not seats:
-        return
 
-    num_players = len(seats)
-    pos_labels = POSITIONS_BY_COUNT.get(num_players)
-    if pos_labels is None:
-        # Fallback for unusual counts
-        pos_labels = POSITIONS_BY_COUNT.get(min(num_players, 9), POSITIONS_6MAX)
+def split_hands(content: str) -> list[str]:
+    """Split a file with multiple GGPoker hand histories into individual hands."""
+    return re.split(r'\n(?=Poker Hand #)', content)
 
-    # Sort seats clockwise starting from button
-    seat_numbers = sorted(s["seat"] for s in seats)
-    # Find button index
-    btn_idx = None
-    for i, sn in enumerate(seat_numbers):
-        if sn == button_seat:
-            btn_idx = i
-            break
-    if btn_idx is None:
-        # Button seat not occupied — find the closest seat before button going backwards
-        # (the seat that would act as button)
-        for i in range(len(seat_numbers) - 1, -1, -1):
-            if seat_numbers[i] < button_seat:
-                btn_idx = i
-                break
-        if btn_idx is None:
-            btn_idx = len(seat_numbers) - 1
 
-    # Reorder clockwise from button
-    ordered = seat_numbers[btn_idx:] + seat_numbers[:btn_idx]
-
-    seat_to_pos = {}
-    for i, sn in enumerate(ordered):
-        if i < len(pos_labels):
-            seat_to_pos[sn] = pos_labels[i]
-        else:
-            seat_to_pos[sn] = f"S{sn}"
-
-    for s in seats:
-        s["position"] = seat_to_pos[s["seat"]]
+def extract_hand_id(hand_text: str) -> str | None:
+    """Extract hand ID from the first line."""
+    m = re.search(r'Poker Hand #(\w+):', hand_text)
+    return m.group(1) if m else None
 
 
 def parse_hand_history(hand_text: str) -> ParsedHand:

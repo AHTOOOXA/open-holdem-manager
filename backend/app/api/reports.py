@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Query
-from app.db import get_read_cursor, get_hero_player_id, get_hero_username
+from app.db import get_read_cursor, get_hero_player_id
 from app.models import GraphPoint, GraphResponse, VarianceStats, SessionMarker, FilterOptions, StakeBreakdown, MonthBreakdown, PositionBreakdown, ResultsBreakdown, DriftStat, DriftResponse
 import math
 from datetime import datetime, timedelta
@@ -20,16 +20,9 @@ def get_graph(
     workspace_id: int = Query(1),
 ):
     db = get_read_cursor()
-    hero_username = get_hero_username(db, workspace_id)
-
-    player = db.execute(
-        "SELECT id FROM players WHERE username = ? AND site_id = 1",
-        [hero_username],
-    ).fetchone()
-    if not player:
+    player_id = get_hero_player_id(db, workspace_id)
+    if not player_id:
         return GraphResponse(points=[], sessions=[], variance=None)
-
-    player_id = player[0]
 
     query = """
         SELECT hp.won_bb, COALESCE(hp.all_in_ev_bb, hp.won_bb),

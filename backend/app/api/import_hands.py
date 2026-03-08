@@ -3,7 +3,8 @@ from fastapi.responses import StreamingResponse, FileResponse
 from decimal import Decimal
 from app.models import ImportResult
 from app.db import get_db, db_lock, close_db, DB_PATH
-from app.parsers.ggpoker import parse_hand_history, ParsedHand, _ZERO
+from app.parsers.common import ParsedHand, _ZERO
+from app.parsers import detect_parser, PARSER_BY_SITE_ID
 from app.stat_flags import compute_stat_flags
 from app.player_classification import batch_update_player_types
 
@@ -14,7 +15,6 @@ import zipfile
 import io
 import json
 import os
-import re
 import shutil
 import tempfile
 import time
@@ -28,12 +28,8 @@ except ImportError:
 
 router = APIRouter()
 
-# ── Pre-compiled regexes ──
-RE_HAND_BOUNDARY = re.compile(r'\n(?=Poker Hand #)')
-RE_HAND_ID = re.compile(r'Poker Hand #(\w+):')
-
 # ── Import session caches (cleared between import runs) ──
-_player_cache: dict[str, int] = {}  # username -> player_id
+_player_cache: dict[tuple[int, str], int] = {}  # (site_id, username) -> player_id
 _next_player_id: int | None = None
 _next_hp_id: int | None = None
 
@@ -145,38 +141,45 @@ def _batch_resolve_players(
     """Resolve player IDs for all hands in a batch. Creates new players as needed."""
     global _next_player_id
 
-    all_usernames = set()
+    # Collect (site_id, username) pairs
+    all_pairs: set[tuple[int, str]] = set()
     for item in prepared:
         parsed = item[0]
+        site_id = parsed.site_id
         for s in parsed.seats:
-            all_usernames.add(s["username"])
+            all_pairs.add((site_id, s["username"]))
 
-    uncached = [u for u in all_usernames if u not in _player_cache]
+    uncached = [(sid, u) for sid, u in all_pairs if (sid, u) not in _player_cache]
     if not uncached:
         return
 
-    # Batch lookup existing players
-    for i in range(0, len(uncached), 500):
-        batch = uncached[i:i + 500]
-        placeholders = ",".join(["?"] * len(batch))
-        rows = db.execute(
-            f"SELECT username, id FROM players WHERE site_id = 1 AND username IN ({placeholders})",
-            batch,
-        ).fetchall()
-        for username, pid in rows:
-            _player_cache[username] = pid
+    # Batch lookup existing players, grouped by site_id
+    by_site: dict[int, list[str]] = {}
+    for sid, u in uncached:
+        by_site.setdefault(sid, []).append(u)
+
+    for sid, usernames in by_site.items():
+        for i in range(0, len(usernames), 500):
+            batch = usernames[i:i + 500]
+            placeholders = ",".join(["?"] * len(batch))
+            rows = db.execute(
+                f"SELECT username, id FROM players WHERE site_id = ? AND username IN ({placeholders})",
+                [sid] + batch,
+            ).fetchall()
+            for username, pid in rows:
+                _player_cache[(sid, username)] = pid
 
     # Create missing players in bulk
     new_ids = []
     new_site_ids = []
     new_usernames = []
-    for u in uncached:
-        if u not in _player_cache:
+    for sid, u in uncached:
+        if (sid, u) not in _player_cache:
             pid = _next_player_id
             _next_player_id += 1
-            _player_cache[u] = pid
+            _player_cache[(sid, u)] = pid
             new_ids.append(pid)
-            new_site_ids.append(1)
+            new_site_ids.append(sid)
             new_usernames.append(u)
 
     if new_ids:
@@ -336,7 +339,7 @@ def _build_batch_arrays(
 
         for s in parsed.seats:
             uname = s["username"]
-            pid = _player_cache[uname]
+            pid = _player_cache[(parsed.site_id, uname)]
             cards = parsed.hero_cards.get(uname)
             card1 = cards[0] if cards else None
             card2 = cards[1] if cards else None
@@ -513,11 +516,18 @@ def _parse_batch(
     hand_texts: list[str],
     ids: list[str | None],
     existing_ids: set[str],
+    parser=None,
 ) -> tuple[list[tuple[ParsedHand, dict, tuple]], int, int, list[str], float, float, float]:
     """Parse+stats+financials for a chunk of hands. Pure CPU, no DB.
 
+    Args:
+        parser: Parser module with parse_hand_history(). If None, uses GGPoker parser.
+
     Returns (prepared, new_count, error_count, error_details, t_parse, t_stats, t_equity).
     """
+    if parser is None:
+        from app.parsers import ggpoker as parser
+
     prepared: list[tuple[ParsedHand, dict, tuple]] = []
     error_count = 0
     dup_count = 0
@@ -537,7 +547,7 @@ def _parse_batch(
         existing_ids.add(hid)
         try:
             t0 = time.perf_counter()
-            parsed = parse_hand_history(hand_text)
+            parsed = parser.parse_hand_history(hand_text)
             t1 = time.perf_counter()
             stats = compute_stat_flags(parsed)
             t2 = time.perf_counter()
@@ -570,13 +580,20 @@ async def import_files_stream(files: list[UploadFile] = File(...), workspace_id:
     files_data = [(f.filename or "", await f.read()) for f in files]
     text_contents = _read_uploads(files_data)
 
-    # Pre-split all hands for total count
+    # Per-file parser detection + hand splitting
     all_hands: list[str] = []
+    hand_parsers: list = []  # parallel list: parser module for each hand
+    skipped_files = 0
     for content in text_contents:
-        for h in split_hands(content):
+        parser = detect_parser(content[:500])
+        if parser is None:
+            skipped_files += 1
+            continue
+        for h in parser.split_hands(content):
             h = h.strip()
             if h:
                 all_hands.append(h)
+                hand_parsers.append(parser)
 
     total = len(all_hands)
     file_count = len(text_contents)
@@ -602,7 +619,7 @@ async def import_files_stream(files: list[UploadFile] = File(...), workspace_id:
             t_db = 0.0
 
             # Bulk duplicate check (scoped to workspace)
-            all_ids = [extract_hand_id(h) for h in all_hands]
+            all_ids = [hand_parsers[i].extract_hand_id(h) for i, h in enumerate(all_hands)]
             existing_ids: set[str] = set()
             valid_ids = [hid for hid in all_ids if hid is not None]
             if valid_ids:
@@ -623,11 +640,14 @@ async def import_files_stream(files: list[UploadFile] = File(...), workspace_id:
             db.execute("SET checkpoint_threshold = '10GB'")
 
             # Split hands into BATCH_SIZE chunks for pipeline parallelism
-            chunks: list[tuple[list[str], list[str | None]]] = []
+            chunks: list[tuple[list[str], list[str | None], object]] = []
             for ci in range(0, total, BATCH_SIZE):
                 chunk_texts = all_hands[ci:ci + BATCH_SIZE]
                 chunk_ids = all_ids[ci:ci + BATCH_SIZE]
-                chunks.append((chunk_texts, chunk_ids))
+                # Use the parser of the first hand in the chunk (all hands from
+                # one file share a parser, and chunks rarely span file boundaries)
+                chunk_parser = hand_parsers[ci] if ci < len(hand_parsers) else None
+                chunks.append((chunk_texts, chunk_ids, chunk_parser))
 
             processed = 0
             with ThreadPoolExecutor(max_workers=1) as executor:
@@ -635,7 +655,7 @@ async def import_files_stream(files: list[UploadFile] = File(...), workspace_id:
                 parse_future: Future | None = None
                 if chunks:
                     parse_future = executor.submit(
-                        _parse_batch, chunks[0][0], chunks[0][1], existing_ids
+                        _parse_batch, chunks[0][0], chunks[0][1], existing_ids, chunks[0][2]
                     )
 
                 for ci in range(len(chunks)):
@@ -651,7 +671,7 @@ async def import_files_stream(files: list[UploadFile] = File(...), workspace_id:
                     # Submit next batch for parsing (overlaps with DB insert)
                     if ci + 1 < len(chunks):
                         parse_future = executor.submit(
-                            _parse_batch, chunks[ci + 1][0], chunks[ci + 1][1], existing_ids
+                            _parse_batch, chunks[ci + 1][0], chunks[ci + 1][1], existing_ids, chunks[ci + 1][2]
                         )
                     else:
                         parse_future = None
@@ -716,15 +736,20 @@ def _process_hands(db, text_contents: list[str], workspace_id: int = 1) -> Impor
     total_errors = 0
     error_details: list[str] = []
 
-    # Split all hands and check duplicates in bulk
+    # Per-file parser detection + hand splitting
     all_hands: list[str] = []
     all_ids: list[str | None] = []
+    hand_parsers_list: list = []
     for content in text_contents:
-        for hand_text in split_hands(content):
+        parser = detect_parser(content[:500])
+        if parser is None:
+            continue
+        for hand_text in parser.split_hands(content):
             hand_text = hand_text.strip()
             if hand_text:
                 all_hands.append(hand_text)
-                all_ids.append(extract_hand_id(hand_text))
+                all_ids.append(parser.extract_hand_id(hand_text))
+                hand_parsers_list.append(parser)
 
     existing_ids: set[str] = set()
     valid_ids = [hid for hid in all_ids if hid is not None]
@@ -758,7 +783,7 @@ def _process_hands(db, text_contents: list[str], workspace_id: int = 1) -> Impor
             continue
         existing_ids.add(hid)
         try:
-            parsed = parse_hand_history(hand_text)
+            parsed = hand_parsers_list[i].parse_hand_history(hand_text)
             stats = compute_stat_flags(parsed)
             financials = _compute_financials(parsed)
             pending.append((parsed, stats, financials))
@@ -849,7 +874,7 @@ def _run_rebuild_sync(db, on_progress: 'Callable[[int, int], None] | None' = Non
         return
 
     all_rows = db.execute(
-        "SELECT id, workspace_id, raw_text FROM hands ORDER BY played_at ASC, id ASC"
+        "SELECT id, workspace_id, site_id, raw_text FROM hands ORDER BY played_at ASC, id ASC"
     ).fetchall()
 
     _drop_indexes(db)
@@ -877,9 +902,13 @@ def _run_rebuild_sync(db, on_progress: 'Callable[[int, int], None] | None' = Non
         # (e.g. same hand_id existing in ws1 and ws2).
         prepared_by_ws: dict[int, list] = {}
         rit_updates: list[tuple] = []  # (hand_id, rit_boards, is_cashout)
-        for hand_id, ws_id, raw_text in chunk:
+        for hand_id, ws_id, site_id, raw_text in chunk:
             try:
-                parsed = parse_hand_history(raw_text)
+                parser = PARSER_BY_SITE_ID.get(site_id)
+                if parser is None:
+                    errors += 1
+                    continue
+                parsed = parser.parse_hand_history(raw_text)
                 stats = compute_stat_flags(parsed)
                 financials = _compute_financials(parsed)
                 prepared_by_ws.setdefault(ws_id, []).append(
@@ -1047,12 +1076,3 @@ async def import_database(file: UploadFile = File(...)):
             os.unlink(tmp_path)
 
 
-def split_hands(content: str) -> list[str]:
-    """Split a file with multiple hand histories into individual hands."""
-    return RE_HAND_BOUNDARY.split(content)
-
-
-def extract_hand_id(hand_text: str) -> str | None:
-    """Extract hand ID from the first line."""
-    m = RE_HAND_ID.search(hand_text)
-    return m.group(1) if m else None

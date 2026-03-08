@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from app.parsers.ggpoker import ParsedHand
+    from app.parsers.common import ParsedHand
 
 
 _POS_ORDER = {"SB": 0, "BB": 1, "EP": 2, "MP": 3, "CO": 4, "BTN": 5}

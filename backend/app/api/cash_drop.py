@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Query
-from app.db import get_read_cursor, get_hero_username
+from app.db import get_read_cursor, get_hero_player_id
 from collections import defaultdict
 from app.models import (
     CashDropResponse, CashDropSummary, CashDropTypeBreakdown,
@@ -38,12 +38,7 @@ def get_cash_drop_stats(
     workspace_id: int = Query(1),
 ):
     db = get_read_cursor()
-    hero_username = get_hero_username(db, workspace_id)
-
-    player = db.execute(
-        "SELECT id FROM players WHERE username = ? AND site_id = 1",
-        [hero_username],
-    ).fetchone()
+    player_id = get_hero_player_id(db, workspace_id)
     empty = CashDropResponse(
         summary=CashDropSummary(
             total_hands=0, cash_drop_hands=0,
@@ -60,10 +55,8 @@ def get_cash_drop_stats(
         field=None, by_type=[], hero_ranges=[], hero_ranges_total=0,
         ranges=[],
     )
-    if not player:
+    if not player_id:
         return empty
-
-    player_id = player[0]
     hand_filters, hand_params = _build_filters(stakes, date_from, date_to, workspace_id)
 
     # ── 1. Financial summary ──────────────────────────────────────

@@ -472,14 +472,12 @@ def compute_hero_stats(
     workspace_id: int | None = None,
 ) -> HeroStats:
     """Compute stats for hero by username. Thin wrapper around compute_player_stats."""
-    player = db.execute(
-        "SELECT id FROM players WHERE username = ? AND site_id = 1",
-        [hero_username],
-    ).fetchone()
-    if not player:
+    from app.db import get_hero_player_id
+    player_id = get_hero_player_id(db, workspace_id or 1)
+    if not player_id:
         return HeroStats()
     return compute_player_stats(
-        db, player[0],
+        db, player_id,
         position=position, stakes=stakes, game_mode=game_mode,
         date_from=date_from, date_to=date_to, last_n=last_n,
         workspace_id=workspace_id,

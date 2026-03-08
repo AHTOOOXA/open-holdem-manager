@@ -70,14 +70,9 @@ def get_range_stats(
     db = get_read_cursor()
     hero_username = get_hero_username(db, workspace_id)
 
-    player = db.execute(
-        "SELECT id FROM players WHERE username = ? AND site_id = 1",
-        [hero_username],
-    ).fetchone()
-    if not player:
+    player_id = get_hero_player_id(db, workspace_id)
+    if not player_id:
         return RangeResponse()
-
-    player_id = player[0]
 
     query = """
         SELECT hp.card1, hp.card2,

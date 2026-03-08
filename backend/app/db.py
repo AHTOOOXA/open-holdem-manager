@@ -134,6 +134,12 @@ def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
     conn.execute("""
         INSERT OR IGNORE INTO sites VALUES (1, 'GGPoker', 'GG')
     """)
+    conn.execute("INSERT OR IGNORE INTO sites VALUES (2, 'PokerStars', 'PS')")
+    conn.execute("INSERT OR IGNORE INTO sites VALUES (3, '888poker', '888')")
+    conn.execute("INSERT OR IGNORE INTO sites VALUES (4, 'WPN', 'WPN')")
+    conn.execute("INSERT OR IGNORE INTO sites VALUES (5, 'Winamax', 'WMX')")
+    conn.execute("INSERT OR IGNORE INTO sites VALUES (6, 'iPoker', 'IP')")
+    conn.execute("INSERT OR IGNORE INTO sites VALUES (7, 'partypoker', 'PP')")
     conn.execute("""
         CREATE TABLE IF NOT EXISTS players (
             id INTEGER PRIMARY KEY,
