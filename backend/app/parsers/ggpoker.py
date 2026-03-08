@@ -22,6 +22,188 @@ _STANDARD_BB = [
 ]
 
 
+_STANDARD_BB_SET = set(_STANDARD_BB)
+
+
+def _snap_to_nearest_standard(bb: Decimal) -> Decimal:
+    """Snap a non-standard BB value to the nearest standard stake.
+
+    GGPoker byte corruption can produce values like $0.52 instead of $0.50.
+    Only snaps if within 10% of a standard stake to avoid wild guesses.
+    """
+    best = bb
+    best_ratio = Decimal("Infinity")
+    for std in _STANDARD_BB:
+        if std == 0:
+            continue
+        ratio = abs(bb - std) / std
+        if ratio < best_ratio:
+            best_ratio = ratio
+            best = std
+    if best_ratio <= Decimal("0.10"):
+        return best
+    return bb
+
+
+def _detect_bb(
+    header_bb: Decimal,
+    header_sb: Decimal,
+    posted_bb: Decimal | None,
+    posted_sb: Decimal | None,
+    preflop_amounts: list[Decimal],
+    stacks: list[Decimal],
+) -> Decimal:
+    """Detect the correct BB amount from multiple signals.
+
+    GGPoker hand histories suffer from random byte corruption that can hit
+    any dollar amount. Strategy:
+
+    1. If header and posted BB agree, use that (snap if non-standard).
+    2. If they disagree, use SB as tiebreaker (correct BB = 2× SB).
+    3. If SB can't break the tie, use preflop action amounts to score
+       which candidate produces more typical bet sizing (2-3x BB opens).
+    4. If no actions, prefer the candidate supported by stack sizes.
+
+    Candidates are restricted to header_bb, posted_bb, and their snapped
+    variants — NOT all standard stakes, to avoid pulling hands to adjacent
+    stakes (e.g. NL25 → NL20).
+    """
+    header_std = header_bb in _STANDARD_BB_SET
+    posted_std = posted_bb is not None and posted_bb in _STANDARD_BB_SET
+
+    # ── Fast path: agreement ──
+    if posted_bb is not None and posted_bb == header_bb:
+        bb = header_bb
+        if bb not in _STANDARD_BB_SET:
+            bb = _snap_to_nearest_standard(bb)
+        # Both can agree on a wrong value (e.g. both corrupted to $0.52).
+        # Sanity-check: if actions exist and look wildly wrong for this BB,
+        # fall through to action scoring instead of returning early.
+        if preflop_amounts and bb > 0:
+            bad = 0
+            for amt in preflop_amounts:
+                ratio = amt / bb
+                if ratio < Decimal("0.5") or ratio > Decimal("500"):
+                    bad += 1
+            if bad == 0:
+                return bb
+            # else: actions don't make sense at this BB — fall through
+        elif stacks and bb > 0:
+            # No actions, check stacks
+            sorted_s = sorted(stacks)
+            median = sorted_s[len(sorted_s) // 2]
+            ratio = median / bb
+            if Decimal("5") <= ratio <= Decimal("500"):
+                return bb
+            # else: stacks don't make sense — fall through
+        else:
+            return bb
+
+    # ── One is standard, the other isn't ──
+    if header_std and not posted_std:
+        if posted_bb is None:
+            return header_bb
+        # posted_bb exists but is non-standard — header is probably right,
+        # but verify with SB if available
+        if posted_sb and posted_sb == posted_bb / 2 and posted_bb != header_bb:
+            # SB supports posted — but posted is non-standard and header is.
+            # Only override if actions strongly support posted.
+            pass  # fall through to action scoring
+        else:
+            return header_bb
+
+    if posted_std and not header_std:
+        return posted_bb
+
+    # ── Both standard but disagree ──
+    if header_std and posted_std:
+        # SB tiebreaker: correct BB = 2× SB
+        if posted_sb and posted_sb == posted_bb / 2:
+            return posted_bb
+        if posted_sb and posted_sb == header_bb / 2:
+            return header_bb
+        if header_sb == posted_bb / 2:
+            return posted_bb
+        if header_sb == header_bb / 2:
+            return header_bb
+        # SB didn't help — fall through to action scoring
+
+    # ── Build candidates for scoring ──
+    # Start with direct BB evidence + snapped variants.
+    candidates: set[Decimal] = set()
+    candidates.add(header_bb)
+    candidates.add(_snap_to_nearest_standard(header_bb))
+    if posted_bb is not None:
+        candidates.add(posted_bb)
+        candidates.add(_snap_to_nearest_standard(posted_bb))
+    # If header and posted agreed but failed the sanity check above,
+    # the real BB is far from both. Expand to all standard stakes so
+    # action/stack scoring can find the correct one.
+    if posted_bb is not None and posted_bb == header_bb:
+        candidates.update(_STANDARD_BB_SET)
+    candidates.discard(_ZERO)
+
+    # ── Score by preflop actions (strongest signal) ──
+    if preflop_amounts and len(candidates) > 1:
+        best_candidate = header_bb
+        best_score = -1
+
+        for candidate in candidates:
+            score = 0
+            if candidate in _STANDARD_BB_SET:
+                score += 2
+            for amt in preflop_amounts:
+                ratio = amt / candidate
+                if Decimal("1.5") <= ratio <= Decimal("5"):
+                    score += 5  # Typical open/3bet sizing
+                elif Decimal("0.5") <= ratio <= Decimal("30"):
+                    score += 3  # Plausible (limps, 4bets)
+                elif Decimal("0.5") <= ratio <= Decimal("500"):
+                    score += 1
+            for stack in stacks:
+                ratio = stack / candidate
+                if Decimal("30") <= ratio <= Decimal("200"):
+                    score += 2
+                elif Decimal("5") <= ratio <= Decimal("500"):
+                    score += 1
+
+            if score > best_score or (
+                score == best_score
+                and candidate in _STANDARD_BB_SET
+                and best_candidate not in _STANDARD_BB_SET
+            ):
+                best_score = score
+                best_candidate = candidate
+
+        bb = best_candidate
+    elif len(candidates) == 1:
+        bb = next(iter(candidates))
+    else:
+        # No actions — use stacks as tiebreaker
+        best_candidate = header_bb
+        best_score = -1
+        for candidate in candidates:
+            score = 0
+            if candidate in _STANDARD_BB_SET:
+                score += 2
+            for stack in stacks:
+                ratio = stack / candidate
+                if Decimal("30") <= ratio <= Decimal("200"):
+                    score += 2
+                elif Decimal("5") <= ratio <= Decimal("500"):
+                    score += 1
+            if score > best_score or (
+                score == best_score
+                and candidate in _STANDARD_BB_SET
+                and best_candidate not in _STANDARD_BB_SET
+            ):
+                best_score = score
+                best_candidate = candidate
+        bb = best_candidate
+
+    return _snap_to_nearest_standard(bb) if bb not in _STANDARD_BB_SET else bb
+
+
 @dataclass
 class ParsedHand:
     """Output of parsing a single hand history. Contains all extracted data."""
@@ -241,60 +423,61 @@ def parse_hand_history(hand_text: str) -> ParsedHand:
 
     # GGPoker has random byte corruption in hand history files that can hit
     # any dollar amount — header stakes, blind postings, bet sizes.
-    # The header SB/BB values are unreliable (e.g. $0.74/$0.1 instead of
-    # $0.05/$0.10, or $0.05/$0.2 where BB is corrupted too).
-    # Strategy: scan for the "posts big blind" line and cross-reference with
-    # the header BB. Use the value that matches a standard stake. If both are
-    # non-standard, prefer the one closest to a known stake.
+    # We use a vote-based approach: collect candidate BB values, then score
+    # them by how well preflop action amounts, stack sizes, and standard-
+    # stake membership agree.
 
-    # Quick scan for the actual blind posting amounts
-    posted_bb = None
-    posted_sb = None
-    for stripped in lines:
-        if not posted_bb:
-            bm = RE_BIG_BLIND.match(stripped)
-            if bm:
-                posted_bb = Decimal(bm.group(2))
-        if not posted_sb:
-            sm = RE_SMALL_BLIND.match(stripped)
-            if sm:
-                posted_sb = Decimal(sm.group(2))
-        if posted_bb and posted_sb:
-            break
+    # Pre-scan: collect stacks, posted blinds, and preflop action amounts
+    _scanned_stacks: list[Decimal] = []
+    posted_bb: Decimal | None = None
+    posted_sb: Decimal | None = None
+    preflop_amounts: list[Decimal] = []
+    _in_preflop = False
 
-    # Pick the correct BB by cross-referencing header, posted BB, and posted SB.
-    # When header and posted BB disagree but both are standard stakes, use the
-    # posted SB as a tiebreaker: the correct BB should be 2x the SB.
-    header_ok = header_bb in _STANDARD_BB
-    posted_ok = posted_bb is not None and posted_bb in _STANDARD_BB
-    if posted_bb and posted_bb == header_bb:
-        bb_amount = header_bb
-    elif header_ok and not posted_ok:
-        bb_amount = header_bb
-    elif posted_ok and not header_ok:
-        bb_amount = posted_bb
-    elif header_ok and posted_ok:
-        # Both standard but disagree — use SB values as tiebreaker
-        if posted_sb and posted_sb in _STANDARD_BB:
-            if posted_sb == posted_bb / 2:
-                bb_amount = posted_bb
-            elif posted_sb == header_bb / 2:
-                bb_amount = header_bb
-            else:
-                bb_amount = header_bb
-        elif header_sb and header_sb in _STANDARD_BB:
-            # posted SB is corrupted, use header SB as tiebreaker
-            if header_sb == posted_bb / 2:
-                bb_amount = posted_bb
-            elif header_sb == header_bb / 2:
-                bb_amount = header_bb
-            else:
-                bb_amount = header_bb
-        else:
-            bb_amount = header_bb
-    else:
-        bb_amount = header_bb
+    for _sl in lines:
+        # Stacks
+        _sm = RE_SEAT.match(_sl)
+        if _sm:
+            _scanned_stacks.append(Decimal(_sm.group(3)))
+            continue
+        # Posted blinds
+        if posted_bb is None:
+            _bm = RE_BIG_BLIND.match(_sl)
+            if _bm:
+                posted_bb = Decimal(_bm.group(2))
+                continue
+        if posted_sb is None:
+            _sbm = RE_SMALL_BLIND.match(_sl)
+            if _sbm:
+                posted_sb = Decimal(_sbm.group(2))
+                continue
+        # Preflop action amounts
+        if "*** HOLE CARDS ***" in _sl:
+            _in_preflop = True
+            continue
+        if _in_preflop:
+            if _sl.startswith("***"):
+                _in_preflop = False
+                continue
+            if _sl.startswith("Dealt "):
+                continue
+            _rm = RE_RAISE.match(_sl)
+            if _rm:
+                preflop_amounts.append(Decimal(_rm.group(3)))  # "to" amount
+                continue
+            _cm = RE_CALL.match(_sl)
+            if _cm:
+                preflop_amounts.append(Decimal(_cm.group(2)))
+                continue
+            _bm2 = RE_BET.match(_sl)
+            if _bm2:
+                preflop_amounts.append(Decimal(_bm2.group(2)))
+                continue
 
+    bb_amount = _detect_bb(
+        header_bb, header_sb, posted_bb, posted_sb,
+        preflop_amounts, _scanned_stacks,
+    )
     sb_amount = bb_amount / 2
 
     def _fmt_stake(d: Decimal) -> str:

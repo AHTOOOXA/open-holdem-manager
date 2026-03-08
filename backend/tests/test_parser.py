@@ -386,6 +386,358 @@ Seat 6: Player6 folded before Flop (didn't bet)
         assert hero_won == pytest.approx(12.75, abs=0.01)
 
 
+class TestCorruptedStakes:
+    """Test BB detection with byte-corrupted hand histories."""
+
+    # Template: 6-max NL2 Rush & Cash hand. Placeholders for header stakes,
+    # posted blinds, and preflop action.
+    _TEMPLATE = """\
+Poker Hand #RC9900100001: Hold'em No Limit ({header}) - 2026/01/15 10:00:00
+Table 'RushAndCash99001' 6-max Seat #1 is the button
+Seat 1: Player1 ($2.50 in chips)
+Seat 2: Player2 ($2.00 in chips)
+Seat 3: Player3 ($2.30 in chips)
+Seat 4: Hero ($2.10 in chips)
+Seat 5: Player5 ($3.00 in chips)
+Seat 6: Player6 ($2.00 in chips)
+Player2: posts small blind ${sb}
+Player3: posts big blind ${bb}
+*** HOLE CARDS ***
+Dealt to Hero [Ah Jc]
+{preflop}*** SHOWDOWN ***
+Hero collected $0.05 from pot
+*** SUMMARY ***
+Total pot $0.05 | Rake $0 | Jackpot $0 | Bingo $0 | Fortune $0 | Tax $0
+Seat 4: Hero collected ($0.05)
+"""
+
+    def _make_hand(self, header="$0.01/$0.02", sb="0.01", bb="0.02",
+                   preflop="Hero: raises $0.03 to $0.05\nPlayer5: folds\nPlayer6: folds\nPlayer1: folds\nPlayer2: folds\nPlayer3: folds\nUncalled bet ($0.03) returned to Hero\n"):
+        return self._TEMPLATE.format(header=header, sb=sb, bb=bb, preflop=preflop)
+
+    def test_clean_nl2(self):
+        """Baseline: no corruption, NL2 detected correctly."""
+        p = parse_hand_history(self._make_hand())
+        assert p.bb_amount == Decimal("0.02")
+        assert p.stakes == "$0.01/$0.02"
+
+    def test_header_bb_corrupted_to_052(self):
+        """Header $0.52 instead of $0.02 — actions resolve to NL2."""
+        p = parse_hand_history(self._make_hand(header="$0.01/$0.52", bb="0.52"))
+        assert p.bb_amount == Decimal("0.02")
+
+    def test_header_bb_dot_dropped_002(self):
+        """Header $002 (dot dropped) = $2.00 — posted BB $0.02 is correct."""
+        p = parse_hand_history(self._make_hand(header="$0.01/$002", bb="0.02"))
+        assert p.bb_amount == Decimal("0.02")
+
+    def test_nl5_dot_dropped_005(self):
+        """Header $005 = $5.00, real stake is NL5 ($0.05 BB)."""
+        hand = """\
+Poker Hand #RC9900100001: Hold'em No Limit ($0.02/$005) - 2026/01/15 10:00:00
+Table 'RushAndCash99001' 6-max Seat #1 is the button
+Seat 1: Player1 ($6.50 in chips)
+Seat 2: Player2 ($5.00 in chips)
+Seat 3: Player3 ($5.30 in chips)
+Seat 4: Hero ($6.10 in chips)
+Seat 5: Player5 ($7.00 in chips)
+Seat 6: Player6 ($5.00 in chips)
+Player2: posts small blind $0.02
+Player3: posts big blind $0.05
+*** HOLE CARDS ***
+Dealt to Hero [Ah Jc]
+Hero: raises $0.05 to $0.1
+Player5: folds
+Player6: folds
+Player1: folds
+Player2: folds
+Player3: calls $0.05
+*** SHOWDOWN ***
+Hero collected $0.22 from pot
+*** SUMMARY ***
+Total pot $0.22 | Rake $0 | Jackpot $0 | Bingo $0 | Fortune $0 | Tax $0
+Seat 4: Hero collected ($0.22)
+"""
+        p = parse_hand_history(hand)
+        assert p.bb_amount == Decimal("0.05")
+
+    def test_header_only_corrupted(self):
+        """Header says $0.74/$0.10, posted BB is $0.10 — NL10."""
+        hand = """\
+Poker Hand #RC9900100001: Hold'em No Limit ($0.74/$0.10) - 2026/01/15 10:00:00
+Table 'RushAndCash99001' 6-max Seat #1 is the button
+Seat 1: Player1 ($12.50 in chips)
+Seat 2: Player2 ($10.00 in chips)
+Seat 3: Player3 ($10.30 in chips)
+Seat 4: Hero ($11.10 in chips)
+Seat 5: Player5 ($13.00 in chips)
+Seat 6: Player6 ($10.00 in chips)
+Player2: posts small blind $0.05
+Player3: posts big blind $0.10
+*** HOLE CARDS ***
+Dealt to Hero [Ah Jc]
+Hero: raises $0.15 to $0.25
+Player5: folds
+Player6: folds
+Player1: folds
+Player2: folds
+Player3: folds
+Uncalled bet ($0.15) returned to Hero
+*** SHOWDOWN ***
+Hero collected $0.15 from pot
+*** SUMMARY ***
+Total pot $0.15 | Rake $0 | Jackpot $0 | Bingo $0 | Fortune $0 | Tax $0
+Seat 4: Hero collected ($0.15)
+"""
+        p = parse_hand_history(hand)
+        assert p.bb_amount == Decimal("0.10")
+
+    def test_no_actions_fold_to_bb(self):
+        """Everyone folds to BB — no preflop actions, uses fallback."""
+        p = parse_hand_history(self._make_hand(
+            header="$0.01/$0.02", sb="0.01", bb="0.02",
+            preflop="Hero: folds\nPlayer5: folds\nPlayer6: folds\nPlayer1: folds\nPlayer2: folds\nUncalled bet ($0.01) returned to Player3\n",
+        ))
+        assert p.bb_amount == Decimal("0.02")
+
+    def test_no_actions_header_corrupted(self):
+        """No preflop actions + header corrupted — SB tiebreaker resolves."""
+        p = parse_hand_history(self._make_hand(
+            header="$0.01/$002", sb="0.01", bb="0.02",
+            preflop="Hero: folds\nPlayer5: folds\nPlayer6: folds\nPlayer1: folds\nPlayer2: folds\nUncalled bet ($0.01) returned to Player3\n",
+        ))
+        assert p.bb_amount == Decimal("0.02")
+
+    def test_header_bb_becomes_different_standard_stake(self):
+        """Header BB corrupted from $0.02 to $0.05 (both standard). Actions resolve NL2.
+
+        Real hand RC4327823011: header says $0.01/$0.05 but posted BB is $0.02
+        and raise to $0.06 = 3x at NL2 (typical), 1.2x at NL5 (atypical).
+        """
+        hand = """\
+Poker Hand #RC4327823011: Hold'em No Limit ($0.01/$0.05) - 2026/02/27 02:31:43
+Table 'RushAndCash19646929' 6-max Seat #1 is the button
+Seat 1: 7b230231 ($2.36 in chips)
+Seat 2: d8a99f6b ($2.37 in chips)
+Seat 3: 41e80c6a ($2.04 in chips)
+Seat 4: Hero ($4.42 in chips)
+Seat 5: a5ba07eb ($2.64 in chips)
+Seat 6: 17fa6957 ($1.93 in chips)
+d8a99f6b: posts small blind $0.01
+41e80c6a: posts big blind $0.02
+*** HOLE CARDS ***
+Dealt to Hero [5c Ks]
+Hero: folds
+a5ba07eb: folds
+17fa6957: raises $0.04 to $0.06
+7b230231: folds
+d8a99f6b: calls $0.05
+41e80c6a: folds
+*** FLOP *** [Qs 4h 5h]
+d8a99f6b: checks
+17fa6957: bets $0.06
+d8a99f6b: raises $0.08 to $0.14
+17fa6957: raises $0.22 to $0.36
+d8a99f6b: calls $0.22
+*** TURN *** [Qs 4h 5h] [2d]
+d8a99f6b: checks
+17fa6957: bets $0.31
+d8a99f6b: calls $0.31
+*** RIVER *** [Qs 4h 5h 2d] [3d]
+d8a99f6b: checks
+17fa6957: bets $0.62
+d8a99f6b: calls $0.62
+17fa6957: shows [Tc Ah] (a straight, Ace to Five)
+d8a99f6b: shows [Qh Ac] (a straight, Ace to Five)
+*** SHOWDOWN ***
+d8a99f6b collected $1.32 from pot
+17fa6957 collected $1.31 from pot
+*** SUMMARY ***
+Total pot $2.72 | Rake $0.06 | Jackpot $0.03 | Bingo $0 | Fortune $0 | Tax $0
+Board [Qs 4h 5h 2d 3d]
+Seat 1: 7b230231 (button) folded before Flop (didn't bet)
+Seat 2: d8a99f6b (small blind) showed [Qh Ac] and won ($1.32) with a straight, Ace to Five
+Seat 3: 41e80c6a (big blind) folded before Flop
+Seat 4: Hero folded before Flop (didn't bet)
+Seat 5: a5ba07eb folded before Flop (didn't bet)
+Seat 6: 17fa6957 showed [Tc Ah] and won ($1.31) with a straight, Ace to Five
+"""
+        p = parse_hand_history(hand)
+        assert p.bb_amount == Decimal("0.02")
+
+    def test_real_hand_nl52_corruption(self):
+        """Real hand RC4314742506: header+posted BB both corrupted to $0.52."""
+        hand = """\
+Poker Hand #RC4314742506: Hold'em No Limit ($0.01/$0.52) - 2026/02/21 22:30:11
+Table 'RushAndCash16036662' 6-max Seat #1 is the button
+Seat 1: f3c4555d ($2.03 in chips)
+Seat 2: fcfb870b ($2.03 in chips)
+Seat 3: ef907299 ($2.27 in chips)
+Seat 4: Hero ($2.04 in chips)
+Seat 5: dc065eff ($4.36 in chips)
+Seat 6: 93cd4d24 ($2 in chips)
+fcfb870b: posts small blind $0.01
+ef907299: posts big blind $0.52
+*** HOLE CARDS ***
+Dealt to Hero [Ah Jc]
+Hero: raises $0.03 to $0.05
+dc065eff: folds
+93cd4d24: folds
+f3c4555d: folds
+fcfb870b: folds
+ef907299: folds
+Uncalled bet ($0.03) returned to Hero
+*** SHOWDOWN ***
+Hero collected $0.05 from pot
+*** SUMMARY ***
+Total pot $0.05 | Rake $0 | Jackpot $0 | Bingo $0 | Fortune $0 | Tax $0
+Seat 4: Hero collected ($0.05)
+"""
+        p = parse_hand_history(hand)
+        assert p.bb_amount == Decimal("0.02")
+        assert p.stakes == "$0.01/$0.02"
+
+    def test_real_hand_nl200_dot_dropped(self):
+        """Real hand RC4337993519: header BB $002 (dot dropped from $0.02)."""
+        hand = """\
+Poker Hand #RC4337993519: Hold'em No Limit ($0.01/$002) - 2026/03/03 03:32:34
+Table 'RushAndCash22477396' 6-max Seat #1 is the button
+Seat 1: 6252ce9e ($2.98 in chips)
+Seat 2: ad0138a2 ($1.14 in chips)
+Seat 3: 62de0394 ($6.9 in chips)
+Seat 4: c1d74a26 ($9.58 in chips)
+Seat 5: Hero ($2.38 in chips)
+Seat 6: 37d192bf ($3.48 in chips)
+ad0138a2: posts small blind $0.01
+62de0394: posts big blind $0.02
+*** HOLE CARDS ***
+Dealt to Hero [6h Tc]
+c1d74a26: folds
+Hero: folds
+37d192bf: folds
+6252ce9e: folds
+ad0138a2: folds
+Uncalled bet ($0.01) returned to 62de0394
+*** SHOWDOWN ***
+62de0394 collected $0.02 from pot
+*** SUMMARY ***
+Total pot $0.02 | Rake $0 | Jackpot $0 | Bingo $0 | Fortune $0 | Tax $0
+Seat 5: Hero folded before Flop (didn't bet)
+"""
+        p = parse_hand_history(hand)
+        assert p.bb_amount == Decimal("0.02")
+
+    def test_real_hand_nl200_dot_dropped_with_action(self):
+        """Real hand RC4327478084: header BB $002 with preflop action."""
+        hand = """\
+Poker Hand #RC4327478084: Hold'em No Limit ($0.01/$002) - 2026/02/26 22:36:58
+Table 'RushAndCash19542002' 6-max Seat #1 is the button
+Seat 1: 5d886d28 ($3.12 in chips)
+Seat 2: f87af489 ($2 in chips)
+Seat 3: b2416d31 ($2.16 in chips)
+Seat 4: Hero ($3.28 in chips)
+Seat 5: dfbbb6a ($3.39 in chips)
+Seat 6: 6383d678 ($2 in chips)
+f87af489: posts small blind $0.01
+b2416d31: posts big blind $0.02
+*** HOLE CARDS ***
+Dealt to Hero [3d Kc]
+Hero: folds
+dfbbb6a: folds
+6383d678: raises $0.03 to $0.05
+5d886d28: folds
+f87af489: folds
+b2416d31: calls $0.03
+*** FLOP *** [9c 3h 5s]
+b2416d31: checks
+6383d678: checks
+*** TURN *** [9c 3h 5s] [As]
+b2416d31: checks
+6383d678: bets $0.04
+b2416d31: folds
+Uncalled bet ($0.04) returned to 6383d678
+*** SHOWDOWN ***
+6383d678 collected $0.11 from pot
+*** SUMMARY ***
+Total pot $0.11 | Rake $0 | Jackpot $0 | Bingo $0 | Fortune $0 | Tax $0
+Board [9c 3h 5s As]
+Seat 6: 6383d678 won ($0.11)
+"""
+        p = parse_hand_history(hand)
+        assert p.bb_amount == Decimal("0.02")
+
+    def test_real_hand_nl500_dot_dropped(self):
+        """Real hand RC4306586133: header BB $005 (dot dropped from $0.05)."""
+        hand = """\
+Poker Hand #RC4306586133: Hold'em No Limit ($0.02/$005) - 2026/02/18 18:34:20
+Table 'RushAndCash9101393' 6-max Seat #1 is the button
+Seat 1: e74d6ef3 ($13.57 in chips)
+Seat 2: cbd910e8 ($4.71 in chips)
+Seat 3: 888f3558 ($6.02 in chips)
+Seat 4: Hero ($6.98 in chips)
+Seat 5: 25de2030 ($7.68 in chips)
+Seat 6: 730be48e ($10.99 in chips)
+cbd910e8: posts small blind $0.02
+888f3558: posts big blind $0.05
+*** HOLE CARDS ***
+Dealt to Hero [Qd 8h]
+Hero: folds
+25de2030: folds
+730be48e: raises $0.05 to $0.1
+e74d6ef3: folds
+cbd910e8: folds
+888f3558: calls $0.05
+*** FLOP *** [5s 8c Qh]
+888f3558: checks
+730be48e: checks
+*** TURN *** [5s 8c Qh] [2s]
+888f3558: checks
+730be48e: bets $0.1
+888f3558: folds
+Uncalled bet ($0.1) returned to 730be48e
+*** SHOWDOWN ***
+730be48e collected $0.21 from pot
+*** SUMMARY ***
+Total pot $0.22 | Rake $0.01 | Jackpot $0 | Bingo $0 | Fortune $0 | Tax $0
+Board [5s 8c Qh 2s]
+Seat 6: 730be48e won ($0.21)
+"""
+        p = parse_hand_history(hand)
+        assert p.bb_amount == Decimal("0.05")
+
+    def test_both_corrupted_same_value(self):
+        """Header and posted BB both say $0.52 — actions + snap resolve to NL50."""
+        # Stacks ~$50 = 100 BB at NL50
+        hand = """\
+Poker Hand #RC9900100002: Hold'em No Limit ($0.26/$0.52) - 2026/01/15 10:00:00
+Table 'RushAndCash99002' 6-max Seat #1 is the button
+Seat 1: Player1 ($50.00 in chips)
+Seat 2: Player2 ($48.00 in chips)
+Seat 3: Player3 ($52.00 in chips)
+Seat 4: Hero ($50.00 in chips)
+Seat 5: Player5 ($55.00 in chips)
+Seat 6: Player6 ($50.00 in chips)
+Player2: posts small blind $0.26
+Player3: posts big blind $0.52
+*** HOLE CARDS ***
+Dealt to Hero [Ah Kd]
+Hero: raises $1.25 to $1.25
+Player5: folds
+Player6: folds
+Player1: folds
+Player2: folds
+Player3: folds
+Uncalled bet ($0.73) returned to Hero
+*** SHOWDOWN ***
+Hero collected $1.30 from pot
+*** SUMMARY ***
+Total pot $1.30 | Rake $0 | Jackpot $0 | Bingo $0 | Fortune $0 | Tax $0
+Seat 4: Hero collected ($1.30)
+"""
+        p = parse_hand_history(hand)
+        assert p.bb_amount == Decimal("0.50")
+
+
 class TestOpenRaiseOpp:
     """Test open_raise_opp flag (RFI opportunity)."""
 

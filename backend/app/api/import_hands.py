@@ -885,7 +885,10 @@ def _run_rebuild_sync(db, on_progress: 'Callable[[int, int], None] | None' = Non
                 prepared_by_ws.setdefault(ws_id, []).append(
                     (parsed, stats, financials)
                 )
-                rit_updates.append((hand_id, parsed.rit_boards, parsed.is_cashout))
+                rit_updates.append((
+                    hand_id, parsed.rit_boards, parsed.is_cashout,
+                    parsed.stakes, float(parsed.sb_amount), float(parsed.bb_amount),
+                ))
             except Exception:
                 errors += 1
                 traceback.print_exc()
@@ -899,14 +902,22 @@ def _run_rebuild_sync(db, on_progress: 'Callable[[int, int], None] | None' = Non
                 imported += imp
                 errors += errs
 
-        # Update rit_boards/is_cashout on preserved hands table
+        # Update hands table with re-parsed values (stakes may change if
+        # corruption detection improved, rit_boards/is_cashout may change too)
         if rit_updates:
             _ids = [r[0] for r in rit_updates]
             _rits = [r[1] for r in rit_updates]
             _cos = [r[2] for r in rit_updates]
-            pa_rit = pa.table({"hid": _ids, "rit": _rits, "co": _cos})
+            _stakes = [r[3] for r in rit_updates]
+            _sbs = [r[4] for r in rit_updates]
+            _bbs = [r[5] for r in rit_updates]
+            pa_rit = pa.table({
+                "hid": _ids, "rit": _rits, "co": _cos,
+                "st": _stakes, "sb": _sbs, "bb": _bbs,
+            })
             db.execute(
-                "UPDATE hands SET rit_boards = pa_rit.rit, is_cashout = pa_rit.co "
+                "UPDATE hands SET rit_boards = pa_rit.rit, is_cashout = pa_rit.co, "
+                "stakes = pa_rit.st, sb_amount = pa_rit.sb, bb_amount = pa_rit.bb "
                 "FROM pa_rit WHERE hands.id = pa_rit.hid"
             )
 

@@ -10,7 +10,7 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 # Bump this when stat_flags.py or parser logic changes to trigger auto-rebuild.
-STAT_VERSION = 2
+STAT_VERSION = 4
 
 _data_dir = os.environ.get("OHM_DATA_DIR")
 if _data_dir:
