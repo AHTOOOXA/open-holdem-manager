@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="utf-8"?>
+<session sessioncode="1234567890">
+  <general>
+    <mode>real</mode>
+    <gametype>Hold'em NL</gametype>
+    <tablename>Table $0.25/$0.50</tablename>
+    <duration/>
+    <gamecount>1</gamecount>
+    <startdate>2024-01-15 14:30:00</startdate>
+    <currency>USD</currency>
+    <nickname>Player1</nickname>
+    <bession/>
+    <istrnt>false</istrnt>
+  </general>
+  <game gamecode="9876543210">
+    <general>
+      <startdate>2024-01-15 14:30:00</startdate>
+      <players>
+        <player seat="1" name="Player1" chips="$52.35" dealer="0" win="$32.75" bet="$16.25" rebuy="0" addon="0"/>
+        <player seat="2" name="Player2" chips="$49.80" dealer="0" win="$0" bet="$0" rebuy="0" addon="0"/>
+        <player seat="3" name="Player3" chips="$50.00" dealer="1" win="$0" bet="$1.50" rebuy="0" addon="0"/>
+        <player seat="4" name="Player4" chips="$47.25" dealer="0" win="$0" bet="$0.25" rebuy="0" addon="0"/>
+        <player seat="5" name="Player5" chips="$51.50" dealer="0" win="$0" bet="$16.25" rebuy="0" addon="0"/>
+        <player seat="6" name="Player6" chips="$48.75" dealer="0" win="$0" bet="$0" rebuy="0" addon="0"/>
+      </players>
+    </general>
+    <round no="0" id="preflop">
+      <action player="Player4" type="1" sum="$0.25" cards=""/>
+      <action player="Player5" type="2" sum="$0.50" cards=""/>
+      <action player="Player6" type="0" sum="$0" cards=""/>
+      <action player="Player1" type="23" sum="$1.50" cards="HA DK"/>
+      <action player="Player2" type="0" sum="$0" cards=""/>
+      <action player="Player3" type="3" sum="$1.50" cards=""/>
+      <action player="Player4" type="0" sum="$0" cards=""/>
+      <action player="Player5" type="3" sum="$1.00" cards=""/>
+    </round>
+    <round no="1" id="flop">
+      <cards type="community">HK C7 D2</cards>
+      <action player="Player5" type="4" sum="$0" cards=""/>
+      <action player="Player1" type="5" sum="$2.25" cards=""/>
+      <action player="Player3" type="0" sum="$0" cards=""/>
+      <action player="Player5" type="3" sum="$2.25" cards=""/>
+    </round>
+    <round no="2" id="turn">
+      <cards type="community">S5</cards>
+      <action player="Player5" type="4" sum="$0" cards=""/>
+      <action player="Player1" type="5" sum="$4.50" cards=""/>
+      <action player="Player5" type="3" sum="$4.50" cards=""/>
+    </round>
+    <round no="3" id="river">
+      <cards type="community">H9</cards>
+      <action player="Player5" type="4" sum="$0" cards=""/>
+      <action player="Player1" type="5" sum="$8.00" cards=""/>
+      <action player="Player5" type="3" sum="$8.00" cards=""/>
+    </round>
+    <round no="4" id="showdown">
+      <action player="Player1" type="15" sum="$0" cards="HA DK"/>
+      <action player="Player5" type="15" sum="$0" cards="HQ HJ"/>
+    </round>
+  </game>
+</session>

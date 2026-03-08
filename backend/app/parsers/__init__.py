@@ -10,10 +10,10 @@ Each parser module exposes:
   - parse_hand_history(hand_text: str) -> ParsedHand
 """
 
-from app.parsers import ggpoker
+from app.parsers import ggpoker, pokerstars, poker888, wpn, winamax, ipoker, partypoker
 from app.parsers.common import ParsedHand, _assign_positions, POSITIONS_BY_COUNT, _ZERO
 
-PARSERS = [ggpoker]
+PARSERS = [ggpoker, pokerstars, poker888, wpn, winamax, ipoker, partypoker]
 PARSER_BY_SITE_ID = {p.SITE_ID: p for p in PARSERS}
 
 

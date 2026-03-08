@@ -1,0 +1,37 @@
+PokerStars Zoom Hand #RC345678901:  Hold'em No Limit ($0.25/$0.50 USD) - 2024/01/15 15:00:00 ET
+Table 'Donato' 6-max Seat #5 is the button
+Seat 1: Player1 ($50.00 in chips)
+Seat 2: Player2 ($62.40 in chips)
+Seat 3: Player3 ($48.75 in chips)
+Seat 4: Player4 ($55.10 in chips)
+Seat 5: Player5 ($50.00 in chips)
+Seat 6: Player6 ($51.25 in chips)
+Player6: posts small blind $0.25
+Player1: posts big blind $0.50
+*** HOLE CARDS ***
+Dealt to Player1 [Jc Jd]
+Player2: folds
+Player3: raises $0.75 to $1.25
+Player4: folds
+Player5: folds
+Player6: folds
+Player1: raises $2.75 to $4.00
+Player3: calls $2.75
+*** FLOP *** [8s 5d 2h]
+Player1: bets $3.00
+Player3: calls $3.00
+*** TURN *** [8s 5d 2h] [3c]
+Player1: bets $7.50
+Player3: folds
+Uncalled bet ($7.50) returned to Player1
+Player1 collected $14.25 from pot
+Player1: doesn't show hand
+*** SUMMARY ***
+Total pot $14.75 | Rake $0.50
+Board [8s 5d 2h 3c]
+Seat 1: Player1 (big blind) collected ($14.25)
+Seat 2: Player2 folded before Flop (didn't bet)
+Seat 3: Player3 folded on the Turn
+Seat 4: Player4 folded before Flop (didn't bet)
+Seat 5: Player5 (button) folded before Flop (didn't bet)
+Seat 6: Player6 (small blind) folded before Flop
