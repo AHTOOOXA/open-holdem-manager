@@ -1,0 +1,32 @@
+﻿Winamax Poker - CashGame - HandId: #7331600-91-1427188257 - Holdem no limit (5€/10€) - 2015/03/24 09:10:57 UTC
+Table: 'Florence 03' 5-max (real money) Seat #4 is the button
+Seat 1: Nackerbatzl (1010€)
+Seat 2: letsgamboule (958€)
+Seat 3: TIBONE 17 (1143.50€)
+Seat 4: martineduran (1523€)
+Seat 5: ChimiChimi (1214€)
+*** ANTE/BLINDS ***
+ChimiChimi posts small blind 5€
+Nackerbatzl posts big blind 10€
+*** PRE-FLOP *** 
+letsgamboule folds
+TIBONE 17 raises 20€ to 30€
+martineduran folds
+ChimiChimi folds
+Nackerbatzl calls 20€
+*** FLOP *** [Kh 7h 4h]
+Nackerbatzl checks
+TIBONE 17 bets 43€
+Nackerbatzl raises 77€ to 120€
+TIBONE 17 calls 77€
+*** TURN *** [Kh 7h 4h] [8d]
+Nackerbatzl bets 210€
+TIBONE 17 calls 210€
+*** RIVER *** [Kh 7h 4h 8d] [Qd]
+Nackerbatzl bets 650€ and is all-in
+TIBONE 17 folds
+Nackerbatzl collected 1372€ from pot
+*** SUMMARY ***
+Total pot 1372€ | Rake 3€
+Board: [Kh 7h 4h 8d Qd]
+Seat 1: Nackerbatzl (big blind) won 1372€

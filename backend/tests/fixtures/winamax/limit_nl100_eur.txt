@@ -1,0 +1,17 @@
+﻿Winamax Poker - CashGame - HandId: #7334932-77-1427241614 - Holdem no limit (0.50€/1€) - 2015/03/25 00:00:14 UTC
+Table: 'Albuquerque 03' 5-max (real money) Seat #1 is the button
+Seat 1: 9574561 (74.66€)
+Seat 3: Woodshipper1 (103.11€)
+Seat 4: Kool Shen (118.71€)
+Seat 5: 7 7 7 (43.54€)
+*** ANTE/BLINDS ***
+Woodshipper1 posts small blind 0.50€
+Kool Shen posts big blind 1€
+*** PRE-FLOP *** 
+7 7 7 folds
+9574561 folds
+Woodshipper1 folds
+Kool Shen collected 1.50€ from pot
+*** SUMMARY ***
+Total pot 1.50€ | No rake
+Seat 4: Kool Shen (big blind) won 1.50€

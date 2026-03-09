@@ -1,0 +1,33 @@
+﻿***** Hand History for Game 13551258247 *****
+$0.05/$0.10 USD NL Texas Hold'em - Monday, January 06, 13:09:04 EST 2014
+Table Delhi (Real Money)
+Seat 1 is the button
+Total number of players : 7/9 
+Seat 3: Glazynoff_ ( $10 USD )
+Seat 9: MasterM87 ( $10 USD )
+Seat 8: SZB4 ( $5 USD )
+Seat 1: addy188 ( $7.58 USD )
+Seat 7: darka884 ( $9.90 USD )
+Seat 4: roianu ( $4.08 USD )
+Seat 2: stefan198988 ( $2.48 USD )
+stefan198988 posts small blind [$0.05 USD].
+Glazynoff_ posts big blind [$0.10 USD].
+roianu posts big blind [$0.10 USD].
+SZB4 posts big blind [$0.10 USD].
+** Dealing down cards **
+roianu checks
+SZB4 checks
+addy188 calls [$0.10 USD]
+stefan198988 calls [$0.05 USD]
+Glazynoff_ checks
+** Dealing Flop ** [ Th, Ah, Ts ]
+stefan198988 bets [$0.10 USD]
+Glazynoff_ folds
+roianu folds
+SZB4 folds
+addy188 calls [$0.10 USD]
+** Dealing Turn ** [ 3d ]
+stefan198988 bets [$0.10 USD]
+addy188 folds
+stefan198988 does not show cards.
+stefan198988 wins $0.77 USD

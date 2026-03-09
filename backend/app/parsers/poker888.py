@@ -84,6 +84,8 @@ def split_hands(content: str) -> list[str]:
     Files may have '#Game No : NNNN' lines before each hand header.
     Split on the ***** header, then re-attach any preceding #Game No line.
     """
+    # Strip BOM if present
+    content = content.lstrip("\ufeff")
     # Split just before the ***** header line
     parts = re.split(r'\n(?=\*{5} 888poker Hand History)', content)
     # Also handle files that start with #Game No before the first hand

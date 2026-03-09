@@ -1,0 +1,26 @@
+﻿***** Hand History for Game 13550420797 *****
+$0.05/$0.10 USD NL Texas Hold'em - Monday, January 06, 05:54:36 EST 2014
+Table Almería (Real Money)
+Seat 4 is the button
+Total number of players : 3/6 
+Seat 4: Sajator ( $10.15 USD )
+Seat 5: jott1982 ( $9.60 USD )
+Seat 3: sawas222 ( $3.31 USD )
+jott1982 posts small blind [$0.05 USD].
+sawas222 posts big blind [$0.10 USD].
+** Dealing down cards **
+Sajator folds
+jott1982 calls [$0.05 USD]
+sawas222 checks
+** Dealing Flop ** [ 2s, 9d, As ]
+jott1982 checks
+sawas222 checks
+** Dealing Turn ** [ Qc ]
+jott1982 checks
+sawas222 checks
+** Dealing River ** [ 5c ]
+jott1982 checks
+sawas222 checks
+jott1982 shows [ 5s, Js ]a pair of Fives.
+sawas222 doesn't show [ 7c, 8c ]high card Ace.
+jott1982 wins $0.19 USD from the main pot with a pair of Fives.

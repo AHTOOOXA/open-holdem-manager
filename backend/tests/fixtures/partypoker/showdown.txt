@@ -1,0 +1,24 @@
+﻿***** Hand History for Game 13550276397 *****
+$0.05/$0.10 USD NL Texas Hold'em - Monday, January 06, 03:13:25 EST 2014
+Table Bloemfontein (Real Money)
+Seat 1 is the button
+Total number of players : 2/6 
+Seat 1: poket Ass ( $8.54 USD )
+Seat 5: stal1969 ( $11 USD )
+poket Ass posts small blind [$0.05 USD].
+stal1969 posts big blind [$0.10 USD].
+** Dealing down cards **
+poket Ass calls [$0.05 USD]
+stal1969 checks
+** Dealing Flop ** [ Ah, 3s, 4s ]
+stal1969 checks
+poket Ass checks
+** Dealing Turn ** [ 9d ]
+stal1969 checks
+poket Ass checks
+** Dealing River ** [ Tc ]
+stal1969 checks
+poket Ass checks
+stal1969 shows [ 7h, 3c ]a pair of Threes.
+poket Ass doesn't show [ Ks, 6d ]high card Ace.
+stal1969 wins $0.19 USD from the main pot with a pair of Threes.

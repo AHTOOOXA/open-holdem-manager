@@ -9,17 +9,7 @@ from app.parsers.ggpoker import parse_hand_history
 from app.api.import_hands import insert_parsed_hand, reset_import_cache
 from app.db import init_schema
 
-FIXTURES = Path(__file__).parent / "fixtures"
-
-
-@pytest.fixture
-def db():
-    """Create an in-memory DuckDB with schema for each test."""
-    reset_import_cache()
-    conn = duckdb.connect(":memory:")
-    init_schema(conn)
-    yield conn
-    conn.close()
+FIXTURES = Path(__file__).parent / "fixtures" / "ggpoker"
 
 
 def _get_hero_won(db, hand_id: str) -> float:
@@ -74,7 +64,7 @@ class TestRegularHand:
     """Test parsing of a standard hand (baseline)."""
 
     def test_basic_hand(self, db):
-        text = (FIXTURES / "ggpoker_sample.txt").read_text()
+        text = (FIXTURES / "sample.txt").read_text()
         # Parse just the first hand
         first_hand = text.split("\n\n\n")[0]
         parsed = parse_hand_history(first_hand)
@@ -94,7 +84,7 @@ class TestRegularHand:
         assert hero_won == pytest.approx(6.25, abs=0.01)
 
     def test_showdown_hand(self, db):
-        text = (FIXTURES / "ggpoker_sample.txt").read_text()
+        text = (FIXTURES / "sample.txt").read_text()
         # Fifth hand has a showdown
         hands = [h.strip() for h in text.split("\n\n\n") if h.strip()]
         parsed = parse_hand_history(hands[4])
@@ -743,7 +733,7 @@ class TestOpenRaiseOpp:
 
     def test_open_raise_opp_basic(self, db):
         """Players acting before first raise get open_raise_opp=True."""
-        text = (FIXTURES / "ggpoker_sample.txt").read_text()
+        text = (FIXTURES / "sample.txt").read_text()
         first_hand = text.split("\n\n\n")[0]
         parsed = parse_hand_history(first_hand)
         hand_id = insert_parsed_hand(db, parsed)

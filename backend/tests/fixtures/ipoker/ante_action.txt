@@ -1,0 +1,61 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<session sessioncode="0">
+  <general>
+    <mode>real</mode>
+    <gametype>Holdem NL £0.05/£0.10</gametype>
+    <tablename>Albuixech, 817196375</tablename>
+    <tablecurrency>GBP</tablecurrency>
+    <duration>N/A</duration>
+    <gamecount>N/A</gamecount>
+    <startdate>2014-01-06 17:05:34</startdate>
+    <currency></currency>
+    <nickname>N/A</nickname>
+    <bets>N/A</bets>
+    <wins>N/A</wins>
+    <chipsin>N/A</chipsin>
+    <chipsout>N/A</chipsout>
+    <ipoints>N/A</ipoints>
+    <statuspoints>N/A</statuspoints>
+    <awardpoints>N/A</awardpoints>
+  </general>
+  <game gamecode="5384038435">
+    <general>
+      <startdate>2014-01-06 17:11:41</startdate>
+      <players>
+        <player seat="4" name="WWR141388412" chips="£11.25" dealer="0" win="£0.35" bet="£0.22" rebuy="0" addon="0" reg_code="-" />
+        <player seat="5" name="keepfishing68" chips="£9.30" dealer="0" win="£0" bet="£0.12" rebuy="0" addon="0" reg_code="-" />
+        <player seat="6" name="chcake515151" chips="£9.08" dealer="1" win="£0" bet="£0.02" rebuy="0" addon="0" reg_code="-" />
+      </players>
+    </general>
+    <round no="0">
+      <action no="1" player="WWR141388412" type="15" sum="£0.02" cards="[cards]" />
+      <action no="4" player="WWR141388412" type="1" sum="£0.05" cards="[cards]" />
+      <action no="2" player="keepfishing68" type="15" sum="£0.02" cards="[cards]" />
+      <action no="5" player="keepfishing68" type="2" sum="£0.10" cards="[cards]" />
+      <action no="3" player="chcake515151" type="15" sum="£0.02" cards="[cards]" />
+    </round>
+    <round no="1">
+      <cards type="Pocket" player="WWR141388412">X X</cards>
+      <action no="7" player="WWR141388412" type="3" sum="£0.05" cards="" />
+      <cards type="Pocket" player="keepfishing68">X X</cards>
+      <action no="8" player="keepfishing68" type="4" sum="£0" cards="" />
+      <cards type="Pocket" player="chcake515151">X X</cards>
+      <action no="6" player="chcake515151" type="0" sum="£0" cards="" />
+    </round>
+    <round no="2">
+      <cards type="Flop" player="">D3 C9 H3</cards>
+      <action no="9" player="WWR141388412" type="4" sum="£0" cards="" />
+      <action no="10" player="keepfishing68" type="4" sum="£0" cards="" />
+    </round>
+    <round no="3">
+      <cards type="Turn" player="">HJ</cards>
+      <action no="11" player="WWR141388412" type="4" sum="£0" cards="" />
+      <action no="12" player="keepfishing68" type="4" sum="£0" cards="" />
+    </round>
+    <round no="4">
+      <cards type="River" player="">S4</cards>
+      <action no="13" player="WWR141388412" type="5" sum="£0.10" cards="" />
+      <action no="14" player="keepfishing68" type="0" sum="£0" cards="" />
+    </round>
+  </game>
+</session>
