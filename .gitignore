@@ -30,6 +30,9 @@ Thumbs.db
 # Benchmark
 backend/tests/benchmark_log.jsonl
 
+# Third-party test fixtures (external hand history samples)
+backend/tests/fixtures/*/hhsmithy/
+
 # Electron / electron-builder
 release/
 *.dmg
