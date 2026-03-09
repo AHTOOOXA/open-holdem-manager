@@ -12,7 +12,7 @@ OHM is at v0.0.10 alpha -- core features work but the product hasn't been public
 
 ### Pillar 1: Multi-Site Support
 
-Each new parser unlocks a new community to announce in. Launching with 3-4 sites means a stronger launch story and larger addressable audience. See [docs/specs/MULTI-SITE-PARSERS-PRD.md](docs/specs/MULTI-SITE-PARSERS-PRD.md) for technical details.
+Each new parser unlocks a new community to announce in. Launching with 3-4 sites means a stronger launch story and larger addressable audience. **DONE** -- all 7 parsers shipped (GG, PS, 888, WPN, Winamax, iPoker, partypoker). See [docs/archive/MULTI-SITE-PARSERS-PRD.md](docs/archive/MULTI-SITE-PARSERS-PRD.md) for the completed spec.
 
 ### Pillar 2: Natural Language Query Engine ("PostHog for Poker")
 
@@ -33,11 +33,11 @@ Together they make the Reddit headline: **"I built a poker analytics engine -- a
 
 ## Phase 0: Parsers + Query Engine + API + Polish (Weeks 1-5)
 
-### Product Work -- Parsers (Weeks 1-3)
-- Build PokerStars, 888poker, and WPN parsers
-- Add auto-detection in import flow (detect site from file format)
-- Test all parsers end-to-end: import -> stats -> graph -> hand replay
-- See [docs/specs/MULTI-SITE-PARSERS-PRD.md](docs/specs/MULTI-SITE-PARSERS-PRD.md) for per-site format specs
+### Product Work -- Parsers (Weeks 1-3) -- DONE
+- ~~Build PokerStars, 888poker, and WPN parsers~~ All 7 parsers shipped (GG, PS, 888, WPN, Winamax, iPoker, partypoker)
+- ~~Add auto-detection in import flow (detect site from file format)~~ `detect_parser()` registry working
+- ~~Test all parsers end-to-end: import -> stats -> graph -> hand replay~~ 359 tests passing
+- Spec completed and archived: [docs/archive/MULTI-SITE-PARSERS-PRD.md](docs/archive/MULTI-SITE-PARSERS-PRD.md)
 
 ### Product Work -- Query Engine (Weeks 2-4)
 

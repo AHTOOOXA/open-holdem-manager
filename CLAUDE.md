@@ -91,13 +91,13 @@ docs/
     EXTENSIBILITY.md       #   Plugin architecture, API layers, security model, plugin ideas
     MARKET-ANALYSIS.md     #   Market research, competitive analysis, monetization
   specs/                   # Active implementation specs for unbuilt features
-    MULTI-SITE-PARSERS-PRD.md  #   Parser interface, per-site formats, rollout plan
     REDO-RIT-CASHOUT.md    #   RIT/Cashout rework spec
     REWORK_SUBSTATS.md     #   Stat detail subpage rework
     stats-page-redesign.md #   Stats page layout redesign
     stat-detail-panel.md   #   Per-stat detail panel contents
     og-image-redesign.md   #   OG image poker table scene
   archive/                 # Shipped/superseded specs (kept for history)
+    MULTI-SITE-PARSERS-PRD.md  #   Multi-site parsers (DONE — all 7 sites shipped)
 
 ROADMAP.md               # Integrated product + marketing roadmap (references docs/ for details)
 ```
