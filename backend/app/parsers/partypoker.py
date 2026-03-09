@@ -275,8 +275,8 @@ def parse_hand_history(hand_text: str) -> ParsedHand:
     action_order = 0
 
     for line in lines[line_idx:]:
-        # Footer line — end of hand
-        if RE_FOOTER.match(line) and lines.index(line) > 0:
+        # Footer line — same header pattern repeated at end of hand
+        if RE_FOOTER.match(line):
             break
 
         # Street markers

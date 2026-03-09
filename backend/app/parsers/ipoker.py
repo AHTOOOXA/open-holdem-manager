@@ -245,6 +245,10 @@ def parse_hand_history(hand_text: str) -> ParsedHand:
     sb_player = None
     bb_player = None
     action_order = 0
+    # Track running investment for all-in detection
+    player_stacks = {s["username"]: s["stack"] for s in seats}
+    player_running_invested: dict[str, Decimal] = {}
+    player_street_invested: dict[str, Decimal] = {}  # per street, reset each street
 
     for round_el in game.findall("round"):
         round_id = round_el.get("id", "")
@@ -258,6 +262,9 @@ def parse_hand_history(hand_text: str) -> ParsedHand:
                 converted = _convert_cards(cards_el.text)
                 if street in board_cards:
                     board_cards[street] = converted
+
+        # Reset per-street tracking
+        player_street_invested = {}
 
         # Actions
         for action_el in round_el.findall("action"):
@@ -294,12 +301,29 @@ def parse_hand_history(hand_text: str) -> ParsedHand:
             if street == "showdown":
                 continue
 
+            # Track running investment for all-in detection
+            prev_running = player_running_invested.get(player_name, _ZERO)
+            prev_street = player_street_invested.get(player_name, _ZERO)
+            if action_name in ("sb", "bb", "ante", "call", "bet"):
+                player_running_invested[player_name] = prev_running + action_sum
+                player_street_invested[player_name] = prev_street + action_sum
+            elif action_name == "raise":
+                # action_sum is "to" amount for this street
+                increment = action_sum - prev_street
+                if increment > _ZERO:
+                    player_running_invested[player_name] = prev_running + increment
+                player_street_invested[player_name] = action_sum
+
+            stack = player_stacks.get(player_name, _ZERO)
+            invested = player_running_invested.get(player_name, _ZERO)
+            is_all_in = invested > _ZERO and invested >= stack
+
             action_order += 1
             actions_by_street[street].append({
                 "username": player_name,
                 "action": action_name,
                 "amount": action_sum,
-                "is_all_in": False,  # iPoker doesn't explicitly mark all-in
+                "is_all_in": is_all_in,
                 "order": action_order,
             })
 
