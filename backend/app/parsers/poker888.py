@@ -79,10 +79,24 @@ def detect(sample: str) -> bool:
 
 
 def split_hands(content: str) -> list[str]:
-    """Split a file with multiple 888poker hand histories into individual hands."""
-    # Split on header line, but also handle optional #Game No : prefix
-    parts = re.split(r'\n(?=#Game No\s*:|(?=\*{5} 888poker Hand History))', content)
-    return [p.strip() for p in parts if p.strip()]
+    """Split a file with multiple 888poker hand histories into individual hands.
+
+    Files may have '#Game No : NNNN' lines before each hand header.
+    Split on the ***** header, then re-attach any preceding #Game No line.
+    """
+    # Split just before the ***** header line
+    parts = re.split(r'\n(?=\*{5} 888poker Hand History)', content)
+    # Also handle files that start with #Game No before the first hand
+    result = []
+    for p in parts:
+        p = p.strip()
+        if not p:
+            continue
+        # Skip standalone #Game No fragments (no header follows)
+        if p.startswith("#Game No") and "888poker Hand History" not in p:
+            continue
+        result.append(p)
+    return result
 
 
 def extract_hand_id(hand_text: str) -> str | None:

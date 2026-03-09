@@ -174,8 +174,10 @@ def parse_hand_history(hand_text: str) -> ParsedHand:
 
     Returns a ParsedHand dataclass. Does NOT write to DB or compute stats.
     """
-    # Strip BOM and invisible chars
-    hand_text = hand_text.replace("\ufeff", "").replace("\x00", "")
+    # Strip BOM, invisible chars, and normalize Windows-1252 euro sign to UTF-8
+    # \x80 is the raw byte; \ufffd is the replacement char from errors='replace'
+    hand_text = (hand_text.replace("\ufeff", "").replace("\x00", "")
+                 .replace("\x80", "€").replace("\ufffd", "€"))
     lines = hand_text.strip().split("\n")
     lines = [l.strip() for l in lines if l.strip()]
 
