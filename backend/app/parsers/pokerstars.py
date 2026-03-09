@@ -25,25 +25,26 @@ RE_SKIP = re.compile(
 
 # Regex patterns
 RE_HEADER = re.compile(
-    r"PokerStars (?:Zoom )?Hand #(\w+):\s+"
-    r"Hold'em No Limit \(\$([0-9.]+)/\$([0-9.]+)(?: USD)?\)"
-    r" - (\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2})"
+    r"PokerStars (?:Zoom )?(?:Hand|Game) #(\w+):\s+"
+    r"Hold'em No Limit \((?:\$|€|EUR)([0-9.]+)/(?:\$|€|EUR)([0-9.]+)(?:\s*(?:USD|EUR))?\)"
+    r" - (\d{4}/\d{2}/\d{2} \d{1,2}:\d{2}:\d{2})"
 )
-RE_ZOOM = re.compile(r"PokerStars Zoom Hand #")
+RE_ZOOM = re.compile(r"PokerStars Zoom (?:Hand|Game) #")
 RE_TABLE = re.compile(
     r"Table '([^']+)' (\d+)-max Seat #(\d+) is the button"
 )
+_C = r"(?:\$|€|EUR)"  # Currency prefix pattern
 RE_SEAT = re.compile(
-    r"Seat (\d+): (.+?) \(\$([0-9.]+) in chips\)"
+    r"Seat (\d+): (.+?) \(" + _C + r"([0-9.]+) in chips\)\s*"
 )
 RE_ANTE = re.compile(
-    r"^(.+?): posts the ante \$([0-9.]+)"
+    r"^(.+?): posts the ante " + _C + r"([0-9.]+)"
 )
 RE_SMALL_BLIND = re.compile(
-    r"^(.+?): posts small blind \$([0-9.]+)"
+    r"^(.+?): posts small blind " + _C + r"([0-9.]+)"
 )
 RE_BIG_BLIND = re.compile(
-    r"^(.+?): posts big blind \$([0-9.]+)"
+    r"^(.+?): posts big blind " + _C + r"([0-9.]+)"
 )
 RE_DEALT = re.compile(
     r"Dealt to (.+?) \[(\w{2}) (\w{2})\]"
@@ -51,20 +52,20 @@ RE_DEALT = re.compile(
 RE_FOLD = re.compile(r"^(.+?): folds")
 RE_CHECK = re.compile(r"^(.+?): checks")
 RE_CALL = re.compile(
-    r"^(.+?): calls \$([0-9.]+)(?:\s+and is all-in)?"
+    r"^(.+?): calls " + _C + r"([0-9.]+)(?:\s+and is all-in)?"
 )
 RE_BET = re.compile(
-    r"^(.+?): bets \$([0-9.]+)(?:\s+and is all-in)?"
+    r"^(.+?): bets " + _C + r"([0-9.]+)(?:\s+and is all-in)?"
 )
 RE_RAISE = re.compile(
-    r"^(.+?): raises \$([0-9.]+) to \$([0-9.]+)(?:\s+and is all-in)?"
+    r"^(.+?): raises " + _C + r"([0-9.]+) to " + _C + r"([0-9.]+)(?:\s+and is all-in)?"
 )
 RE_ALLIN_MARKER = re.compile(r"and is all-in")
 RE_UNCALLED = re.compile(
-    r"Uncalled bet \(\$([0-9.]+)\) returned to (.+)"
+    r"Uncalled bet \(" + _C + r"([0-9.]+)\) returned to (.+)"
 )
 RE_COLLECTED_FROM_POT = re.compile(
-    r"^(.+?) collected \$([0-9.]+) from (?:main |side )?pot"
+    r"^(.+?) collected " + _C + r"([0-9.]+) from (?:main |side )?pot"
 )
 RE_FLOP = re.compile(r"\*\*\* FLOP \*\*\* \[(.+?)\]")
 RE_TURN = re.compile(r"\*\*\* TURN \*\*\* \[.+?\] \[(\w{2})\]")
@@ -73,13 +74,13 @@ RE_SHOWDOWN = re.compile(r"\*\*\* SHOW DOWN \*\*\*")
 RE_SUMMARY = re.compile(r"\*\*\* SUMMARY \*\*\*")
 RE_SHOWS = re.compile(r"^(.+?): shows \[(\w{2}) (\w{2})\]")
 RE_SUMMARY_POT_RAKE = re.compile(
-    r"Total pot \$([0-9.]+) \| Rake \$([0-9.]+)"
+    r"Total pot " + _C + r"([0-9.]+).*?\| Rake " + _C + r"([0-9.]+)"
 )
 RE_BOARD = re.compile(r"Board \[(.+?)\]")
 RE_SEAT_USERNAME = re.compile(
     r"Seat \d+: (.+?)(?:\s+\((?:button|small blind|big blind)\))?\s+(?:showed|mucked|folded|collected|won|received)"
 )
-RE_COLLECTED_WON_AMOUNT = re.compile(r"(?:collected|won) \(\$([0-9.]+)\)")
+RE_COLLECTED_WON_AMOUNT = re.compile(r"(?:collected|won) \(" + _C + r"([0-9.]+)\)")
 RE_SHOWED = re.compile(
     r"Seat (\d+): (.+?) (?:.*?)(?:showed|mucked) \[(\w{2}) (\w{2})\]"
 )
@@ -92,17 +93,17 @@ def _should_skip(line: str) -> bool:
 def detect(sample: str) -> bool:
     """Check if this content is a PokerStars hand history."""
     s = sample[:500]
-    return "PokerStars Hand #" in s or "PokerStars Zoom Hand #" in s
+    return bool(re.search(r'PokerStars (?:Zoom )?(?:Hand|Game) #', s))
 
 
 def split_hands(content: str) -> list[str]:
     """Split a file with multiple PokerStars hand histories into individual hands."""
-    return re.split(r'\n(?=PokerStars (?:Zoom )?Hand #)', content)
+    return re.split(r'\n(?=PokerStars (?:Zoom )?(?:Hand|Game) #)', content)
 
 
 def extract_hand_id(hand_text: str) -> str | None:
     """Extract hand ID from the first line."""
-    m = re.search(r'PokerStars (?:Zoom )?Hand #(\w+):', hand_text)
+    m = re.search(r'PokerStars (?:Zoom )?(?:Hand|Game) #(\w+):', hand_text)
     return m.group(1) if m else None
 
 
@@ -111,6 +112,8 @@ def parse_hand_history(hand_text: str) -> ParsedHand:
 
     Returns a ParsedHand dataclass. Does NOT write to DB or compute stats.
     """
+    # Strip BOM and invisible chars
+    hand_text = hand_text.replace("\ufeff", "").replace("\x00", "")
     lines = hand_text.strip().split("\n")
     lines = [l.strip() for l in lines if l.strip()]
 

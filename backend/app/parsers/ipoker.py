@@ -29,49 +29,76 @@ _ACTION_TYPES = {
     "3": "call",
     "4": "check",
     "5": "bet",
+    "7": "call",   # type 7 = call (often all-in call)
     "15": "show",
     "23": "raise",
 }
 
-# Round id to street name
-_ROUND_TO_STREET = {
-    "preflop": "preflop",
-    "flop": "flop",
-    "turn": "turn",
-    "river": "river",
-    "showdown": "showdown",
+# Round no to street name
+# no=0: blinds (preflop), no=1: preflop (pocket cards + actions)
+# no=2: flop, no=3: turn, no=4: river, no=5+: showdown
+_ROUND_NO_TO_STREET = {
+    "0": "preflop",
+    "1": "preflop",
+    "2": "flop",
+    "3": "turn",
+    "4": "river",
 }
 
-RE_STAKES = re.compile(r"\$([0-9.]+)/\$([0-9.]+)")
+# Currency symbols to strip from amounts
+_CURRENCY_RE = re.compile(r"[€$£]")
+
+# Stakes from gametype element: "Holdem NL €0.05/€0.10" or "Holdem L $5/$10"
+RE_GAMETYPE_STAKES = re.compile(r"[€$£]([0-9.]+)\s*/\s*[€$£]([0-9.]+)")
 
 
 def _convert_card(ipoker_card: str) -> str:
-    """Convert iPoker card format (HA, DK, C7) to standard (Ah, Kd, 7c)."""
+    """Convert iPoker card format (HA, DK, C7, H10) to standard (Ah, Kd, 7c, Th).
+
+    iPoker uses suit-first format: H=hearts, D=diamonds, C=clubs, S=spades.
+    Rank "10" is converted to "T".
+    """
     suit = ipoker_card[0].lower()  # H->h, D->d, C->c, S->s
-    rank = ipoker_card[1:]  # A, K, Q, J, T, 9, 8, etc.
+    rank = ipoker_card[1:]  # A, K, Q, J, T, 10, 9, 8, etc.
+    if rank == "10":
+        rank = "T"
     return f"{rank}{suit}"
 
 
 def _convert_cards(card_str: str) -> list[str]:
-    """Convert space-separated iPoker cards to standard format."""
+    """Convert space-separated iPoker cards to standard format.
+
+    Filters out unknown 'X' cards.
+    """
     if not card_str or not card_str.strip():
         return []
-    return [_convert_card(c) for c in card_str.strip().split()]
+    cards = []
+    for c in card_str.strip().split():
+        if c == "X":
+            continue
+        cards.append(_convert_card(c))
+    return cards
 
 
 def _parse_amount(amount_str: str) -> Decimal:
-    """Parse dollar amount like '$2.25' or '$0' to Decimal."""
-    return Decimal(amount_str.replace("$", "").replace(",", ""))
+    """Parse currency amount like '$2.25', '€0.10', or '$0' to Decimal."""
+    cleaned = _CURRENCY_RE.sub("", amount_str).replace(",", "").strip()
+    if not cleaned:
+        return _ZERO
+    return Decimal(cleaned)
 
 
 def detect(sample: str) -> bool:
     """Check if this content is an iPoker XML hand history."""
-    s = sample[:500]
-    return "<?xml" in s and "<session" in s
+    # Strip BOM if present
+    s = sample.lstrip("\ufeff")[:500]
+    return ("<session" in s) and ("<general>" in s or "<game " in s)
 
 
 def split_hands(content: str) -> list[str]:
     """Split iPoker XML into per-game XML strings."""
+    # Strip BOM
+    content = content.lstrip("\ufeff")
     root = ET.fromstring(content)
     general = root.find("general")
     games = root.findall("game")
@@ -90,7 +117,8 @@ def split_hands(content: str) -> list[str]:
 def extract_hand_id(hand_text: str) -> str | None:
     """Extract hand ID (gamecode) from iPoker XML."""
     try:
-        root = ET.fromstring(hand_text)
+        text = hand_text.lstrip("\ufeff")
+        root = ET.fromstring(text)
         game = root.find("game")
         if game is not None:
             return game.get("gamecode")
@@ -172,7 +200,9 @@ def parse_hand_history(hand_text: str) -> ParsedHand:
 
     Returns a ParsedHand dataclass. Does NOT write to DB or compute stats.
     """
-    root = ET.fromstring(hand_text)
+    # Strip BOM
+    hand_text_clean = hand_text.lstrip("\ufeff")
+    root = ET.fromstring(hand_text_clean)
     session_general = root.find("general")
     game = root.find("game")
     if game is None:
@@ -182,8 +212,12 @@ def parse_hand_history(hand_text: str) -> ParsedHand:
     table_name_raw = session_general.findtext("tablename", "") if session_general is not None else ""
     hero_nick = session_general.findtext("nickname", "") if session_general is not None else ""
 
-    # Parse stakes from table name
-    m = RE_STAKES.search(table_name_raw)
+    # Parse stakes from gametype element first, fall back to tablename
+    gametype_str = session_general.findtext("gametype", "") if session_general is not None else ""
+    m = RE_GAMETYPE_STAKES.search(gametype_str)
+    if not m:
+        # Fall back: try to find stakes in table name
+        m = RE_GAMETYPE_STAKES.search(table_name_raw)
     if m:
         sb_amount = Decimal(m.group(1))
         bb_amount = Decimal(m.group(2))
@@ -217,10 +251,14 @@ def parse_hand_history(hand_text: str) -> ParsedHand:
     for p in player_elements:
         seat_num = int(p.get("seat", "0"))
         name = p.get("name", "")
-        chips = _parse_amount(p.get("chips", "$0"))
+        chips = _parse_amount(p.get("chips", "0"))
         is_dealer = p.get("dealer", "0") == "1"
-        win_amt = _parse_amount(p.get("win", "$0"))
-        bet_amt = _parse_amount(p.get("bet", "$0"))
+        win_amt = _parse_amount(p.get("win", "0"))
+        bet_amt = _parse_amount(p.get("bet", "0"))
+
+        # Skip sitting-out players (chips=0, bet=0, win=0)
+        if chips == _ZERO and bet_amt == _ZERO and win_amt == _ZERO:
+            continue
 
         seats.append({"seat": seat_num, "username": name, "stack": chips})
         username_to_seat[name] = seat_num
@@ -251,26 +289,56 @@ def parse_hand_history(hand_text: str) -> ParsedHand:
     player_street_invested: dict[str, Decimal] = {}  # per street, reset each street
 
     for round_el in game.findall("round"):
-        round_id = round_el.get("id", "")
-        street = _ROUND_TO_STREET.get(round_id)
+        round_no = round_el.get("no", "")
+        street = _ROUND_NO_TO_STREET.get(round_no)
         if street is None:
+            # Round 5+ could be showdown — check for show actions
+            for action_el in round_el.findall("action"):
+                action_type = action_el.get("type", "")
+                if action_type == "15":
+                    player_name = action_el.get("player", "")
+                    went_to_showdown_players.add(player_name)
+                    # Try to get cards from cards attribute
+                    cards_attr = action_el.get("cards", "")
+                    if cards_attr:
+                        converted = _convert_cards(cards_attr)
+                        if len(converted) == 2:
+                            hero_cards[player_name] = (converted[0], converted[1])
             continue
 
-        # Community cards
+        # ── Community cards: <cards type="Flop">, <cards type="Turn">, <cards type="River"> ──
         for cards_el in round_el.findall("cards"):
-            if cards_el.get("type") == "community" and cards_el.text:
-                converted = _convert_cards(cards_el.text)
+            cards_type = cards_el.get("type", "")
+            cards_text = cards_el.text or ""
+
+            if cards_type == "Flop" and cards_text.strip():
+                board_cards["flop"] = _convert_cards(cards_text)
+            elif cards_type == "Turn" and cards_text.strip():
+                board_cards["turn"] = _convert_cards(cards_text)
+            elif cards_type == "River" and cards_text.strip():
+                board_cards["river"] = _convert_cards(cards_text)
+            elif cards_type == "community" and cards_text.strip():
+                # Legacy format compatibility
+                converted = _convert_cards(cards_text)
                 if street in board_cards:
                     board_cards[street] = converted
+            elif cards_type == "Pocket":
+                # Pocket cards: <cards type="Pocket" player="name">D9 CK</cards>
+                pocket_player = cards_el.get("player", "")
+                if pocket_player and cards_text.strip():
+                    converted = _convert_cards(cards_text)
+                    if len(converted) == 2:
+                        hero_cards[pocket_player] = (converted[0], converted[1])
 
-        # Reset per-street tracking
-        player_street_invested = {}
+        # Reset per-street tracking (only on new street, not for round 0->1 which are both preflop)
+        if street != "preflop" or round_no == "0":
+            player_street_invested = {}
 
         # Actions
         for action_el in round_el.findall("action"):
             player_name = action_el.get("player", "")
             action_type = action_el.get("type", "")
-            action_sum = _parse_amount(action_el.get("sum", "$0"))
+            action_sum = _parse_amount(action_el.get("sum", "0"))
             cards_attr = action_el.get("cards", "")
 
             action_name = _ACTION_TYPES.get(action_type)
@@ -286,7 +354,7 @@ def parse_hand_history(hand_text: str) -> ParsedHand:
                         hero_cards[player_name] = (converted[0], converted[1])
                 continue
 
-            # Extract hero cards from preflop action cards attribute
+            # Extract hero cards from preflop action cards attribute (legacy format)
             if street == "preflop" and cards_attr and player_name not in hero_cards:
                 converted = _convert_cards(cards_attr)
                 if len(converted) == 2:

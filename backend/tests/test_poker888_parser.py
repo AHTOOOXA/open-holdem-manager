@@ -11,6 +11,7 @@ from app.stat_flags import compute_stat_flags
 from app.db import init_schema
 
 FIXTURES = Path(__file__).parent / "fixtures" / "poker888"
+REAL_FIXTURES = FIXTURES / "real"
 
 
 @pytest.fixture
@@ -194,3 +195,244 @@ class TestMultiHand:
         hands = split_hands(content)
         parsed = parse_hand_history(hands[1])
         assert parsed.hand_id == "1234567891"
+
+
+# ─── Real 888poker Fixtures ──────────────────────────────────────────────────
+
+
+class TestRealDetection:
+    def test_detect_real_general(self):
+        sample = open(REAL_FIXTURES / "general.txt").read()[:500]
+        assert detect(sample) is True
+
+    def test_detect_real_allin(self):
+        sample = open(REAL_FIXTURES / "allin_showdown.txt").read()[:500]
+        assert detect(sample) is True
+
+    def test_detect_parser_routes_real(self):
+        sample = open(REAL_FIXTURES / "general.txt").read()[:500]
+        parser = detect_parser(sample)
+        assert parser is not None
+        assert parser.SITE_CODE == "888"
+
+    def test_extract_hand_id_real(self):
+        text = open(REAL_FIXTURES / "general.txt").read()
+        hid = extract_hand_id(text)
+        assert hid == "349736402"
+
+
+class TestRealGeneral:
+    """Test against real 888poker hand: general.txt — heads-up, no showdown."""
+
+    def test_parse_general(self):
+        text = open(REAL_FIXTURES / "general.txt").read()
+        parsed = parse_hand_history(text)
+        assert parsed.hand_id == "349736402"
+        assert parsed.site_id == 3
+        assert parsed.sb_amount == Decimal("0.05")
+        assert parsed.bb_amount == Decimal("0.10")
+        assert parsed.table_name == "Abbotsford"
+        assert parsed.table_size == 6
+        assert parsed.button_seat == 9
+        assert len(parsed.seats) == 2
+        assert parsed.sb_player == "FCSM_1935"
+        assert parsed.bb_player == "silas_tomkyn"
+
+    def test_board_cards(self):
+        text = open(REAL_FIXTURES / "general.txt").read()
+        parsed = parse_hand_history(text)
+        assert parsed.board_cards["flop"] == ["Jc", "Kc", "3c"]
+        assert parsed.board_cards["turn"] == []
+        assert parsed.board_cards["river"] == []
+
+    def test_actions(self):
+        text = open(REAL_FIXTURES / "general.txt").read()
+        parsed = parse_hand_history(text)
+        preflop = parsed.actions_by_street["preflop"]
+        # SB posts, BB posts, SB calls, BB checks
+        assert len(preflop) == 4
+        assert preflop[0]["action"] == "sb"
+        assert preflop[1]["action"] == "bb"
+        assert preflop[2]["action"] == "call"
+        assert preflop[2]["username"] == "FCSM_1935"
+        assert preflop[2]["amount"] == Decimal("0.05")
+        assert preflop[3]["action"] == "check"
+
+        flop = parsed.actions_by_street["flop"]
+        assert len(flop) == 3
+        assert flop[1]["action"] == "bet"
+        assert flop[1]["username"] == "FCSM_1935"
+        assert flop[1]["amount"] == Decimal("0.10")
+        assert flop[2]["action"] == "fold"
+
+    def test_no_showdown(self):
+        text = open(REAL_FIXTURES / "general.txt").read()
+        parsed = parse_hand_history(text)
+        assert parsed.in_showdown is False
+        assert len(parsed.went_to_showdown_players) == 0
+
+    def test_collected_and_uncalled(self):
+        text = open(REAL_FIXTURES / "general.txt").read()
+        parsed = parse_hand_history(text)
+        assert parsed.collected["FCSM_1935"] == Decimal("0.19")
+        # FCSM_1935 bet 0.10 on flop, silas_tomkyn folded -> 0.10 uncalled
+        assert parsed.uncalled_returns["FCSM_1935"] == Decimal("0.10")
+
+    def test_rake(self):
+        text = open(REAL_FIXTURES / "general.txt").read()
+        parsed = parse_hand_history(text)
+        # Invested: SB 0.05+0.05=0.10, BB 0.10, flop bet 0.10 = total 0.30
+        # Uncalled: 0.10, Collected: 0.19, Rake: 0.30 - 0.10 - 0.19 = 0.01
+        assert parsed.total_rake == Decimal("0.01")
+
+    def test_financials_balance(self):
+        text = open(REAL_FIXTURES / "general.txt").read()
+        parsed = parse_hand_history(text)
+        player_invested, _ = _compute_financials(parsed)
+
+        total_invested = sum(player_invested.values())
+        total_uncalled = sum(parsed.uncalled_returns.values())
+        total_collected = sum(parsed.collected.values())
+        balance = total_invested - total_uncalled - total_collected - parsed.total_rake
+        assert float(balance) == pytest.approx(0.0, abs=0.02)
+
+    def test_stat_flags(self):
+        text = open(REAL_FIXTURES / "general.txt").read()
+        parsed = parse_hand_history(text)
+        stats = compute_stat_flags(parsed)
+        # FCSM_1935 (SB) called — VPIP but not PFR
+        assert stats["FCSM_1935"]["vpip"] is True
+        assert stats["FCSM_1935"]["pfr"] is False
+        # silas_tomkyn (BB) checked — no VPIP
+        assert stats["silas_tomkyn"]["vpip"] is False
+
+    def test_db_insert(self, db):
+        text = open(REAL_FIXTURES / "general.txt").read()
+        parsed = parse_hand_history(text)
+        hand_id = insert_parsed_hand(db, parsed)
+        assert hand_id == "349736402"
+
+        row = db.execute("SELECT site_id, stakes FROM hands WHERE id = ?", [hand_id]).fetchone()
+        assert row[0] == 3
+        assert row[1] == "$0.05/$0.10"
+
+        # Verify player count
+        count = db.execute("SELECT COUNT(*) FROM hand_players WHERE hand_id = ?", [hand_id]).fetchone()[0]
+        assert count == 2
+
+
+class TestRealAllinShowdown:
+    """Test against real 888poker hand: allin_showdown.txt — 5-player, all-in on river."""
+
+    def test_parse_allin(self):
+        text = open(REAL_FIXTURES / "allin_showdown.txt").read()
+        parsed = parse_hand_history(text)
+        assert parsed.hand_id == "349444554"
+        assert parsed.site_id == 3
+        assert parsed.sb_amount == Decimal("0.50")
+        assert parsed.bb_amount == Decimal("1")
+        assert parsed.table_name == "Valledupar"
+        assert parsed.table_size == 6
+        assert parsed.button_seat == 6
+        assert len(parsed.seats) == 5
+
+    def test_blinds(self):
+        text = open(REAL_FIXTURES / "allin_showdown.txt").read()
+        parsed = parse_hand_history(text)
+        assert parsed.sb_player == "zvony_tango7"
+        # First BB poster is the bb_player
+        assert parsed.bb_player is not None
+
+    def test_board_cards(self):
+        text = open(REAL_FIXTURES / "allin_showdown.txt").read()
+        parsed = parse_hand_history(text)
+        assert parsed.board_cards["flop"] == ["4h", "Kc", "3s"]
+        assert parsed.board_cards["turn"] == ["Kh"]
+        assert parsed.board_cards["river"] == ["6c"]
+
+    def test_showdown(self):
+        text = open(REAL_FIXTURES / "allin_showdown.txt").read()
+        parsed = parse_hand_history(text)
+        assert parsed.in_showdown is True
+        assert "qprcuz" in parsed.went_to_showdown_players
+        assert "kiss014" in parsed.went_to_showdown_players
+
+    def test_shown_cards(self):
+        text = open(REAL_FIXTURES / "allin_showdown.txt").read()
+        parsed = parse_hand_history(text)
+        assert parsed.hero_cards["qprcuz"] == ("3d", "3c")
+        assert parsed.hero_cards["kiss014"] == ("5h", "2h")
+
+    def test_collected(self):
+        text = open(REAL_FIXTURES / "allin_showdown.txt").read()
+        parsed = parse_hand_history(text)
+        assert parsed.collected["qprcuz"] == Decimal("197.50")
+
+    def test_river_actions(self):
+        """kiss014 bets, qprcuz raises all-in, kiss014 calls all-in."""
+        text = open(REAL_FIXTURES / "allin_showdown.txt").read()
+        parsed = parse_hand_history(text)
+        river = parsed.actions_by_street["river"]
+        assert len(river) == 3
+        assert river[0]["action"] == "bet"
+        assert river[0]["username"] == "kiss014"
+        assert river[0]["amount"] == Decimal("6.55")
+        assert river[1]["action"] == "raise"
+        assert river[1]["username"] == "qprcuz"
+        assert river[1]["amount"] == Decimal("101.66")
+        assert river[2]["action"] == "call"
+        assert river[2]["username"] == "kiss014"
+        assert river[2]["amount"] == Decimal("89.83")
+
+    def test_financials_balance(self):
+        text = open(REAL_FIXTURES / "allin_showdown.txt").read()
+        parsed = parse_hand_history(text)
+        player_invested, _ = _compute_financials(parsed)
+
+        total_invested = sum(player_invested.values())
+        total_uncalled = sum(parsed.uncalled_returns.values())
+        total_collected = sum(parsed.collected.values())
+        balance = total_invested - total_uncalled - total_collected - parsed.total_rake
+        assert float(balance) == pytest.approx(0.0, abs=0.02)
+
+    def test_stat_flags(self):
+        text = open(REAL_FIXTURES / "allin_showdown.txt").read()
+        parsed = parse_hand_history(text)
+        stats = compute_stat_flags(parsed)
+        # qprcuz called preflop — VPIP but not PFR
+        assert stats["qprcuz"]["vpip"] is True
+        assert stats["qprcuz"]["pfr"] is False
+        # qprcuz and kiss014 went to showdown
+        assert stats["qprcuz"]["went_to_showdown"] is True
+        assert stats["kiss014"]["went_to_showdown"] is True
+        # qprcuz won at showdown
+        assert stats["qprcuz"]["won_at_showdown"] is True
+        assert stats["kiss014"]["won_at_showdown"] is False
+
+    def test_db_insert(self, db):
+        text = open(REAL_FIXTURES / "allin_showdown.txt").read()
+        parsed = parse_hand_history(text)
+        hand_id = insert_parsed_hand(db, parsed)
+        assert hand_id == "349444554"
+
+        row = db.execute("SELECT site_id, stakes FROM hands WHERE id = ?", [hand_id]).fetchone()
+        assert row[0] == 3
+        assert row[1] == "$0.50/$1"
+
+        # Verify player count
+        count = db.execute("SELECT COUNT(*) FROM hand_players WHERE hand_id = ?", [hand_id]).fetchone()[0]
+        assert count == 5
+
+        # qprcuz won: collected 197.50, invested 105.28 -> net 92.22
+        won = db.execute(
+            "SELECT hp.won FROM hand_players hp JOIN players p ON hp.player_id = p.id WHERE hp.hand_id = ? AND p.username = 'qprcuz'",
+            [hand_id]
+        ).fetchone()[0]
+        assert float(won) == pytest.approx(92.22, abs=0.01)
+
+        # kiss014 lost full stack
+        won_kiss = db.execute(
+            "SELECT hp.won FROM hand_players hp JOIN players p ON hp.player_id = p.id WHERE hp.hand_id = ? AND p.username = 'kiss014'",
+            [hand_id]
+        ).fetchone()[0]
+        assert float(won_kiss) == pytest.approx(-100.0, abs=0.01)

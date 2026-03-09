@@ -22,7 +22,7 @@ _INVEST_ACTIONS = frozenset(("sb", "bb", "ante", "straddle", "call", "bet"))
 # ── Regex patterns ──
 
 RE_HEADER = re.compile(
-    r"\*{5} Hand History For Game (\d+) \*{5}"
+    r"\*{5} Hand History [Ff]or Game (\d+) \*{5}"
 )
 RE_STAKES = re.compile(
     r"\$([0-9.]+)/\$([0-9.]+) USD"
@@ -31,7 +31,10 @@ RE_DATE = re.compile(
     r"\w+, (\w+) (\d+), (\d{2}:\d{2}:\d{2}) \w+ (\d{4})"
 )
 RE_TABLE = re.compile(
-    r"Table (.+?) (\d+) Max"
+    r"Table (.+?)(?:\s+(\d+)\s+Max)?\s+\((?:Real Money|Play Money)\)"
+)
+RE_TOTAL_PLAYERS = re.compile(
+    r"Total number of players\s*:\s*\d+/(\d+)"
 )
 RE_BUTTON = re.compile(
     r"Seat (\d+) is the button"
@@ -52,16 +55,19 @@ RE_DEALING_STREET = re.compile(
     r"^\*\* Dealing (down cards|Flop|Turn|River) \*\*(?:\s*\[ (.+?) \])?"
 )
 RE_WINS = re.compile(
-    r"^(.+?) wins \$([0-9.]+) USD(?:\s+from .+)?$"
+    r"^(.+?) wins \$([0-9.]+) USD"
 )
 RE_SHOWS = re.compile(
-    r"^(.+?) shows \[ (.+?) \]$"
+    r"^(.+?) shows \[ (.+?) \]"
 )
 RE_DOESNT_SHOW = re.compile(
-    r"^(.+?) doesn't show \[ (.+?) \]$"
+    r"^(.+?) (?:doesn't|doesn\u2019t|does not) show \[ (.+?) \]"
+)
+RE_DOES_NOT_SHOW_NO_CARDS = re.compile(
+    r"^(.+?) does not show cards\.$"
 )
 RE_FOOTER = re.compile(
-    r"^\*{5} Hand History For Game \d+ \*{5}$"
+    r"^\*{5} Hand History [Ff]or Game \d+ \*{5}$"
 )
 
 # Action patterns — amounts have [$X USD] format
@@ -71,22 +77,24 @@ RE_CALL = re.compile(r"^(.+?) calls \[\$([0-9.]+) USD\]$")
 RE_BET = re.compile(r"^(.+?) bets \[\$([0-9.]+) USD\]$")
 RE_RAISE = re.compile(r"^(.+?) raises \[\$([0-9.]+) USD\]$")
 RE_ALLIN = re.compile(r"(?:is all-[Ii]n|\[all in\])")
+RE_ALLIN_ACTION = re.compile(r"^(.+?) is all-[Ii]n\s+\[\$([0-9.]+) USD\]$")
 
 
 def detect(sample: str) -> bool:
     """Check if this content is a partypoker hand history."""
-    if "888poker" in sample[:500]:
+    s = sample[:500]
+    if "888poker" in s:
         return False
-    return "Hand History For Game" in sample[:500]
+    return bool(re.search(r"Hand History [Ff]or Game", s))
 
 
 def split_hands(content: str) -> list[str]:
     """Split a file with multiple partypoker hand histories into individual hands.
 
-    Each hand starts and ends with ***** Hand History For Game NNNN *****.
+    Each hand starts and ends with ***** Hand History For/for Game NNNN *****.
     Split on blank lines between hands, then strip footer lines.
     """
-    parts = re.split(r'\n\n+(?=\*{5} Hand History For Game)', content)
+    parts = re.split(r'\n\n+(?=\*{5} Hand History [Ff]or Game)', content)
     return [p.strip() for p in parts if p.strip()]
 
 
@@ -187,6 +195,8 @@ def parse_hand_history(hand_text: str) -> ParsedHand:
 
     Returns a ParsedHand dataclass. Does NOT write to DB or compute stats.
     """
+    # Strip BOM and invisible chars
+    hand_text = hand_text.replace("\ufeff", "").replace("\x00", "")
     lines = hand_text.strip().split("\n")
     lines = [l.strip() for l in lines if l.strip()]
 
@@ -218,30 +228,50 @@ def parse_hand_history(hand_text: str) -> ParsedHand:
     game_type = "NLH"
     game_mode = ""
 
-    # ── Parse table info ──
-    m = RE_TABLE.search(lines[2])
-    if not m:
-        raise ValueError(f"Cannot parse table: {lines[2]}")
-    table_name = m.group(1)
-    table_size = int(m.group(2))
+    # ── Parse table info, button, and seat lines ──
+    # Lines after header+stakes can vary in order: Table, Button, Total players, Seats
+    table_name = None
+    table_size = None
+    button_seat = None
+    line_idx = 2
 
-    # ── Parse button ──
-    m = RE_BUTTON.search(lines[3])
-    if not m:
-        raise ValueError(f"Cannot parse button: {lines[3]}")
-    button_seat = int(m.group(1))
+    # Scan the metadata lines (table, button, total players) before seats
+    while line_idx < len(lines):
+        l = lines[line_idx]
+        m = RE_TABLE.search(l)
+        if m:
+            table_name = m.group(1)
+            if m.group(2):
+                table_size = int(m.group(2))
+            line_idx += 1
+            continue
+
+        m = RE_BUTTON.search(l)
+        if m:
+            button_seat = int(m.group(1))
+            line_idx += 1
+            continue
+
+        m = RE_TOTAL_PLAYERS.search(l)
+        if m:
+            if table_size is None:
+                table_size = int(m.group(1))
+            line_idx += 1
+            continue
+
+        # If it's a seat line or something else, stop scanning metadata
+        break
+
+    if table_name is None:
+        raise ValueError(f"Cannot parse table name from hand")
+    if button_seat is None:
+        raise ValueError(f"Cannot parse button seat from hand")
+    if table_size is None:
+        table_size = 9  # default
 
     # ── Parse seats ──
     seats = []
     username_to_seat = {}
-    line_idx = 4
-
-    # Skip the "Total number of players" line
-    while line_idx < len(lines):
-        if lines[line_idx].startswith("Total number of players"):
-            line_idx += 1
-            break
-        line_idx += 1
 
     while line_idx < len(lines):
         m = RE_SEAT.match(lines[line_idx])
@@ -349,13 +379,18 @@ def parse_hand_history(hand_text: str) -> ParsedHand:
                 went_to_showdown_players.add(uname)
             continue
 
-        # Doesn't show hand
+        # Doesn't show hand (with cards)
         m = RE_DOESNT_SHOW.match(line)
         if m:
             uname = m.group(1)
             cards = _parse_cards(m.group(2))
             if len(cards) == 2 and uname in username_set:
                 hero_cards[uname] = (cards[0], cards[1])
+            continue
+
+        # Does not show cards (no card info)
+        m = RE_DOES_NOT_SHOW_NO_CARDS.match(line)
+        if m:
             continue
 
         # Wins
@@ -442,8 +477,42 @@ def parse_hand_history(hand_text: str) -> ParsedHand:
                 })
             continue
 
+        # All-in as standalone action: "player is all-In  [$X USD]"
+        m = RE_ALLIN_ACTION.match(line)
+        if m:
+            uname = m.group(1)
+            amt = Decimal(m.group(2))
+            if uname in username_set:
+                action_order += 1
+                actions_by_street[current_street].append({
+                    "username": uname,
+                    "action": "bet",
+                    "amount": amt,
+                    "is_all_in": True,
+                    "order": action_order,
+                })
+            continue
+
+        # Skip informational lines
+        if "has left the table" in line:
+            continue
+
     # ── Showdown detection ──
-    if len(went_to_showdown_players) >= 2:
+    # Determine who folded and who actually participated
+    folded_players = set()
+    active_players = set()
+    for street in _STREETS:
+        for a in actions_by_street[street]:
+            active_players.add(a["username"])
+            if a["action"] == "fold":
+                folded_players.add(a["username"])
+
+    remaining_players = active_players - folded_players
+    if len(remaining_players) >= 2:
+        # Multiple players remained — this is a showdown.
+        went_to_showdown_players = remaining_players
+        in_showdown = True
+    elif len(went_to_showdown_players) >= 2:
         in_showdown = True
 
     # ── Compute uncalled returns ──
@@ -471,8 +540,16 @@ def parse_hand_history(hand_text: str) -> ParsedHand:
     total_uncalled = sum(uncalled_returns.values())
     total_collected = sum(collected.values())
     total_rake = total_invested - total_uncalled - total_collected
+
+    # partypoker sometimes includes uncalled returns in the "wins" amount.
+    # If rake comes out negative, it means the wins already includes uncalled —
+    # clear uncalled_returns and recompute rake.
     if total_rake < _ZERO:
-        total_rake = _ZERO
+        uncalled_returns = {}
+        total_uncalled = _ZERO
+        total_rake = total_invested - total_collected
+        if total_rake < _ZERO:
+            total_rake = _ZERO
 
     return ParsedHand(
         hand_id=hand_id,

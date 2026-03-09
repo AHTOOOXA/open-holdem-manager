@@ -11,6 +11,7 @@ from app.stat_flags import compute_stat_flags
 from app.db import init_schema
 
 FIXTURES = Path(__file__).parent / "fixtures" / "ipoker"
+REAL_FIXTURES = FIXTURES / "real"
 
 
 @pytest.fixture
@@ -32,6 +33,15 @@ class TestDetection:
         parser = detect_parser(sample)
         assert parser is not None
         assert parser.SITE_CODE == "IP"
+
+    def test_detect_without_xml_decl(self):
+        """Real general.txt has no <?xml> declaration but has <session>."""
+        sample = open(REAL_FIXTURES / "general.txt").read()[:500]
+        assert detect(sample) is True
+
+    def test_detect_with_xml_decl(self):
+        sample = open(REAL_FIXTURES / "allin_showdown.txt").read()[:500]
+        assert detect(sample) is True
 
     def test_reject_text_format(self):
         assert detect("PokerStars Hand #123") is False
@@ -56,8 +66,15 @@ class TestCardConversion:
     def test_five_spades(self):
         assert _convert_card("S5") == "5s"
 
-    def test_ten(self):
+    def test_ten_hearts_legacy(self):
         assert _convert_card("HT") == "Th"
+
+    def test_ten_hearts_real(self):
+        """Real iPoker uses H10 for 10 of Hearts."""
+        assert _convert_card("H10") == "Th"
+
+    def test_ten_spades_real(self):
+        assert _convert_card("S10") == "Ts"
 
     def test_queen(self):
         assert _convert_card("HQ") == "Qh"
@@ -237,3 +254,179 @@ class TestMultiHand:
         hands = split_hands(content)
         parsed = parse_hand_history(hands[1])
         assert parsed.hero_cards["Player1"] == ("Td", "9d")
+
+
+class TestRealGeneral:
+    """Tests against real iPoker hand history: general.txt (limit hold'em, fold preflop)."""
+
+    def test_parse_real_general(self):
+        text = open(REAL_FIXTURES / "general.txt").read()
+        parsed = parse_hand_history(text)
+        assert parsed.hand_id == "5383708755"
+        assert parsed.site_id == 6
+        assert parsed.sb_amount == Decimal("5")
+        assert parsed.bb_amount == Decimal("10")
+        assert parsed.stakes == "$5/$10"
+
+    def test_real_general_players(self):
+        text = open(REAL_FIXTURES / "general.txt").read()
+        parsed = parse_hand_history(text)
+        # DropOfRain has chips=0, bet=0, win=0 — should be excluded (sitting out)
+        assert parsed.table_size == 2
+        usernames = {s["username"] for s in parsed.seats}
+        assert "d0dge" in usernames
+        assert "SirPaulGB" in usernames
+        assert "DropOfRain" not in usernames
+
+    def test_real_general_button(self):
+        text = open(REAL_FIXTURES / "general.txt").read()
+        parsed = parse_hand_history(text)
+        assert parsed.button_seat == 6  # SirPaulGB is dealer
+
+    def test_real_general_blinds(self):
+        text = open(REAL_FIXTURES / "general.txt").read()
+        parsed = parse_hand_history(text)
+        assert parsed.sb_player == "SirPaulGB"
+        assert parsed.bb_player == "d0dge"
+
+    def test_real_general_actions(self):
+        text = open(REAL_FIXTURES / "general.txt").read()
+        parsed = parse_hand_history(text)
+        preflop = parsed.actions_by_street["preflop"]
+        # SB posts, BB posts, SirPaulGB folds
+        assert len(preflop) == 3
+        assert preflop[0]["action"] == "bb"  # d0dge BB (action no=2 but round 0)
+        assert preflop[1]["action"] == "sb"  # SirPaulGB SB (action no=1)
+        assert preflop[2]["action"] == "fold"  # SirPaulGB folds
+
+    def test_real_general_collected(self):
+        text = open(REAL_FIXTURES / "general.txt").read()
+        parsed = parse_hand_history(text)
+        assert parsed.collected["d0dge"] == Decimal("7.50")
+
+    def test_real_general_no_showdown(self):
+        text = open(REAL_FIXTURES / "general.txt").read()
+        parsed = parse_hand_history(text)
+        assert parsed.in_showdown is False
+
+    def test_real_general_financials_balance(self):
+        text = open(REAL_FIXTURES / "general.txt").read()
+        parsed = parse_hand_history(text)
+        player_invested, _ = _compute_financials(parsed)
+
+        total_invested = sum(player_invested.values())
+        total_collected = sum(parsed.collected.values())
+        # iPoker XML "win" includes uncalled returns, so collected already covers them
+        # invested = collected + rake (rake is 0 for this hand)
+        assert float(total_invested) == pytest.approx(float(total_collected + parsed.total_rake), abs=0.02)
+
+    def test_real_general_db_insert(self, db):
+        text = open(REAL_FIXTURES / "general.txt").read()
+        parsed = parse_hand_history(text)
+        hand_id = insert_parsed_hand(db, parsed)
+        assert hand_id == "5383708755"
+
+        row = db.execute("SELECT site_id, stakes FROM hands WHERE id = ?", [hand_id]).fetchone()
+        assert row[0] == 6
+        assert row[1] == "$5/$10"
+
+
+class TestRealAllinShowdown:
+    """Tests against real iPoker hand history: allin_showdown.txt (NL hold'em, all-in preflop)."""
+
+    def test_parse_real_allin(self):
+        text = open(REAL_FIXTURES / "allin_showdown.txt").read()
+        parsed = parse_hand_history(text)
+        assert parsed.hand_id == "5385476176"
+        assert parsed.site_id == 6
+        assert parsed.sb_amount == Decimal("0.05")
+        assert parsed.bb_amount == Decimal("0.10")
+        assert parsed.stakes == "$0.05/$0.10"
+
+    def test_real_allin_euro_currency(self):
+        """Real file uses euro currency (€) — amounts must parse correctly."""
+        text = open(REAL_FIXTURES / "allin_showdown.txt").read()
+        parsed = parse_hand_history(text)
+        # Check stacks parsed correctly
+        stacks = {s["username"]: s["stack"] for s in parsed.seats}
+        assert stacks["Amalfitano1"] == Decimal("19.25")
+        assert stacks["Taras2107"] == Decimal("1.70")
+
+    def test_real_allin_players(self):
+        text = open(REAL_FIXTURES / "allin_showdown.txt").read()
+        parsed = parse_hand_history(text)
+        assert parsed.table_size == 2
+        assert parsed.button_seat == 3  # Amalfitano1 is dealer
+
+    def test_real_allin_pocket_cards(self):
+        """Pocket cards from <cards type="Pocket"> elements."""
+        text = open(REAL_FIXTURES / "allin_showdown.txt").read()
+        parsed = parse_hand_history(text)
+        assert parsed.hero_cards["Amalfitano1"] == ("9d", "Kc")
+        assert parsed.hero_cards["Taras2107"] == ("Js", "Jd")
+
+    def test_real_allin_board_cards(self):
+        """Board cards from <cards type="Flop">, <cards type="Turn">, <cards type="River">."""
+        text = open(REAL_FIXTURES / "allin_showdown.txt").read()
+        parsed = parse_hand_history(text)
+        assert parsed.board_cards["flop"] == ["7d", "Th", "9s"]
+        assert parsed.board_cards["turn"] == ["8c"]
+        assert parsed.board_cards["river"] == ["Ts"]
+
+    def test_real_allin_preflop_actions(self):
+        """Preflop has blinds + raises + type 7 (call all-in)."""
+        text = open(REAL_FIXTURES / "allin_showdown.txt").read()
+        parsed = parse_hand_history(text)
+        preflop = parsed.actions_by_street["preflop"]
+        action_types = [a["action"] for a in preflop]
+        # SB, BB, raise, raise, raise, call (type 7)
+        assert "sb" in action_types
+        assert "bb" in action_types
+        assert "raise" in action_types
+        assert "call" in action_types
+
+    def test_real_allin_type7_is_call(self):
+        """Action type 7 should be mapped to 'call'."""
+        text = open(REAL_FIXTURES / "allin_showdown.txt").read()
+        parsed = parse_hand_history(text)
+        preflop = parsed.actions_by_street["preflop"]
+        # Taras2107's last action is type 7 (call all-in)
+        taras_actions = [a for a in preflop if a["username"] == "Taras2107"]
+        assert taras_actions[-1]["action"] == "call"
+
+    def test_real_allin_all_in_detection(self):
+        """Both players go all-in preflop."""
+        text = open(REAL_FIXTURES / "allin_showdown.txt").read()
+        parsed = parse_hand_history(text)
+        preflop = parsed.actions_by_street["preflop"]
+        # Check Taras2107 is all-in (stack 1.70, total invested 1.70)
+        taras_last = [a for a in preflop if a["username"] == "Taras2107"][-1]
+        assert taras_last["is_all_in"] is True
+
+    def test_real_allin_collected(self):
+        text = open(REAL_FIXTURES / "allin_showdown.txt").read()
+        parsed = parse_hand_history(text)
+        assert parsed.collected["Amalfitano1"] == Decimal("17.55")
+        assert parsed.collected["Taras2107"] == Decimal("3.18")
+
+    def test_real_allin_financials_balance(self):
+        text = open(REAL_FIXTURES / "allin_showdown.txt").read()
+        parsed = parse_hand_history(text)
+        player_invested, _ = _compute_financials(parsed)
+        total_invested = sum(player_invested.values())
+        total_uncalled = sum(parsed.uncalled_returns.values())
+        total_collected = sum(parsed.collected.values())
+        # invested - uncalled = collected + rake
+        assert float(total_invested - total_uncalled) == pytest.approx(
+            float(total_collected + parsed.total_rake), abs=0.01
+        )
+
+    def test_real_allin_db_insert(self, db):
+        text = open(REAL_FIXTURES / "allin_showdown.txt").read()
+        parsed = parse_hand_history(text)
+        hand_id = insert_parsed_hand(db, parsed)
+        assert hand_id == "5385476176"
+
+        row = db.execute("SELECT site_id, stakes FROM hands WHERE id = ?", [hand_id]).fetchone()
+        assert row[0] == 6
+        assert row[1] == "$0.05/$0.10"

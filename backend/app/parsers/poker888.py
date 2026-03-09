@@ -80,7 +80,8 @@ def detect(sample: str) -> bool:
 
 def split_hands(content: str) -> list[str]:
     """Split a file with multiple 888poker hand histories into individual hands."""
-    parts = re.split(r'\n(?=\*{5} 888poker Hand History)', content)
+    # Split on header line, but also handle optional #Game No : prefix
+    parts = re.split(r'\n(?=#Game No\s*:|(?=\*{5} 888poker Hand History))', content)
     return [p.strip() for p in parts if p.strip()]
 
 
@@ -182,8 +183,14 @@ def parse_hand_history(hand_text: str) -> ParsedHand:
 
     Returns a ParsedHand dataclass. Does NOT write to DB or compute stats.
     """
+    # Strip BOM and invisible chars
+    hand_text = hand_text.replace("\ufeff", "").replace("\x00", "")
     lines = hand_text.strip().split("\n")
     lines = [l.strip() for l in lines if l.strip()]
+
+    # Skip "#Game No :" prefix line if present
+    while lines and lines[0].startswith("#Game No"):
+        lines.pop(0)
 
     # ── Parse header ──
     m = RE_HEADER.search(lines[0])

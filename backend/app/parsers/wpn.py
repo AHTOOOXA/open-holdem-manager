@@ -4,11 +4,18 @@ WPN (Winning Poker Network / Americas Cardroom) hand history parser.
 Parses a single hand history text block into structured data.
 Returns a ParsedHand dataclass — does NOT write to DB or compute stat flags.
 
-Format is nearly identical to PokerStars. Key differences:
-  - Header: "Game Hand #987654321 - Hold'em No Limit ($0.25/$0.50) - 2024/01/15 14:30:00"
-  - Fast fold: table name contains "Blitz" or header contains "Fast-Fold"
-  - All-in marker: "[all-in]" in square brackets
-  - Raises: "raises $X to $Y" — extract $Y (the "to" amount)
+Real WPN format:
+  - Header: "Game started at: YYYY/M/D H:M:S" + "Game ID: NNN SB/BB TableName (Options) (GameType)"
+  - No $ currency symbol — amounts are bare: (0.10), (0.25), (44.87)
+  - Actions use "Player" prefix: "Player name raises (0.80)"
+  - Blinds: "Player name has small blind (0.10)"
+  - Card dealing: "Player name received a card."
+  - Raises: incremental — "Player name raises (X)" means X additional
+  - All-in: "Player name allin (X)" — separate keyword
+  - Straddle: "Player name straddle (0.50)"
+  - Street markers: "*** FLOP ***: [cards]" (extra colon)
+  - Summary: "------ Summary ------" with "Pot: X. Rake Y"
+  - Results: "*Player name shows: Hand [cards]. Bets: X. Collects: Y. Wins: Z."
 """
 
 import re
@@ -21,99 +28,160 @@ SITE_ID = 4
 SITE_CODE = "WPN"
 SITE_NAME = "WPN"
 
-# Skip lines that are informational, not actions
-RE_SKIP = re.compile(
-    r"is disconnected|has timed out|is sitting out|is connected|"
-    r"has returned|was removed from the table|said,|"
-    r"leaves the table|joins the table|"
-    r"doesn't show hand"
+# Streets in order for investment/uncalled computation
+_STREETS = ("preflop", "flop", "turn", "river")
+_INVEST_ACTIONS = frozenset(("sb", "bb", "ante", "straddle", "call", "bet"))
+
+# ── Regex patterns ──
+
+RE_GAME_STARTED = re.compile(
+    r"Game started at:\s*(\d{4}/\d{1,2}/\d{1,2}\s+\d{1,2}:\d{1,2}:\d{1,2})"
+)
+RE_GAME_ID = re.compile(
+    r"Game ID:\s*(\d+)\s+([0-9.]+)/([0-9.]+)\s+(.+?)\s+\(([^)]*)\)\s*$"
+)
+RE_BUTTON = re.compile(r"Seat (\d+) is the button")
+RE_SEAT = re.compile(r"Seat (\d+):\s+(.+?)\s+\(([0-9.]+)\)\.")
+RE_SMALL_BLIND = re.compile(r"^Player (.+?) has small blind \(([0-9.]+)\)$")
+RE_BIG_BLIND = re.compile(r"^Player (.+?) has big blind \(([0-9.]+)\)$")
+RE_STRADDLE = re.compile(r"^Player (.+?) straddle \(([0-9.]+)\)$")
+RE_ANTE = re.compile(r"^Player (.+?) ante \(([0-9.]+)\)$")
+RE_RECEIVED_CARD = re.compile(r"^Player .+? received a card\.$")
+RE_DEALT = re.compile(r"^Player (.+?) received card: \[(.+?)\]$")
+
+# Action patterns
+RE_FOLD = re.compile(r"^Player (.+?) folds$")
+RE_CHECK = re.compile(r"^Player (.+?) checks$")
+RE_CALL = re.compile(r"^Player (.+?) calls \(([0-9.]+)\)$")
+RE_BET = re.compile(r"^Player (.+?) bets \(([0-9.]+)\)$")
+RE_RAISE = re.compile(r"^Player (.+?) raises \(([0-9.]+)\)$")
+RE_ALLIN = re.compile(r"^Player (.+?) allin \(([0-9.]+)\)$")
+
+# Street markers (note extra colon after ***)
+RE_FLOP = re.compile(r"\*\*\* FLOP \*\*\*:\s*\[(.+?)\]")
+RE_TURN = re.compile(r"\*\*\* TURN \*\*\*:\s*\[.+?\]\s*\[(.+?)\]")
+RE_RIVER = re.compile(r"\*\*\* RIVER \*\*\*:\s*\[.+?\]\s*\[(.+?)\]")
+
+# Summary
+RE_SUMMARY_LINE = re.compile(r"^-+ Summary -+$")
+RE_POT_RAKE = re.compile(r"Pot:\s*([0-9.]+)\.\s*Rake\s+([0-9.]+)")
+RE_BOARD = re.compile(r"Board:\s*\[(.+?)\]")
+
+# Summary player lines
+# Winner line starts with *, loser does not
+RE_SUMMARY_PLAYER = re.compile(
+    r"^\*?Player (.+?)(?:\s+shows:\s+.+?\s+\[(.+?)\]|"
+    r"\s+mucks\s+\(does not show cards\)|"
+    r"\s+does not show cards)"
+    r"\.\s*Bets:\s*([0-9.]+)\.\s*Collects:\s*([0-9.]+)\.\s*(?:Wins|Loses):\s*[0-9.]+\.$"
 )
 
-# Regex patterns
-RE_HEADER = re.compile(
-    r"Game Hand #(\d+) - "
-    r"Hold'em No Limit \(\$([0-9.]+)/\$([0-9.]+)\)"
-    r" - (\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2})"
-)
-RE_TABLE = re.compile(
-    r"Table '([^']+)' (\d+)-max Seat #(\d+) is the button"
-)
-RE_SEAT = re.compile(
-    r"Seat (\d+): (.+?) \(\$([0-9.]+) in chips\)"
-)
-RE_ANTE = re.compile(
-    r"^(.+?): posts the ante \$([0-9.]+)"
-)
-RE_SMALL_BLIND = re.compile(
-    r"^(.+?): posts small blind \$([0-9.]+)"
-)
-RE_BIG_BLIND = re.compile(
-    r"^(.+?): posts big blind \$([0-9.]+)"
-)
-RE_DEALT = re.compile(
-    r"Dealt to (.+?) \[(\w{2}) (\w{2})\]"
-)
-RE_FOLD = re.compile(r"^(.+?): folds")
-RE_CHECK = re.compile(r"^(.+?): checks")
-RE_CALL = re.compile(
-    r"^(.+?): calls \$([0-9.]+)(?:\s+(?:and is all-in|\[all-in\]))?"
-)
-RE_BET = re.compile(
-    r"^(.+?): bets \$([0-9.]+)(?:\s+(?:and is all-in|\[all-in\]))?"
-)
-RE_RAISE = re.compile(
-    r"^(.+?): raises \$([0-9.]+) to \$([0-9.]+)(?:\s+(?:and is all-in|\[all-in\]))?"
-)
-# Fallback for older format: "raises $X" with no "to $Y"
-RE_RAISE_NO_TO = re.compile(
-    r"^(.+?): raises \$([0-9.]+)(?:\s+(?:and is all-in|\[all-in\]))?$"
-)
-RE_ALLIN_MARKER = re.compile(r"(?:and is all-in|\[all-in\])")
-RE_UNCALLED = re.compile(
-    r"Uncalled bet \(\$([0-9.]+)\) returned to (.+)"
-)
-RE_COLLECTED_FROM_POT = re.compile(
-    r"^(.+?) collected \$([0-9.]+) from (?:main |side )?pot"
-)
-RE_FLOP = re.compile(r"\*\*\* FLOP \*\*\* \[(.+?)\]")
-RE_TURN = re.compile(r"\*\*\* TURN \*\*\* \[.+?\] \[(\w{2})\]")
-RE_RIVER = re.compile(r"\*\*\* RIVER \*\*\* \[.+?\] \[(\w{2})\]")
-RE_SHOWDOWN = re.compile(r"\*\*\* SHOW DOWN \*\*\*")
-RE_SUMMARY = re.compile(r"\*\*\* SUMMARY \*\*\*")
-RE_SHOWS = re.compile(r"^(.+?): shows \[(\w{2}) (\w{2})\]")
-RE_SUMMARY_POT_RAKE = re.compile(
-    r"Total pot \$([0-9.]+) \| Rake \$([0-9.]+)"
-)
-RE_BOARD = re.compile(r"Board \[(.+?)\]")
-RE_SEAT_USERNAME = re.compile(
-    r"Seat \d+: (.+?)(?:\s+\((?:button|small blind|big blind)\))?\s+(?:showed|mucked|folded|collected|won|received)"
-)
-RE_COLLECTED_WON_AMOUNT = re.compile(r"(?:collected|won) \(\$([0-9.]+)\)")
-RE_SHOWED = re.compile(
-    r"Seat (\d+): (.+?) (?:.*?)(?:showed|mucked) \[(\w{2}) (\w{2})\]"
-)
+# Uncalled bet (some WPN hands have this explicitly)
+RE_UNCALLED = re.compile(r"^Uncalled bet \(([0-9.]+)\) returned to (.+)$")
 
+# Mucks during hand (before summary)
+RE_MUCKS = re.compile(r"^Player (.+?) mucks cards$")
 
-def _should_skip(line: str) -> bool:
-    return RE_SKIP.search(line) is not None
+# Game ended
+RE_GAME_ENDED = re.compile(r"^Game ended at:")
 
 
 def detect(sample: str) -> bool:
     """Check if this content is a WPN hand history."""
-    s = sample[:500]
-    # Must start with "Game Hand #" (at beginning of text or line)
-    return bool(re.search(r"(?:^|\n)Game Hand #", s))
+    s = sample.lstrip("\ufeff")[:500]
+    return bool(re.search(r"(?:^|\n)Game started at:", s))
 
 
 def split_hands(content: str) -> list[str]:
     """Split a file with multiple WPN hand histories into individual hands."""
-    return re.split(r'\n(?=Game Hand #)', content)
+    content = content.lstrip("\ufeff")
+    parts = re.split(r'\n(?=Game started at:)', content)
+    return [p.strip() for p in parts if p.strip()]
 
 
 def extract_hand_id(hand_text: str) -> str | None:
-    """Extract hand ID from the first line."""
-    m = re.search(r'Game Hand #(\d+)', hand_text)
+    """Extract hand ID from the Game ID line."""
+    m = re.search(r'Game ID:\s*(\d+)', hand_text)
     return m.group(1) if m else None
+
+
+def _parse_datetime(s: str) -> datetime:
+    """Parse WPN datetime format YYYY/M/D H:M:S (fields may not be zero-padded)."""
+    # Normalize: split and reconstruct with zero-padding
+    date_part, time_part = s.strip().split()
+    y, mo, d = date_part.split("/")
+    h, mi, sec = time_part.split(":")
+    return datetime(int(y), int(mo), int(d), int(h), int(mi), int(sec))
+
+
+def _compute_uncalled_returns(
+    actions_by_street: dict[str, list[dict]],
+    collected: dict[str, Decimal],
+) -> dict[str, Decimal]:
+    """Compute uncalled bet returns from action sequence.
+
+    WPN sometimes shows explicit uncalled bet lines, but not always.
+    When a player bets/raises and everyone else folds, their excess
+    over the next highest contribution is returned.
+    """
+    uncalled: dict[str, Decimal] = {}
+
+    # Find the last street that had actions
+    last_street = None
+    for street in reversed(_STREETS):
+        if actions_by_street[street]:
+            last_street = street
+            break
+
+    if last_street is None:
+        return uncalled
+
+    # Track who folded across all streets
+    folded: set[str] = set()
+    all_players: set[str] = set()
+    for street in _STREETS:
+        for a in actions_by_street[street]:
+            all_players.add(a["username"])
+            if a["action"] == "fold":
+                folded.add(a["username"])
+
+    remaining = all_players - folded
+    if len(remaining) > 1:
+        # Multiple players remained — no uncalled bet
+        return uncalled
+
+    # One player left — compute their excess on the last active street
+    street_put_in: dict[str, Decimal] = {}
+    for a in actions_by_street[last_street]:
+        uname = a["username"]
+        action = a["action"]
+        amt = a["amount"]
+
+        if action in _INVEST_ACTIONS:
+            street_put_in[uname] = street_put_in.get(uname, _ZERO) + amt
+        elif action == "raise":
+            street_put_in[uname] = amt  # "to" amount
+
+    if not street_put_in:
+        return uncalled
+
+    amounts = sorted(street_put_in.values(), reverse=True)
+    if len(amounts) < 2:
+        max_player = max(street_put_in, key=street_put_in.get)  # type: ignore[arg-type]
+        if max_player in remaining:
+            uncalled[max_player] = amounts[0]
+        return uncalled
+
+    max_amount = amounts[0]
+    second_max = amounts[1]
+
+    if max_amount > second_max:
+        for p, amt in street_put_in.items():
+            if amt == max_amount and p in remaining:
+                uncalled[p] = max_amount - second_max
+                break
+
+    return uncalled
 
 
 def parse_hand_history(hand_text: str) -> ParsedHand:
@@ -121,47 +189,43 @@ def parse_hand_history(hand_text: str) -> ParsedHand:
 
     Returns a ParsedHand dataclass. Does NOT write to DB or compute stats.
     """
+    # Strip BOM and null bytes
+    hand_text = hand_text.replace("\ufeff", "").replace("\x00", "")
     lines = hand_text.strip().split("\n")
     lines = [l.strip() for l in lines if l.strip()]
 
-    # ── Parse header ──
-    m = RE_HEADER.search(lines[0])
+    # ── Parse header: Line 1 = "Game started at: ..." ──
+    m = RE_GAME_STARTED.match(lines[0])
     if not m:
-        raise ValueError(f"Cannot parse header line: {lines[0]}")
+        raise ValueError(f"Cannot parse WPN header line: {lines[0]}")
+    played_at = _parse_datetime(m.group(1))
 
+    # ── Parse Game ID line ──
+    m = RE_GAME_ID.match(lines[1])
+    if not m:
+        raise ValueError(f"Cannot parse WPN Game ID line: {lines[1]}")
     hand_id = m.group(1)
     sb_amount = Decimal(m.group(2))
     bb_amount = Decimal(m.group(3))
-    played_at = datetime.strptime(m.group(4), "%Y/%m/%d %H:%M:%S")
-
+    table_name = m.group(4).strip()
     def _fmt_stake(d: Decimal) -> str:
         if d == d.to_integral_value():
             return f"${int(d)}"
         return f"${d:.2f}"
     stakes = f"{_fmt_stake(sb_amount)}/{_fmt_stake(bb_amount)}"
-    game_type = "NLH"
-
-    # Detect Fast Fold (Blitz tables or Fast-Fold header)
+    game_type = "NLH"  # We only support Hold'em for now
     game_mode = ""
-    if "Fast-Fold" in lines[0]:
-        game_mode = "Fast Fold"
 
-    # ── Parse table info ──
-    m = RE_TABLE.search(lines[1])
+    # ── Parse button ──
+    m = RE_BUTTON.match(lines[2])
     if not m:
-        raise ValueError(f"Cannot parse table line: {lines[1]}")
-
-    table_name = m.group(1)
-    table_size = int(m.group(2))
-    button_seat = int(m.group(3))
-
-    if "Blitz" in table_name:
-        game_mode = "Fast Fold"
+        raise ValueError(f"Cannot parse button line: {lines[2]}")
+    button_seat = int(m.group(1))
 
     # ── Parse seats ──
-    seats = []
-    username_to_seat = {}
-    line_idx = 2
+    seats: list[dict] = []
+    username_to_seat: dict[str, int] = {}
+    line_idx = 3
 
     while line_idx < len(lines):
         m = RE_SEAT.match(lines[line_idx])
@@ -177,74 +241,80 @@ def parse_hand_history(hand_text: str) -> ParsedHand:
     if not seats:
         raise ValueError("No seats found")
 
+    # Determine table_size from seat numbers or default to 6
+    max_seat = max(s["seat"] for s in seats)
+    # Common WPN table sizes: 2, 6, 9
+    if max_seat <= 2:
+        table_size = 2
+    elif max_seat <= 6:
+        table_size = 6
+    else:
+        table_size = 9
+
     _assign_positions(seats, button_seat, table_size)
-
-    # Build lookup
-    username_to_info = {s["username"]: s for s in seats}
-
-    # ── Track current bet level per street for raise-without-to fallback ──
-    current_bet = _ZERO
+    username_set = {s["username"] for s in seats}
 
     # ── Parse action lines ──
-    hero_cards = {}
-    actions_by_street = {"preflop": [], "flop": [], "turn": [], "river": []}
+    hero_cards: dict[str, tuple[str, str]] = {}
+    actions_by_street: dict[str, list[dict]] = {
+        "preflop": [], "flop": [], "turn": [], "river": []
+    }
     current_street = "preflop"
-    board_cards = {"flop": [], "turn": [], "river": []}
-    uncalled_returns = {}
-    collected = {}
+    board_cards: dict[str, list[str]] = {"flop": [], "turn": [], "river": []}
+    uncalled_returns: dict[str, Decimal] = {}
+    collected: dict[str, Decimal] = {}
     total_rake = _ZERO
-    total_jackpot = _ZERO
-    went_to_showdown_players = set()
-    in_showdown = False
+    went_to_showdown_players: set[str] = set()
     in_summary = False
 
-    sb_player = None
-    bb_player = None
+    sb_player: str | None = None
+    bb_player: str | None = None
 
     action_order = 0
 
+    # Per-player per-street investment tracking (for computing raise "to" amounts)
+    street_put_in: dict[str, Decimal] = {}
+
+    # Track dealt cards per player (WPN shows one card at a time for hero)
+    hero_card_buffer: dict[str, list[str]] = {}
+
     for line in lines[line_idx:]:
-        if _should_skip(line):
+        # Skip card dealing lines
+        if RE_RECEIVED_CARD.match(line):
             continue
 
-        # Street markers
-        if line.startswith("*** HOLE CARDS ***"):
-            current_street = "preflop"
-            continue
-        m = RE_FLOP.match(line)
-        if m:
-            current_street = "flop"
-            current_bet = _ZERO
-            board_cards["flop"] = m.group(1).split()
-            continue
-        m = RE_TURN.match(line)
-        if m:
-            current_street = "turn"
-            current_bet = _ZERO
-            board_cards["turn"] = [m.group(1)]
-            continue
-        m = RE_RIVER.match(line)
-        if m:
-            current_street = "river"
-            current_bet = _ZERO
-            board_cards["river"] = [m.group(1)]
+        # Hero card reveal (if WPN shows hero's cards)
+        m_dealt = RE_DEALT.match(line)
+        if m_dealt:
+            uname = m_dealt.group(1)
+            card = m_dealt.group(2).strip()
+            if uname not in hero_card_buffer:
+                hero_card_buffer[uname] = []
+            hero_card_buffer[uname].append(card)
+            if len(hero_card_buffer[uname]) == 2:
+                hero_cards[uname] = (
+                    hero_card_buffer[uname][0],
+                    hero_card_buffer[uname][1],
+                )
             continue
 
-        if RE_SHOWDOWN.match(line):
-            in_showdown = True
-            continue
-        if RE_SUMMARY.match(line):
+        # Game ended
+        if RE_GAME_ENDED.match(line):
+            break
+
+        # Summary section
+        if RE_SUMMARY_LINE.match(line):
             in_summary = True
             continue
 
-        # Summary section
         if in_summary:
-            m = RE_SUMMARY_POT_RAKE.search(line)
+            # Pot/Rake line
+            m = RE_POT_RAKE.search(line)
             if m:
                 total_rake = Decimal(m.group(2))
                 continue
 
-            # Board line fallback
+            # Board line
             m = RE_BOARD.search(line)
             if m:
                 cards = m.group(1).split()
@@ -256,48 +326,43 @@ def parse_hand_history(hand_text: str) -> ParsedHand:
                     board_cards["river"] = [cards[4]]
                 continue
 
-            # Showed cards in summary
-            m = RE_SHOWED.match(line)
+            # Player summary lines
+            m = RE_SUMMARY_PLAYER.match(line)
             if m:
-                uname = m.group(2).strip()
-                if uname in username_to_info:
-                    hero_cards[uname] = (m.group(3), m.group(4))
+                uname = m.group(1)
+                cards_str = m.group(2)  # may be None if mucks/doesn't show
+                collects = Decimal(m.group(4))
 
-            # Collected/won in summary
-            seat_m = RE_SEAT_USERNAME.match(line)
-            uname_from_seat = seat_m.group(1).strip() if seat_m else None
+                if cards_str:
+                    card_list = cards_str.split()
+                    if len(card_list) >= 2:
+                        hero_cards[uname] = (card_list[0], card_list[1])
+                    went_to_showdown_players.add(uname)
 
-            found_any = False
-            for m_coll in RE_COLLECTED_WON_AMOUNT.finditer(line):
-                amt = Decimal(m_coll.group(1))
-                uname = uname_from_seat or "unknown"
-                collected[uname] = collected.get(uname, _ZERO) + amt
-                found_any = True
+                if collects > _ZERO:
+                    collected[uname] = collected.get(uname, _ZERO) + collects
 
-            if found_any:
                 continue
             continue
 
-        # Dealt hole cards
-        if line.startswith("Dealt to"):
-            m = RE_DEALT.match(line)
-            if m:
-                hero_cards[m.group(1)] = (m.group(2), m.group(3))
-            continue
-
-        # Antes
-        m = RE_ANTE.match(line)
+        # Street markers
+        m = RE_FLOP.match(line)
         if m:
-            uname = m.group(1)
-            amt = Decimal(m.group(2))
-            action_order += 1
-            actions_by_street["preflop"].append({
-                "username": uname,
-                "action": "ante",
-                "amount": amt,
-                "is_all_in": False,
-                "order": action_order,
-            })
+            current_street = "flop"
+            street_put_in = {}  # reset per-street tracking
+            board_cards["flop"] = m.group(1).split()
+            continue
+        m = RE_TURN.match(line)
+        if m:
+            current_street = "turn"
+            street_put_in = {}
+            board_cards["turn"] = [m.group(1)]
+            continue
+        m = RE_RIVER.match(line)
+        if m:
+            current_street = "river"
+            street_put_in = {}
+            board_cards["river"] = [m.group(1)]
             continue
 
         # Small blind
@@ -306,7 +371,7 @@ def parse_hand_history(hand_text: str) -> ParsedHand:
             uname = m.group(1)
             amt = Decimal(m.group(2))
             sb_player = uname
-            current_bet = amt
+            street_put_in[uname] = street_put_in.get(uname, _ZERO) + amt
             action_order += 1
             actions_by_street["preflop"].append({
                 "username": uname,
@@ -323,7 +388,7 @@ def parse_hand_history(hand_text: str) -> ParsedHand:
             uname = m.group(1)
             amt = Decimal(m.group(2))
             bb_player = uname
-            current_bet = amt
+            street_put_in[uname] = street_put_in.get(uname, _ZERO) + amt
             action_order += 1
             actions_by_street["preflop"].append({
                 "username": uname,
@@ -334,7 +399,38 @@ def parse_hand_history(hand_text: str) -> ParsedHand:
             })
             continue
 
-        # Uncalled bet
+        # Straddle
+        m = RE_STRADDLE.match(line)
+        if m:
+            uname = m.group(1)
+            amt = Decimal(m.group(2))
+            street_put_in[uname] = street_put_in.get(uname, _ZERO) + amt
+            action_order += 1
+            actions_by_street["preflop"].append({
+                "username": uname,
+                "action": "straddle",
+                "amount": amt,
+                "is_all_in": False,
+                "order": action_order,
+            })
+            continue
+
+        # Ante
+        m = RE_ANTE.match(line)
+        if m:
+            uname = m.group(1)
+            amt = Decimal(m.group(2))
+            action_order += 1
+            actions_by_street["preflop"].append({
+                "username": uname,
+                "action": "ante",
+                "amount": amt,
+                "is_all_in": False,
+                "order": action_order,
+            })
+            continue
+
+        # Uncalled bet (explicit in some hands)
         m = RE_UNCALLED.match(line)
         if m:
             amt = Decimal(m.group(1))
@@ -342,27 +438,16 @@ def parse_hand_history(hand_text: str) -> ParsedHand:
             uncalled_returns[uname] = uncalled_returns.get(uname, _ZERO) + amt
             continue
 
-        # Collected during hand body — skip, we use summary as authoritative
-        if not in_summary:
-            m = RE_COLLECTED_FROM_POT.match(line)
-            if m:
-                continue
-
-        # Shows hand (during showdown)
-        m = RE_SHOWS.match(line)
-        if m:
-            uname = m.group(1)
-            hero_cards[uname] = (m.group(2), m.group(3))
-            went_to_showdown_players.add(uname)
+        # Mucks cards (before summary)
+        if RE_MUCKS.match(line):
             continue
 
         # ── Voluntary actions ──
-        is_all_in = bool(RE_ALLIN_MARKER.search(line))
 
         m = RE_FOLD.match(line)
         if m:
             uname = m.group(1)
-            if uname in username_to_info:
+            if uname in username_set:
                 action_order += 1
                 actions_by_street[current_street].append({
                     "username": uname,
@@ -376,7 +461,7 @@ def parse_hand_history(hand_text: str) -> ParsedHand:
         m = RE_CHECK.match(line)
         if m:
             uname = m.group(1)
-            if uname in username_to_info:
+            if uname in username_set:
                 action_order += 1
                 actions_by_street[current_street].append({
                     "username": uname,
@@ -391,13 +476,14 @@ def parse_hand_history(hand_text: str) -> ParsedHand:
         if m:
             uname = m.group(1)
             amt = Decimal(m.group(2))
-            if uname in username_to_info:
+            if uname in username_set:
+                street_put_in[uname] = street_put_in.get(uname, _ZERO) + amt
                 action_order += 1
                 actions_by_street[current_street].append({
                     "username": uname,
                     "action": "call",
                     "amount": amt,
-                    "is_all_in": is_all_in,
+                    "is_all_in": False,
                     "order": action_order,
                 })
             continue
@@ -406,52 +492,101 @@ def parse_hand_history(hand_text: str) -> ParsedHand:
         if m:
             uname = m.group(1)
             amt = Decimal(m.group(2))
-            if uname in username_to_info:
-                current_bet = amt
+            if uname in username_set:
+                street_put_in[uname] = street_put_in.get(uname, _ZERO) + amt
                 action_order += 1
                 actions_by_street[current_street].append({
                     "username": uname,
                     "action": "bet",
                     "amount": amt,
-                    "is_all_in": is_all_in,
+                    "is_all_in": False,
                     "order": action_order,
                 })
             continue
 
-        # Raise with "to" amount
         m = RE_RAISE.match(line)
         if m:
             uname = m.group(1)
-            raise_to = Decimal(m.group(3))  # Store the "to" amount
-            if uname in username_to_info:
-                current_bet = raise_to
+            increment = Decimal(m.group(2))
+            if uname in username_set:
+                already_in = street_put_in.get(uname, _ZERO)
+                raise_to = already_in + increment
+                street_put_in[uname] = raise_to
                 action_order += 1
                 actions_by_street[current_street].append({
                     "username": uname,
                     "action": "raise",
                     "amount": raise_to,
-                    "is_all_in": is_all_in,
+                    "is_all_in": False,
                     "order": action_order,
                 })
             continue
 
-        # Raise without "to" (older format fallback)
-        m = RE_RAISE_NO_TO.match(line)
+        m = RE_ALLIN.match(line)
         if m:
             uname = m.group(1)
             increment = Decimal(m.group(2))
-            raise_to = current_bet + increment
-            if uname in username_to_info:
-                current_bet = raise_to
+            if uname in username_set:
+                already_in = street_put_in.get(uname, _ZERO)
+                allin_to = already_in + increment
+                street_put_in[uname] = allin_to
+
+                # Determine if this is a bet or raise based on whether
+                # anyone else has bet on this street
+                has_bet_this_street = False
+                for a in actions_by_street[current_street]:
+                    if a["action"] in ("bet", "raise") and a["username"] != uname:
+                        has_bet_this_street = True
+                        break
+                # Also check if there are blinds/straddles that count as bets (preflop)
+                if current_street == "preflop":
+                    has_bet_this_street = True  # BB counts as a bet
+
+                action_type = "raise" if has_bet_this_street else "bet"
+
                 action_order += 1
                 actions_by_street[current_street].append({
                     "username": uname,
-                    "action": "raise",
-                    "amount": raise_to,
-                    "is_all_in": is_all_in,
+                    "action": action_type,
+                    "amount": allin_to if action_type == "raise" else increment,
+                    "is_all_in": True,
                     "order": action_order,
                 })
             continue
+
+    # ── Showdown detection ──
+    in_showdown = len(went_to_showdown_players) >= 2
+
+    # ── Compute uncalled returns if not explicitly provided ──
+    if not uncalled_returns:
+        uncalled_returns = _compute_uncalled_returns(actions_by_street, collected)
+
+    # ── Always compute rake from invested vs collected ──
+    # WPN summary "Rake" may not include jackpot drop, so compute from actions
+    # to ensure financial balance (same approach as 888poker parser).
+    if collected:
+        total_invested = _ZERO
+        for street in _STREETS:
+            st_put_in: dict[str, Decimal] = {}
+            for a in actions_by_street[street]:
+                uname = a["username"]
+                action = a["action"]
+                amt = a["amount"]
+                if action in _INVEST_ACTIONS:
+                    st_put_in[uname] = st_put_in.get(uname, _ZERO) + amt
+                    total_invested += amt
+                elif action == "raise":
+                    already = st_put_in.get(uname, _ZERO)
+                    inc = amt - already
+                    if inc > 0:
+                        total_invested += inc
+                    st_put_in[uname] = amt
+
+        total_uncalled = sum(uncalled_returns.values())
+        total_collected = sum(collected.values())
+        computed_rake = total_invested - total_uncalled - total_collected
+        if computed_rake > _ZERO:
+            total_rake = computed_rake
 
     return ParsedHand(
         hand_id=hand_id,
@@ -472,7 +607,7 @@ def parse_hand_history(hand_text: str) -> ParsedHand:
         uncalled_returns=uncalled_returns,
         collected=collected,
         total_rake=total_rake,
-        total_jackpot=total_jackpot,
+        total_jackpot=_ZERO,
         went_to_showdown_players=went_to_showdown_players,
         in_showdown=in_showdown,
         sb_player=sb_player,

@@ -42,8 +42,8 @@ RE_DEALT = re.compile(
     r"Dealt to (.+?) \[(\w{2}) (\w{2})\]"
 )
 RE_FLOP = re.compile(r"\*\*\* FLOP \*\*\* \[(.+?)\]")
-RE_TURN = re.compile(r"\*\*\* TURN \*\*\* \[.+?\]\[(\w{2})\]")
-RE_RIVER = re.compile(r"\*\*\* RIVER \*\*\* \[.+?\]\[(\w{2})\]")
+RE_TURN = re.compile(r"\*\*\* TURN \*\*\* \[.+?\] ?\[(\w{2})\]")
+RE_RIVER = re.compile(r"\*\*\* RIVER \*\*\* \[.+?\] ?\[(\w{2})\]")
 RE_SHOWDOWN = re.compile(r"\*\*\* SHOW DOWN \*\*\*")
 RE_SUMMARY = re.compile(r"\*\*\* SUMMARY \*\*\*")
 
@@ -67,7 +67,7 @@ RE_SUMMARY_POT_RAKE = re.compile(
 )
 RE_BOARD = re.compile(r"Board: \[(.+?)\]")
 RE_SUMMARY_WON = re.compile(
-    r"Seat \d+: (.+?)(?:\s+\((?:button|small blind|big blind)\))?\s+(?:showed .+? and )?won ([0-9.]+)€"
+    r"Seat \d+: (.+?)(?:\s+\((?:button|small blind|big blind)\))*\s+(?:showed .+? and )?won ([0-9.]+)€"
 )
 RE_SUMMARY_SHOWED = re.compile(
     r"Seat (\d+): (.+?) (?:.*?)showed \[(\w{2}) (\w{2})\]"
@@ -174,6 +174,8 @@ def parse_hand_history(hand_text: str) -> ParsedHand:
 
     Returns a ParsedHand dataclass. Does NOT write to DB or compute stats.
     """
+    # Strip BOM and invisible chars
+    hand_text = hand_text.replace("\ufeff", "").replace("\x00", "")
     lines = hand_text.strip().split("\n")
     lines = [l.strip() for l in lines if l.strip()]
 

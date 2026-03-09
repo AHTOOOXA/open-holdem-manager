@@ -212,7 +212,10 @@ def _compute_financials(parsed: ParsedHand):
             amt = a["amount"]
 
             if action in _INVEST_ACTIONS:
-                street_put_in[uname] = street_put_in.get(uname, _ZERO) + amt
+                # Antes are investments but don't count toward the wagering
+                # round — "raise to X" is relative to blinds/calls, not antes.
+                if action != "ante":
+                    street_put_in[uname] = street_put_in.get(uname, _ZERO) + amt
                 player_invested[uname] += amt
             elif action == "raise":
                 already_in = street_put_in.get(uname, _ZERO)
