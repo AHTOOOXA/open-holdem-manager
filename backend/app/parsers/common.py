@@ -58,6 +58,78 @@ POSITIONS_BY_COUNT = {
 }
 
 
+STREETS = ("preflop", "flop", "turn", "river")
+INVEST_ACTIONS = frozenset(("sb", "bb", "ante", "straddle", "call", "bet"))
+
+
+def compute_uncalled_returns(
+    actions_by_street: dict[str, list[dict]],
+) -> dict[str, Decimal]:
+    """Compute uncalled bet returns from action sequence.
+
+    When a player bets/raises and everyone else folds, their excess
+    over the next highest contribution is returned.
+    """
+    uncalled: dict[str, Decimal] = {}
+
+    # Find the last street that had actions
+    last_street = None
+    for street in reversed(STREETS):
+        if actions_by_street[street]:
+            last_street = street
+            break
+
+    if last_street is None:
+        return uncalled
+
+    # Track who folded and all players across all streets
+    folded: set[str] = set()
+    all_players: set[str] = set()
+    for street in STREETS:
+        for a in actions_by_street[street]:
+            all_players.add(a["username"])
+            if a["action"] == "fold":
+                folded.add(a["username"])
+
+    remaining = all_players - folded
+    if len(remaining) > 1:
+        # Multiple players remained — no uncalled bet (went to showdown)
+        return uncalled
+
+    # One player left — compute their excess on the last active street
+    street_put_in: dict[str, Decimal] = {}
+    for a in actions_by_street[last_street]:
+        uname = a["username"]
+        action = a["action"]
+        amt = a["amount"]
+
+        if action in INVEST_ACTIONS:
+            street_put_in[uname] = street_put_in.get(uname, _ZERO) + amt
+        elif action == "raise":
+            street_put_in[uname] = amt  # "to" amount
+
+    if not street_put_in:
+        return uncalled
+
+    amounts = sorted(street_put_in.values(), reverse=True)
+    if len(amounts) < 2:
+        max_player = max(street_put_in, key=street_put_in.get)  # type: ignore[arg-type]
+        if max_player in remaining:
+            uncalled[max_player] = amounts[0]
+        return uncalled
+
+    max_amount = amounts[0]
+    second_max = amounts[1]
+
+    if max_amount > second_max:
+        for p, amt in street_put_in.items():
+            if amt == max_amount and p in remaining:
+                uncalled[p] = max_amount - second_max
+                break
+
+    return uncalled
+
+
 def _assign_positions(seats: list[dict], button_seat: int, table_size: int) -> None:
     """Assign position labels to seated players based on button seat.
 

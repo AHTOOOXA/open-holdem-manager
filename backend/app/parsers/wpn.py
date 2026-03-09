@@ -22,7 +22,7 @@ import re
 from decimal import Decimal
 from datetime import datetime
 
-from app.parsers.common import ParsedHand, _ZERO, _assign_positions
+from app.parsers.common import ParsedHand, _ZERO, _assign_positions, compute_uncalled_returns
 
 SITE_ID = 4
 SITE_CODE = "WPN"
@@ -112,76 +112,6 @@ def _parse_datetime(s: str) -> datetime:
     y, mo, d = date_part.split("/")
     h, mi, sec = time_part.split(":")
     return datetime(int(y), int(mo), int(d), int(h), int(mi), int(sec))
-
-
-def _compute_uncalled_returns(
-    actions_by_street: dict[str, list[dict]],
-    collected: dict[str, Decimal],
-) -> dict[str, Decimal]:
-    """Compute uncalled bet returns from action sequence.
-
-    WPN sometimes shows explicit uncalled bet lines, but not always.
-    When a player bets/raises and everyone else folds, their excess
-    over the next highest contribution is returned.
-    """
-    uncalled: dict[str, Decimal] = {}
-
-    # Find the last street that had actions
-    last_street = None
-    for street in reversed(_STREETS):
-        if actions_by_street[street]:
-            last_street = street
-            break
-
-    if last_street is None:
-        return uncalled
-
-    # Track who folded across all streets
-    folded: set[str] = set()
-    all_players: set[str] = set()
-    for street in _STREETS:
-        for a in actions_by_street[street]:
-            all_players.add(a["username"])
-            if a["action"] == "fold":
-                folded.add(a["username"])
-
-    remaining = all_players - folded
-    if len(remaining) > 1:
-        # Multiple players remained — no uncalled bet
-        return uncalled
-
-    # One player left — compute their excess on the last active street
-    street_put_in: dict[str, Decimal] = {}
-    for a in actions_by_street[last_street]:
-        uname = a["username"]
-        action = a["action"]
-        amt = a["amount"]
-
-        if action in _INVEST_ACTIONS:
-            street_put_in[uname] = street_put_in.get(uname, _ZERO) + amt
-        elif action == "raise":
-            street_put_in[uname] = amt  # "to" amount
-
-    if not street_put_in:
-        return uncalled
-
-    amounts = sorted(street_put_in.values(), reverse=True)
-    if len(amounts) < 2:
-        max_player = max(street_put_in, key=street_put_in.get)  # type: ignore[arg-type]
-        if max_player in remaining:
-            uncalled[max_player] = amounts[0]
-        return uncalled
-
-    max_amount = amounts[0]
-    second_max = amounts[1]
-
-    if max_amount > second_max:
-        for p, amt in street_put_in.items():
-            if amt == max_amount and p in remaining:
-                uncalled[p] = max_amount - second_max
-                break
-
-    return uncalled
 
 
 def parse_hand_history(hand_text: str) -> ParsedHand:
@@ -559,7 +489,7 @@ def parse_hand_history(hand_text: str) -> ParsedHand:
 
     # ── Compute uncalled returns if not explicitly provided ──
     if not uncalled_returns:
-        uncalled_returns = _compute_uncalled_returns(actions_by_street, collected)
+        uncalled_returns = compute_uncalled_returns(actions_by_street)
 
     # ── Always compute rake from invested vs collected ──
     # WPN summary "Rake" may not include jackpot drop, so compute from actions
