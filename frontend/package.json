@@ -26,7 +26,7 @@
     "react-dom": "^19.2.0",
     "react-router-dom": "^7.13.0",
     "recharts": "^3.7.0",
-    "satori": "^0.19.2",
+    "satori": "^0.33.5",
     "tailwind-merge": "^3.4.0"
   },
   "devDependencies": {
