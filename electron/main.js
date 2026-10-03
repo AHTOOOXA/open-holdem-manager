@@ -5,7 +5,7 @@ const net = require('net');
 const http = require('http');
 const https = require('https');
 
-// Windows: electron-updater works without code signing (full auto-update).
+// Windows: electron-updater, but only downloads/installs when the user clicks.
 // macOS: requires Apple Developer account ($99/yr) for code signing, so we
 // fall back to GitHub API release checking with manual download.
 // TODO: Buy Apple Developer account and enable autoUpdater on macOS too.
@@ -157,19 +157,21 @@ function killBackend() {
 }
 
 // --- Update system ---
-// Windows: electron-updater (full auto-update)
+// Windows: electron-updater, user-initiated download and install
 // macOS: GitHub API checker (manual download until we get Apple signing)
 
 const REPO_OWNER = 'AHTOOOXA';
 const REPO_NAME = 'open-holdem-manager';
 
-let updateState = { available: null, downloaded: false };
+let updateState = { available: null, downloading: false, downloaded: false };
 
-// --- Windows: electron-updater auto-update ---
+// --- Windows: electron-updater ---
 
 function setupAutoUpdater() {
-  autoUpdater.autoDownload = true;
-  autoUpdater.autoInstallOnAppQuit = true;
+  // Nothing is downloaded or installed without a click. Builds are unsigned,
+  // so a compromised release must not become a silent install on every machine.
+  autoUpdater.autoDownload = false;
+  autoUpdater.autoInstallOnAppQuit = false;
 
   autoUpdater.on('update-available', (info) => {
     updateState.available = { version: info.version, releaseNotes: info.releaseNotes };
@@ -185,6 +187,7 @@ function setupAutoUpdater() {
   });
 
   autoUpdater.on('update-downloaded', () => {
+    updateState.downloading = false;
     updateState.downloaded = true;
     if (mainWindow) {
       mainWindow.webContents.send('update-downloaded');
@@ -192,6 +195,7 @@ function setupAutoUpdater() {
   });
 
   autoUpdater.on('error', (err) => {
+    updateState.downloading = false;
     console.error('Auto-updater error:', err.message);
     if (mainWindow) {
       mainWindow.webContents.send('update-error', err.message);
@@ -270,8 +274,18 @@ function setupUpdateSystem() {
 
 // --- IPC handlers ---
 
+ipcMain.handle('download-update', () => {
+  if (!autoUpdater || !updateState.available) return;
+  if (updateState.downloading || updateState.downloaded) return;
+  updateState.downloading = true;
+  autoUpdater.downloadUpdate().catch((err) => {
+    updateState.downloading = false;
+    console.error('Update download failed:', err.message);
+  });
+});
+
 ipcMain.handle('install-update', () => {
-  if (!autoUpdater) return;
+  if (!autoUpdater || !updateState.downloaded) return;
   setTimeout(() => {
     try {
       autoUpdater.quitAndInstall(false, true);

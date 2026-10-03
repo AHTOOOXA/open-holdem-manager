@@ -137,9 +137,14 @@ export default function SidebarFooterSettings() {
                 </DropdownMenuItem>
               ) : updateVersion ? (
                 canAutoUpdate ? (
-                  <DropdownMenuItem disabled>
-                    <RotateCw className="size-4" />
-                    Downloading v{updateVersion}...
+                  <DropdownMenuItem
+                    onClick={() => {
+                      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                      (window as any).electronAPI?.downloadUpdate?.();
+                    }}
+                  >
+                    <ArrowDownToLine className="size-4" />
+                    Download v{updateVersion}
                   </DropdownMenuItem>
                 ) : (
                   <DropdownMenuItem

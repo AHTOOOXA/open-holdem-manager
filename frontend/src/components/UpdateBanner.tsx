@@ -18,6 +18,7 @@ interface ElectronAPI {
   onDownloadProgress: (cb: (info: { percent: number }) => void) => void;
   onUpdateDownloaded: (cb: () => void) => void;
   onUpdateError: (cb: (message: string) => void) => void;
+  downloadUpdate: () => void;
   installUpdate: () => void;
   checkForUpdates: () => void;
   openExternal: (url: string) => void;
@@ -44,7 +45,7 @@ export default function UpdateBanner() {
   const [showNotes, setShowNotes] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Windows gets full auto-update; macOS gets manual download link
+  // Windows gets in-app download + restart (on click); macOS gets manual download link
   // TODO: Buy Apple Developer account ($99/yr) to enable auto-update on macOS
   const canAutoUpdate = getAPI()?.platform === 'win32';
 
@@ -173,6 +174,17 @@ export default function UpdateBanner() {
             What's new?
           </button>
         )}
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-5 px-2 text-xs"
+          onClick={() => {
+            setPercent(0);
+            getAPI()?.downloadUpdate();
+          }}
+        >
+          Download
+        </Button>
       </>
     );
   };

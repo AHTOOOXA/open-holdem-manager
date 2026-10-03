@@ -9,7 +9,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openExternal: (url) => ipcRenderer.invoke('open-external', url),
 
   // Update system
-  // Windows: full auto-update via electron-updater (all channels active)
+  // Windows: electron-updater, download and install only on user click
   // macOS: only onUpdateAvailable fires (GitHub API checker, manual download)
   // TODO: Buy Apple Developer account ($99/yr) to enable auto-update on macOS
   onUpdateAvailable: (callback) => {
@@ -24,6 +24,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onUpdateError: (callback) => {
     ipcRenderer.on('update-error', (_event, message) => callback(message));
   },
+  downloadUpdate: () => ipcRenderer.invoke('download-update'),
   installUpdate: () => ipcRenderer.invoke('install-update'),
   checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
 });
