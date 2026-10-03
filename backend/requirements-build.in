@@ -1,0 +1,5 @@
+# Build-time dependencies for release binaries (CI).
+# Regenerate the lock after changing this file or requirements.txt:
+#   uv pip compile requirements-build.in --universal --python-version 3.12 --generate-hashes -o requirements-build.lock
+-r requirements.txt
+pyinstaller
