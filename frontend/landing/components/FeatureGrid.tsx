@@ -14,7 +14,7 @@ const features = [
   {
     icon: GitBranch,
     title: 'Open Source',
-    description: 'MIT licensed. Fork it, modify it, contribute to it.',
+    description: 'AGPL-3.0 licensed. Read it, audit it, fork it, contribute to it.',
   },
   {
     icon: Zap,

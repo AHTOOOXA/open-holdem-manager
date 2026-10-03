@@ -1,6 +1,6 @@
 appId: com.openholdemmanager.app
 productName: Open Holdem Manager
-copyright: Copyright © 2025
+copyright: Copyright © 2025-2026 Anton Safonov
 
 publish:
   provider: github
@@ -26,7 +26,8 @@ extraResources:
 
 mac:
   category: public.app-category.utilities
-  artifactName: "${productName}-${arch}.${ext}"
+  # No spaces: CI uploads these files as-is, and latest*.yml must match the asset names
+  artifactName: "Open-Holdem-Manager-${arch}.${ext}"
   target:
     - dmg
     - zip
@@ -39,7 +40,7 @@ dmg:
   title: "${productName}"
 
 win:
-  artifactName: "${productName}-Setup.${ext}"
+  artifactName: "Open-Holdem-Manager-Setup.${ext}"
   target:
     - nsis
 

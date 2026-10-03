@@ -2,7 +2,7 @@ export default function Footer() {
   return (
     <footer className="border-t border-border py-8">
       <div className="max-w-5xl mx-auto px-4 sm:px-6 flex flex-col sm:flex-row items-center justify-between gap-4 text-sm text-text-muted">
-        <span>Open Holdem Manager &middot; MIT License</span>
+        <span>Open Holdem Manager &middot; AGPL-3.0 License</span>
         <div className="flex items-center gap-4">
           <a
             href="https://github.com/AHTOOOXA/open-holdem-manager"

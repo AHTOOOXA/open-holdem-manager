@@ -1,7 +1,7 @@
 {
   "name": "open-holdem-manager",
   "version": "0.0.10",
-  "description": "Local poker hand history tracker for GGPoker Rush & Cash",
+  "description": "Open-source local poker tracker: hand history import, stats, graphs and replayer for 7 poker sites",
   "main": "electron/main.js",
   "private": true,
   "scripts": {
@@ -17,8 +17,8 @@
     "electron": "^33.2.0",
     "electron-builder": "^25.1.8"
   },
-  "author": "",
-  "license": "MIT",
+  "author": "Anton Safonov",
+  "license": "AGPL-3.0-only",
   "dependencies": {
     "electron-updater": "^6.7.3"
   }
