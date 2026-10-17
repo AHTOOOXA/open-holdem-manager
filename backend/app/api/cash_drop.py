@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Query
+from app.date_filters import DATE_TO_SQL
 from app.db import get_read_cursor, get_hero_player_id
 from collections import defaultdict
 from app.models import (
@@ -25,7 +26,7 @@ def _build_filters(stakes, date_from, date_to, workspace_id=1):
         clauses += " AND h.played_at >= ?"
         params.append(date_from)
     if date_to:
-        clauses += " AND h.played_at <= ?"
+        clauses += " AND " + DATE_TO_SQL
         params.append(date_to)
     return clauses, params
 

@@ -1,8 +1,17 @@
 from fastapi import APIRouter, Query
+from app.date_filters import DATE_TO_SQL
 from app.db import get_read_cursor, get_hero_player_id
 from app.models import GraphPoint, GraphResponse, VarianceStats, SessionMarker, FilterOptions, StakeBreakdown, MonthBreakdown, PositionBreakdown, ResultsBreakdown, DriftStat, DriftResponse
 import math
 from datetime import datetime, timedelta
+
+from app.h2n.rows import sql_case, sql_opp
+from app.stat_registry import VALID_SQL
+
+# Fold to 3-Bet on the drift page: H2N row P03, as in stats_engine / the General screen
+# (hands H2N would refuse to import are left out, like everywhere else it is shown).
+_F3B_OPP = f"({sql_opp('P03')} = 1 AND {VALID_SQL})"
+_F3B_CASE = sql_case("P03")
 
 router = APIRouter()
 
@@ -50,7 +59,7 @@ def get_graph(
         query += " AND h.played_at >= ?"
         params.append(date_from)
     if date_to:
-        query += " AND h.played_at <= ?"
+        query += " AND " + DATE_TO_SQL
         params.append(date_to)
 
     query += " ORDER BY h.played_at ASC, h.id ASC"
@@ -240,7 +249,7 @@ def get_breakdown(
         where += " AND h.played_at >= ?"
         params.append(date_from)
     if date_to:
-        where += " AND h.played_at <= ?"
+        where += " AND " + DATE_TO_SQL
         params.append(date_to)
 
     # For last_n, restrict to the most recent N hand IDs
@@ -372,7 +381,7 @@ _DRIFT_STATS_V2: list[tuple[str, str, str]] = [
     ("vpip",               "CAST(hp.vpip AS DOUBLE)",               ""),
     ("pfr",                "CAST(hp.pfr AS DOUBLE)",                ""),
     ("three_bet",          "CAST(hp.three_bet AS DOUBLE)",          "AND hp.three_bet_opp = true"),
-    ("fold_to_3bet",       "CAST(hp.fold_to_3bet AS DOUBLE)",       "AND hp.three_bet_opp = true"),
+    ("fold_to_3bet",       "CAST(hp.fold_to_3bet AS DOUBLE)",       "AND hp.fold_to_3bet IS NOT NULL"),
     ("cbet_flop",          "CAST(hp.cbet_flop AS DOUBLE)",          "AND hp.cbet_flop_opp = true"),
     ("fold_to_cbet_flop",  "CAST(hp.fold_to_cbet_flop AS DOUBLE)",  "AND hp.fold_to_cbet_flop IS NOT NULL"),
     ("went_to_showdown",   "CAST(hp.went_to_showdown AS DOUBLE)",   "AND hp.saw_flop = true"),
@@ -457,7 +466,7 @@ def get_drift(
         where += " AND h.played_at >= ?"
         params.append(date_from)
     if date_to:
-        where += " AND h.played_at <= ?"
+        where += " AND " + DATE_TO_SQL
         params.append(date_to)
 
     # Get total hand count
@@ -482,7 +491,7 @@ def get_drift(
             AVG(CAST(hp.pfr AS DOUBLE)),
             AVG(CAST(hp.three_bet AS DOUBLE)) FILTER (WHERE hp.three_bet_opp),
             COUNT(*) FILTER (WHERE hp.three_bet_opp),
-            AVG(CAST(hp.fold_to_3bet AS DOUBLE)) FILTER (WHERE hp.three_bet_opp),
+            AVG(CAST({_F3B_CASE} AS DOUBLE)) FILTER (WHERE {_F3B_OPP}),
             AVG(CAST(hp.cbet_flop AS DOUBLE)) FILTER (WHERE hp.cbet_flop_opp),
             COUNT(*) FILTER (WHERE hp.cbet_flop_opp),
             AVG(CAST(hp.fold_to_cbet_flop AS DOUBLE)) FILTER (WHERE hp.fold_to_cbet_flop IS NOT NULL),
@@ -497,7 +506,8 @@ def get_drift(
             COUNT(*) FILTER (WHERE hp.faced_steal),
             AVG(CASE WHEN hp.won_bb > 0 THEN 1.0 ELSE 0.0 END) FILTER (WHERE hp.saw_flop),
             SUM(hp.flop_bets + hp.flop_raises) FILTER (WHERE hp.saw_flop),
-            SUM(hp.flop_bets + hp.flop_raises + hp.flop_calls + hp.flop_checks + hp.flop_folds) FILTER (WHERE hp.saw_flop)
+            SUM(hp.flop_bets + hp.flop_raises + hp.flop_calls + hp.flop_checks + hp.flop_folds) FILTER (WHERE hp.saw_flop),
+            COUNT(*) FILTER (WHERE {_F3B_OPP})
         FROM hand_players hp
         JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
         WHERE {where}
@@ -511,7 +521,7 @@ def get_drift(
         ("vpip",              0,  1),
         ("pfr",               2,  1),
         ("three_bet",         3,  4),
-        ("fold_to_3bet",      5,  4),
+        ("fold_to_3bet",      5,  21),  # H2N row P03, same as stats_engine
         ("cbet_flop",         6,  7),
         ("fold_to_cbet_flop", 8,  9),
         ("went_to_showdown",  10, 11),
@@ -540,7 +550,9 @@ def get_drift(
         ]),
         ("AND hp.three_bet_opp = true", [
             ("three_bet", "CAST(hp.three_bet AS DOUBLE)"),
-            ("fold_to_3bet", "CAST(hp.fold_to_3bet AS DOUBLE)"),
+        ]),
+        (f"AND {_F3B_OPP}", [
+            ("fold_to_3bet", f"CAST({_F3B_CASE} AS DOUBLE)"),
         ]),
         ("AND hp.cbet_flop_opp = true", [
             ("cbet_flop", "CAST(hp.cbet_flop AS DOUBLE)"),

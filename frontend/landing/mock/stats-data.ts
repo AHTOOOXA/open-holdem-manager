@@ -18,6 +18,21 @@ function sv(value: number | null, sample: number = 800): StatValue {
   return { value, sample };
 }
 
+/** Rows that only have some columns (steal tables): the rest are empty, as the API returns them. */
+function cols(total: number, columns: Partial<Record<'btn' | 'sb' | 'bb', number>>, baseSample = 300): PositionalStats {
+  const empty: StatValue = { value: null, sample: 0 };
+  const cell = (v: number | undefined) => (v === undefined ? empty : sv(v, Math.round(baseSample / 2)));
+  return {
+    total: sv(total, baseSample),
+    ep: empty,
+    mp: empty,
+    co: empty,
+    btn: cell(columns.btn),
+    sb: cell(columns.sb),
+    bb: cell(columns.bb),
+  };
+}
+
 export const mockHeroStats: HeroStats = {
   hands: 800,
   win_rate_bb100: 4.82,
@@ -45,14 +60,14 @@ export const mockHeroStats: HeroStats = {
   iso_raise:       sv(8.2, 95),
   fold_to_squeeze: sv(58.4, 65),
 
-  // Steal
-  steal:               ps(32.5, 0, 0, 28.4, 38.2, 35.1, 0, 340),
-  fold_to_3bet_steal:  ps(52.8, 0, 0, 0, 48.5, 55.2, 0, 180),
-  four_bet_steal:      ps(5.2, 0, 0, 0, 6.1, 4.5, 0, 180),
-  four_bet_fold_steal: ps(38.5, 0, 0, 0, 35.2, 42.1, 0, 45),
-  vs_steal_fold:       ps(62.1, 0, 0, 0, 0, 65.8, 58.4, 280),
-  vs_steal_call:       ps(22.5, 0, 0, 0, 0, 18.2, 26.8, 280),
-  vs_steal_3bet:       ps(15.4, 0, 0, 0, 0, 16.0, 14.8, 280),
+  // Steal: BTN and SB only (CO is not a steal seat); vs. Steal: SB and BB only
+  steal:               cols(36.7, { btn: 38.2, sb: 35.1 }, 280),
+  fold_to_3bet_steal:  cols(52.8, { btn: 48.5, sb: 55.2 }, 180),
+  four_bet_steal:      cols(5.2, { btn: 6.1, sb: 4.5 }, 180),
+  four_bet_fold_steal: cols(38.5, { btn: 35.2, sb: 42.1 }, 45),
+  vs_steal_fold:       cols(66.3, { sb: 78.4, bb: 54.2 }, 280),
+  vs_steal_call:       cols(19.3, { sb: 8.2, bb: 30.4 }, 280),
+  vs_steal_3bet:       cols(14.4, { sb: 13.4, bb: 15.4 }, 280),
 
   // Postflop
   cbet_flop:            ps(62.5, 55.2, 58.4, 65.1, 68.2, 60.5, 58.8, 450),

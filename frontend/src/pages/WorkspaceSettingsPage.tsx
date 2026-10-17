@@ -17,6 +17,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { DatePicker } from '@/components/ui/date-picker';
+import { formatLocalDate } from '@/lib/date';
 import {
   Dialog,
   DialogContent,
@@ -95,7 +96,7 @@ export default function WorkspaceSettingsPage() {
   // Checkpoint dialog
   const [cpDialogWs, setCpDialogWs] = useState<Workspace | null>(null);
   const [newCpName, setNewCpName] = useState('');
-  const [newCpDate, setNewCpDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [newCpDate, setNewCpDate] = useState(() => formatLocalDate());
   const [newCpTime, setNewCpTime] = useState(() => {
     const now = new Date();
     return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
@@ -288,7 +289,7 @@ export default function WorkspaceSettingsPage() {
                         const now = new Date();
                         setCpDialogWs(ws);
                         setNewCpName('');
-                        setNewCpDate(now.toISOString().slice(0, 10));
+                        setNewCpDate(formatLocalDate(now));
                         setNewCpTime(`${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`);
                         setNewCpNote('');
                       }}>
@@ -488,7 +489,7 @@ export default function WorkspaceSettingsPage() {
                 <label className="text-sm font-medium">Date</label>
                 <DatePicker
                   value={newCpDate}
-                  onChange={(v) => setNewCpDate(v || new Date().toISOString().slice(0, 10))}
+                  onChange={(v) => setNewCpDate(v || formatLocalDate())}
                   placeholder="Checkpoint date"
                   className="h-9 text-sm w-full"
                 />

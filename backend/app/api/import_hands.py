@@ -2,10 +2,12 @@ from fastapi import APIRouter, UploadFile, File
 from fastapi.responses import StreamingResponse, FileResponse
 from decimal import Decimal
 from app.models import ImportResult
-from app.db import get_db, db_lock, close_db, DB_PATH
+from app.db import get_db, db_lock, close_db, shutdown_requested, DB_PATH
 from app.parsers.common import ParsedHand, _ZERO
 from app.parsers import detect_parser, PARSER_BY_SITE_ID
+from app.h2n.columns import H2N_COLUMN_NAMES
 from app.stat_flags import compute_stat_flags
+from app.money import compute_hand_money, net_round2, rake_columns
 from app.player_classification import batch_update_player_types
 
 import duckdb
@@ -20,10 +22,16 @@ import tempfile
 import time
 import pyarrow as pa
 from concurrent.futures import ThreadPoolExecutor, Future
+from contextlib import contextmanager
 
 try:
     from app.equity import calculate_headsup_equity as _calc_equity
 except ImportError:
+    # Packaged builds have shipped without eval7's deps before; say so loudly
+    # instead of silently falling back to actual winnings for all-in EV.
+    logging.getLogger(__name__).warning(
+        "eval7 unavailable: all-in EV will equal actual winnings", exc_info=True,
+    )
     _calc_equity = None
 
 router = APIRouter()
@@ -108,7 +116,7 @@ _STAT_FLAG_KEYS = (
     "bb_defense", "bb_defense_opp", "iso_raise", "iso_raise_opp",
     "faced_squeeze", "fold_to_squeeze",
     "pot_type", "is_multiway",
-)
+) + H2N_COLUMN_NAMES  # h2n_pos, h2n_*_opp/case, is_winner, hv_* (app/h2n/CONTRACT.md)
 _HP_ALL_COLS = _HP_BASE_COLS + _STAT_FLAG_KEYS
 _BOARD_COLS = ("hand_id", "street", "card", "card_order", "workspace_id", "board_number")
 
@@ -119,6 +127,52 @@ def reset_import_cache() -> None:
     _player_cache.clear()
     _next_player_id = None
     _next_hp_id = None
+
+
+class ShutdownInProgress(Exception):
+    """Raised inside a bulk write when the app is quitting."""
+
+
+def _check_shutdown() -> None:
+    if shutdown_requested():
+        raise ShutdownInProgress("App is shutting down")
+
+
+@contextmanager
+def _bulk_write(db: duckdb.DuckDBPyConnection):
+    """One transaction for a bulk load, with indexes dropped for speed.
+
+    Any error (or an app shutdown) rolls the whole load back, so the DB is
+    never left half-written, and the connection is never left inside an
+    aborted transaction. On success the caller recreates the indexes.
+    """
+    _drop_indexes(db)
+    db.execute("BEGIN TRANSACTION")
+    db.execute("SET checkpoint_threshold = '10GB'")
+    try:
+        yield
+        db.execute("COMMIT")
+    except BaseException:
+        try:
+            db.execute("ROLLBACK")
+        except Exception:
+            logging.getLogger(__name__).exception("ROLLBACK failed")
+        # The cache may hold IDs that were just rolled back
+        reset_import_cache()
+        _create_indexes(db)
+        raise
+    finally:
+        # The setting is per connection: left at 10GB, nothing would be
+        # checkpointed for the rest of the session.
+        db.execute("RESET checkpoint_threshold")
+
+
+def _checkpoint_after_bulk(db: duckdb.DuckDBPyConnection) -> None:
+    """Move a finished bulk load out of the WAL and into the DB file."""
+    try:
+        db.execute("CHECKPOINT")
+    except Exception:
+        logging.getLogger(__name__).exception("CHECKPOINT after bulk write failed")
 
 
 def _init_counters(db: duckdb.DuckDBPyConnection) -> None:
@@ -192,98 +246,15 @@ def _batch_resolve_players(
         )
 
 
-_STREETS = ("preflop", "flop", "turn", "river")
-_INVEST_ACTIONS = frozenset(("sb", "bb", "ante", "straddle", "call", "bet"))
-_STREET_ORDER = {"preflop": 0, "flop": 1, "turn": 2, "river": 3}
-
-
 def _compute_financials(parsed: ParsedHand):
-    """Compute per-player investment and all-in EV for a parsed hand.
+    """Per-player money for a hand, computed like Hand2Note (app/money.py).
 
-    Returns (player_invested, all_in_ev_bb_map).
+    Returns (player_invested, money): investment by username (uncalled bets
+    included) and the HandMoney with each player's won, rake and all-in EV.
     """
-    player_invested = {s["username"]: _ZERO for s in parsed.seats}
-
-    for street in _STREETS:
-        street_put_in: dict[str, Decimal] = {}
-        for a in parsed.actions_by_street[street]:
-            uname = a["username"]
-            action = a["action"]
-            amt = a["amount"]
-
-            if action in _INVEST_ACTIONS:
-                # Antes are investments but don't count toward the wagering
-                # round — "raise to X" is relative to blinds/calls, not antes.
-                if action != "ante":
-                    street_put_in[uname] = street_put_in.get(uname, _ZERO) + amt
-                player_invested[uname] += amt
-            elif action == "raise":
-                already_in = street_put_in.get(uname, _ZERO)
-                increment = amt - already_in
-                if increment > 0:
-                    player_invested[uname] += increment
-                street_put_in[uname] = amt
-
-    # All-in EV calculation
-    all_in_ev_bb_map: dict[str, float] = {}
-
-    all_in_street = None
-    for street in _STREETS:
-        for a in parsed.actions_by_street[street]:
-            if a["is_all_in"]:
-                all_in_street = street
-                break
-        if all_in_street is not None:
-            break
-
-    if all_in_street is not None and _calc_equity:
-        players_in = set(s["username"] for s in parsed.seats)
-        folded = set()
-        for st in _STREETS:
-            for a in parsed.actions_by_street[st]:
-                if a["action"] == "fold":
-                    folded.add(a["username"])
-        remaining = players_in - folded
-        real_showdown = len(remaining) >= 2 and (
-            parsed.in_showdown or parsed.went_to_showdown_players
-        )
-
-        if real_showdown and len(remaining) == 2:
-            board_at = []
-            if _STREET_ORDER[all_in_street] >= 1:
-                board_at.extend(parsed.board_cards["flop"])
-            if _STREET_ORDER[all_in_street] >= 2:
-                board_at.extend(parsed.board_cards["turn"])
-            if _STREET_ORDER[all_in_street] >= 3:
-                board_at.extend(parsed.board_cards["river"])
-
-            if 5 - len(board_at) > 0:
-                pl = list(remaining)
-                if pl[0] in parsed.hero_cards and pl[1] in parsed.hero_cards:
-                    try:
-                        p1, p2 = pl
-                        p1_eq = _calc_equity(
-                            parsed.hero_cards[p1], parsed.hero_cards[p2], board_at
-                        )
-                        p2_eq = 1.0 - p1_eq
-                        p1_net = float(player_invested[p1]) - float(
-                            parsed.uncalled_returns.get(p1, _ZERO)
-                        )
-                        p2_net = float(player_invested[p2]) - float(
-                            parsed.uncalled_returns.get(p2, _ZERO)
-                        )
-                        total_risk = (
-                            sum(float(v) for v in player_invested.values())
-                            - sum(float(v) for v in parsed.uncalled_returns.values())
-                        )
-                        dist = total_risk - float(parsed.total_rake)
-                        bb = float(parsed.bb_amount)
-                        all_in_ev_bb_map[p1] = (p1_eq * dist - p1_net) / bb
-                        all_in_ev_bb_map[p2] = (p2_eq * dist - p2_net) / bb
-                    except Exception:
-                        pass
-
-    return player_invested, all_in_ev_bb_map
+    money = compute_hand_money(parsed, with_ev=_calc_equity is not None)
+    player_invested = {u: pm.invested for u, pm in money.players.items()}
+    return player_invested, money
 
 
 def _build_batch_arrays(
@@ -310,16 +281,7 @@ def _build_batch_arrays(
     for parsed, player_stats, financials in prepared:
         bb_amount = parsed.bb_amount
         bb_f = float(bb_amount) if bb_amount else 0.0
-        num_winners = len(parsed.collected)
-        per_player_rake = (
-            parsed.total_rake / max(num_winners, 1)
-            if parsed.total_rake else _ZERO
-        )
-        per_player_jackpot = (
-            parsed.total_jackpot / max(num_winners, 1)
-            if parsed.total_jackpot else _ZERO
-        )
-        player_invested, all_in_ev_bb_map = financials
+        _player_invested, money = financials
 
         # Append to hands columns (skip during rebuild — hands table is preserved)
         if hands_cols is not None:
@@ -346,17 +308,21 @@ def _build_batch_arrays(
             cards = parsed.hero_cards.get(uname)
             card1 = cards[0] if cards else None
             card2 = cards[1] if cards else None
-            gross = parsed.collected.get(uname, Decimal("0"))
-            uncalled = parsed.uncalled_returns.get(uname, Decimal("0"))
-            invested = player_invested.get(uname, Decimal("0"))
-            net_won = float(gross + uncalled - invested)
-            rake = float(per_player_rake) if uname in parsed.collected else 0.0
-            jackpot = float(per_player_jackpot) if uname in parsed.collected else 0.0
-            won_bb = net_won / bb_f if bb_f else 0.0
+            # Money as Hand2Note computes it (app/money.py): a GG Cash Drop
+            # counts as winnings, rake is split per pot, all-in EV per pot.
+            pm = money.players.get(uname)
+            if pm is not None:
+                net_won = float(pm.won)
+                rake, jackpot = rake_columns(parsed, pm)
+                won_ev = pm.won_ev
+            else:
+                net_won = rake = jackpot = won_ev = 0.0
+            # H2N reads winnings rounded to cents before dividing by the BB
+            won_bb = net_round2(net_won) / bb_f if bb_f else 0.0
             rake_bb = rake / bb_f if bb_f else 0.0
             jackpot_bb = jackpot / bb_f if bb_f else 0.0
             stack_bb = float(s["stack"]) / bb_f if bb_f else 0.0
-            ev_bb = all_in_ev_bb_map.get(uname, won_bb)
+            ev_bb = won_ev / bb_f if bb_f else 0.0
             ps = player_stats[uname]
 
             hp_id = _next_hp_id
@@ -448,7 +414,9 @@ def _flush_batch(
     """Bulk-insert a batch of (parsed, player_stats, financials) tuples using PyArrow column-oriented inserts.
 
     When rebuild=True, skips inserting into the hands table (it already has the data).
-    When in_transaction=True, caller manages the transaction — no BEGIN/COMMIT per batch.
+    When in_transaction=True, caller manages the transaction — no BEGIN/COMMIT per batch,
+    and a failure is re-raised: DuckDB aborts the whole transaction on any error, and a
+    later COMMIT then silently rolls everything back instead of failing.
     Returns (imported_count, error_count, error_details).
     """
     if not prepared:
@@ -459,6 +427,8 @@ def _flush_batch(
         _insert_arrays(db, pa_hands, pa_hp, pa_board, in_transaction=in_transaction)
         return len(prepared), 0, []
     except Exception as e:
+        if in_transaction:
+            raise
         traceback.print_exc()
         return 0, len(prepared), [f"Batch insert failed: {e}"]
 
@@ -578,30 +548,32 @@ async def import_files(files: list[UploadFile] = File(...), workspace_id: int = 
     return result
 
 
-@router.post("/import/files/stream")
-async def import_files_stream(files: list[UploadFile] = File(...), workspace_id: int = 1):
-    files_data = [(f.filename or "", await f.read()) for f in files]
-    text_contents = _read_uploads(files_data)
+def _stream_import(
+    all_hands: list[str],
+    hand_parsers: list,
+    file_count: int,
+    workspace_id: int,
+    pre_errors: list[str] | None = None,
+) -> StreamingResponse:
+    """Import already-split hands, streaming NDJSON progress (start / progress / done | error).
 
-    # Per-file parser detection + hand splitting
-    all_hands: list[str] = []
-    hand_parsers: list = []  # parallel list: parser module for each hand
-    skipped_files = 0
-    for content in text_contents:
-        parser = detect_parser(content[:500])
-        if parser is None:
-            skipped_files += 1
-            continue
-        for h in parser.split_hands(content):
-            h = h.strip()
-            if h:
-                all_hands.append(h)
-                hand_parsers.append(parser)
-
+    hand_parsers[i] is the parser module for all_hands[i].
+    pre_errors: problems found before parsing (counted as errors in the result).
+    """
+    pre_errors = pre_errors or []
     total = len(all_hands)
-    file_count = len(text_contents)
 
     def generate():
+        try:
+            yield from _generate()
+        except Exception as e:
+            logging.getLogger(__name__).exception("Import failed, rolled back")
+            yield json.dumps({
+                "type": "error",
+                "message": f"Import failed, nothing was imported: {e}",
+            }) + "\n"
+
+    def _generate():
         yield json.dumps({
             "type": "start",
             "total_hands": total,
@@ -612,8 +584,8 @@ async def import_files_stream(files: list[UploadFile] = File(...), workspace_id:
             db = get_db()
             imported = 0
             duplicates = 0
-            errors = 0
-            error_details: list[str] = []
+            errors = len(pre_errors)
+            error_details: list[str] = list(pre_errors)
 
             t_start = time.perf_counter()
             t_parse = 0.0
@@ -635,25 +607,18 @@ async def import_files_stream(files: list[UploadFile] = File(...), workspace_id:
                     ).fetchall()
                     existing_ids.update(r[0] for r in rows)
 
-            # Drop indexes for fast bulk loading
-            _drop_indexes(db)
-
-            # Single transaction + suppress auto-checkpoint for bulk load
-            db.execute("BEGIN TRANSACTION")
-            db.execute("SET checkpoint_threshold = '10GB'")
-
             # Split hands into BATCH_SIZE chunks for pipeline parallelism
+            # One parser per chunk: start a new chunk at BATCH_SIZE or when the
+            # site changes (several files from different sites in one upload)
             chunks: list[tuple[list[str], list[str | None], object]] = []
-            for ci in range(0, total, BATCH_SIZE):
-                chunk_texts = all_hands[ci:ci + BATCH_SIZE]
-                chunk_ids = all_ids[ci:ci + BATCH_SIZE]
-                # Use the parser of the first hand in the chunk (all hands from
-                # one file share a parser, and chunks rarely span file boundaries)
-                chunk_parser = hand_parsers[ci] if ci < len(hand_parsers) else None
-                chunks.append((chunk_texts, chunk_ids, chunk_parser))
+            start = 0
+            for ci in range(1, total + 1):
+                if ci == total or ci - start == BATCH_SIZE or hand_parsers[ci] is not hand_parsers[start]:
+                    chunks.append((all_hands[start:ci], all_ids[start:ci], hand_parsers[start]))
+                    start = ci
 
             processed = 0
-            with ThreadPoolExecutor(max_workers=1) as executor:
+            with _bulk_write(db), ThreadPoolExecutor(max_workers=1) as executor:
                 # Start parsing first batch
                 parse_future: Future | None = None
                 if chunks:
@@ -662,6 +627,7 @@ async def import_files_stream(files: list[UploadFile] = File(...), workspace_id:
                     )
 
                 for ci in range(len(chunks)):
+                    _check_shutdown()
                     # Wait for current parse result
                     batch_prepared, batch_dups, batch_errs, batch_details, bp, bs, be = parse_future.result()
                     duplicates += batch_dups
@@ -703,14 +669,13 @@ async def import_files_stream(files: list[UploadFile] = File(...), workspace_id:
                         "hands_per_sec": round(hps),
                     }) + "\n"
 
-            db.execute("COMMIT")
-
             # Recreate indexes (bulk build is faster than incremental)
             t0_idx = time.perf_counter()
             _create_indexes(db)
             t_idx = time.perf_counter() - t0_idx
 
             finalize_import(db, workspace_id=workspace_id)
+            _checkpoint_after_bulk(db)
 
         elapsed = time.perf_counter() - t_start
         hps = imported / elapsed if elapsed > 0 else 0
@@ -730,6 +695,29 @@ async def import_files_stream(files: list[UploadFile] = File(...), workspace_id:
         }) + "\n"
 
     return StreamingResponse(generate(), media_type="application/x-ndjson")
+
+
+@router.post("/import/files/stream")
+async def import_files_stream(files: list[UploadFile] = File(...), workspace_id: int = 1):
+    files_data = [(f.filename or "", await f.read()) for f in files]
+    text_contents = _read_uploads(files_data)
+
+    # Per-file parser detection + hand splitting
+    all_hands: list[str] = []
+    hand_parsers: list = []  # parallel list: parser module for each hand
+    skipped_files = 0
+    for content in text_contents:
+        parser = detect_parser(content[:500])
+        if parser is None:
+            skipped_files += 1
+            continue
+        for h in parser.split_hands(content):
+            h = h.strip()
+            if h:
+                all_hands.append(h)
+                hand_parsers.append(parser)
+
+    return _stream_import(all_hands, hand_parsers, len(text_contents), workspace_id)
 
 
 def _process_hands(db, text_contents: list[str], workspace_id: int = 1) -> ImportResult:
@@ -766,13 +754,29 @@ def _process_hands(db, text_contents: list[str], workspace_id: int = 1) -> Impor
             ).fetchall()
             existing_ids.update(r[0] for r in rows)
 
-    # Drop indexes for fast bulk loading
-    _drop_indexes(db)
+    with _bulk_write(db):
+        total_imported, total_duplicates, total_errors = _process_hands_in_txn(
+            db, all_hands, all_ids, hand_parsers_list, existing_ids,
+            error_details, total_duplicates, total_errors, workspace_id,
+        )
 
-    # Single transaction + suppress auto-checkpoint for bulk load
-    db.execute("BEGIN TRANSACTION")
-    db.execute("SET checkpoint_threshold = '10GB'")
+    _create_indexes(db)
+    finalize_import(db, workspace_id=workspace_id)
+    _checkpoint_after_bulk(db)
 
+    return ImportResult(
+        imported=total_imported,
+        duplicates=total_duplicates,
+        errors=total_errors,
+        error_details=error_details[:20],
+    )
+
+
+def _process_hands_in_txn(
+    db, all_hands, all_ids, hand_parsers_list, existing_ids,
+    error_details, total_duplicates, total_errors, workspace_id,
+) -> tuple[int, int, int]:
+    total_imported = 0
     pending: list[tuple[ParsedHand, dict, tuple]] = []
 
     for i, hand_text in enumerate(all_hands):
@@ -795,6 +799,7 @@ def _process_hands(db, text_contents: list[str], workspace_id: int = 1) -> Impor
             error_details.append(f"Hand parse error: {str(e)}")
 
         if len(pending) >= BATCH_SIZE:
+            _check_shutdown()
             imp, errs, details = _flush_batch(db, pending, in_transaction=True, workspace_id=workspace_id)
             total_imported += imp
             total_errors += errs
@@ -807,16 +812,7 @@ def _process_hands(db, text_contents: list[str], workspace_id: int = 1) -> Impor
         total_errors += errs
         error_details.extend(details)
 
-    db.execute("COMMIT")
-    _create_indexes(db)
-    finalize_import(db, workspace_id=workspace_id)
-
-    return ImportResult(
-        imported=total_imported,
-        duplicates=total_duplicates,
-        errors=total_errors,
-        error_details=error_details[:20],
-    )
+    return total_imported, total_duplicates, total_errors
 
 
 @router.post("/import/rebuild")
@@ -880,18 +876,32 @@ def _run_rebuild_sync(db, on_progress: 'Callable[[int, int], None] | None' = Non
         "SELECT id, workspace_id, site_id, raw_text FROM hands ORDER BY played_at ASC, id ASC"
     ).fetchall()
 
-    _drop_indexes(db)
-    db.execute("DELETE FROM player_classifications")
-    db.execute("DELETE FROM actions")
-    db.execute("DELETE FROM board_cards")
-    db.execute("DELETE FROM hand_players")
-    # Keep players table intact — player_aliases has FK references, and
-    # _batch_resolve_players will look up existing players from the DB.
     reset_import_cache()
+    with _bulk_write(db):
+        # Inside the transaction: if the rebuild fails or the app quits
+        # midway, the old rows come back instead of empty stats tables.
+        db.execute("DELETE FROM player_classifications")
+        db.execute("DELETE FROM actions")
+        db.execute("DELETE FROM board_cards")
+        db.execute("DELETE FROM hand_players")
+        # Keep players table intact — player_aliases has FK references, and
+        # _batch_resolve_players will look up existing players from the DB.
+        imported, errors, t_start = _rebuild_rows(db, all_rows, total, on_progress)
 
-    db.execute("BEGIN TRANSACTION")
-    db.execute("SET checkpoint_threshold = '10GB'")
+    _create_indexes(db)
+    # Full rebuild: recompute classifications for all workspaces
+    finalize_import(db, workspace_id=None)
+    _checkpoint_after_bulk(db)
 
+    elapsed = time.perf_counter() - t_start
+    hps = imported / elapsed if elapsed > 0 else 0
+    logging.getLogger(__name__).info(
+        "Auto-rebuild complete: %d hands in %.1fs (%.0f h/s, %d errors)",
+        imported, elapsed, hps, errors,
+    )
+
+
+def _rebuild_rows(db, all_rows, total, on_progress) -> tuple[int, int, float]:
     imported = 0
     errors = 0
     processed = 0
@@ -900,6 +910,7 @@ def _run_rebuild_sync(db, on_progress: 'Callable[[int, int], None] | None' = Non
     chunks = [all_rows[ci:ci + BATCH_SIZE] for ci in range(0, total, BATCH_SIZE)]
 
     for ci, chunk in enumerate(chunks):
+        _check_shutdown()
         # Group prepared items by workspace_id so each flush gets the correct one.
         # Within a chunk, hands from different workspaces may be interleaved
         # (e.g. same hand_id existing in ws1 and ws2).
@@ -964,17 +975,7 @@ def _run_rebuild_sync(db, on_progress: 'Callable[[int, int], None] | None' = Non
                 "Auto-rebuild: %d/%d hands (%.0f h/s)", imported, total, hps,
             )
 
-    db.execute("COMMIT")
-    _create_indexes(db)
-    # Full rebuild: recompute classifications for all workspaces
-    finalize_import(db, workspace_id=None)
-
-    elapsed = time.perf_counter() - t_start
-    hps = imported / elapsed if elapsed > 0 else 0
-    logging.getLogger(__name__).info(
-        "Auto-rebuild complete: %d hands in %.1fs (%.0f h/s, %d errors)",
-        imported, elapsed, hps, errors,
-    )
+    return imported, errors, t_start
 
 
 @router.post("/import/clear")
@@ -1011,27 +1012,29 @@ async def clear_hands(workspace_id: int = 1):
 @router.get("/import/export")
 async def export_database():
     """Export the database as a downloadable .duckdb file."""
+    tmp_dir = tempfile.mkdtemp(prefix="ohm-export-")
+    tmp_path = os.path.join(tmp_dir, "export.duckdb")
     with db_lock():
-        db = get_db()
-        db.execute("CHECKPOINT")
-        # Copy to a temp file while we hold the lock
-        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".duckdb")
-        tmp.close()
-        shutil.copy2(str(DB_PATH), tmp.name)
+        # Close (and checkpoint) before copying: on Windows the open DB file
+        # can't be read through another handle (WinError 32). COPY FROM
+        # DATABASE isn't an option: it copies tables in an order that breaks
+        # foreign keys. Other requests wait on the lock until we reopen.
+        close_db()
+        try:
+            shutil.copy2(str(DB_PATH), tmp_path)
+        finally:
+            get_db()
 
     from datetime import datetime
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     filename = f"ohm-backup-{timestamp}.duckdb"
 
     def cleanup():
-        try:
-            os.unlink(tmp.name)
-        except OSError:
-            pass
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
     from starlette.background import BackgroundTask
     return FileResponse(
-        tmp.name,
+        tmp_path,
         media_type="application/octet-stream",
         filename=filename,
         background=BackgroundTask(cleanup),

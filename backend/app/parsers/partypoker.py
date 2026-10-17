@@ -48,6 +48,10 @@ RE_SMALL_BLIND = re.compile(
 RE_BIG_BLIND = re.compile(
     r"^(.+?) posts big blind \[\$([0-9.]+) USD\]\.$"
 )
+# A returning/new player posting out of turn: live big blind + dead small blind
+RE_BIG_BLIND_DEAD = re.compile(
+    r"^(.+?) posts big blind \+ dead \[\$([0-9.]+)(?: USD)?\]\.?$"
+)
 RE_DEALT = re.compile(
     r"^Dealt to (.+?) \[\s+(.+?)\s+\]$"
 )
@@ -78,6 +82,22 @@ RE_BET = re.compile(r"^(.+?) bets \[\$([0-9.]+) USD\]$")
 RE_RAISE = re.compile(r"^(.+?) raises \[\$([0-9.]+) USD\]$")
 RE_ALLIN = re.compile(r"(?:is all-[Ii]n|\[all in\])")
 RE_ALLIN_ACTION = re.compile(r"^(.+?) is all-[Ii]n\s+\[\$([0-9.]+) USD\]$")
+
+
+def _raises_to_totals(actions_by_street: dict[str, list[dict]]) -> None:
+    """partypoker's "raises [$X]" is the chips added by that action (like a
+    call), not the total. Rewrite it to the "raise to" convention ParsedHand uses.
+    """
+    for street in _STREETS:
+        committed: dict[str, Decimal] = {}
+        for a in actions_by_street[street]:
+            uname = a["username"]
+            action = a["action"]
+            if action == "raise":
+                a["amount"] = committed.get(uname, _ZERO) + a["amount"]
+                committed[uname] = a["amount"]
+            elif action in _INVEST_ACTIONS and action != "ante":
+                committed[uname] = committed.get(uname, _ZERO) + a["amount"]
 
 
 def detect(sample: str) -> bool:
@@ -290,6 +310,26 @@ def parse_hand_history(hand_text: str) -> ParsedHand:
             })
             continue
 
+        # Big blind + dead: the big-blind part is live (counts toward the
+        # preflop bet), the rest is dead money (like an ante)
+        m = RE_BIG_BLIND_DEAD.match(line)
+        if m:
+            uname = m.group(1)
+            total = Decimal(m.group(2))
+            live = min(bb_amount, total)
+            for action, amt in (("bb", live), ("ante", total - live)):
+                if amt <= _ZERO:
+                    continue
+                action_order += 1
+                actions_by_street["preflop"].append({
+                    "username": uname,
+                    "action": action,
+                    "amount": amt,
+                    "is_all_in": False,
+                    "order": action_order,
+                })
+            continue
+
         # Shows hand
         m = RE_SHOWS.match(line)
         if m:
@@ -386,7 +426,7 @@ def parse_hand_history(hand_text: str) -> ParsedHand:
         m = RE_RAISE.match(line)
         if m:
             uname = m.group(1)
-            amt = Decimal(m.group(2))  # "to" amount
+            amt = Decimal(m.group(2))  # chips added; converted to "to" below
             if uname in username_set:
                 action_order += 1
                 actions_by_street[current_street].append({
@@ -436,8 +476,18 @@ def parse_hand_history(hand_text: str) -> ParsedHand:
     elif len(went_to_showdown_players) >= 2:
         in_showdown = True
 
+    _raises_to_totals(actions_by_street)
+
     # ── Compute uncalled returns ──
     uncalled_returns = compute_uncalled_returns(actions_by_street)
+
+    # "wins $X" includes the winner's own uncalled bet. Take it out so it
+    # isn't credited twice (collected + uncalled return).
+    for uname, amt in uncalled_returns.items():
+        if uname in collected:
+            collected[uname] = collected[uname] - amt
+            if collected[uname] <= _ZERO:
+                del collected[uname]
 
     # ── Compute rake ──
     total_invested = _ZERO
@@ -449,7 +499,9 @@ def parse_hand_history(hand_text: str) -> ParsedHand:
             amt = a["amount"]
 
             if action in _INVEST_ACTIONS:
-                street_put_in[uname] = street_put_in.get(uname, _ZERO) + amt
+                # Dead money doesn't count toward the street's bet
+                if action != "ante":
+                    street_put_in[uname] = street_put_in.get(uname, _ZERO) + amt
                 total_invested += amt
             elif action == "raise":
                 already_in = street_put_in.get(uname, _ZERO)
@@ -461,16 +513,8 @@ def parse_hand_history(hand_text: str) -> ParsedHand:
     total_uncalled = sum(uncalled_returns.values())
     total_collected = sum(collected.values())
     total_rake = total_invested - total_uncalled - total_collected
-
-    # partypoker sometimes includes uncalled returns in the "wins" amount.
-    # If rake comes out negative, it means the wins already includes uncalled —
-    # clear uncalled_returns and recompute rake.
     if total_rake < _ZERO:
-        uncalled_returns = {}
-        total_uncalled = _ZERO
-        total_rake = total_invested - total_collected
-        if total_rake < _ZERO:
-            total_rake = _ZERO
+        total_rake = _ZERO
 
     return ParsedHand(
         hand_id=hand_id,

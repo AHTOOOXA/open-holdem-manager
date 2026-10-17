@@ -490,7 +490,9 @@ class TestIPokerRealGeneral:
     def test_collected(self):
         text = (FIXTURES / "ipoker" / "real_general.txt").read_text()
         parsed = ipoker.parse_hand_history(text)
-        assert parsed.collected["d0dge"] == Decimal("7.50")
+        # XML win="7.50" includes the 2.50 uncalled bet; collected is from the pot only
+        assert parsed.collected["d0dge"] == Decimal("5.00")
+        assert parsed.uncalled_returns["d0dge"] == Decimal("2.50")
         assert parsed.in_showdown is False
 
 
@@ -527,7 +529,9 @@ class TestPartyPokerRealGeneral:
     def test_collected(self):
         text = (FIXTURES / "partypoker" / "real_general.txt").read_text()
         parsed = partypoker.parse_hand_history(text)
-        assert parsed.collected["lenstr1"] == Decimal("0.53")
+        # "wins $0.53" includes the $0.10 uncalled river bet; collected is from the pot only
+        assert parsed.collected["lenstr1"] == Decimal("0.43")
+        assert parsed.uncalled_returns["lenstr1"] == Decimal("0.10")
 
     def test_date_parsing(self):
         text = (FIXTURES / "partypoker" / "real_general.txt").read_text()

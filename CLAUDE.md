@@ -55,9 +55,17 @@ backend/
     models.py            # Pydantic response models
     stats_engine.py      # H2N-style stats from hand_players
     stat_flags.py        # Site-independent stat flag computation
+    h2n/                 # Hand2Note-compatible matcher: action sequence, row rules, per-hand opp/case bits (CONTRACT.md)
+    general_cells.py     # General screen cell registry + expression cells (mirrors frontend lib/h2n-layout.ts)
+    hand_value.py        # Hand value categories per street + board textures (stat popup Range/Boards)
+    money.py             # Winnings, rake per pot, all-in EV, main blind (Hand2Note money rules)
     parsers/ggpoker.py   # GGPoker parser — text → ParsedHand
+    parsers/h2n_db.py    # Hand2Note 4 DB reader — extracts original hand texts for the parsers
     api/
       import_hands.py    # Import endpoints + insert_parsed_hand() + player cache
+      import_h2n.py      # Import from a Hand2Note 4 database folder
+      general.py         # GET /api/general: every General screen cell
+      general_popup.py   # GET /api/general/cell/{id}/detail and /hands: stat popup + hands list
       stats.py           # GET /api/stats/hero
       reports.py         # GET /api/reports/graph, /filter-options, /breakdown
       hands.py           # Hand browser: list, detail, tags, notes
@@ -73,7 +81,10 @@ frontend/
     lib/api.ts           # Typed API client (fetch wrapper, NDJSON streaming)
     components/          # RebuildBanner, UpdateBanner
     components/ui/       # shadcn/ui primitives
-    pages/               # UploadPage, StatsPage, GraphPage, HandsPage
+    pages/               # UploadPage, StatsPage, GraphPage, HandsPage, GeneralPage (Hand2Note-style General screen)
+    components/general/  # General grid, stat popup (Range/Boards/Bet Sizes/Hands tabs), hands list
+    lib/h2n-*.ts         # General screen layout (h2n-layout.ts) and number/sample formatting (h2n-format.ts)
+    lib/api-general.ts   # Typed client for /api/general
   vite.config.ts         # React, Tailwind v4, API proxy, ELECTRON=1 base path
   vite.config.landing.ts # Landing page config (root: landing/, output: dist-landing/)
   landing/               # Static landing site — see Landing Page section
@@ -96,6 +107,10 @@ docs/
     stats-page-redesign.md #   Stats page layout redesign
     stat-detail-panel.md   #   Per-stat detail panel contents
     og-image-redesign.md   #   OG image poker table scene
+    H2N-IMPORT.md          #   Import from Hand2Note DB (shipped; format notes)
+    H2N-COMPATIBLE-STATS.md #  What every General screen / stat popup number counts, money rules, parity result
+    BUGS-FROM-FORK.md      #   25 bugs found by the uhayate fork, verified against main, prioritized
+  private/                 # GITIGNORED local-only research notes -- never commit, never copy code from it
   archive/                 # Shipped/superseded specs (kept for history)
     MULTI-SITE-PARSERS-PRD.md  #   Multi-site parsers (DONE — all 7 sites shipped)
 

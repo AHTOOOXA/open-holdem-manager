@@ -25,6 +25,35 @@ export default function StatsCard({ stats, decimals, driftMap, onStatClick, comp
     return { sv, position: pos, ...opts, delta: d(sv, cSv) };
   }
 
+  // H2N General screen: the 3-Bet Total is the built-in 3-Bet (squeezes in), the
+  // position columns are a direct 3-bet of the opener (squeezes out), so the
+  // columns drill into a different stat than the Total.
+  const threeBetRow = {
+    label: '3-Bet',
+    groupEnd: true,
+    cells: fullPosKeys.map((p) => ({
+      sv: stats.three_bet[p],
+      statKey: 'three_bet',
+      position: p,
+      drillKey: p === 'total' ? 'three_bet' : 'three_bet_vs_open',
+      delta: d(stats.three_bet[p], cs?.three_bet[p]),
+    })),
+  };
+
+  /** Steal-table row (H2N: hero on BTN or SB only; CO is not a steal seat) */
+  function stealRow(
+    label: string,
+    field: 'steal' | 'fold_to_3bet_steal' | 'four_bet_steal' | 'four_bet_fold_steal',
+    drill: { total: string; btn: string; sb: string },
+    statKey?: string,
+  ) {
+    return {
+      label,
+      cells: (['total', 'btn', 'sb'] as const).map((p) =>
+        sc(stats[field][p], p, cs?.[field][p], { statKey, drillKey: drill[p] })),
+    };
+  }
+
   return (
     <Card className="gap-0 py-0 overflow-hidden">
 
@@ -46,7 +75,7 @@ export default function StatsCard({ stats, decimals, driftMap, onStatClick, comp
               posRow('Open Raise',    stats.open_raise,      'open_raise',   fullPosKeys, undefined, undefined, cs?.open_raise),
               posRow('Limp',          stats.limp,            'limp',         fullPosKeys, undefined, true,      cs?.limp),
               posRow('Call Open',     stats.call_open_raise, undefined,      fullPosKeys, 'call_open_raise', undefined, cs?.call_open_raise),
-              posRow('3-Bet',         stats.three_bet,       'three_bet',    fullPosKeys, undefined, true,      cs?.three_bet),
+              threeBetRow,
               posRow('Fold to 3-Bet', stats.fold_to_3bet,    'fold_to_3bet', fullPosKeys, undefined, undefined, cs?.fold_to_3bet),
               posRow('4-Bet',         stats.four_bet,        'four_bet',     fullPosKeys, undefined, true,      cs?.four_bet),
               posRow('Fold to 4-Bet', stats.fold_to_4bet,    'fold_to_4bet', fullPosKeys, undefined, undefined, cs?.fold_to_4bet),
@@ -62,11 +91,12 @@ export default function StatsCard({ stats, decimals, driftMap, onStatClick, comp
             driftMap={driftMap}
             onStatClick={onStatClick}
             rows={[
-              { label: 'Squeeze', cells: [{ sv: stats.squeeze, drillKey: 'squeeze', delta: d(stats.squeeze, cs?.squeeze) }] },
-              { label: '5-Bet', cells: [{ sv: stats.five_bet, drillKey: 'five_bet', delta: d(stats.five_bet, cs?.five_bet) }] },
-              { label: 'Call 4-Bet', cells: [{ sv: stats.call_4bet, drillKey: 'call_4bet', delta: d(stats.call_4bet, cs?.call_4bet) }] },
-              { label: 'Limp-Fold', cells: [{ sv: stats.limp_fold, drillKey: 'limp_fold', delta: d(stats.limp_fold, cs?.limp_fold) }] },
+              { label: '4-Bet Range', cells: [{ sv: stats.four_bet_range, drillKey: 'four_bet_range', delta: d(stats.four_bet_range, cs?.four_bet_range) }] },
               { label: '4-Bet-Fold', cells: [{ sv: stats.four_bet_fold, drillKey: 'four_bet_fold', delta: d(stats.four_bet_fold, cs?.four_bet_fold) }] },
+              { label: 'Call 4-Bet', cells: [{ sv: stats.call_4bet, drillKey: 'call_4bet', delta: d(stats.call_4bet, cs?.call_4bet) }] },
+              { label: '5-Bet', cells: [{ sv: stats.five_bet, drillKey: 'five_bet', delta: d(stats.five_bet, cs?.five_bet) }] },
+              { label: 'Limp-Fold', cells: [{ sv: stats.limp_fold, drillKey: 'limp_fold', delta: d(stats.limp_fold, cs?.limp_fold) }] },
+              { label: 'Squeeze', cells: [{ sv: stats.squeeze, drillKey: 'squeeze', delta: d(stats.squeeze, cs?.squeeze) }] },
             ]}
           />
         </div>
@@ -85,38 +115,15 @@ export default function StatsCard({ stats, decimals, driftMap, onStatClick, comp
             driftMap={driftMap}
             onStatClick={onStatClick}
             rows={[
-              {
-                label: 'Steal',
-                cells: [
-                  sc(stats.steal.total, 'total', cs?.steal.total, { statKey: 'steal', drillKey: 'steal' }),
-                  sc(stats.steal.btn, 'btn', cs?.steal.btn, { statKey: 'steal', drillKey: 'steal' }),
-                  sc(stats.steal.sb, 'sb', cs?.steal.sb, { statKey: 'steal', drillKey: 'steal' }),
-                ],
-              },
-              {
-                label: 'Fold to 3Bet',
-                cells: [
-                  sc(stats.fold_to_3bet_steal.total, 'total', cs?.fold_to_3bet_steal.total, { statKey: 'fold_to_3bet', drillKey: 'fold_to_3bet' }),
-                  sc(stats.fold_to_3bet_steal.btn, 'btn', cs?.fold_to_3bet_steal.btn, { statKey: 'fold_to_3bet', drillKey: 'fold_to_3bet' }),
-                  sc(stats.fold_to_3bet_steal.sb, 'sb', cs?.fold_to_3bet_steal.sb, { statKey: 'fold_to_3bet', drillKey: 'fold_to_3bet' }),
-                ],
-              },
-              {
-                label: '4-Bet',
-                cells: [
-                  sc(stats.four_bet_steal.total, 'total', cs?.four_bet_steal.total, { statKey: 'four_bet', drillKey: 'four_bet' }),
-                  sc(stats.four_bet_steal.btn, 'btn', cs?.four_bet_steal.btn, { statKey: 'four_bet', drillKey: 'four_bet' }),
-                  sc(stats.four_bet_steal.sb, 'sb', cs?.four_bet_steal.sb, { statKey: 'four_bet', drillKey: 'four_bet' }),
-                ],
-              },
-              {
-                label: '4-Bet-Fold',
-                cells: [
-                  sc(stats.four_bet_fold_steal.total, 'total', cs?.four_bet_fold_steal.total, { drillKey: 'four_bet_fold_steal' }),
-                  sc(stats.four_bet_fold_steal.btn, 'btn', cs?.four_bet_fold_steal.btn, { drillKey: 'four_bet_fold_steal' }),
-                  sc(stats.four_bet_fold_steal.sb, 'sb', cs?.four_bet_fold_steal.sb, { drillKey: 'four_bet_fold_steal' }),
-                ],
-              },
+              stealRow('Steal', 'steal', { total: 'steal', btn: 'steal', sb: 'steal' }, 'steal'),
+              // Total: 3-bets from the blinds; BTN = pre-flop Fold to 3-Bet BTN;
+              // SB: any 3-bet after an unopened-pot raise
+              stealRow('Fold to 3Bet', 'fold_to_3bet_steal',
+                { total: 'fold_to_3bet_steal', btn: 'fold_to_3bet', sb: 'fold_to_3bet_open' }, 'fold_to_3bet'),
+              stealRow('4-Bet', 'four_bet_steal',
+                { total: 'four_bet_steal', btn: 'four_bet_open', sb: 'four_bet_open' }, 'four_bet'),
+              stealRow('4-Bet-Fold', 'four_bet_fold_steal',
+                { total: 'four_bet_fold_steal', btn: 'four_bet_fold_open', sb: 'four_bet_fold_open' }),
             ]}
           />
         </div>

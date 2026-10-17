@@ -4,6 +4,7 @@ from typing import Optional
 import math
 import re
 
+from app.date_filters import DATE_TO_SQL
 from app.db import get_db, db_lock, get_read_cursor, get_hero_player_id, get_hero_username
 from app.models import (
     HandSummary, HandListResponse, HandDetail, HandPlayerDetail,
@@ -74,7 +75,7 @@ def list_hands(
             where_clauses.append(
                 "NOT EXISTS (SELECT 1 FROM hand_tags ht2 WHERE ht2.hand_id = h.id AND ht2.workspace_id = h.workspace_id)"
             )
-        else:
+        elif tag_list:
             ph = ",".join("?" for _ in tag_list)
             where_clauses.append(
                 f"EXISTS (SELECT 1 FROM hand_tags ht2 WHERE ht2.hand_id = h.id AND ht2.workspace_id = h.workspace_id AND ht2.tag IN ({ph}))"
@@ -85,7 +86,7 @@ def list_hands(
         where_clauses.append("h.played_at >= ?")
         params.append(date_from)
     if date_to:
-        where_clauses.append("h.played_at <= ?")
+        where_clauses.append(DATE_TO_SQL)
         params.append(date_to)
 
     if player_id is not None:
@@ -446,13 +447,20 @@ class TagBody(BaseModel):
 
 @router.post("/hands/{hand_id}/tags")
 def add_tag(hand_id: str, body: TagBody, workspace_id: int = Query(1)):
+    tag = body.tag.strip()
+    if not tag:
+        raise HTTPException(status_code=400, detail="Tag must not be blank")
     with db_lock():
         db = get_db()
         if not db.execute("SELECT 1 FROM hands WHERE id = ? AND workspace_id = ?", [hand_id, workspace_id]).fetchone():
             raise HTTPException(status_code=404, detail="Hand not found")
+        # No ON CONFLICT: the composite-key migration recreated hand_tags without
+        # a primary key, so INSERT OR IGNORE raises a BinderException.
         db.execute(
-            "INSERT OR IGNORE INTO hand_tags (hand_id, tag, workspace_id) VALUES (?, ?, ?)",
-            [hand_id, body.tag.strip(), workspace_id],
+            "INSERT INTO hand_tags (hand_id, tag, workspace_id) "
+            "SELECT ?, ?, ? WHERE NOT EXISTS ("
+            "SELECT 1 FROM hand_tags WHERE hand_id = ? AND tag = ? AND workspace_id = ?)",
+            [hand_id, tag, workspace_id, hand_id, tag, workspace_id],
         )
         return {"status": "ok"}
 

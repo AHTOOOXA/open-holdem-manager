@@ -4,6 +4,7 @@ from typing import Optional
 import math
 
 from app.db import get_db, db_lock, get_read_cursor, get_hero_player_id
+from app.parsers.common import POSITIONS_BY_COUNT
 from app.stats_engine import compute_player_stats
 from app.models import HeroStats
 
@@ -283,6 +284,20 @@ def get_player_stats(
 
 # ── Head-to-head ────────────────────────────────────────────────────
 
+# Preflop action order (first to act → BB), derived from the full-ring seat list
+# so every position label any table size can produce has a rank.
+_FULL_RING = POSITIONS_BY_COUNT[max(POSITIONS_BY_COUNT)]
+_BB_IDX = _FULL_RING.index("BB")
+# dict.fromkeys dedupes repeated labels (EP EP MP MP at full ring), keeping order
+_ACTION_RANK = {
+    pos: i for i, pos in enumerate(dict.fromkeys(_FULL_RING[_BB_IDX + 1:] + _FULL_RING[:_BB_IDX + 1]))
+}
+
+
+def _action_order_key(position: str | None) -> tuple[int, str]:
+    return (_ACTION_RANK.get(position or "", len(_ACTION_RANK)), position or "")
+
+
 class HeadToHeadRow(BaseModel):
     hero_position: str
     hands: int
@@ -315,8 +330,8 @@ def get_head_to_head(player_id: int, workspace_id: int = Query(1)):
         JOIN hands h ON hero.hand_id = h.id AND hero.workspace_id = h.workspace_id
         WHERE hero.player_id = ? AND h.workspace_id = ?
         GROUP BY hero.position
-        ORDER BY hero.position
     """, [player_id, hero_id, workspace_id]).fetchall()
+    rows.sort(key=lambda r: _action_order_key(r[0]))
 
     if not rows:
         return HeadToHeadResponse(rows=[], total_hands=0, total_won_bb=0, overall_bb_per_100=0)

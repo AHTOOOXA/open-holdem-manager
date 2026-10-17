@@ -25,6 +25,26 @@ _STANDARD_BB = [
 _STANDARD_BB_SET = set(_STANDARD_BB)
 
 
+# Stakes where the SB isn't half the BB
+_STANDARD_SB = {Decimal("0.05"): Decimal("0.02"), Decimal("0.25"): Decimal("0.10")}
+
+
+def _detect_sb(
+    bb: Decimal, header_sb: Decimal, header_bb: Decimal, posted_sb: Decimal | None,
+) -> Decimal:
+    """Small blind for the detected BB. Not always BB/2: $0.02/$0.05, $0.10/$0.25.
+
+    Prefers the header (when its BB matches the detected one), then the posted
+    SB, as long as the value is a plausible SB (2:5 to 1:2 of the BB) — either
+    can be hit by GG's byte corruption.
+    """
+    candidates = (header_sb if header_bb == bb else None, posted_sb)
+    for sb in candidates:
+        if sb and bb * Decimal("0.4") <= sb <= bb / 2:
+            return sb
+    return _STANDARD_SB.get(bb, bb / 2)
+
+
 def _snap_to_nearest_standard(bb: Decimal) -> Decimal:
     """Snap a non-standard BB value to the nearest standard stake.
 
@@ -80,10 +100,14 @@ def _detect_bb(
         # Sanity-check: if actions exist and look wildly wrong for this BB,
         # fall through to action scoring instead of returning early.
         if preflop_amounts and bb > 0:
+            # A huge amount that still fits the biggest stack is a deep
+            # all-in (e.g. $33 at NL5 = 660 bb), not corruption: H2N keeps
+            # the agreed BB there (parity round 3).
+            max_stack = max(stacks) if stacks else _ZERO
             bad = 0
             for amt in preflop_amounts:
                 ratio = amt / bb
-                if ratio < Decimal("0.5") or ratio > Decimal("500"):
+                if ratio < Decimal("0.5") or (ratio > Decimal("500") and amt > max_stack):
                     bad += 1
             if bad == 0:
                 return bb
@@ -218,7 +242,8 @@ RE_SKIP = re.compile(
 # Regex patterns for parsing
 RE_HEADER = re.compile(
     r"Poker Hand #(\w+): (?:Tournament #\S+, )?"
-    r"Hold'em No Limit \(\$([0-9.]+)/\$([0-9.]+)\)"
+    # Ante tables add the ante in parentheses: ($0.02/$0.05($0.01))
+    r"Hold'em No Limit \(\$([0-9.]+)/\$([0-9.]+)(?:\(\$[0-9.]+\))?\)"
     r" - (\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2})"
 )
 RE_TABLE = re.compile(
@@ -228,7 +253,7 @@ RE_SEAT = re.compile(
     r"Seat (\d+): (.+?) \(\$([0-9.]+) in chips\)"
 )
 RE_ANTE = re.compile(
-    r"^(.+?): posts ante \$([0-9.]+)"
+    r"^(.+?): posts (?:the )?ante \$([0-9.]+)"
 )
 RE_SMALL_BLIND = re.compile(
     r"^(.+?): posts small blind \$([0-9.]+)"
@@ -276,13 +301,17 @@ RE_SUMMARY_FEE = re.compile(
 RE_SUMMARY_JACKPOT = re.compile(
     r"Jackpot \$([0-9.]+)"
 )
+RE_SUMMARY_RAKE = re.compile(
+    r"Rake \$([0-9.]+)"
+)
 RE_CASH_DROP = re.compile(r"Cash Drop to Pot : total \$([0-9.]+)")
 RE_SUMMARY_SEAT = re.compile(
     r"Seat (\d+): (.+?)(?:\s+\(.*?\))* (?:collected|folded|showed|mucked|lost|won)"
 )
 # Extract username from summary seat lines — stops before position labels and action words
 RE_SEAT_USERNAME = re.compile(
-    r"Seat \d+: (.+?)(?:\s+\((?:button|small blind|big blind)\))?\s+(?:showed|mucked|folded|collected|won|received|bought)"
+    # Heads-up the button is also the small blind: "(button) (small blind)"
+    r"Seat \d+: (.+?)(?:\s+\((?:button|small blind|big blind)\))*\s+(?:showed|mucked|folded|collected|won|received|bought)"
 )
 RE_SHOWED = re.compile(
     r"Seat (\d+): (.+?) (?:.*?)(?:showed|mucked) \[(\w{2}) (\w{2})\]"
@@ -401,7 +430,7 @@ def parse_hand_history(hand_text: str) -> ParsedHand:
         header_bb, header_sb, posted_bb, posted_sb,
         preflop_amounts, _scanned_stacks,
     )
-    sb_amount = bb_amount / 2
+    sb_amount = _detect_sb(bb_amount, header_sb, header_bb, posted_sb)
 
     def _fmt_stake(d: Decimal) -> str:
         if d == d.to_integral_value():
@@ -460,8 +489,9 @@ def parse_hand_history(hand_text: str) -> ParsedHand:
     is_cashout = False
     uncalled_returns = {}  # username -> amount
     collected = {}  # username -> total amount collected
-    total_rake = _ZERO
+    total_rake = _ZERO      # rake only
     total_jackpot = _ZERO
+    total_fees = _ZERO      # rake + jackpot + bingo + fortune + tax
     cash_drop_received = _ZERO
     went_to_showdown_players = set()
     in_showdown = False
@@ -551,7 +581,10 @@ def parse_hand_history(hand_text: str) -> ParsedHand:
             if m:
                 # Sum all fees: Rake + Jackpot + Bingo + Fortune + Tax
                 for fee_m in RE_SUMMARY_FEE.finditer(line):
-                    total_rake += Decimal(fee_m.group(1))
+                    total_fees += Decimal(fee_m.group(1))
+                rm = RE_SUMMARY_RAKE.search(line)
+                if rm:
+                    total_rake = Decimal(rm.group(1))
                 jm = RE_SUMMARY_JACKPOT.search(line)
                 if jm:
                     total_jackpot = Decimal(jm.group(1))
@@ -796,6 +829,7 @@ def parse_hand_history(hand_text: str) -> ParsedHand:
         collected=collected,
         total_rake=total_rake,
         total_jackpot=total_jackpot,
+        total_fees=total_fees,
         went_to_showdown_players=went_to_showdown_players,
         in_showdown=in_showdown,
         sb_player=sb_player,

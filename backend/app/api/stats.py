@@ -3,6 +3,7 @@ import statistics
 from typing import Optional
 
 from fastapi import APIRouter, Query, HTTPException, Path
+from app.date_filters import DATE_TO_SQL
 from app.db import get_read_cursor, get_hero_player_id, get_hero_username
 from app.models import (
     HeroStats, ComboStats, RangeResponse, StatDetailHand, StatDetailHandsResponse,
@@ -15,7 +16,7 @@ from app.models import (
 )
 from app.stats_engine import compute_hero_stats
 from app.stat_registry import (
-    STAT_REGISTRY, get_key_street, RESPONSE_DECOMPOSITION,
+    POS_SQL, STAT_REGISTRY, get_key_street, RESPONSE_DECOMPOSITION,
     EV_BREAKDOWN_CONFIG, SIZING_CONFIG, FOLD_EQUITY_CONFIG,
     BY_CONTEXT_CONFIG, COMPOSITION_CONFIG, MONEY_CONFIG, POSTFLOP_BRIDGE_CONFIG,
 )
@@ -88,7 +89,7 @@ def get_range_stats(
     params: list = [player_id, workspace_id]
 
     if position:
-        query += " AND hp.position = ?"
+        query += f" AND {POS_SQL} = ?"
         params.append(position.upper())
     if stakes:
         query += " AND h.stakes = ?"
@@ -100,7 +101,7 @@ def get_range_stats(
         query += " AND h.played_at >= ?"
         params.append(date_from)
     if date_to:
-        query += " AND h.played_at <= ?"
+        query += " AND " + DATE_TO_SQL
         params.append(date_to)
 
     rows = db.execute(query, params).fetchall()
@@ -114,7 +115,7 @@ def get_range_stats(
     """
     total_params: list = [player_id, workspace_id]
     if position:
-        total_query += " AND hp.position = ?"
+        total_query += f" AND {POS_SQL} = ?"
         total_params.append(position.upper())
     if stakes:
         total_query += " AND h.stakes = ?"
@@ -126,7 +127,7 @@ def get_range_stats(
         total_query += " AND h.played_at >= ?"
         total_params.append(date_from)
     if date_to:
-        total_query += " AND h.played_at <= ?"
+        total_query += " AND " + DATE_TO_SQL
         total_params.append(date_to)
 
     total_hands = db.execute(total_query, total_params).fetchone()[0]
@@ -236,7 +237,7 @@ def get_stat_detail_hands(
         where_parts.append(extra_where)
 
     if position:
-        where_parts.append("hp.position = ?")
+        where_parts.append(POS_SQL + " = ?")
         params.append(position.upper())
     if stakes:
         where_parts.append("h.stakes = ?")
@@ -248,7 +249,7 @@ def get_stat_detail_hands(
         where_parts.append("h.played_at >= ?")
         params.append(date_from)
     if date_to:
-        where_parts.append("h.played_at <= ?")
+        where_parts.append(DATE_TO_SQL)
         params.append(date_to)
 
     where_sql = " AND ".join(where_parts)
@@ -279,7 +280,7 @@ def get_stat_detail_hands(
 
     # Fetch hands page (include raw_text, bb_amount, all_in_ev_bb)
     hands_query = f"""
-        SELECT h.id, h.played_at, hp.position, hp.card1, hp.card2,
+        SELECT h.id, h.played_at, {POS_SQL} AS position, hp.card1, hp.card2,
                ({action_expr}) AS action_taken, hp.won_bb, h.stakes,
                hp.all_in_ev_bb, h.bb_amount, h.raw_text
         FROM hand_players hp
@@ -420,7 +421,7 @@ def get_stat_trend(
     if extra_where:
         where_parts.append(extra_where)
     if position:
-        where_parts.append("hp.position = ?")
+        where_parts.append(POS_SQL + " = ?")
         params.append(position.upper())
     if stakes:
         where_parts.append("h.stakes = ?")
@@ -432,7 +433,7 @@ def get_stat_trend(
         where_parts.append("h.played_at >= ?")
         params.append(date_from)
     if date_to:
-        where_parts.append("h.played_at <= ?")
+        where_parts.append(DATE_TO_SQL)
         params.append(date_to)
 
     where_sql = " AND ".join(where_parts)
@@ -548,7 +549,7 @@ def get_stat_analysis(
     params: list = [player_id, workspace_id]
 
     if position:
-        where_parts.append("hp.position = ?")
+        where_parts.append(POS_SQL + " = ?")
         params.append(position.upper())
     if stakes:
         where_parts.append("h.stakes = ?")
@@ -560,7 +561,7 @@ def get_stat_analysis(
         where_parts.append("h.played_at >= ?")
         params.append(date_from)
     if date_to:
-        where_parts.append("h.played_at <= ?")
+        where_parts.append(DATE_TO_SQL)
         params.append(date_to)
 
     where_sql = " AND ".join(where_parts)
@@ -612,7 +613,7 @@ def _build_filter_where(
     parts = ["hp.player_id = ?", "h.workspace_id = ?"]
     params: list = [player_id, workspace_id]
     if position:
-        parts.append("hp.position = ?")
+        parts.append(POS_SQL + " = ?")
         params.append(position.upper())
     if stakes:
         parts.append("h.stakes = ?")
@@ -624,7 +625,7 @@ def _build_filter_where(
         parts.append("h.played_at >= ?")
         params.append(date_from)
     if date_to:
-        parts.append("h.played_at <= ?")
+        parts.append(DATE_TO_SQL)
         params.append(date_to)
     return " AND ".join(parts), params
 

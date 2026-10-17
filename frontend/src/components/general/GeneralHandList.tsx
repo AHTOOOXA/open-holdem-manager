@@ -1,0 +1,165 @@
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useInfiniteQuery } from '@tanstack/react-query';
+import { X } from 'lucide-react';
+import HandDrawer from '@/components/hands/HandDrawer';
+import { Button } from '@/components/ui/button';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import {
+  HANDS_MAX_ROWS,
+  HANDS_PAGE_SIZE,
+  cellHandsQueryKey,
+  getCellHands,
+} from '@/lib/api-general';
+import type { GeneralFilterParams, HandsFilter, HandsOrder, HandsSort } from '@/lib/api-general';
+import { H2N_THEME } from '@/lib/h2n-layout';
+import { POPUP_THEME, formatRangeCount } from '@/lib/general-notation';
+import type { HandStreet } from '@/lib/general-notation';
+import GeneralHandRow from './GeneralHandRow';
+
+const SORTS: { value: string; label: string; sort: HandsSort; order: HandsOrder }[] = [
+  { value: 'date-desc', label: 'Newest first', sort: 'date', order: 'desc' },
+  { value: 'date-asc', label: 'Oldest first', sort: 'date', order: 'asc' },
+  { value: 'won-desc', label: 'Won: most', sort: 'won', order: 'desc' },
+  { value: 'won-asc', label: 'Won: least', sort: 'won', order: 'asc' },
+  { value: 'ev-desc', label: 'EV diff: most', sort: 'ev', order: 'desc' },
+  { value: 'ev-asc', label: 'EV diff: least', sort: 'ev', order: 'asc' },
+];
+
+interface GeneralHandListProps {
+  cellId: string;
+  params: GeneralFilterParams;
+  filter: HandsFilter;
+  /** Title pill of the hands pane; omitted inside the popup's Hands tab. */
+  title?: string;
+  onClose?: () => void;
+}
+
+/**
+ * The stat's hands (cases) for one popup selection, newest first, in H2N's
+ * list notation. Loads 50 rows, then more as you scroll, up to 512 per sort
+ * order. Clicking a row opens the hand in the replayer drawer.
+ */
+export default function GeneralHandList({ cellId, params, filter, title, onClose }: GeneralHandListProps) {
+  const [sortValue, setSortValue] = useState('date-desc');
+  const { sort, order } = SORTS.find((s) => s.value === sortValue) ?? SORTS[0];
+  const [expanded, setExpanded] = useState<ReadonlySet<HandStreet>>(new Set());
+  const [openHandId, setOpenHandId] = useState<string | null>(null);
+
+  const query = useInfiniteQuery({
+    queryKey: cellHandsQueryKey(cellId, params, filter, sort, order),
+    queryFn: ({ pageParam }) =>
+      getCellHands(cellId, params, {
+        ...filter,
+        sort,
+        order,
+        offset: pageParam,
+        limit: Math.min(HANDS_PAGE_SIZE, HANDS_MAX_ROWS - pageParam),
+      }),
+    initialPageParam: 0,
+    getNextPageParam: (last, pages) => {
+      const loaded = pages.reduce((n, p) => n + p.rows.length, 0);
+      const cap = Math.min(last.total, HANDS_MAX_ROWS);
+      return last.rows.length > 0 && loaded < cap ? loaded : undefined;
+    },
+  });
+  const { data, isPending, isError, error, hasNextPage, isFetchingNextPage, fetchNextPage } = query;
+
+  const rows = useMemo(() => data?.pages.flatMap((p) => p.rows) ?? [], [data]);
+  const total = data?.pages[0]?.total ?? 0;
+
+  // Load the next page when the sentinel under the table scrolls into view.
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const sentinelRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el || !hasNextPage) return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting) && !isFetchingNextPage) void fetchNextPage();
+      },
+      { root: scrollRef.current, rootMargin: '200px' },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage, rows.length]);
+
+  const openIndex = openHandId ? rows.findIndex((r) => r.hand_id === openHandId) : -1;
+
+  return (
+    <div className="flex h-full min-h-0 flex-col" style={{ fontFamily: H2N_THEME.fontFamily }}>
+      <div className="flex shrink-0 items-center gap-3 px-4 py-2">
+        {title && (
+          <span
+            className="rounded-full px-4 text-sm whitespace-nowrap text-white"
+            style={{ background: POPUP_THEME.titlePill, lineHeight: '33px' }}
+          >
+            {title}
+          </span>
+        )}
+        <span className="text-sm whitespace-nowrap" style={{ color: POPUP_THEME.label }}>
+          {data
+            ? `${formatRangeCount(total)} hand${total === 1 ? '' : 's'}${total > HANDS_MAX_ROWS ? `, first ${HANDS_MAX_ROWS}` : ''}`
+            : ''}
+        </span>
+        <div className="ml-auto flex items-center gap-1">
+          <Select value={sortValue} onValueChange={setSortValue}>
+            <SelectTrigger size="sm" className="h-7 w-[132px] border-white/10 bg-transparent text-xs text-white/70" aria-label="Sort hands">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {SORTS.map((s) => (
+                <SelectItem key={s.value} value={s.value}>
+                  {s.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {onClose && (
+            <Button variant="ghost" size="icon" className="size-8 text-white/60" onClick={onClose} aria-label="Close hands">
+              <X />
+            </Button>
+          )}
+        </div>
+      </div>
+
+      <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto">
+        {isPending ? (
+          <p className="px-4 py-2 text-sm text-white/50">Loading hands…</p>
+        ) : isError ? (
+          <p className="px-4 py-2 text-sm text-white/50">{(error as Error)?.message ?? 'Could not load hands.'}</p>
+        ) : rows.length === 0 ? (
+          <p className="px-4 py-2 text-sm text-white/50">No hands.</p>
+        ) : (
+          <>
+            <table className="border-collapse text-[14px]" style={{ lineHeight: H2N_THEME.lineHeight }}>
+              <tbody>
+                {rows.map((r) => (
+                  <GeneralHandRow
+                    key={r.hand_id}
+                    row={r}
+                    expandedStreets={expanded}
+                    onExpandStreet={(s) => setExpanded((prev) => new Set(prev).add(s))}
+                    selected={r.hand_id === openHandId}
+                    onOpen={setOpenHandId}
+                  />
+                ))}
+              </tbody>
+            </table>
+            <div ref={sentinelRef} className="h-px" />
+            {isFetchingNextPage && <p className="px-4 py-2 text-sm text-white/50">Loading more…</p>}
+          </>
+        )}
+      </div>
+
+      {openHandId && (
+        <HandDrawer
+          handId={openHandId}
+          onClose={() => setOpenHandId(null)}
+          onPrev={() => openIndex > 0 && setOpenHandId(rows[openIndex - 1].hand_id)}
+          onNext={() => openIndex >= 0 && openIndex < rows.length - 1 && setOpenHandId(rows[openIndex + 1].hand_id)}
+          onTagsChanged={() => {}}
+        />
+      )}
+    </div>
+  );
+}

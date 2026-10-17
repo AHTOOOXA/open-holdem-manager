@@ -370,6 +370,13 @@ def parse_hand_history(hand_text: str) -> ParsedHand:
     # ── Compute uncalled returns ──
     uncalled_returns = compute_uncalled_returns(actions_by_street)
 
+    # Winamax prints no "Uncalled bet returned" line: the uncalled amount is
+    # folded into "won X€" (Total pot includes it too). Take it back out so
+    # the winner isn't credited twice (collected + uncalled return).
+    for uname, amt in uncalled_returns.items():
+        if uname in collected:
+            collected[uname] = max(collected[uname] - amt, _ZERO)
+
     return ParsedHand(
         hand_id=hand_id,
         site_id=SITE_ID,

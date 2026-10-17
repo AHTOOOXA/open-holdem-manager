@@ -15,10 +15,14 @@ const REGISTRY: Record<string, StatRegistryEntry> = {
   open_raise:        { displayName: 'Open Raise',        heroStatsField: 'open_raise',        isPositional: true  },
   call_open_raise:   { displayName: 'Call Open Raise',   heroStatsField: 'call_open_raise',   isPositional: true  },
   three_bet:         { displayName: '3-Bet',             heroStatsField: 'three_bet',         isPositional: true  },
+  // Position columns of the 3-Bet row: a direct 3-bet of the opener (squeezes out)
+  three_bet_vs_open: { displayName: '3-Bet vs Open Raise', heroStatsField: 'three_bet',       isPositional: true  },
   three_bet_ip:      { displayName: '3-Bet IP',          heroStatsField: 'three_bet_ip',      isPositional: true  },
   three_bet_oop:     { displayName: '3-Bet OOP',         heroStatsField: 'three_bet_oop',     isPositional: true  },
   four_bet:          { displayName: '4-Bet',             heroStatsField: 'four_bet',          isPositional: true  },
   five_bet:          { displayName: '5-Bet',             heroStatsField: 'five_bet',          isPositional: false },
+  // Drill-down lists the 4-bet hands among the open-raise opportunities
+  four_bet_range:    { displayName: '4-Bet Range',       heroStatsField: 'four_bet_range',    isPositional: false },
   // Preflop defense
   fold_to_3bet:      { displayName: 'Fold to 3-Bet',    heroStatsField: 'fold_to_3bet',      isPositional: true  },
   fold_to_4bet:      { displayName: 'Fold to 4-Bet',    heroStatsField: 'fold_to_4bet',      isPositional: true  },
@@ -36,7 +40,14 @@ const REGISTRY: Record<string, StatRegistryEntry> = {
   fold_to_steal:     { displayName: 'Fold to Steal',     heroStatsField: 'vs_steal_fold',     isPositional: true  },
   call_steal:        { displayName: 'Call Steal',        heroStatsField: 'vs_steal_call',     isPositional: true  },
   three_bet_vs_steal:{ displayName: '3-Bet vs Steal',   heroStatsField: 'vs_steal_3bet',     isPositional: true  },
-  four_bet_fold_steal: { displayName: '4-Bet-Fold (Steal)', heroStatsField: 'four_bet_fold_steal', isPositional: false },
+  // Steal table: Total columns count 3-bets from the blinds only...
+  fold_to_3bet_steal:  { displayName: 'Fold to 3-Bet (Steal)', heroStatsField: 'fold_to_3bet_steal',  isPositional: true },
+  four_bet_steal:      { displayName: '4-Bet (Steal)',         heroStatsField: 'four_bet_steal',      isPositional: true },
+  four_bet_fold_steal: { displayName: '4-Bet-Fold (Steal)',    heroStatsField: 'four_bet_fold_steal', isPositional: true },
+  // ...the BTN / SB columns count any 3-bettor after an unopened-pot raise
+  fold_to_3bet_open:   { displayName: 'Fold to 3-Bet (Open)',  heroStatsField: 'fold_to_3bet_steal',  isPositional: true },
+  four_bet_open:       { displayName: '4-Bet (Open)',          heroStatsField: 'four_bet_steal',      isPositional: true },
+  four_bet_fold_open:  { displayName: '4-Bet-Fold (Open)',     heroStatsField: 'four_bet_fold_steal', isPositional: true },
   // Postflop action
   cbet_flop:         { displayName: 'C-Bet Flop',       heroStatsField: 'cbet_flop',         isPositional: true  },
   cbet_turn:         { displayName: 'C-Bet Turn',       heroStatsField: 'cbet_turn',         isPositional: true  },

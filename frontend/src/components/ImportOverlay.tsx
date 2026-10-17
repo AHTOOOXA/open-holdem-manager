@@ -6,7 +6,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 
 export default function ImportOverlay() {
-  const { phase, fileInfo, progress, result, error, dismiss } = useImport();
+  const { phase, fileInfo, sourceLabel, progress, result, error, dismiss } = useImport();
   const { workspaces, activeWorkspace } = useWorkspace();
 
   if (phase === 'idle' || phase === 'rebuilding') return null;
@@ -44,7 +44,9 @@ export default function ImportOverlay() {
               {progress?.type === 'start' || progress?.type === 'progress' ? (
                 <>
                   <p className="text-text-muted text-sm">
-                    {fileInfo && !progress?.total_hands
+                    {sourceLabel
+                      ? `Processing ${progress?.total_hands?.toLocaleString() ?? '...'} hands from ${sourceLabel}...`
+                      : fileInfo && !progress?.total_hands
                       ? `Uploading ${fileInfo.count} file${fileInfo.count !== 1 ? 's' : ''} (${(fileInfo.size / 1024).toFixed(0)} KB)...`
                       : `Processing ${progress?.total_hands?.toLocaleString() ?? '...'} hands from ${progress?.files ?? fileInfo?.count ?? '?'} file${(progress?.files ?? fileInfo?.count ?? 0) !== 1 ? 's' : ''}...`}
                   </p>
@@ -72,7 +74,9 @@ export default function ImportOverlay() {
                 </>
               ) : (
                 <p className="text-text-muted text-sm">
-                  {fileInfo
+                  {sourceLabel
+                    ? `Reading ${sourceLabel}...`
+                    : fileInfo
                     ? `Uploading ${fileInfo.count} file${fileInfo.count !== 1 ? 's' : ''} (${(fileInfo.size / 1024).toFixed(0)} KB)...`
                     : 'Uploading...'}
                 </p>

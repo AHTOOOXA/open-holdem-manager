@@ -8,11 +8,23 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from app.h2n import apply_h2n
+
 if TYPE_CHECKING:
     from app.parsers.common import ParsedHand
 
 
 _POS_ORDER = {"SB": 0, "BB": 1, "EP": 2, "MP": 3, "CO": 4, "BTN": 5}
+
+
+def _postflop_order(info: dict) -> int:
+    """Seat's postflop action order (SB first, BTN last).
+
+    Position labels repeat at 7+ players (EP EP MP MP), so prefer the exact
+    order from _assign_positions over the label.
+    """
+    order = info.get("action_order")
+    return order if order is not None else _POS_ORDER.get(info["position"], 0)
 
 
 def _find_action_order(actions: list[dict], username: str, action_type: str) -> int | None:
@@ -379,13 +391,13 @@ def compute_stat_flags(parsed: ParsedHand) -> dict[str, dict]:
             three_bet_order = _find_action_order(voluntary_preflop, second_raiser, "raise")
 
         if first_raise_order is not None:
-            raiser_pos_order = _POS_ORDER.get(username_to_info[first_raiser]["position"], 0)
+            raiser_pos_order = _postflop_order(username_to_info[first_raiser])
             for a in voluntary_preflop:
                 if a["order"] > first_raise_order and a["username"] != first_raiser:
                     # Include the 3-bettor themselves (<=), exclude players after
                     if three_bet_order is None or a["order"] <= three_bet_order:
                         player_stats[a["username"]]["three_bet_opp"] = True
-                        player_pos_order = _POS_ORDER.get(username_to_info[a["username"]]["position"], 0)
+                        player_pos_order = _postflop_order(username_to_info[a["username"]])
                         player_stats[a["username"]]["three_bet_opp_ip"] = player_pos_order > raiser_pos_order
 
     # ── Mark faced_steal fold defaults ──
@@ -421,9 +433,9 @@ def compute_stat_flags(parsed: ParsedHand) -> dict[str, dict]:
                         player_stats[s["username"]]["is_multiway"] = True
                 # Compute postflop IP: player with latest position among flop survivors
                 if len(flop_survivors) >= 2:
-                    max_order = max(_POS_ORDER.get(username_to_info[u]["position"], 0) for u in flop_survivors)
+                    max_order = max(_postflop_order(username_to_info[u]) for u in flop_survivors)
                     for uname in flop_survivors:
-                        pos_order = _POS_ORDER.get(username_to_info[uname]["position"], 0)
+                        pos_order = _postflop_order(username_to_info[uname])
                         player_stats[uname]["postflop_ip"] = (pos_order == max_order)
         elif street == "flop":
             if board_cards["turn"]:
@@ -533,10 +545,15 @@ def compute_stat_flags(parsed: ParsedHand) -> dict[str, dict]:
                 if a["action"] in ("bet", "check") and a["username"] != prev_aggressor:
                     player_stats[a["username"]][f"donk_bet_{street}_opp"] = True
 
-        # Donk bet: first bet into the previous street's aggressor
+        # Donk bet: first bet into the previous street's aggressor, made
+        # before the aggressor acts. A bet after the aggressor checks is a
+        # bet vs missed cbet, not a donk.
         if first_bet_or_raise and first_bet_or_raise["action"] == "bet":
             bettor = first_bet_or_raise["username"]
-            if prev_aggressor and bettor != prev_aggressor:
+            if (
+                prev_aggressor and bettor != prev_aggressor
+                and player_stats[bettor][f"donk_bet_{street}_opp"]
+            ):
                 player_stats[bettor][f"donk_bet_{street}"] = True
 
         # Fold to cbet: players who face a cbet and fold/call/raise
@@ -575,4 +592,6 @@ def compute_stat_flags(parsed: ParsedHand) -> dict[str, dict]:
                     if uname_other != prev_aggressor and player_stats[uname_other]["saw_flop"]:
                         player_stats[uname_other]["vs_missed_cbet_flop_opp"] = True
 
+    # H2N-compatible columns (h2n_pos, row bitmasks, is_winner, hv_*): app/h2n/CONTRACT.md
+    apply_h2n(parsed, player_stats)
     return player_stats

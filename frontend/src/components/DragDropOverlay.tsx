@@ -3,9 +3,10 @@ import { FolderUp } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useImport } from '@/contexts/ImportContext';
 import { collectFilesFromEntry } from '@/lib/file-utils';
+import H2NImportSection from '@/components/H2NImportSection';
 
 export default function DragDropOverlay() {
-  const { startImport, phase, showImportOverlay, setShowImportOverlay } = useImport();
+  const { startImport, startH2NImport, phase, showImportOverlay, setShowImportOverlay } = useImport();
   const [dragging, setDragging] = useState(false);
   const counterRef = useRef(0);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -112,7 +113,7 @@ export default function DragDropOverlay() {
         }
       }}
     >
-      <div className="flex flex-col items-center gap-4 rounded-xl border-2 border-dashed border-primary bg-primary/5 px-16 py-12">
+      <div className="flex w-full max-w-md flex-col items-center gap-4 rounded-xl border-2 border-dashed border-primary bg-primary/5 px-12 py-10">
         <FolderUp className="size-12 text-primary" />
         <p className="text-lg font-medium text-primary">
           {dragging ? 'Drop files to import' : 'Import Hand Histories'}
@@ -139,6 +140,12 @@ export default function DragDropOverlay() {
                 const files = Array.from(e.target.files || []);
                 handleFiles(files);
                 e.target.value = '';
+              }}
+            />
+            <H2NImportSection
+              onImport={(path, name) => {
+                setShowImportOverlay(false);
+                startH2NImport(path, name);
               }}
             />
           </>

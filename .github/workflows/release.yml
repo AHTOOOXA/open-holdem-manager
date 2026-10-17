@@ -74,8 +74,17 @@ jobs:
           --collect-submodules starlette
           --collect-submodules pydantic
           --collect-submodules duckdb
+          --collect-all eval7
+          --collect-submodules pyparsing
           --hidden-import multipart
           run_server.py
+
+      # Fails the build if the packaged backend can't compute all-in EV
+      # (eval7's compiled modules import things PyInstaller can't see).
+      - name: Smoke-test packaged backend
+        working-directory: backend
+        shell: bash
+        run: ./dist/ohm-backend/ohm-backend --self-check
 
       # ── Frontend ────────────────────────────────────────────────
       - name: Install frontend dependencies

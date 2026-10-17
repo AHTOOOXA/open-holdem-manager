@@ -41,21 +41,44 @@ class ParsedHand:
     extra_boards: list[dict[str, list[str]]] = field(default_factory=list)
     rit_boards: int = 1       # 1=normal, 2=RIT, 3=RIT3
     is_cashout: bool = False
+    # Everything the site took from the pot (rake + jackpot + other fees).
+    # None means rake + jackpot is the whole of it. GGPoker sets it because
+    # its summary also lists Bingo, Fortune and Tax.
+    total_fees: Decimal | None = None
+
+    @property
+    def fees(self) -> Decimal:
+        if self.total_fees is not None:
+            return self.total_fees
+        return self.total_rake + self.total_jackpot
 
 
 # Position labels for 6-max (clockwise from BTN)
 POSITIONS_6MAX = ["BTN", "SB", "BB", "EP", "MP", "CO"]
-# For fewer players, trim from the middle positions
-POSITIONS_BY_COUNT = {
-    2: ["BTN", "BB"],
-    3: ["BTN", "SB", "BB"],
-    4: ["BTN", "SB", "BB", "CO"],
-    5: ["BTN", "SB", "BB", "MP", "CO"],
-    6: ["BTN", "SB", "BB", "EP", "MP", "CO"],
-    7: ["BTN", "SB", "BB", "EP", "MP", "HJ", "CO"],
-    8: ["BTN", "SB", "BB", "UTG", "EP", "MP", "HJ", "CO"],
-    9: ["BTN", "SB", "BB", "UTG", "UTG1", "EP", "MP", "HJ", "CO"],
-}
+
+
+def position_labels(num_players: int) -> list[str]:
+    """Position labels clockwise from BTN, always from the six buckets
+    BTN/SB/BB/EP/MP/CO that every stat and filter is grouped by.
+
+    Matches Hand2Note's column groups: counting back from the button the
+    seats are CO, then MP (always exactly one seat, the HJ), then EP for
+    every earlier seat (H2N's EP + UTG1..UTG4). So 5-max is MP CO, 6-max
+    EP MP CO, 9-max EP EP EP EP MP CO. Heads-up the button posts the small
+    blind and is "SB" (H2N's SB-HU), the other player "BB" (BB-HU); there is
+    no BTN. Labels repeat at 7+ players; use the seat's "action_order" when
+    exact order matters.
+    """
+    if num_players == 2:
+        return ["SB", "BB"]
+    if num_players <= 3:
+        return ["BTN", "SB", "BB"][:num_players]
+    middle = num_players - 4  # seats between BB and CO
+    mp = min(middle, 1)
+    return ["BTN", "SB", "BB"] + ["EP"] * (middle - mp) + ["MP"] * mp + ["CO"]
+
+
+POSITIONS_BY_COUNT = {n: position_labels(n) for n in range(2, 11)}
 
 
 STREETS = ("preflop", "flop", "turn", "river")
@@ -140,10 +163,7 @@ def _assign_positions(seats: list[dict], button_seat: int, table_size: int) -> N
         return
 
     num_players = len(seats)
-    pos_labels = POSITIONS_BY_COUNT.get(num_players)
-    if pos_labels is None:
-        # Fallback for unusual counts
-        pos_labels = POSITIONS_BY_COUNT.get(min(num_players, 9), POSITIONS_6MAX)
+    pos_labels = POSITIONS_BY_COUNT.get(num_players) or position_labels(num_players)
 
     # Sort seats clockwise starting from button
     seat_numbers = sorted(s["seat"] for s in seats)
@@ -173,5 +193,11 @@ def _assign_positions(seats: list[dict], button_seat: int, table_size: int) -> N
         else:
             seat_to_pos[sn] = f"S{sn}"
 
+    # Postflop action order: SB first ... BTN last (heads-up: BB first, the
+    # button, labelled SB, last).
+    # Needed because position labels repeat at 7+ players.
+    seat_to_order = {sn: (i - 1) % num_players for i, sn in enumerate(ordered)}
+
     for s in seats:
         s["position"] = seat_to_pos[s["seat"]]
+        s["action_order"] = seat_to_order[s["seat"]]

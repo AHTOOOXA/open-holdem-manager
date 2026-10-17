@@ -1,4 +1,4 @@
-import { BarChart3, Grid3X3, TrendingUp, List, DollarSign, FolderUp, Clock, Users, PieChart, ArrowLeftRight } from 'lucide-react';
+import { BarChart3, LayoutGrid, Grid3X3, TrendingUp, List, DollarSign, FolderUp, Clock, Users, PieChart, ArrowLeftRight } from 'lucide-react';
 import { NavLink, useLocation } from 'react-router-dom';
 import {
   Sidebar,
@@ -18,6 +18,7 @@ import { useImport } from '@/contexts/ImportContext';
 
 const navItems = [
   { to: '/stats', label: 'Stats', icon: BarChart3 },
+  { to: '/general', label: 'General', icon: LayoutGrid },
   { to: '/range', label: 'Range', icon: Grid3X3 },
   { to: '/graph', label: 'Results', icon: TrendingUp },
   { to: '/sessions', label: 'Sessions', icon: Clock },

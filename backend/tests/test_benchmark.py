@@ -13,10 +13,10 @@ from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
-from app.parsers.ggpoker import parse_hand_history
+from app.parsers.ggpoker import parse_hand_history, split_hands
 from app.stat_flags import compute_stat_flags
 from app.api.import_hands import (
-    _flush_batch, _compute_financials, reset_import_cache, split_hands, BATCH_SIZE,
+    _flush_batch, _compute_financials, reset_import_cache, BATCH_SIZE,
 )
 from app.db import init_schema
 

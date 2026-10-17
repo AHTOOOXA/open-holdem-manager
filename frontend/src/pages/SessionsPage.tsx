@@ -26,13 +26,15 @@ import { queryKeys } from '@/lib/query-keys';
 import { formatStakes, formatRelativeDate } from '@/lib/utils';
 import EmptyState from '@/components/EmptyState';
 import { CardBoxPair, CardBoxRow, CardBox } from '@/components/hands/CardDisplay';
-import Actions from '@/components/hands/Actions';
+import Actions, { formatBb } from '@/components/hands/Actions';
 import Pagination from '@/components/hands/Pagination';
 import HandDrawer from '@/components/hands/HandDrawer';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Button } from '@/components/ui/button';
 import {
   Table,
   TableBody,
@@ -85,9 +87,27 @@ export default function SessionsPage() {
   const { sessionIndex } = useParams<{ sessionIndex?: string }>();
 
   if (sessionIndex !== undefined) {
-    return <SessionDetail index={parseInt(sessionIndex, 10)} />;
+    if (!/^\d+$/.test(sessionIndex)) return <SessionNotFound />;
+    return <SessionDetail index={Number(sessionIndex)} />;
   }
   return <SessionList />;
+}
+
+function SessionNotFound({ error }: { error?: string }) {
+  const navigate = useNavigate();
+  return (
+    <div className="max-w-6xl mx-auto">
+      <Alert variant="destructive">
+        <AlertTitle>{error ? 'Could not load session' : 'Session not found'}</AlertTitle>
+        <AlertDescription>
+          {error ?? "This session doesn't exist. Session numbers change after an import, so an old link may point nowhere."}
+        </AlertDescription>
+      </Alert>
+      <Button variant="outline" size="sm" className="mt-3" onClick={() => navigate('/sessions')}>
+        Back to sessions
+      </Button>
+    </div>
+  );
 }
 
 // ── Session List View ────────────────────────────────────────────────
@@ -185,7 +205,7 @@ function SessionDetail({ index }: { index: number }) {
   const [handsPage, setHandsPage] = useState(1);
   const [handsPerPage, setHandsPerPage] = useState(50);
 
-  const { data, isPending } = useQuery({
+  const { data, isPending, error } = useQuery({
     queryKey: queryKeys.sessions.detail(index),
     queryFn: () => getSessionDetail(index),
   });
@@ -243,11 +263,9 @@ function SessionDetail({ index }: { index: number }) {
   }
 
   if (!stats) {
-    return (
-      <div className="max-w-6xl mx-auto">
-        <EmptyState variant="no-data" />
-      </div>
-    );
+    // 404 = no such session; anything else (backend down, 500) shows the real error
+    const loadError = error && !error.message.includes(' 404 ') ? error.message : undefined;
+    return <SessionNotFound error={loadError} />;
   }
 
   const n = stats.hands;
@@ -533,7 +551,7 @@ function SessionDetail({ index }: { index: number }) {
                           <CardBoxRow cards={h.flop_cards} />
                         </TableCell>
                         <TableCell className="py-1.5 px-1 text-center font-mono text-[14px] text-text-muted">
-                          {h.flop_cards.length > 0 ? Math.round(h.flop_pot) : ''}
+                          {h.flop_cards.length > 0 ? formatBb(h.flop_pot, 1) : ''}
                         </TableCell>
                         <TableCell className="py-1.5 px-2">
                           <Actions items={h.flop_actions} />
@@ -542,7 +560,7 @@ function SessionDetail({ index }: { index: number }) {
                           {h.turn_card && <CardBox card={h.turn_card} />}
                         </TableCell>
                         <TableCell className="py-1.5 px-1 text-center font-mono text-[14px] text-text-muted">
-                          {h.turn_card ? Math.round(h.turn_pot) : ''}
+                          {h.turn_card ? formatBb(h.turn_pot, 1) : ''}
                         </TableCell>
                         <TableCell className="py-1.5 px-2">
                           <Actions items={h.turn_actions} />
@@ -551,7 +569,7 @@ function SessionDetail({ index }: { index: number }) {
                           {h.river_card && <CardBox card={h.river_card} />}
                         </TableCell>
                         <TableCell className="py-1.5 px-1 text-center font-mono text-[14px] text-text-muted">
-                          {h.river_card ? Math.round(h.river_pot) : ''}
+                          {h.river_card ? formatBb(h.river_pot, 1) : ''}
                         </TableCell>
                         <TableCell className="py-1.5 px-2">
                           <Actions items={h.river_actions} />

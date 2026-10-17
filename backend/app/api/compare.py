@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Query
+from app.date_filters import DATE_TO_SQL
 from app.db import get_read_cursor, get_hero_username, get_hero_player_id
 from app.models import PeriodStats, CompareResponse
 from app.stats_engine import compute_hero_stats, compute_population_stats
@@ -28,7 +29,7 @@ def _get_period_summary(
     params: list = [player_id, workspace_id, date_from]
 
     if date_to:
-        query += " AND h.played_at <= ?"
+        query += " AND " + DATE_TO_SQL
         params.append(date_to)
     if stakes:
         query += " AND h.stakes = ?"

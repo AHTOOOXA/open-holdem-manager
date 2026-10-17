@@ -49,3 +49,6 @@ backend/*.spec
 # Env
 .env
 .env.local
+
+# Local-only research notes (never commit)
+docs/private/

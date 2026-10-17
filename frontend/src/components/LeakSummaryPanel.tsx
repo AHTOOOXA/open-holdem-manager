@@ -21,7 +21,7 @@ function LeakCard({ leak }: { leak: { statKey: string; displayName: string; valu
       <div className="flex items-baseline gap-2 text-[12px]">
         <span className="font-mono text-red font-semibold">{valueDisplay}</span>
         <span className="text-text-muted">{targetDisplay}</span>
-        <span className="text-text-muted">({leak.sample.toLocaleString()} hands)</span>
+        <span className="text-text-muted">({leak.sample.toLocaleString()} {isRatio ? 'sample' : 'opportunities'})</span>
       </div>
       <p className="text-[11px] text-text-muted leading-relaxed">{leak.benchmark.fix}</p>
       <Link

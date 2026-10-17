@@ -168,7 +168,8 @@ export interface HeroStats {
 }
 
 export interface ImportProgress {
-  type: 'start' | 'progress' | 'done';
+  type: 'start' | 'progress' | 'done' | 'error';
+  message?: string; // set on 'error': the import failed and was rolled back
   total_hands?: number;
   files?: number;
   processed?: number;
@@ -208,15 +209,82 @@ export async function uploadFilesStream(
   const sp = new URLSearchParams();
   _addWorkspaceParam(sp);
   const res = await fetch(`${BASE}/import/files/stream?${sp}`, { method: 'POST', body: form });
+  return readImportStream(res, onProgress);
+}
+
+export interface H2NDatabase {
+  name: string;
+  path: string;
+  version: string;
+  hands: number;
+}
+
+/** Hand2Note databases found in H2N's default folder on this machine. */
+export async function listH2NDatabases(): Promise<{ root: string; databases: H2NDatabase[] }> {
+  const res = await fetch(`${BASE}/import/h2n/databases`);
+  if (!res.ok) throw new Error(`Failed to look for Hand2Note databases: ${res.statusText}`);
+  return res.json();
+}
+
+/** Import every hand of a Hand2Note database folder, with streamed progress. */
+export async function importH2NStream(
+  path: string,
+  onProgress: (progress: ImportProgress) => void,
+): Promise<ImportResult> {
+  const sp = new URLSearchParams();
+  _addWorkspaceParam(sp);
+  const res = await fetch(`${BASE}/import/h2n?${sp}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path }),
+  });
+  return readImportStream(res, onProgress);
+}
+
+/** Read an NDJSON import stream (start / progress / done | error). */
+async function readImportStream(
+  res: Response,
+  onProgress: (progress: ImportProgress) => void,
+): Promise<ImportResult> {
   if (!res.ok) {
     const body = await res.text().catch(() => '');
-    throw new Error(`Import failed: ${res.status} ${res.statusText}${body ? ` — ${body}` : ''}`);
+    let detail = body;
+    try {
+      detail = JSON.parse(body).detail ?? body;
+    } catch {
+      // not JSON
+    }
+    throw new Error(`Import failed: ${res.status} ${res.statusText}${detail ? ` — ${detail}` : ''}`);
   }
 
   const reader = res.body!.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
-  let finalResult: ImportResult | null = null;
+  // Assigned inside handleLine; the cast stops TS from narrowing it to null.
+  let finalResult = null as ImportResult | null;
+
+  const handleLine = (line: string) => {
+    if (!line.trim()) return;
+    const msg: ImportProgress = JSON.parse(line);
+    if (msg.type === 'error') {
+      throw new Error(msg.message || 'Import failed. Nothing was imported.');
+    }
+    onProgress(msg);
+    if (msg.type === 'done') {
+      finalResult = {
+        imported: msg.imported ?? 0,
+        duplicates: msg.duplicates ?? 0,
+        errors: msg.errors ?? 0,
+        error_details: msg.error_details ?? [],
+        elapsed_ms: msg.elapsed_ms,
+        hands_per_sec: msg.hands_per_sec,
+        parse_ms: msg.parse_ms,
+        stats_ms: msg.stats_ms,
+        equity_ms: msg.equity_ms,
+        db_ms: msg.db_ms,
+      };
+    }
+  };
 
   while (true) {
     const { done, value } = await reader.read();
@@ -225,29 +293,17 @@ export async function uploadFilesStream(
     buffer += decoder.decode(value, { stream: true });
     const lines = buffer.split('\n');
     buffer = lines.pop() || '';
-
-    for (const line of lines) {
-      if (!line.trim()) continue;
-      const msg: ImportProgress = JSON.parse(line);
-      onProgress(msg);
-      if (msg.type === 'done') {
-        finalResult = {
-          imported: msg.imported ?? 0,
-          duplicates: msg.duplicates ?? 0,
-          errors: msg.errors ?? 0,
-          error_details: msg.error_details ?? [],
-          elapsed_ms: msg.elapsed_ms,
-          hands_per_sec: msg.hands_per_sec,
-          parse_ms: msg.parse_ms,
-          stats_ms: msg.stats_ms,
-          equity_ms: msg.equity_ms,
-          db_ms: msg.db_ms,
-        };
-      }
-    }
+    lines.forEach(handleLine);
   }
+  buffer += decoder.decode();
+  handleLine(buffer);
 
-  return finalResult ?? { imported: 0, duplicates: 0, errors: 0, error_details: [] };
+  // A stream that closes without a 'done' message means the backend died or
+  // the connection dropped mid-import. Don't report that as "0 hands imported".
+  if (!finalResult) {
+    throw new Error('Import was interrupted before it finished. Nothing from this run was saved; re-run the import (duplicates are skipped).');
+  }
+  return finalResult;
 }
 
 export async function getHeroStats(params?: {
@@ -315,6 +371,8 @@ export interface HealthResponse {
   hands: number;
   rebuilding: boolean;
   rebuild_progress?: { processed: number; total: number };
+  /** Set when startup had to move a corrupt write-ahead log aside */
+  wal_recovery?: { quarantined_wal: string; error: string };
 }
 
 export async function getHealth(): Promise<HealthResponse> {
@@ -797,7 +855,7 @@ export async function getSessionDetail(index: number): Promise<SessionDetailResp
   const sp = new URLSearchParams();
   _addWorkspaceParam(sp);
   const res = await fetch(`${BASE}/sessions/${index}?${sp}`);
-  if (!res.ok) throw new Error(`Session detail failed: ${res.statusText}`);
+  if (!res.ok) throw new Error(`Session detail failed: ${res.status} ${res.statusText}`);
   return res.json();
 }
 

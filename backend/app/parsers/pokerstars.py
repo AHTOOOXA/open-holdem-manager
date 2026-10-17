@@ -9,7 +9,7 @@ import re
 from decimal import Decimal
 from datetime import datetime
 
-from app.parsers.common import ParsedHand, _ZERO, _assign_positions
+from app.parsers.common import ParsedHand, _ZERO, _assign_positions, compute_uncalled_returns
 
 SITE_ID = 2
 SITE_CODE = "PS"
@@ -77,13 +77,38 @@ RE_SUMMARY_POT_RAKE = re.compile(
     r"Total pot " + _C + r"([0-9.]+).*?\| Rake " + _C + r"([0-9.]+)"
 )
 RE_BOARD = re.compile(r"Board \[(.+?)\]")
+# Heads-up the button is also the small blind: "(button) (small blind)"
 RE_SEAT_USERNAME = re.compile(
-    r"Seat \d+: (.+?)(?:\s+\((?:button|small blind|big blind)\))?\s+(?:showed|mucked|folded|collected|won|received)"
+    r"Seat (?P<seat>\d+): (?P<name>.+?)(?:\s+\((?:button|small blind|big blind)\))*\s+(?:showed|mucked|folded|collected|won|received)"
 )
 RE_COLLECTED_WON_AMOUNT = re.compile(r"(?:collected|won) \(" + _C + r"([0-9.]+)\)")
 RE_SHOWED = re.compile(
     r"Seat (\d+): (.+?) (?:.*?)(?:showed|mucked) \[(\w{2}) (\w{2})\]"
 )
+
+
+def _use_summary_names(seats: list[dict], body: list[str]) -> None:
+    """Fix seat-line names that don't match the rest of the hand.
+
+    Some histories have garbled names on the seat lines only (e.g.
+    "Blahdi:42eblah" there, "Blahdieblah" in every action and the summary).
+    If the summary names a seat differently and that name is the one the
+    actions use, take it — otherwise those actions belong to nobody.
+    """
+    try:
+        start = next(i for i, l in enumerate(body) if RE_SUMMARY.match(l))
+    except StopIteration:
+        return
+    actors = {l.split(": ", 1)[0] for l in body[:start] if ": " in l}
+    by_seat = {s["seat"]: s for s in seats}
+    for line in body[start + 1:]:
+        m = RE_SEAT_USERNAME.match(line)
+        if not m:
+            continue
+        seat = by_seat.get(int(m.group("seat")))
+        name = m.group("name").strip()
+        if seat and seat["username"] != name and name in actors and seat["username"] not in actors:
+            seat["username"] = name
 
 
 def _should_skip(line: str) -> bool:
@@ -165,6 +190,7 @@ def parse_hand_history(hand_text: str) -> ParsedHand:
     if not seats:
         raise ValueError("No seats found")
 
+    _use_summary_names(seats, lines[line_idx:])
     _assign_positions(seats, button_seat, table_size)
 
     # Build lookup
@@ -247,7 +273,7 @@ def parse_hand_history(hand_text: str) -> ParsedHand:
 
             # Collected/won in summary
             seat_m = RE_SEAT_USERNAME.match(line)
-            uname_from_seat = seat_m.group(1).strip() if seat_m else None
+            uname_from_seat = seat_m.group("name").strip() if seat_m else None
 
             found_any = False
             for m_coll in RE_COLLECTED_WON_AMOUNT.finditer(line):
@@ -411,6 +437,11 @@ def parse_hand_history(hand_text: str) -> ParsedHand:
                     "order": action_order,
                 })
             continue
+
+    # Old histories (e.g. 2011) have no "Uncalled bet ... returned" line;
+    # "Total pot" and "collected" already exclude it, so derive it.
+    if not uncalled_returns:
+        uncalled_returns = compute_uncalled_returns(actions_by_street)
 
     return ParsedHand(
         hand_id=hand_id,

@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useCallback, useEffect, useRef, type ReactNode } from 'react';
-import { uploadFilesStream, rebuildHands, getSettings, updateSettings, getHealth, clearDatabase, exportDb, importDb } from '@/lib/api';
+import { uploadFilesStream, importH2NStream, rebuildHands, getSettings, updateSettings, getHealth, clearDatabase, exportDb, importDb } from '@/lib/api';
 import type { ImportResult, ImportProgress, Settings, HealthResponse } from '@/lib/api';
 import { queryClient } from '@/lib/query-client';
 
@@ -13,6 +13,8 @@ interface RebuildProgress {
 interface ImportState {
   phase: Phase;
   fileInfo: { count: number; size: number } | null;
+  /** Set when importing from somewhere other than uploaded files, e.g. a Hand2Note database */
+  sourceLabel: string | null;
   progress: ImportProgress | null;
   result: ImportResult | null;
   error: string | null;
@@ -23,6 +25,7 @@ interface ImportState {
 
 interface ImportActions {
   startImport: (files: File[]) => void;
+  startH2NImport: (path: string, name: string) => void;
   startRebuild: () => void;
   clearDb: () => Promise<void>;
   dismiss: () => void;
@@ -47,6 +50,7 @@ function useImport() {
 function ImportProvider({ children }: { children: ReactNode }) {
   const [phase, setPhase] = useState<Phase>('idle');
   const [fileInfo, setFileInfo] = useState<{ count: number; size: number } | null>(null);
+  const [sourceLabel, setSourceLabel] = useState<string | null>(null);
   const [progress, setProgress] = useState<ImportProgress | null>(null);
   const [result, setResult] = useState<ImportResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -113,6 +117,7 @@ function ImportProvider({ children }: { children: ReactNode }) {
 
     const totalSize = validFiles.reduce((sum, f) => sum + f.size, 0);
     setFileInfo({ count: validFiles.length, size: totalSize });
+    setSourceLabel(null);
     setPhase('uploading');
     setError(null);
     setResult(null);
@@ -127,6 +132,30 @@ function ImportProvider({ children }: { children: ReactNode }) {
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Upload failed');
       setPhase('error');
+      await refreshHandCount().catch(() => {});
+      queryClient.invalidateQueries();
+    }
+  }, [phase, refreshHandCount]);
+
+  const startH2NImport = useCallback(async (path: string, name: string) => {
+    if (phase !== 'idle') return;
+    setFileInfo(null);
+    setSourceLabel(`Hand2Note database "${name}"`);
+    setPhase('uploading');
+    setError(null);
+    setResult(null);
+    setProgress(null);
+    try {
+      const res = await importH2NStream(path, (p) => setProgress(p));
+      setResult(res);
+      setPhase('done');
+      await refreshHandCount();
+      queryClient.invalidateQueries();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Import failed');
+      setPhase('error');
+      await refreshHandCount().catch(() => {});
+      queryClient.invalidateQueries();
     }
   }, [phase, refreshHandCount]);
 
@@ -182,9 +211,9 @@ function ImportProvider({ children }: { children: ReactNode }) {
   return (
     <ImportContext.Provider
       value={{
-        phase, fileInfo, progress, result, error, handCount, settings,
+        phase, fileInfo, sourceLabel, progress, result, error, handCount, settings,
         autoRebuildProgress,
-        startImport, startRebuild, clearDb, dismiss, updateHeroName, refreshHandCount,
+        startImport, startH2NImport, startRebuild, clearDb, dismiss, updateHeroName, refreshHandCount,
         exportDatabase, importDatabase, showImportOverlay, setShowImportOverlay,
       }}
     >

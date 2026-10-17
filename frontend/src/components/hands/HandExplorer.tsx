@@ -6,13 +6,14 @@ import { useFilterOptions } from '@/hooks/useFilterOptions';
 import { queryKeys } from '@/lib/query-keys';
 import { queryClient } from '@/lib/query-client';
 import { formatStakes, formatRelativeDate } from '@/lib/utils';
+import { formatLocalDate } from '@/lib/date';
 import EmptyState from '@/components/EmptyState';
 import HandFilters from '@/components/hands/HandFilters';
 import type { FilterState } from '@/components/hands/HandFilters';
 import { QUICK_FILTERS_MAP } from '@/components/hands/HandFilters';
 import { CardBoxPair, CardBoxRow, CardBox } from '@/components/hands/CardDisplay';
 import { RitBadge, CashoutBadge } from '@/components/hands/HandTypeBadge';
-import Actions, { actionTitle } from '@/components/hands/Actions';
+import Actions, { actionTitle, formatBb } from '@/components/hands/Actions';
 import TagPill from '@/components/hands/TagPill';
 import Pagination from '@/components/hands/Pagination';
 import HandDrawer from '@/components/hands/HandDrawer';
@@ -30,11 +31,11 @@ function getDateRange(preset: string, dateFrom: string, dateTo: string): { from?
   today.setHours(0, 0, 0, 0);
   switch (preset) {
     case 'today':
-      return { from: today.toISOString().slice(0, 10) };
+      return { from: formatLocalDate(today) };
     case 'week': {
       const d = new Date(today);
       d.setDate(d.getDate() - d.getDay());
-      return { from: d.toISOString().slice(0, 10) };
+      return { from: formatLocalDate(d) };
     }
     case 'month':
       return { from: `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-01` };
@@ -84,7 +85,7 @@ export default function HandExplorer({
   });
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showLegend, setShowLegend] = useState(false);
-  const [bbPrecision, setBbPrecision] = useState<0 | 1>(0);
+  const [bbPrecision, setBbPrecision] = useState<0 | 1>(1);
 
   const searchTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -325,7 +326,7 @@ export default function HandExplorer({
                       </TableCell>
                       {/* Flop pot */}
                       <TableCell className="py-1.5 px-1 text-center font-mono text-[14px] text-text-muted">
-                        {h.flop_cards.length > 0 ? (bbPrecision === 0 ? Math.round(h.flop_pot) : h.flop_pot.toFixed(1).replace(/\.0$/, '')) : ''}
+                        {h.flop_cards.length > 0 ? formatBb(h.flop_pot, bbPrecision) : ''}
                       </TableCell>
                       {/* Flop actions */}
                       <TableCell className="py-1.5 px-2">
@@ -339,7 +340,7 @@ export default function HandExplorer({
                       </TableCell>
                       {/* Turn pot */}
                       <TableCell className="py-1.5 px-1 text-center font-mono text-[14px] text-text-muted">
-                        {h.turn_card ? (bbPrecision === 0 ? Math.round(h.turn_pot) : h.turn_pot.toFixed(1).replace(/\.0$/, '')) : ''}
+                        {h.turn_card ? formatBb(h.turn_pot, bbPrecision) : ''}
                       </TableCell>
                       {/* Turn actions */}
                       <TableCell className="py-1.5 px-2">
@@ -353,7 +354,7 @@ export default function HandExplorer({
                       </TableCell>
                       {/* River pot */}
                       <TableCell className="py-1.5 px-1 text-center font-mono text-[14px] text-text-muted">
-                        {h.river_card ? (bbPrecision === 0 ? Math.round(h.river_pot) : h.river_pot.toFixed(1).replace(/\.0$/, '')) : ''}
+                        {h.river_card ? formatBb(h.river_pot, bbPrecision) : ''}
                       </TableCell>
                       {/* River actions */}
                       <TableCell className="py-1.5 px-2">

@@ -1,5 +1,6 @@
 const { app, BrowserWindow, dialog, ipcMain, shell } = require('electron');
 const { spawn } = require('child_process');
+const crypto = require('crypto');
 const path = require('path');
 const net = require('net');
 const http = require('http');
@@ -13,7 +14,14 @@ const isMac = process.platform === 'darwin';
 const autoUpdater = !isMac ? require('electron-updater').autoUpdater : null;
 
 let backendProcess = null;
+let backendPort = null;
 let mainWindow = null;
+let quitting = false;
+
+// Lets only this Electron process call POST /api/shutdown
+const shutdownToken = crypto.randomBytes(32).toString('hex');
+// How long to wait for the backend to checkpoint and exit before killing it
+const BACKEND_SHUTDOWN_TIMEOUT_MS = 15000;
 
 const isDev = !app.isPackaged;
 
@@ -52,8 +60,10 @@ function startBackend(port) {
     ...process.env,
     OHM_DATA_DIR: dataDir,
     OHM_STATIC_DIR: staticDir,
+    OHM_SHUTDOWN_TOKEN: shutdownToken,
   };
 
+  backendPort = port;
   return new Promise((resolve, reject) => {
     backendProcess = spawn(backendExe, ['--port', String(port)], {
       env,
@@ -154,6 +164,48 @@ function killBackend() {
     backendProcess.kill();
     backendProcess = null;
   }
+}
+
+function requestBackendShutdown() {
+  return new Promise((resolve) => {
+    const req = http.request({
+      host: '127.0.0.1',
+      port: backendPort,
+      path: '/api/shutdown',
+      method: 'POST',
+      headers: { 'X-OHM-Shutdown-Token': shutdownToken },
+      timeout: 2000,
+    }, (res) => {
+      res.resume();
+      resolve();
+    });
+    req.on('error', resolve);
+    req.on('timeout', () => {
+      req.destroy();
+      resolve();
+    });
+    req.end();
+  });
+}
+
+// Ask the backend to exit cleanly so DuckDB checkpoints and closes. Killing it
+// outright (TerminateProcess on Windows) can leave a WAL that fails to replay,
+// and then the app never starts again. Kill only if it doesn't exit in time.
+function stopBackend() {
+  const child = backendProcess;
+  if (!child || child.exitCode !== null) return Promise.resolve();
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      console.error('Backend did not exit in time, killing it');
+      child.kill();
+      resolve();
+    }, BACKEND_SHUTDOWN_TIMEOUT_MS);
+    child.once('exit', () => {
+      clearTimeout(timer);
+      resolve();
+    });
+    requestBackendShutdown();
+  });
 }
 
 // --- Update system ---
@@ -353,12 +405,15 @@ app.whenReady().then(async () => {
 });
 
 app.on('window-all-closed', () => {
-  killBackend();
   app.quit();
 });
 
-app.on('before-quit', () => {
-  killBackend();
+app.on('before-quit', (event) => {
+  if (quitting || !backendProcess) return;
+  // Hold the quit until the backend has shut down, then quit for real
+  event.preventDefault();
+  quitting = true;
+  stopBackend().finally(() => app.quit());
 });
 
 // macOS: re-create window when dock icon clicked

@@ -68,3 +68,10 @@ make dev      # starts backend (port 4243) + frontend (port 4242)
 Copyright © 2025-2026 Anton Safonov.
 
 Open Holdem Manager is free software under the [GNU Affero General Public License v3.0](LICENSE). You can use, study, modify and share it. If you distribute a modified version, or run one as a network service, you must publish its source under the same license.
+
+## Trademarks
+
+Hand2Note, PokerTracker, Holdem Manager, GGPoker, PokerStars and other names are trademarks of their
+owners. Open Holdem Manager is an independent project and is not affiliated with or endorsed by any of
+them. It reads your own data (hand histories, your own Hand2Note database) for interoperability; it
+contains no code or assets from other tools.

@@ -1,7 +1,9 @@
 import json
 
 from fastapi import APIRouter, HTTPException, Query
+from app.date_filters import DATE_TO_SQL
 from app.db import get_db, db_lock, get_read_cursor
+from app.stat_registry import POS_SQL
 from app.models import (
     IdentityResponse, CreateIdentity, UpdateIdentity,
     AliasResponse, AddAlias, HeroStats,
@@ -283,7 +285,7 @@ def _compute_identity_stats(
     params: list = list(player_ids)
 
     if position:
-        where_parts.append("hp.position = ?")
+        where_parts.append(f"{POS_SQL} = ?")
         params.append(position.upper())
     if stakes:
         where_parts.append("h.stakes = ?")
@@ -295,8 +297,8 @@ def _compute_identity_stats(
         where_parts.append("h.played_at >= ?")
         params.append(date_from)
     if date_to:
-        where_parts.append("h.played_at <= ?")
-        params.append(date_to + " 23:59:59")
+        where_parts.append(DATE_TO_SQL)
+        params.append(date_to)
 
     where_sql = " AND ".join(where_parts)
 

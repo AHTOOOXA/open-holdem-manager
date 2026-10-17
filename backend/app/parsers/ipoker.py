@@ -30,7 +30,7 @@ _ACTION_TYPES = {
     "4": "check",
     "5": "bet",
     "7": "call",   # type 7 = call (often all-in call)
-    "15": "show",
+    "15": "show",  # in the blinds round (no=0) with a sum it's an ante, see below
     "23": "raise",
 }
 
@@ -276,6 +276,10 @@ def parse_hand_history(hand_text: str) -> ParsedHand:
             action_name = _ACTION_TYPES.get(action_type)
             if action_name is None:
                 continue
+            # Type 15 in the blinds round is an ante post (it's counted in the
+            # player's XML bet total), not a show.
+            if action_type == "15" and round_no == "0" and action_sum > _ZERO:
+                action_name = "ante"
 
             # Showdown: type 15 = show cards
             if action_name == "show":
@@ -304,7 +308,10 @@ def parse_hand_history(hand_text: str) -> ParsedHand:
             # Track running investment for all-in detection
             prev_running = player_running_invested.get(player_name, _ZERO)
             prev_street = player_street_invested.get(player_name, _ZERO)
-            if action_name in ("sb", "bb", "ante", "call", "bet"):
+            if action_name == "ante":
+                # Antes don't count toward the street: raise sums exclude them
+                player_running_invested[player_name] = prev_running + action_sum
+            elif action_name in ("sb", "bb", "call", "bet"):
                 player_running_invested[player_name] = prev_running + action_sum
                 player_street_invested[player_name] = prev_street + action_sum
             elif action_name == "raise":
@@ -333,6 +340,15 @@ def parse_hand_history(hand_text: str) -> ParsedHand:
     # ── Compute uncalled returns ──
     uncalled_returns = compute_uncalled_returns(actions_by_street)
 
+    # The XML win attribute is everything paid back to the player, including
+    # their uncalled bet. Take that out so it isn't credited twice
+    # (collected + uncalled return).
+    for uname, amt in uncalled_returns.items():
+        if uname in collected:
+            collected[uname] = max(collected[uname] - amt, _ZERO)
+            if collected[uname] == _ZERO:
+                del collected[uname]
+
     # ── Compute rake ──
     # Use action-based investment calculation for accuracy
     total_invested = _ZERO
@@ -344,7 +360,9 @@ def parse_hand_history(hand_text: str) -> ParsedHand:
             amt = a["amount"]
 
             if action in _INVEST_ACTIONS:
-                street_put_in[uname] = street_put_in.get(uname, _ZERO) + amt
+                # Raise sums are "to" amounts that exclude the ante
+                if action != "ante":
+                    street_put_in[uname] = street_put_in.get(uname, _ZERO) + amt
                 total_invested += amt
             elif action == "raise":
                 already_in = street_put_in.get(uname, _ZERO)

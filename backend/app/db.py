@@ -7,10 +7,12 @@ import time
 import threading
 from pathlib import Path
 
+from app.h2n.columns import H2N_COLUMNS
+
 logger = logging.getLogger(__name__)
 
 # Bump this when stat_flags.py or parser logic changes to trigger auto-rebuild.
-STAT_VERSION = 4
+STAT_VERSION = 7
 
 _data_dir = os.environ.get("OHM_DATA_DIR")
 if _data_dir:
@@ -19,7 +21,14 @@ else:
     DB_PATH = Path(__file__).parent.parent.parent / "data" / "poker.duckdb"
 
 _conn: duckdb.DuckDBPyConnection | None = None
-_lock = threading.Lock()
+# Reentrant: write paths hold the lock and then call close_db()/get_db(),
+# which take it again.
+_lock = threading.RLock()
+# Set when the app is quitting. Long write loops (import, rebuild) check it
+# between batches and roll back so the DB can be closed cleanly.
+_shutdown_event = threading.Event()
+# Set if startup had to move a corrupt WAL aside (surfaced via /api/health).
+_wal_recovery: dict | None = None
 _request_cursors: contextvars.ContextVar[list | None] = contextvars.ContextVar(
     '_request_cursors', default=None
 )
@@ -34,19 +43,67 @@ def get_db() -> duckdb.DuckDBPyConnection:
         with _lock:
             if _conn is None:
                 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-                for attempt in range(10):
-                    try:
-                        _conn = duckdb.connect(str(DB_PATH))
-                        _conn.execute("SET memory_limit = '4GB'")
-                        break
-                    except duckdb.IOException:
-                        if attempt < 9:
-                            time.sleep(1)
-                        else:
-                            raise
+                _conn = _connect_with_recovery()
+                _conn.execute("SET memory_limit = '4GB'")
                 init_schema(_conn)
                 atexit.register(close_db)
     return _conn
+
+
+def _wal_path() -> Path:
+    return DB_PATH.with_name(DB_PATH.name + ".wal")
+
+
+def _is_wal_replay_error(e: Exception) -> bool:
+    return "WAL" in str(e) and _wal_path().exists()
+
+
+def _quarantine_wal(e: Exception) -> None:
+    """Move a WAL that DuckDB can't replay out of the way (never delete it).
+
+    Changes since the last checkpoint are lost, but the database opens again.
+    The file is kept next to the DB so it can be inspected or recovered later.
+    """
+    global _wal_recovery
+    wal = _wal_path()
+    dest = wal.with_name(f"{wal.name}.corrupt-{time.strftime('%Y%m%d-%H%M%S')}")
+    wal.rename(dest)
+    _wal_recovery = {"quarantined_wal": str(dest), "error": str(e)[:500]}
+    logger.error("WAL replay failed (%s). Moved WAL to %s and retrying.", e, dest)
+
+
+def _connect_with_recovery() -> duckdb.DuckDBPyConnection:
+    quarantined = False
+    lock_retries = 0
+    while True:
+        try:
+            return duckdb.connect(str(DB_PATH))
+        except duckdb.Error as e:
+            # A crash or kill mid-write can leave a WAL that fails to replay
+            # (IOException or InternalException depending on the damage).
+            # Without this, every later launch fails the same way.
+            if not quarantined and _is_wal_replay_error(e):
+                _quarantine_wal(e)
+                quarantined = True
+                continue
+            # Lock held by another process (e.g. previous backend still exiting)
+            if isinstance(e, duckdb.IOException) and lock_retries < 9:
+                lock_retries += 1
+                time.sleep(1)
+                continue
+            raise
+
+
+def get_wal_recovery() -> dict | None:
+    return _wal_recovery
+
+
+def request_shutdown() -> None:
+    _shutdown_event.set()
+
+
+def shutdown_requested() -> bool:
+    return _shutdown_event.is_set()
 
 
 def get_read_cursor() -> duckdb.DuckDBPyConnection:
@@ -81,7 +138,7 @@ def cleanup_request_cursors():
     _request_cursors.set(None)
 
 
-def db_lock() -> threading.Lock:
+def db_lock() -> threading.RLock:
     """Return the lock that must be held during write operations."""
     return _lock
 
@@ -117,10 +174,31 @@ def close_db():
     with _lock:
         if _conn is not None:
             try:
+                # Flush the WAL into the DB file so a later hard kill
+                # can't leave anything to replay.
+                _conn.execute("CHECKPOINT")
+            except Exception:
+                logger.exception("CHECKPOINT on close failed")
+            try:
                 _conn.close()
             except Exception:
                 pass
             _conn = None
+
+
+def _add_column_if_missing(
+    conn: duckdb.DuckDBPyConnection, table: str, column: str, ddl: str,
+) -> None:
+    """ALTER TABLE ADD COLUMN only when needed, instead of catching the error
+    (a failed statement aborts the surrounding transaction, if there is one)."""
+    exists = conn.execute(
+        "SELECT 1 FROM duckdb_columns() WHERE database_name = current_database() "
+        "AND schema_name = current_schema() "
+        "AND table_name = ? AND column_name = ?",
+        [table, column],
+    ).fetchone()
+    if not exists:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
 
 
 def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
@@ -286,6 +364,9 @@ def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
             iso_raise_opp BOOLEAN DEFAULT FALSE,
             faced_squeeze BOOLEAN DEFAULT FALSE,
             fold_to_squeeze BOOLEAN
+
+            -- H2N columns (h2n_pos, h2n_*_opp/case bitmasks, is_winner, hv_*)
+            -- are added below from app.h2n.columns.H2N_COLUMNS
         )
     """)
     conn.execute("""
@@ -396,10 +477,11 @@ def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
         ("pot_type", "VARCHAR DEFAULT 'SRP'"),
         ("is_multiway", "BOOLEAN DEFAULT FALSE"),
     ]:
-        try:
-            conn.execute(f"ALTER TABLE hand_players ADD COLUMN {col} {default}")
-        except duckdb.CatalogException:
-            pass
+        _add_column_if_missing(conn, "hand_players", col, default)
+
+    # H2N-compatible columns (contract: app/h2n/CONTRACT.md)
+    for col, ddl, _ in H2N_COLUMNS:
+        _add_column_if_missing(conn, "hand_players", col, ddl)
 
     # Migrations for hands table
     for col, default in [
@@ -408,16 +490,10 @@ def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
         ("rit_boards", "INTEGER DEFAULT 1"),
         ("is_cashout", "BOOLEAN DEFAULT FALSE"),
     ]:
-        try:
-            conn.execute(f"ALTER TABLE hands ADD COLUMN {col} {default}")
-        except duckdb.CatalogException:
-            pass
+        _add_column_if_missing(conn, "hands", col, default)
 
     # Migration for board_cards table
-    try:
-        conn.execute("ALTER TABLE board_cards ADD COLUMN board_number INTEGER DEFAULT 1")
-    except duckdb.CatalogException:
-        pass
+    _add_column_if_missing(conn, "board_cards", "board_number", "INTEGER DEFAULT 1")
 
     # Backfill game_mode: RC* hands → Fast Fold, everything else → ''
     try:
@@ -487,6 +563,9 @@ def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
     # Add workspace_id to player_classifications for workspace-scoped classification
     _migrate_player_classifications_workspace(conn)
 
+    # One tag per (workspace, hand, tag), one note per (workspace, hand)
+    _ensure_tag_note_keys(conn)
+
     # Check stat version — trigger rebuild if outdated
     _check_stat_version(conn)
 
@@ -539,10 +618,7 @@ def _migrate_to_workspaces(conn: duckdb.DuckDBPyConnection) -> None:
     )
 
     # 4. Add workspace_id column to hands table
-    try:
-        conn.execute("ALTER TABLE hands ADD COLUMN workspace_id INTEGER DEFAULT 1")
-    except duckdb.CatalogException:
-        pass  # Column already exists
+    _add_column_if_missing(conn, "hands", "workspace_id", "INTEGER DEFAULT 1")
 
     # 5. Backfill any NULL workspace_id values
     conn.execute("UPDATE hands SET workspace_id = 1 WHERE workspace_id IS NULL")
@@ -651,10 +727,7 @@ def _migrate_child_workspace_id(conn: duckdb.DuckDBPyConnection) -> None:
     logger.info("Adding workspace_id to child tables...")
 
     for table in ("hand_players", "actions", "board_cards", "hand_tags", "hand_notes"):
-        try:
-            conn.execute(f"ALTER TABLE {table} ADD COLUMN workspace_id INTEGER")
-        except duckdb.CatalogException:
-            pass  # column already exists
+        _add_column_if_missing(conn, table, "workspace_id", "INTEGER")
 
         # Backfill from hands table
         conn.execute(f"""
@@ -1009,6 +1082,64 @@ def _migrate_hands_composite_key(conn: duckdb.DuckDBPyConnection) -> None:
     logger.info("Hands composite key migration complete.")
 
 
+def _ensure_tag_note_keys(conn: duckdb.DuckDBPyConnection) -> None:
+    """Unique keys for hand_tags / hand_notes that include workspace_id.
+
+    The original keys (hand_id, tag) and (hand_id) ignored the workspace, and
+    the composite-key migration rebuilt both tables with CREATE TABLE AS,
+    which dropped them entirely, so duplicates were possible. Idempotent.
+    """
+    existing = {
+        r[0] for r in conn.execute(
+            "SELECT index_name FROM duckdb_indexes() "
+            "WHERE index_name IN ('uq_hand_tags', 'uq_hand_notes')"
+        ).fetchall()
+    }
+    if "uq_hand_tags" not in existing:
+        dupes = conn.execute("""
+            SELECT COUNT(*) FROM (
+                SELECT 1 FROM hand_tags GROUP BY workspace_id, hand_id, tag HAVING COUNT(*) > 1
+            )
+        """).fetchone()[0]
+        if dupes:
+            logger.info("Removing duplicate hand_tags for %d (workspace, hand, tag) keys", dupes)
+            conn.execute("""
+                CREATE OR REPLACE TEMP TABLE _tags_dedup AS
+                SELECT hand_id, tag, MIN(created_at) AS created_at, workspace_id
+                FROM hand_tags GROUP BY workspace_id, hand_id, tag
+            """)
+            conn.execute("DELETE FROM hand_tags")
+            conn.execute(
+                "INSERT INTO hand_tags (hand_id, tag, created_at, workspace_id) "
+                "SELECT hand_id, tag, created_at, workspace_id FROM _tags_dedup"
+            )
+            conn.execute("DROP TABLE _tags_dedup")
+        conn.execute("CREATE UNIQUE INDEX uq_hand_tags ON hand_tags(workspace_id, hand_id, tag)")
+
+    if "uq_hand_notes" not in existing:
+        dupes = conn.execute("""
+            SELECT COUNT(*) FROM (
+                SELECT 1 FROM hand_notes GROUP BY workspace_id, hand_id HAVING COUNT(*) > 1
+            )
+        """).fetchone()[0]
+        if dupes:
+            logger.info("Removing duplicate hand_notes for %d (workspace, hand) keys", dupes)
+            # Keep the most recently updated note
+            conn.execute("""
+                CREATE OR REPLACE TEMP TABLE _notes_dedup AS
+                SELECT hand_id, arg_max(note, updated_at) AS note,
+                       MAX(updated_at) AS updated_at, workspace_id
+                FROM hand_notes GROUP BY workspace_id, hand_id
+            """)
+            conn.execute("DELETE FROM hand_notes")
+            conn.execute(
+                "INSERT INTO hand_notes (hand_id, note, updated_at, workspace_id) "
+                "SELECT hand_id, note, updated_at, workspace_id FROM _notes_dedup"
+            )
+            conn.execute("DROP TABLE _notes_dedup")
+        conn.execute("CREATE UNIQUE INDEX uq_hand_notes ON hand_notes(workspace_id, hand_id)")
+
+
 def get_rebuild_status() -> dict:
     """Return current background rebuild status."""
     return dict(_rebuild_status)
@@ -1025,7 +1156,15 @@ def _check_stat_version(conn: duckdb.DuckDBPyConnection) -> None:
     db_version = int(row[0]) if row else 0
 
     hand_count = conn.execute("SELECT COUNT(*) FROM hands").fetchone()[0]
-    if db_version >= STAT_VERSION or hand_count == 0:
+    if hand_count == 0 and db_version < STAT_VERSION:
+        # Empty DB: everything imported from now on uses the current flags.
+        # Without this, the first import is rebuilt again on the next launch.
+        conn.execute(
+            "INSERT OR REPLACE INTO settings VALUES ('stat_version', ?)",
+            [str(STAT_VERSION)],
+        )
+        return
+    if db_version >= STAT_VERSION:
         return
 
     logger.info(

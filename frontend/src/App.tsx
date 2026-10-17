@@ -17,6 +17,7 @@ import ImportOverlay from '@/components/ImportOverlay';
 import DragDropOverlay from '@/components/DragDropOverlay';
 import AppSidebar from '@/components/AppSidebar';
 import RebuildBanner from '@/components/RebuildBanner';
+import DbRecoveryBanner from '@/components/DbRecoveryBanner';
 import UpdateBanner from '@/components/UpdateBanner';
 import { getStatDisplayName } from '@/lib/stat-registry';
 import StatsPage from './pages/StatsPage';
@@ -31,8 +32,10 @@ import PopulationPage from './pages/PopulationPage';
 import WorkspaceSettingsPage from './pages/WorkspaceSettingsPage';
 import ComparePage from './pages/ComparePage';
 import IdentityDetailPage from './pages/IdentityDetailPage';
+import GeneralPage from './pages/GeneralPage';
 const PAGE_LABELS: Record<string, string> = {
   '/stats': 'Stats',
+  '/general': 'General',
   '/range': 'Range',
   '/graph': 'Results',
   '/sessions': 'Sessions',
@@ -121,6 +124,7 @@ export default function App() {
                 <Route path="/" element={<Navigate to="/graph" replace />} />
                 <Route path="/stats" element={<StatsPage />} />
                 <Route path="/stats/:statKey" element={<StatsPage />} />
+                <Route path="/general" element={<GeneralPage />} />
                 <Route path="/graph" element={<GraphPage />} />
                 <Route path="/range" element={<RangePage />} />
                 <Route path="/hands" element={<HandsPage />} />
@@ -136,6 +140,7 @@ export default function App() {
                 <Route path="*" element={<Navigate to="/graph" replace />} />
               </Routes>
             </main>
+            <DbRecoveryBanner />
             <RebuildBanner />
             <UpdateBanner />
           </SidebarInset>

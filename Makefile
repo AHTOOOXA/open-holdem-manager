@@ -28,8 +28,10 @@ electron-build:
 	cd backend && pyinstaller --name ohm-backend --onedir --noconfirm --clean \
 		--collect-submodules uvicorn --collect-submodules fastapi \
 		--collect-submodules starlette --collect-submodules pydantic \
-		--collect-submodules duckdb --hidden-import multipart \
+		--collect-submodules duckdb --collect-all eval7 \
+		--collect-submodules pyparsing --hidden-import multipart \
 		run_server.py
+	cd backend && ./dist/ohm-backend/ohm-backend --self-check
 	npx electron-builder
 
 # Release: bump version, commit, tag, push → CI builds & publishes

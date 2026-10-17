@@ -45,6 +45,11 @@ RE_SMALL_BLIND = re.compile(
 RE_BIG_BLIND = re.compile(
     r"^(.+?) posts big blind \[\$([0-9.]+)\]$"
 )
+# Posting out of turn: "[$dead + $live]" — the small-blind part is dead money,
+# the big-blind part is a live bet (the player can check preflop)
+RE_DEAD_BLIND = re.compile(
+    r"^(.+?) posts dead blind \[\$([0-9.]+) \+ \$([0-9.]+)\]$"
+)
 RE_DEALT = re.compile(
     r"^Dealt to (.+?) \[ (.+?) \]$"
 )
@@ -274,6 +279,22 @@ def parse_hand_history(hand_text: str) -> ParsedHand:
             })
             continue
 
+        m = RE_DEAD_BLIND.match(line)
+        if m:
+            uname = m.group(1)
+            for action, amt in (("ante", Decimal(m.group(2))), ("bb", Decimal(m.group(3)))):
+                if amt <= _ZERO:
+                    continue
+                action_order += 1
+                actions_by_street["preflop"].append({
+                    "username": uname,
+                    "action": action,
+                    "amount": amt,
+                    "is_all_in": False,
+                    "order": action_order,
+                })
+            continue
+
         # Shows hand
         m = RE_SHOWS.match(line)
         if m:
@@ -391,7 +412,9 @@ def parse_hand_history(hand_text: str) -> ParsedHand:
             amt = a["amount"]
 
             if action in _INVEST_ACTIONS:
-                street_put_in[uname] = street_put_in.get(uname, _ZERO) + amt
+                # Dead money doesn't count toward the street's bet
+                if action != "ante":
+                    street_put_in[uname] = street_put_in.get(uname, _ZERO) + amt
                 total_invested += amt
             elif action == "raise":
                 already_in = street_put_in.get(uname, _ZERO)
@@ -402,6 +425,16 @@ def parse_hand_history(hand_text: str) -> ParsedHand:
 
     total_uncalled = sum(uncalled_returns.values())
     total_collected = sum(collected.values())
+    # When nobody else put money in (e.g. a lone small blind and a walk),
+    # "collected" is just the player's own blind coming back, which is also
+    # the uncalled return. Don't credit it twice.
+    if total_collected > total_invested - total_uncalled:
+        for uname, amt in uncalled_returns.items():
+            if uname in collected:
+                collected[uname] -= amt
+                if collected[uname] <= _ZERO:
+                    del collected[uname]
+        total_collected = sum(collected.values())
     total_rake = total_invested - total_uncalled - total_collected
     if total_rake < _ZERO:
         total_rake = _ZERO

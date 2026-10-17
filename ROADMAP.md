@@ -1,366 +1,221 @@
 # Integrated Product + Marketing Roadmap
 
-## Context
+> Updated 2026-10-18. Replaces the "query engine is the launch" plan from March 2026.
+> No dates: phases run in order, each item carries an effort estimate.
 
-OHM is at v0.0.10 alpha -- core features work but the product hasn't been publicly launched. The goal is to create a coordinated roadmap where every development sprint produces something marketable, and every marketing action is timed to a feature that's ready to demo. Constraints: 5-15 hrs/week, zero budget, dual goal of user adoption + portfolio credibility.
+**Effort scale** (focused work, not calendar time):
+**S** = a session or two · **M** = a few days · **L** = one to two weeks · **XL** = several weeks, split into milestones
+
+## Where we are
+
+OHM is at v0.0.10 alpha, not publicly launched. Constraints: 5-15 hrs/week, zero budget, dual goal of
+user adoption + portfolio credibility. Done since the last roadmap:
+
+- **7 site parsers** (GG, PS, 888, WPN, Winamax, iPoker, partypoker), each checked by a per-hand money
+  invariant on every fixture hand.
+- **25 data-safety and money bugs** from the uhayate fork fixed, plus ~10 more found along the way
+  ([docs/specs/BUGS-FROM-FORK.md](docs/specs/BUGS-FROM-FORK.md)): clean shutdown, WAL recovery,
+  transactional import and rebuild, all-in EV in packaged builds.
+- **Import from Hand2Note 4** in one click ([docs/specs/H2N-IMPORT.md](docs/specs/H2N-IMPORT.md)):
+  75,865 real hands, 0 errors.
+- **Hand2Note-compatible stats and General screen**
+  ([docs/specs/H2N-COMPATIBLE-STATS.md](docs/specs/H2N-COMPATIBLE-STATS.md)): 102/102 cells identical to
+  Hand2Note on 75,849 real hands; stat popup (Range / Boards / Bet Sizes / Hands); Hand2Note's money rules
+  for winnings, rake and all-in EV. The Stats page uses the same definitions.
+
+## Strategy: "Hand2Note, free and open source"
+
+Hand2Note dropped its free tier (Jan 2025) and is closed. OHM reads a Hand2Note database in one click and
+shows the same numbers. That's the launch story, and it beats "PostHog for poker": players switch tools
+for **their numbers and their HUD**, not for a query language.
+
+Positioning:
+- **Switch in one click, same numbers.** Import from Hand2Note (PT4 / HM3 next), parity 102/102.
+- **Free and open source** (AGPL), Mac + Windows + Linux, fully local.
+- **Open data**: DuckDB, documented schema, REST API, SQL. The NL query engine stays on the roadmap as a
+  differentiator, not as the launch gate (see [docs/vision/MONETIZATION.md](docs/vision/MONETIZATION.md):
+  it's a UX feature, not a revenue line).
+
+Launch in two steps, because the main market can't use a HUD anyway: **GGPoker doesn't allow third-party
+HUDs**, so GG grinders (and the CIS market) need exactly what's built now. Soft-launch to them first, then
+the big launch once the HUD covers the sites that allow one.
 
 ## Core Principle
 
-**Never build silently.** Every 2-3 week sprint ends with a release that has a story to tell. Development and marketing alternate in a rhythm: build -> ship -> promote -> listen -> build.
-
-## Strategy: Three Launch Pillars
-
-### Pillar 1: Multi-Site Support
-
-Each new parser unlocks a new community to announce in. Launching with 3-4 sites means a stronger launch story and larger addressable audience. **DONE** -- all 7 parsers shipped (GG, PS, 888, WPN, Winamax, iPoker, partypoker). See [docs/archive/MULTI-SITE-PARSERS-PRD.md](docs/archive/MULTI-SITE-PARSERS-PRD.md) for the completed spec.
-
-### Pillar 2: Natural Language Query Engine ("PostHog for Poker")
-
-No poker tool lets you ask questions in plain English. This is ~20-25 hours of work but **changes what the product is** -- from "another tracker" to "poker analytics engine." See [docs/vision/PRODUCT-VISION.md](docs/vision/PRODUCT-VISION.md) for the full concept.
-
-### Pillar 3: Open Platform & Extensibility
-
-No poker tracker has a public API, JSON export, webhook system, or plugin architecture. OHM already has 60+ REST endpoints -- they just aren't documented or marketed. See [docs/vision/EXTENSIBILITY.md](docs/vision/EXTENSIBILITY.md) for architecture details.
-
-The three pillars reinforce each other:
-- **Multi-site** proves it's serious (breadth)
-- **Query engine** proves it's different (depth)
-- **Open platform** creates the community flywheel (ecosystem)
-
-Together they make the Reddit headline: **"I built a poker analytics engine -- ask any question about your game in English. Free, open-source, supports PokerStars/GGPoker/888/WPN. Full API included."**
+**Never build silently.** Every phase ends with a release that has a story to tell:
+build -> ship -> promote -> listen -> build.
 
 ---
 
-## Phase 0: Parsers + Query Engine + API + Polish (Weeks 1-5)
+## Phase 0: Must-haves + soft launch
 
-### Product Work -- Parsers (Weeks 1-3) -- DONE
-- ~~Build PokerStars, 888poker, and WPN parsers~~ All 7 parsers shipped (GG, PS, 888, WPN, Winamax, iPoker, partypoker)
-- ~~Add auto-detection in import flow (detect site from file format)~~ `detect_parser()` registry working
-- ~~Test all parsers end-to-end: import -> stats -> graph -> hand replay~~ 359 tests passing
-- Spec completed and archived: [docs/archive/MULTI-SITE-PARSERS-PRD.md](docs/archive/MULTI-SITE-PARSERS-PRD.md)
+### Ship what's done
+| Item | Effort |
+|---|---|
+| Split the `fix/fork-bugs` branch into reviewable commits, release **v0.1.0** (`STAT_VERSION` bump = one rebuild per install; release notes cover the money, position and stat-definition changes) | S |
+| Clean-machine install test on macOS and Windows; verify Hand2Note's default database path on Windows | S |
+| One source of truth per stat: decide the Stats page vs General page split (General = Hand2Note layout, Stats = OHM extras like BB defense) | S |
 
-### Product Work -- Query Engine (Weeks 2-4)
+### Must-have features
+| Item | Effort |
+|---|---|
+| **Auto-import**: watch hand history folders per site, import new hands as they're written. Also the foundation of the HUD | M |
+| **Import from PokerTracker 4 / Holdem Manager 3**: both keep the original hand history text in PostgreSQL; extract it and reuse the parsers, like the Hand2Note import | M (S per tool once the first one exists) |
+| **Line filters**: UI builder ("3-bet BTN -> called -> c-bet flop -> faced raise") on the Hand2Note-compatible action matcher that already exists; applies to every report, graph and the hand list. Builder part of [docs/specs/QUERY-ENGINE-PRD.md](docs/specs/QUERY-ENGINE-PRD.md) | L |
+| **Preflop range grid** (13x13) in the stat popup for preflop stats | S |
+| **Opponent selector** on the General page (any player, vs-hero values) | M |
+| **Smart reports**: Hand2Note-style next-action drill-down (faced next / next actions) from the popup | M |
 
-The "PostHog for Poker" feature. ~20-25 hours total. See [docs/vision/PRODUCT-VISION.md](docs/vision/PRODUCT-VISION.md) for design details.
+### Marketing -- soft launch
+- GitHub README + release with screenshots: General screen side by side with Hand2Note
+- **2+2 Software forum + r/GGPoker**: "Free open-source Hand2Note alternative -- import your H2N database in
+  one click, same numbers (102/102 stats on 75k hands)". GG players first: they can't use a HUD anyway
+- Russian GG community (Telegram, gipsyteam): the same post in Russian
 
-1. **Document the schema** -- `SCHEMA.md` with every table, column, and plain-English description (2 hours)
-2. **Build the semantic layer** -- YAML mapping poker terms -> SQL patterns, all 60+ stats (4 hours)
-3. **Build the query endpoint** -- `POST /api/query/ask`, Claude Haiku, read-only DuckDB, agent retry (8 hours)
-4. **Build the frontend** -- Query bar, results card, suggested questions, Copy SQL / Edit & Re-run (8 hours)
-5. **API key strategy**: BYOK (user provides their own key in Settings)
-
-### Product Work -- API & Platform Foundation (Weeks 4-5)
-
-~4 hours of work, massive differentiation. See [docs/vision/EXTENSIBILITY.md](docs/vision/EXTENSIBILITY.md) Layer 1.
-
-1. **API documentation** -- Add descriptions to all 60+ endpoint docstrings, link `/docs`
-2. **Export endpoints** -- `GET /api/export/hands?format=json|csv`, `GET /api/export/stats?format=json|csv`, `POST /api/query/sql`
-3. **Port discovery for Electron** -- Write port to `~/.ohm/api-port`, permissive CORS for `127.0.0.1`
-
-### Product Work -- Polish (Weeks 3-5)
-- Fix hand replayer visual polish (most screenshot-able feature)
-- Restore leak detection / drift analysis widgets on stat detail pages
-- Fix any RIT/Cashout bugs that affect daily use for GGPoker grinders
-- Ensure Electron installer works cleanly on macOS and Windows
-- Test import flow end-to-end with fresh install (first-time user experience)
-- Landing page: add real screenshots, query engine demo GIF
-
-### Marketing Prep (parallel, weeks 4-5)
-- Record 2-minute screen capture GIF: import -> stats -> ask a question -> get results -> graph -> hand replay
-- Take 5-6 polished screenshots
-- Write draft Reddit post for r/poker (don't post yet)
-- Create GitHub README with screenshots, supported sites, query engine showcase, API docs link
-- Set up GitHub Discussions
-
-### Gate: Don't proceed to Phase 1 until a fresh install on a clean machine works without friction AND at least 3 site parsers AND the query engine AND API docs are ready.
+### Gate: clean install works on both OSes, auto-import + PT4/HM3 import shipped, v0.1.0 released.
 
 ---
 
-## Phase 1: Launch -- "Poker Analytics Engine" (Week 6)
+## Phase 1: HUD -- the key feature for poker players
 
-### The Headline
+The HUD is why most players pay for a tracker. It goes first, right after the must-haves. **Overall: XL.**
 
-**"I built a poker analytics engine -- ask any question about your game in plain English. Free, open-source, supports PokerStars/GGPoker/888/WPN. Full API included."**
+### Scope
+- **Sites**: those that allow third-party HUDs -- PokerStars, WPN, iPoker, 888, Winamax, partypoker (check
+  each site's current HUD policy before shipping). **Not GGPoker** (prohibited; GG players get the review
+  tools instead)
+- HUD numbers come from the same Hand2Note-compatible matcher, so they equal the General screen
 
-### Marketing Actions
-1. **Reddit r/poker** -- Lead with query engine GIF. Mention: free, open-source, no HUD, modern UI, Mac+Windows+Linux, 4 sites, full API.
-2. **Reddit r/GGPoker** -- Tailored post for GGPoker features + query engine
-3. **Reddit r/pokerstars** -- Tailored post for Stars players
-4. **TwoPlusTwo Software Forum** -- Lead with query engine + API. "Your data, your queries. Every column documented."
-5. **GitHub repo polish** -- Star-worthy README with query engine demo
+| Item | Effort |
+|---|---|
+| Research: Hand2Note's default HUD and HUD-popup layouts (which stats, where), described in our own words like the General screen | S |
+| **Real-time pipeline**: tail hand history files as hands finish (on top of auto-import), incremental stat updates per player, under 100 ms per table refresh with 20 tables open | M |
+| **Table detection**: find table windows per site (title parsing), map seats per table size, follow move/resize/minimize | L |
+| **Overlay windows**: transparent always-on-top panels per table, Windows first (most of the HUD market) | L |
+| macOS overlay support (window APIs and permissions differ) | L |
+| **HUD stats panel**: default layout VPIP / PFR / 3-Bet / Fold to 3-Bet / C-Bet / Fold to C-Bet / Steal / hands, sample-size display | M |
+| **HUD popups**: click a stat -> the same popup as the General page (Range / Boards / Bet Sizes / Hands) | M |
+| **Player notes, tags, color labels** (player type classification already exists) | M |
+| **Layout editor**: drag stats, per table size, import/export layouts as JSON | L |
 
-### Expected Outcome
-- 200-500 downloads in first week
-- 30-60 active users providing feedback
-- Query engine generates social sharing (people screenshot their results)
-- First API consumers
+### Milestones
+1. **HUD v0**: PokerStars on Windows, fixed default layout, real-time stats
+2. **HUD v1**: all HUD-friendly sites, macOS, popups, notes, layout editor
 
-### Product Work During This Week
-- Monitor and fix bugs reported by first users (priority #1)
-- Respond to every comment within hours
-- Parser-specific bugs get hot-fixed immediately
-- Monitor query accuracy -- add failing questions to semantic layer
-
----
-
-## Phase 2: Feedback Sprint + Query Hardening + Events (Weeks 7-10)
-
-### Product Work -- Core
-- Fix top 3-5 bugs reported by early users
-- **Query engine hardening**: Add every failed/inaccurate query to the example set
-- **Saved queries / views**: Let users save and share queries
-- Build the #1 most-requested feature (unknown yet -- let users decide)
-- Add any quick-win parsers requested by users
-
-### Product Work -- Event System (3-5 days)
-
-See [docs/vision/EXTENSIBILITY.md](docs/vision/EXTENSIBILITY.md) Layer 2 for architecture.
-
-1. **Internal event bus** -- Python `asyncio` pub/sub. Events: `hand_imported`, `import_completed`, `session_ended`
-2. **WebSocket endpoint** -- `WS /api/ws/events` for real-time consumers
-3. **Webhook delivery** -- `POST /api/settings/webhooks` to configure URLs
-4. **Auto study tagger** -- Built-in feature using event system (configurable rules)
-
-### Marketing Actions
-- **Week 7**: Changelog post to 2+2 thread
-- **Week 8**: Comment in relevant Reddit threads (don't spam, only when genuine)
-- **Week 8**: Share Discord bot example using webhooks. Post to poker Discord servers.
-- **Week 9-10**: Blog post: "Why I built a poker analytics engine" -- the PostHog thesis, tech decisions. SEO + portfolio.
-
-### Expected Outcome
-- 300-800 total users
-- First webhook/Discord integrations built by community
-- Query accuracy improving with every real-world question
+### Marketing -- the big launch
+**"Free, open-source Hand2Note alternative: HUD, same stats, one-click import. Mac + Windows."**
+1. **Reddit r/poker**: GIF of importing an H2N database -> General screen -> HUD at a table
+2. **Reddit r/pokerstars**, **TwoPlusTwo**: HUD + "your numbers match Hand2Note"
+3. **GitHub release v0.2.0** with release notes
 
 ---
 
-## Phase 3: Hacker News + Parser Plugins + Stat Packs (Weeks 11-14)
+## Phase 2: Feedback sprint + Open Data
 
-### Product Work -- Features
-- Hand sharing (shareable link/image for replayer) -- the viral feature
-- **Community query library**: Curated saved queries users can browse and run
-- Population stats polish (board texture analysis)
-- Performance tuning for large databases (100k+ hands)
+| Item | Effort |
+|---|---|
+| Fix the top bugs from launch users (priority #1), HUD reliability per site | ongoing |
+| **API documentation**: describe all endpoints, link `/docs` ([docs/vision/EXTENSIBILITY.md](docs/vision/EXTENSIBILITY.md) Layer 1) | S |
+| **Export**: `GET /api/export/hands|stats?format=json|csv`, read-only `POST /api/query/sql` | S |
+| **Import your custom stats from Hand2Note** (the user's own stat files -> OHM stat definitions) | M |
+| **Saved filters / views** | M |
 
-### Product Work -- Parser Plugin Interface (1 week)
-
-See [docs/vision/EXTENSIBILITY.md](docs/vision/EXTENSIBILITY.md) Layer 3 for plugin architecture.
-
-1. Extract shared types to `parsers/common.py`
-2. Define parser interface + plugin loader for `~/.ohm/plugins/`
-3. Auto-detection: suggest plugins for unrecognized files
-4. Template repo: `ohm-parser-template` on GitHub
-5. Contribution guide: "How to add support for your poker site in a weekend"
-
-### Product Work -- Custom Stat Packs (3-5 days)
-
-JSON-based stat definitions that appear alongside built-in stats and auto-register in the NL query engine. See [docs/vision/EXTENSIBILITY.md](docs/vision/EXTENSIBILITY.md) for the stat pack format.
-
-### Marketing Actions
-1. **Hacker News** -- "Show HN: PostHog for poker -- ask your hand history database anything in plain English." HN loves: open-source, DuckDB, LLM-powered, extensible platforms.
-2. **GitHub release** -- Proper v0.2.0 with release notes
-3. **YouTube video** (3-5 min): "Ask Any Question About Your Poker Game in English"
-4. **"Build a parser" CTA** -- Post in Discords and 2+2
-5. **Poker Discord servers** -- Join, be helpful, mention OHM when relevant
-
-### Expected Outcome
-- 600-2,000 total users
-- 50-200 GitHub stars (more if HN hits front page)
-- First community parser PR
-- First community stat pack shared
+Marketing: changelog posts to the 2+2 thread; "Only tracker with a public API and SQL".
 
 ---
 
-## Phase 4: AI Deep Features + SEO (Months 4-6)
+## Phase 3: NL Query Engine + Events
 
-### Product Work -- AI Features
-- **AI session summary**: "Summarize my last session" -> narrative from queried data
-- **AI leak detection**: "What are my biggest leaks?" -> compare stats to benchmarks
-- **AI opponent scouting**: "Give me a scouting report on RegShark99" -> actionable game plan
-- **Solver bridge** (if feasible): Compare actual play to GTO output
-- Drift detection polish
+| Item | Effort |
+|---|---|
+| **NL query engine** ("PostHog for poker"): plain English -> SQL + results, BYOK. The Phase 0 line-filter builder is already the visual half. See [docs/specs/QUERY-ENGINE-PRD.md](docs/specs/QUERY-ENGINE-PRD.md), [docs/vision/PRODUCT-VISION.md](docs/vision/PRODUCT-VISION.md) | L |
+| **Event bus** (`hand_imported`, `import_completed`, `session_ended`) + `WS /api/ws/events` (the HUD already needs a live channel) | M |
+| Webhooks + auto study tagger ([docs/vision/EXTENSIBILITY.md](docs/vision/EXTENSIBILITY.md) Layer 2) | M |
 
-### Product Work -- Tilt Detector (built-in, uses event system)
-- Monitor rolling VPIP/PFR/aggression over last 20-50 hands
-- Desktop notification when stats deviate from baseline
-- Log tilt episodes for later review
-
-### Product Work -- SEO
-- Landing page content targeting "free poker tracker," "poker analytics engine," etc.
-
-### Marketing Actions
-1. Reddit post: "My free poker tracker now finds your leaks, scouts opponents, and detects tilt"
-2. Hand sharing viral loop: shared pages have "Analyzed with OHM" branding
-3. 2+2 strategy subforums: Post OHM-generated analysis examples
-
-### Expected Outcome
-- 1,500-4,000 total users
-- AI features create strong portfolio differentiation
-- SEO starts producing organic traffic
+Marketing: **Hacker News** "Show HN: open-source poker tracker -- Hand2Note-compatible stats, HUD, ask
+your database anything"; a short YouTube demo.
 
 ---
 
-## Phase 5: Streamers + Frontend Plugins + Product Hunt (Months 7-9)
+## Phase 4: Plugins + Stat Packs + Sharing
 
-### Product Work -- OBS Overlay
-- Transparent HTML page at `http://127.0.0.1:{port}/overlay/session`
-- Streamers add as OBS Browser Source
-- Auto-updates via WebSocket. No competitor offers this.
+| Item | Effort |
+|---|---|
+| **Parser plugin interface** + template repo + "add your site in a weekend" guide ([docs/vision/EXTENSIBILITY.md](docs/vision/EXTENSIBILITY.md) Layer 3) | L |
+| **Custom stat packs**: stat definitions as data on the same matcher; show up in HUD, reports and queries | M |
+| **Hand sharing** (link/image from the replayer): the viral loop | M |
+| Population stats polish, performance for 1M+ hand databases | L |
 
-### Product Work -- Frontend Plugin System (1-2 weeks)
-
-See [docs/vision/EXTENSIBILITY.md](docs/vision/EXTENSIBILITY.md) Layer 3 for architecture.
-
-- Plugin manifest (VS Code-inspired, declarative `contributes`)
-- Frontend plugin loader for `~/.ohm/plugins/`
-- Plugin API: `addStatPanel()`, `addPage()`, `addSettingTab()` with auto-cleanup
-- `useOHMData()` hook + opinionated component library
-
-### Product Work -- Session Replayer
-- Walk through last session hand by hand with AI annotations
-- More parsers based on community demand
-
-### Marketing Actions
-1. **Poker streamer outreach** -- Lead with OBS overlay. One yes = 1000s of eyeballs.
-2. **Product Hunt launch** -- "Open-source poker analytics with AI and a plugin ecosystem"
-3. **Plugin showcase** -- Highlight first community plugins
-
-### Expected Outcome
-- 2,000-5,000 total users
-- Streamer coverage provides outsized ROI
-- 3-5 community plugins live
+Marketing: "Build a parser" CTA, stat pack sharing on 2+2, poker Discords.
 
 ---
 
-## Phase 6: Marketplace + Scale + Monetize (Months 10-12)
+## Phase 5: Streamers + AI as interface
 
-### Product Work -- Plugin Marketplace
-- `community-plugins.json` registry in GitHub repo (Obsidian model)
-- In-app browser: search, filter by type, one-click install
-- `create-ohm-plugin` CLI scaffolding tool
-- Submission process: PR to registry -> automated validation -> code review
-
-### Product Work -- Freemium
-- **Free tier** (forever): All pre-built stats, graphs, replayer, sharing, 50 NL queries/day, community plugins, API access
-- **Pro tier** ($8-15/mo): Unlimited NL queries, AI summaries/leak detection/scouting, solver bridge, cloud sync, saved views
-- Pro users: proxied LLM calls (no BYOK needed)
-
-### Product Work -- Scale
-- Localization framework (Russian first -- huge GGPoker CIS market)
-- Performance optimization for 1M+ hand databases
-- Plugin system polish
-
-### Marketing Actions
-1. Freemium announcement on all channels
-2. Plugin marketplace launch
-3. Russian poker community outreach (if localized)
-4. "State of OHM" year-in-review blog post
-5. GitHub Sponsors / Open Collective
-
-### Expected Outcome
-- 3,000-8,000 total users
-- First paying customers (target: 50-100 at $8-15/mo = $400-1,500/mo)
-- 10+ community plugins
+| Item | Effort |
+|---|---|
+| **OBS overlay** (`/overlay/session` as a browser source, live via WebSocket) + streamer outreach | M |
+| **AI as an interface** only: session summaries and leak lists computed from real stats and benchmarks. No "AI coach" claims without population data or a solver baseline ([docs/vision/MONETIZATION.md](docs/vision/MONETIZATION.md)) | M |
+| Tilt detector (rolling stats vs baseline, desktop notification) | S |
+| Product Hunt launch | S |
 
 ---
 
-## Timeline Summary
+## Phase 6: Money + Scale
+
+Follow [docs/vision/MONETIZATION.md](docs/vision/MONETIZATION.md): the realistic path is **B2B for
+stables and coaches** (combined database = population sample, per-player leak views, coach exports),
+validated by 5 conversations before building. Consumer freemium only with proven demand.
+
+| Item | Effort |
+|---|---|
+| 5 conversations with stables / coaches (go / no-go) | S |
+| Stable workspace: several players' databases, per-player leaks, pool analysis, coach exports | XL |
+| Localization (Russian first: the GG CIS market) | M |
+| Plugin registry / marketplace, if the plugin ecosystem took off | L |
+| GitHub Sponsors / Open Collective | S |
+
+---
+
+## Phase order
 
 ```
-Month 1    [PARSERS + QUERY ENGINE + API]------[LAUNCH]
-              |                                   |
-              v                                   v
-           PS/888/WPN parsers               Reddit r/poker
-           NL query endpoint + UI           "Ask anything about your game"
-           Semantic layer + schema docs     r/GGPoker, r/pokerstars
-           API docs + export + SQL endpoint TwoPlusTwo, GitHub polish
-           Port discovery for Electron      "Only tracker with a public API"
-
-Month 2-3  [HARDENING + EVENTS + HN]
-              |                |
-              v                v
-           Query accuracy   Changelog posts
-           Saved views      Discord bot example
-           Event bus +      Hacker News Show HN
-             webhooks       YouTube "Ask your data"
-           Auto-tagger      Poker Discords
-
-Month 3-4  [PARSER PLUGINS + STAT PACKS]
-              |                |
-              v                v
-           Parser plugin     "Build a parser" CTA
-             interface       First community parser PR
-           Custom stat       Stat pack sharing
-             packs (JSON)    Plugin contribution guide
-           Hand sharing      Viral sharing loop
-
-Month 4-6  [AI FEATURES + SEO]
-              |                |
-              v                v
-           AI summaries     "OHM finds your leaks" post
-           Leak detection   2+2 strategy posts
-           Opponent scout   Tilt detector built-in
-           Solver bridge    SEO pages
-
-Month 7-9  [STREAMERS + FRONTEND PLUGINS + PH]
-              |                |
-              v                v
-           OBS overlay      Streamer outreach
-           Frontend plugin  Product Hunt launch
-             system         Plugin showcase
-           Session replay   SEO compounds
-
-Month 10-12 [MARKETPLACE + SCALE + MONETIZE]
-              |                |
-              v                v
-           Plugin browser   Marketplace launch
-           Freemium tier    Freemium announcement
-           Localization     Russian community
-           Performance      Year-in-review post
+0. MUST-HAVES        v0.1.0, auto-import, PT4/HM3 import,     -> soft launch to GG players
+                     line filters, range grid, opponent          (2+2, r/GGPoker, RU community)
+                     selector, smart reports
+1. HUD (XL)          real-time pipeline, table detection,     -> big launch (r/poker, r/pokerstars, 2+2)
+                     overlay (Win, then Mac), HUD stats =
+                     General stats, popups, notes, editor
+2. FEEDBACK + DATA   bugs, API docs, export, SQL, H2N stats   -> "public API + SQL" post
+3. NL QUERY + EVENTS query engine, event bus, webhooks        -> Show HN, YouTube
+4. PLUGINS + SHARING parser plugins, stat packs, hand sharing -> "build a parser" CTA
+5. OBS + AI UI       OBS overlay, AI summaries, tilt detector -> streamers, Product Hunt
+6. MONEY + SCALE     stables/coaches, localization            -> B2B pilots, RU community
 ```
 
-## Feature -> Marketing Pairing (Quick Reference)
+## Feature -> Marketing Pairing
 
 | Feature | Marketing Action | Why They're Paired |
 |---------|-----------------|-------------------|
-| **NL query engine** | **Reddit launch headline** | **"Ask any question in English" is the 10x differentiator** |
-| Multi-site support | Reddit launch across subreddits | Each parser unlocks a new community |
-| **API docs + export** | **Launch post + 2+2 thread** | **"Only poker tracker with a public API"** |
-| Event system + webhooks | Discord bot example post | First community integration |
-| Parser plugin interface | "Build a parser" CTA on HN + Discord | Community adds sites for you |
-| Saved views + queries | HN "PostHog for poker" post | HN audience gets the platform play |
-| Custom stat packs | Stat pack sharing on 2+2 | Community creates content |
-| Hand sharing | YouTube video + Discord | Viral loop: every shared hand = exposure |
-| AI leak detection | Reddit post + 2+2 strategy forums | "Wow" factor drives sharing |
-| OBS stream overlay | Streamer outreach | Overlay is the pitch hook |
-| Frontend plugin system | Product Hunt | "Open platform with plugin ecosystem" |
-| Plugin marketplace | Marketplace launch post | Community flywheel |
-| Freemium tier | Announcement across all channels | Only after proven demand |
-
-## Platform Evolution
-
-```
-Phase 0-1          Phase 2-3            Phase 4-5            Phase 6
-OPEN DATA          OPEN EVENTS          OPEN PLUGINS         MARKETPLACE
----------          -----------          ------------         -----------
-API docs           Event bus            Parser plugins       Plugin browser
-Export (JSON/CSV)  Webhooks             Stat packs           Community registry
-Raw SQL endpoint   WebSocket stream     Frontend panels      create-ohm-plugin CLI
-Schema docs        Auto-tagger          Custom pages         Submission review
-Port discovery     Discord bot example  Plugin API + hooks   Update checker
-
-"Your data"        "Your events"        "Your extensions"    "Your ecosystem"
-```
+| **H2N import + parity** | **Soft launch: "same numbers, free"** | **Removes the #1 reason not to switch** |
+| PT4 / HM3 import | Same post, more communities | Every tracker's users can move in a click |
+| **HUD** | **Big launch on r/poker + 2+2** | **The feature players actually choose a tracker for** |
+| Line filters | 2+2 study threads | Shows depth: any spot, any report |
+| API + SQL + export | "Only tracker with a public API" | Platform signal for technical players |
+| NL query engine | Show HN + YouTube | The "wow" demo for a broader audience |
+| Parser plugins | "Build a parser" CTA | Community adds sites for you |
+| Hand sharing | Discord / YouTube | Viral loop |
+| OBS overlay | Streamer outreach | One yes = thousands of viewers |
 
 ## Key Rules
 
 1. **Don't launch until install works on a clean machine.** First impressions are everything with zero budget.
-2. **The query engine IS the launch.** "Ask any question in English" is the headline. Multi-site support is the credibility proof. The API is the platform signal. Don't launch without all three.
-3. **Don't build features without a marketing moment.** If you can't tell a story about it, it's not the priority.
-4. **Don't market without a feature to back it.** Every post should link to something tangible.
-5. **Respond to every user within 24 hours.** At this scale, personal attention IS the marketing.
-6. **Ship every 2-3 weeks.** Momentum matters more than perfection.
-7. **The Reddit post is the highest-stakes moment.** You get one shot at a first-impression launch post. Don't waste it on a buggy build.
-8. **Each new parser = a new community to reach.** Parsers are cheap to build and each one multiplies your addressable audience.
-9. **Every failed query = training data.** Track accuracy. The engine gets better with use. This is the moat.
-10. **The API is the flywheel.** Every external tool built on OHM increases switching costs.
+2. **Parity is the launch.** "Your Hand2Note numbers, free and open source": every stat change keeps the
+   parity check green (102/102).
+3. **HUD comes right after the must-haves.** It's the key feature for players; nothing else jumps the queue.
+4. **Respect site rules.** No HUD where a site prohibits it (GGPoker); no hand mining.
+5. **Don't build features without a marketing moment**, and don't market without a feature to back it.
+6. **Ship often.** Momentum matters more than perfection.
+7. **Respond to every user within 24 hours.** At this scale, personal attention IS the marketing.
+8. **Each new import source or HUD site = a new community to reach.**
+9. **Interoperability only**: read the user's own data; no other tool's code or assets in this repo.

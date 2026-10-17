@@ -4,6 +4,7 @@ from fastapi import APIRouter, Query
 from pydantic import BaseModel
 from typing import Optional
 
+from app.date_filters import DATE_TO_SQL
 from app.db import get_read_cursor, get_hero_player_id
 from app.models import HeroStats
 from app.stats_engine import _AGG_SQL, _compute_stats_from_query
@@ -85,7 +86,7 @@ def _build_where(
         clauses.append("h.played_at >= ?")
         params.append(date_from)
     if date_to:
-        clauses.append("h.played_at <= ?")
+        clauses.append(DATE_TO_SQL)
         params.append(date_to)
 
     if exclude_hero:
@@ -199,10 +200,15 @@ def population_full_stats(
     )
     """
 
-    main_where = f"1=1 {where_sql} AND hp.player_id IN (SELECT player_id FROM eligible)"
+    # _AGG_SQL doesn't join player_classifications, so the main WHERE gets the
+    # filters without player_type. The CTE already restricts players by type.
+    main_filter_sql, main_params, _ = _build_where(
+        stakes, date_from, date_to, min_hands, exclude_hero,
+        None, db, workspace_id, exclude_identity_ids, exclude_tags,
+    )
+    main_where = f"1=1 {main_filter_sql} AND hp.player_id IN (SELECT player_id FROM eligible)"
     full_sql = eligible_cte + _AGG_SQL.format(where=main_where)
-    # params used twice: once for CTE, once for main WHERE
-    all_params = params + params
+    all_params = params + main_params
 
     return _compute_stats_from_query(db, main_where, all_params, sql_override=full_sql)
 
@@ -861,7 +867,7 @@ def population_comparison(
             hero_where += " AND h.played_at >= ?"
             hero_params.append(date_from)
         if date_to:
-            hero_where += " AND h.played_at <= ?"
+            hero_where += " AND " + DATE_TO_SQL
             hero_params.append(date_to)
 
         hero = db.execute(f"""

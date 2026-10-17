@@ -46,6 +46,10 @@ RE_SMALL_BLIND = re.compile(r"^Player (.+?) has small blind \(([0-9.]+)\)$")
 RE_BIG_BLIND = re.compile(r"^Player (.+?) has big blind \(([0-9.]+)\)$")
 RE_STRADDLE = re.compile(r"^Player (.+?) straddle \(([0-9.]+)\)$")
 RE_ANTE = re.compile(r"^Player (.+?) ante \(([0-9.]+)\)$")
+# Posting to come in out of turn: a live post (counts toward the preflop bet)
+# and, when a small blind was missed, a separate dead one
+RE_POST_DEAD = re.compile(r"^Player (.+?) posts \(([0-9.]+)\) as a dead bet$")
+RE_POST = re.compile(r"^Player (.+?) posts \(([0-9.]+)\)$")
 RE_RECEIVED_CARD = re.compile(r"^Player .+? received a card\.$")
 RE_DEALT = re.compile(r"^Player (.+?) received card: \[(.+?)\]$")
 
@@ -345,6 +349,33 @@ def parse_hand_history(hand_text: str) -> ParsedHand:
             })
             continue
 
+        m = RE_POST_DEAD.match(line)
+        if m:
+            action_order += 1
+            actions_by_street["preflop"].append({
+                "username": m.group(1),
+                "action": "ante",  # dead money, not part of the bet
+                "amount": Decimal(m.group(2)),
+                "is_all_in": False,
+                "order": action_order,
+            })
+            continue
+
+        m = RE_POST.match(line)
+        if m:
+            uname = m.group(1)
+            amt = Decimal(m.group(2))
+            street_put_in[uname] = street_put_in.get(uname, _ZERO) + amt
+            action_order += 1
+            actions_by_street["preflop"].append({
+                "username": uname,
+                "action": "bb",  # a live big-blind-sized post
+                "amount": amt,
+                "is_all_in": False,
+                "order": action_order,
+            })
+            continue
+
         # Ante
         m = RE_ANTE.match(line)
         if m:
@@ -503,7 +534,8 @@ def parse_hand_history(hand_text: str) -> ParsedHand:
                 action = a["action"]
                 amt = a["amount"]
                 if action in _INVEST_ACTIONS:
-                    st_put_in[uname] = st_put_in.get(uname, _ZERO) + amt
+                    if action != "ante":
+                        st_put_in[uname] = st_put_in.get(uname, _ZERO) + amt
                     total_invested += amt
                 elif action == "raise":
                     already = st_put_in.get(uname, _ZERO)

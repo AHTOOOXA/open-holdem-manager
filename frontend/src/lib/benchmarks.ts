@@ -57,11 +57,24 @@ export const STAT_DISPLAY_NAMES: Record<string, string> = {
 };
 
 // ── Benchmarks ───────────────────────────────────────────────────────
+//
+// Ranges are for 6-max fast-fold / regular cash and follow the stat
+// definitions the Stats page now uses (the same ones as the General screen):
+// - VPIP / PFR: base = hands where hero acted preflop (walks excluded), so BB
+//   VPIP sits a little higher than with an all-hands base;
+// - Steal: BTN + SB raise-first-in only (CO is not a steal seat);
+// - vs. Steal Fold: SB vs. a BTN steal plus BB vs. a BTN / SB steal;
+// - C-Bet: hero made the first raise preflop (iso-raises included) and it was
+//   his last preflop action; multiway flops count, which pulls the % down;
+// - Fold to C-Bet: any villain's bet after hero called a raise preflop with an
+//   increment of 2bb or more (so a BB flat of a 2.5bb open is not counted);
+// - WTSD / WWSF: base = hands with a hero flop action (preflop all-ins out);
+// - AF: hands with a bet + hands with a raise, over hands with a call, per street.
 
 export const BENCHMARKS: Record<string, PositionalBenchmarks> = {
   vpip: {
     total: {
-      low: 20, high: 28,
+      low: 21, high: 29,
       tipLow: 'Playing too few hands. Widen your opening range, especially in position.',
       tipHigh: 'Playing too many hands. Tighten preflop — fold more weak holdings.',
       fix: 'Review your opening ranges by position. Compare to standard GTO charts.',
@@ -73,7 +86,7 @@ export const BENCHMARKS: Record<string, PositionalBenchmarks> = {
     co: { low: 24, high: 32, tipLow: 'CO VPIP too tight. Open wider in the cutoff.', tipHigh: 'CO VPIP too loose.', fix: 'CO should play ~28% of hands.', weight: 3 },
     btn: { low: 35, high: 50, tipLow: 'BTN VPIP too tight. You have position -- play wider.', tipHigh: 'BTN VPIP too loose.', fix: 'BTN should play ~42% of hands.', weight: 3 },
     sb: { low: 28, high: 40, tipLow: 'SB VPIP too tight.', tipHigh: 'SB VPIP too loose. Cold-calling OOP is expensive.', fix: 'SB VPIP-PFR gap should be 0-5%. Raise or fold.', weight: 3 },
-    bb: { low: 35, high: 55, tipLow: 'BB VPIP too tight. Defend more vs steals.', tipHigh: 'BB VPIP too loose. Overdefending OOP costs money.', fix: 'BB defends wide vs steals. Adjust by raiser position.', weight: 3 },
+    bb: { low: 38, high: 58, tipLow: 'BB VPIP too tight. Defend more vs steals.', tipHigh: 'BB VPIP too loose. Overdefending OOP costs money.', fix: 'BB defends wide vs steals. Adjust by raiser position.', weight: 3 },
   },
   pfr: {
     total: {
@@ -181,10 +194,10 @@ export const BENCHMARKS: Record<string, PositionalBenchmarks> = {
   },
   steal: {
     total: {
-      low: 25, high: 40,
-      tipLow: 'Not stealing blinds enough. Missing easy profit from late position.',
+      low: 35, high: 50,
+      tipLow: 'Not stealing blinds enough from the button and small blind.',
       tipHigh: 'Stealing too often. Opponents in the blinds will start defending more.',
-      fix: 'Raise wider from CO/BTN/SB when folded to you. Blinds usually fold.',
+      fix: 'Open wider from BTN (~45%) and SB (~40%) when folded to you.',
       weight: 3,
       statFlagFilter: 'steal_attempted',
       oppFlagFilter: 'steal_opp',
@@ -192,18 +205,20 @@ export const BENCHMARKS: Record<string, PositionalBenchmarks> = {
   },
   vs_steal_fold: {
     total: {
-      low: 40, high: 55,
+      low: 55, high: 72,
       tipLow: 'Defending blinds too much vs steals. Calling too wide OOP.',
       tipHigh: 'Folding too much in the blinds. Opponents can steal freely.',
-      fix: 'Defend ~45-60% from BB vs BTN opens. Mix 3-bets with calls.',
+      fix: 'BB should defend roughly half its hands vs BTN/SB opens; SB mostly 3-bets or folds vs BTN.',
       weight: 3,
       statFlagFilter: 'fold_to_steal',
       oppFlagFilter: 'faced_steal',
     },
+    sb: { low: 75, high: 90, tipLow: 'SB defending too wide vs BTN steals.', tipHigh: 'SB folding too much vs BTN steals.', fix: 'SB vs BTN: 3-bet a polar range, flat rarely, fold the rest.', weight: 2 },
+    bb: { low: 45, high: 62, tipLow: 'BB defending too wide vs steals.', tipHigh: 'BB folding too much vs steals.', fix: 'BB gets a good price: defend suited and connected hands widely.', weight: 3 },
   },
   cbet_flop: {
     total: {
-      low: 50, high: 70,
+      low: 45, high: 65,
       tipLow: 'Not c-betting the flop enough. Missing value and fold equity.',
       tipHigh: 'C-betting too much. Opponents will exploit with raises and floats.',
       fix: 'C-bet more on dry boards, check more on wet boards. Board texture matters.',
@@ -214,7 +229,7 @@ export const BENCHMARKS: Record<string, PositionalBenchmarks> = {
   },
   cbet_turn: {
     total: {
-      low: 50, high: 70,
+      low: 40, high: 60,
       tipLow: 'Not following up on the turn. Giving up too often after c-betting flop.',
       tipHigh: 'Barrelling the turn too often. Be more selective with double barrels.',
       fix: 'Double barrel with strong draws, top pair+, and good bluff cards.',
@@ -225,7 +240,7 @@ export const BENCHMARKS: Record<string, PositionalBenchmarks> = {
   },
   cbet_river: {
     total: {
-      low: 50, high: 70,
+      low: 40, high: 60,
       tipLow: 'Missing river value bets and bluffs.',
       tipHigh: 'Over-bluffing the river. Opponents are calling you down.',
       fix: 'River bets should be polarized: strong value hands or clear bluffs.',
@@ -236,7 +251,7 @@ export const BENCHMARKS: Record<string, PositionalBenchmarks> = {
   },
   fold_to_cbet_flop: {
     total: {
-      low: 40, high: 55,
+      low: 42, high: 58,
       tipLow: 'Not folding enough to flop c-bets. Floating too wide.',
       tipHigh: 'Folding too much to flop c-bets. Opponents can c-bet any two cards.',
       fix: 'Defend with pairs, draws, and backdoor equity. Fold pure air.',
@@ -247,7 +262,7 @@ export const BENCHMARKS: Record<string, PositionalBenchmarks> = {
   },
   fold_to_cbet_turn: {
     total: {
-      low: 40, high: 55,
+      low: 30, high: 48,
       tipLow: 'Not folding enough to turn barrels. Calling too light.',
       tipHigh: 'Folding too much on the turn. Opponents barrel freely.',
       fix: 'Continue with strong draws and pairs. Fold weak one-pair hands.',
@@ -258,7 +273,7 @@ export const BENCHMARKS: Record<string, PositionalBenchmarks> = {
   },
   wtsd: {
     total: {
-      low: 24, high: 30,
+      low: 23, high: 29,
       tipLow: 'Folding too much postflop. Not going to showdown enough.',
       tipHigh: 'Going to showdown too often. Calling too many streets.',
       fix: 'Review river call decisions. Are you calling with losing hands?',
@@ -280,7 +295,7 @@ export const BENCHMARKS: Record<string, PositionalBenchmarks> = {
   },
   wwsf: {
     total: {
-      low: 42, high: 50,
+      low: 41, high: 49,
       tipLow: 'Not winning enough after seeing the flop. Need more aggression.',
       tipHigh: 'Winning too much post-flop. Likely over-bluffing or running hot.',
       fix: 'Increase aggression with continuation bets and semi-bluffs.',
@@ -299,19 +314,19 @@ export const BENCHMARKS: Record<string, PositionalBenchmarks> = {
   },
   af_turn: {
     total: {
-      low: 2, high: 4,
+      low: 1.7, high: 3.5,
       tipLow: 'Turn play too passive. Follow through on your flop aggression.',
       tipHigh: 'Over-aggressive on the turn. Be more selective with second barrels.',
-      fix: 'Target AF 2-4. Bet strong hands, check medium-strength holdings.',
+      fix: 'Target AF 1.7-3.5. Bet strong hands, check medium-strength holdings.',
       weight: 2,
     },
   },
   af_river: {
     total: {
-      low: 2, high: 4,
+      low: 1.4, high: 3,
       tipLow: 'River play too passive. Missing value bets and bluffs.',
       tipHigh: 'Over-bluffing the river. Polarize your betting range.',
-      fix: 'Target AF 2-4. Bet big with nuts and air, check medium hands.',
+      fix: 'Target AF 1.4-3. Bet big with nuts and air, check medium hands.',
       weight: 2,
     },
   },

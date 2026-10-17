@@ -19,6 +19,7 @@ import {
 } from '@/components/ui/select';
 import CompareTable from '@/components/stats/CompareTable';
 import { formatStakes } from '@/lib/utils';
+import { formatLocalDate } from '@/lib/date';
 
 type CompareMode = 'periods' | 'population' | 'workspace';
 
@@ -94,7 +95,7 @@ export default function ComparePage() {
       return {
         ...base,
         period_a_from: aFrom || '2000-01-01',
-        period_a_to: aTo || new Date().toISOString().slice(0, 10),
+        period_a_to: aTo || formatLocalDate(),
         period_b_from: bFrom || '2000-01-01',
         period_b_to: bTo || undefined,
       };
