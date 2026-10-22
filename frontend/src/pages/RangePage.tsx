@@ -15,6 +15,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { fixed } from '@/lib/format';
 
 const RANKS = ['A', 'K', 'Q', 'J', 'T', '9', '8', '7', '6', '5', '4', '3', '2'];
 
@@ -74,12 +75,12 @@ function formatCellValue(value: number | null, colorBy: ColorBy): string {
   switch (colorBy) {
     case 'bb100':
     case 'ev_bb100':
-      return value.toFixed(0);
+      return fixed(value, 0);
     case 'won_bb':
-      if (Math.abs(value) >= 1000) return `${(value / 1000).toFixed(1)}k`;
-      return value.toFixed(0);
+      if (Math.abs(value) >= 1000) return `${fixed((value / 1000), 1)}k`;
+      return fixed(value, 0);
     case 'frequency':
-      return value.toFixed(0);
+      return fixed(value, 0);
     case 'hands':
       return String(value);
   }
@@ -301,15 +302,15 @@ export default function RangePage() {
                   </span>
                 </div>
                 <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-[15px]">
-                  <DetailRow label="Won" value={`${detail.won_bb >= 0 ? '+' : ''}${detail.won_bb.toFixed(1)} BB`} color={detail.won_bb >= 0 ? 'text-green' : 'text-red'} />
-                  <DetailRow label="bb/100" value={detail.bb_per_100.toFixed(1)} color={detail.bb_per_100 >= 0 ? 'text-green' : 'text-red'} />
-                  <DetailRow label="EV Won" value={`${detail.ev_bb >= 0 ? '+' : ''}${detail.ev_bb.toFixed(1)} BB`} color={detail.ev_bb >= 0 ? 'text-green' : 'text-red'} />
-                  <DetailRow label="EV bb/100" value={detail.ev_bb_per_100.toFixed(1)} color={detail.ev_bb_per_100 >= 0 ? 'text-green' : 'text-red'} />
-                  <DetailRow label="VPIP" value={`${detail.hands > 0 ? ((detail.vpip / detail.hands) * 100).toFixed(0) : 0}%`} />
-                  <DetailRow label="PFR" value={`${detail.hands > 0 ? ((detail.pfr / detail.hands) * 100).toFixed(0) : 0}%`} />
-                  <DetailRow label="3-Bet" value={`${detail.hands > 0 ? ((detail.three_bet / detail.hands) * 100).toFixed(0) : 0}%`} />
-                  <DetailRow label="WTSD" value={detail.wtsd_opp > 0 ? `${((detail.wtsd / detail.wtsd_opp) * 100).toFixed(0)}%` : '--'} sub={detail.wtsd_opp > 0 ? `${detail.wtsd}/${detail.wtsd_opp}` : undefined} />
-                  <DetailRow label="W$SD" value={detail.wsd_opp > 0 ? `${((detail.wsd / detail.wsd_opp) * 100).toFixed(0)}%` : '--'} sub={detail.wsd_opp > 0 ? `${detail.wsd}/${detail.wsd_opp}` : undefined} />
+                  <DetailRow label="Won" value={`${detail.won_bb >= 0 ? '+' : ''}${fixed(detail.won_bb, 1)} BB`} color={detail.won_bb >= 0 ? 'text-green' : 'text-red'} />
+                  <DetailRow label="bb/100" value={fixed(detail.bb_per_100, 1)} color={detail.bb_per_100 >= 0 ? 'text-green' : 'text-red'} />
+                  <DetailRow label="EV Won" value={`${detail.ev_bb >= 0 ? '+' : ''}${fixed(detail.ev_bb, 1)} BB`} color={detail.ev_bb >= 0 ? 'text-green' : 'text-red'} />
+                  <DetailRow label="EV bb/100" value={fixed(detail.ev_bb_per_100, 1)} color={detail.ev_bb_per_100 >= 0 ? 'text-green' : 'text-red'} />
+                  <DetailRow label="VPIP" value={`${detail.hands > 0 ? fixed(((detail.vpip / detail.hands) * 100), 0) : 0}%`} />
+                  <DetailRow label="PFR" value={`${detail.hands > 0 ? fixed(((detail.pfr / detail.hands) * 100), 0) : 0}%`} />
+                  <DetailRow label="3-Bet" value={`${detail.hands > 0 ? fixed(((detail.three_bet / detail.hands) * 100), 0) : 0}%`} />
+                  <DetailRow label="WTSD" value={detail.wtsd_opp > 0 ? `${fixed(((detail.wtsd / detail.wtsd_opp) * 100), 0)}%` : '--'} sub={detail.wtsd_opp > 0 ? `${detail.wtsd}/${detail.wtsd_opp}` : undefined} />
+                  <DetailRow label="W$SD" value={detail.wsd_opp > 0 ? `${fixed(((detail.wsd / detail.wsd_opp) * 100), 0)}%` : '--'} sub={detail.wsd_opp > 0 ? `${detail.wsd}/${detail.wsd_opp}` : undefined} />
                 </div>
               </Card>
             ) : (
@@ -333,7 +334,7 @@ export default function RangePage() {
                     >
                       <span className="font-mono font-medium">{c.combo}</span>
                       <span className="flex items-center gap-3">
-                        <span className="text-red font-mono">{c.won_bb.toFixed(0)} BB</span>
+                        <span className="text-red font-mono">{fixed(c.won_bb, 0)} BB</span>
                         <span className="text-text-muted text-sm">{c.hands}h</span>
                       </span>
                     </div>
@@ -357,7 +358,7 @@ export default function RangePage() {
                     >
                       <span className="font-mono font-medium">{c.combo}</span>
                       <span className="flex items-center gap-3">
-                        <span className="text-green font-mono">+{c.won_bb.toFixed(0)} BB</span>
+                        <span className="text-green font-mono">+{fixed(c.won_bb, 0)} BB</span>
                         <span className="text-text-muted text-sm">{c.hands}h</span>
                       </span>
                     </div>

@@ -45,9 +45,10 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Skeleton } from '@/components/ui/skeleton';
+import { fixed, usd, moneyClass, bbUnits, formatClockTime, formatDateTime } from '@/lib/format';
 
 function formatXTick(value: number) {
-  if (value >= 1000) return `${(value / 1000).toFixed(value % 1000 === 0 ? 0 : 1)}k`;
+  if (value >= 1000) return `${fixed(value / 1000, value % 1000 === 0 ? 0 : 1)}k`;
   return String(value);
 }
 
@@ -77,26 +78,6 @@ const LINE_COLORS = {
   ci: '#fbbf24',
   session: 'oklch(0.553 0.013 58.071)',
 } as const;
-
-function formatDateTime(iso: string): string {
-  if (!iso) return '';
-  const d = new Date(iso);
-  return d.toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-  }) + ' ' + d.toLocaleTimeString('en-US', {
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  });
-}
-
-function formatTime(iso: string): string {
-  if (!iso) return '';
-  const d = new Date(iso);
-  return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
-}
 
 function sessionDurationHours(s: SessionMarker): number {
   if (!s.start_time || !s.end_time) return 0;
@@ -142,14 +123,14 @@ function CustomTooltip({ active, payload, label, unit, tooltipNames, activeSessi
           return (
             <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
               <span style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: entry.color, display: 'inline-block', flexShrink: 0 }} />
-              <span>{name}: {prefix}{entry.value[0].toFixed(1)}{suffix} to {prefix}{entry.value[1].toFixed(1)}{suffix}</span>
+              <span>{name}: {prefix}{fixed(entry.value[0], 1)}{suffix} to {prefix}{fixed(entry.value[1], 1)}{suffix}</span>
             </div>
           );
         }
         return (
           <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
             <span style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: entry.color, display: 'inline-block', flexShrink: 0 }} />
-            <span>{name}: {prefix}{entry.value.toFixed(2)}{suffix}</span>
+            <span>{name}: {prefix}{fixed(entry.value, 2)}{suffix}</span>
           </div>
         );
       })}
@@ -159,7 +140,7 @@ function CustomTooltip({ active, payload, label, unit, tooltipNames, activeSessi
         const hph = hrs > 0 ? Math.round(hands / hrs) : 0;
         return (
           <div style={{ marginTop: 6, paddingTop: 6, borderTop: '1px solid oklch(1 0 0 / 10%)', color: 'oklch(0.709 0.01 56.259)', fontSize: 11 }}>
-            Session: {formatTime(activeSession.start_time)} – {formatTime(activeSession.end_time)}
+            Session: {formatClockTime(activeSession.start_time)} – {formatClockTime(activeSession.end_time)}
             <span style={{ marginLeft: 8 }}>({hands} hands{hph > 0 ? ` · ${hph} hands/hr` : ''})</span>
           </div>
         );
@@ -358,9 +339,6 @@ export default function GraphPage() {
   }, [showCheckpoints, checkpoints, data]);
 
   // Helpers
-  const clr = (v: number) => v >= 0 ? 'text-green' : 'text-red';
-  const fmtBB = (v: number) => `${v.toFixed(1)} BB`;
-  const fmtUSD = (v: number) => `${v >= 0 ? '' : '-'}$${Math.abs(v).toFixed(2)}`;
 
 
   // Toggle button helper
@@ -602,7 +580,7 @@ export default function GraphPage() {
                   strokeDasharray="4 4"
                   strokeWidth={1}
                   label={{
-                    value: formatTime(s.start_time),
+                    value: formatClockTime(s.start_time),
                     position: 'top',
                     fill: 'oklch(0.553 0.013 58.071)',
                     fontSize: 9,
@@ -721,16 +699,16 @@ export default function GraphPage() {
         <Card className="gap-0 py-0 overflow-hidden">
           {/* Context strip */}
           <div className="px-4 py-2 text-xs font-mono text-text-muted">
-            {n.toLocaleString()} hands · {handsPerHour > 0 ? `${handsPerHour}/hr · ` : ''}{totalHrs > 0 ? `${totalHrs.toFixed(0)}h played · ` : ''}{sessions.length} sessions
+            {n.toLocaleString()} hands · {handsPerHour > 0 ? `${handsPerHour}/hr · ` : ''}{totalHrs > 0 ? `${fixed(totalHrs, 0)}h played · ` : ''}{sessions.length} sessions
           </div>
 
           {/* Hero pair: Actual vs EV */}
           <div className="grid grid-cols-2 border-t border-border">
             {/* Actual */}
             <div className="px-4 py-3 grid grid-cols-2 gap-x-4">
-              <div className={`text-xl font-bold font-mono ${clr(wonUSD)}`}>{fmtUSD(wonUSD)}</div>
-              <div className={`text-xl font-bold font-mono ${clr(rateBB)}`}>{rateBB.toFixed(2)}</div>
-              <div className={`text-sm font-mono ${clr(wonBB)}`}>{fmtBB(wonBB)}</div>
+              <div className={`text-xl font-bold font-mono ${moneyClass(wonUSD)}`}>{usd(wonUSD)}</div>
+              <div className={`text-xl font-bold font-mono ${moneyClass(rateBB)}`}>{fixed(rateBB, 2)}</div>
+              <div className={`text-sm font-mono ${moneyClass(wonBB)}`}>{bbUnits(wonBB)}</div>
               <div className="text-sm font-mono text-text-muted">bb/100</div>
               <div className="text-[10px] text-text-muted uppercase tracking-wide">Won</div>
               <div className="text-[10px] text-text-muted uppercase tracking-wide">Rate</div>
@@ -739,9 +717,9 @@ export default function GraphPage() {
             <div className="px-4 py-3 border-l border-border grid grid-cols-2 gap-x-4">
               {hasEVData ? (
                 <>
-                  <div className={`text-xl font-bold font-mono ${clr(evUSD)}`}>{fmtUSD(evUSD)}</div>
-                  <div className={`text-xl font-bold font-mono ${clr(evRateBB)}`}>{evRateBB.toFixed(2)}</div>
-                  <div className={`text-sm font-mono ${clr(evBB)}`}>{fmtBB(evBB)}</div>
+                  <div className={`text-xl font-bold font-mono ${moneyClass(evUSD)}`}>{usd(evUSD)}</div>
+                  <div className={`text-xl font-bold font-mono ${moneyClass(evRateBB)}`}>{fixed(evRateBB, 2)}</div>
+                  <div className={`text-sm font-mono ${moneyClass(evBB)}`}>{bbUnits(evBB)}</div>
                   <div className="text-sm font-mono text-text-muted">EV bb/100</div>
                   <div className="text-[10px] text-text-muted uppercase tracking-wide">Won EV</div>
                   <div className="text-[10px] text-text-muted uppercase tracking-wide">EV Rate</div>
@@ -763,34 +741,34 @@ export default function GraphPage() {
           <div className="grid grid-cols-3 sm:grid-cols-5 gap-x-6 px-4 py-2.5 border-t border-border">
             {/* $/hr */}
             <div>
-              <div className={`text-sm font-bold font-mono ${totalHrs > 0 ? clr(usdPerHour) : 'text-text-muted'}`}>
-                {totalHrs > 0 ? `${usdPerHour >= 0 ? '' : '-'}$${Math.abs(usdPerHour).toFixed(2)}/hr` : '—'}
+              <div className={`text-sm font-bold font-mono ${totalHrs > 0 ? moneyClass(usdPerHour) : 'text-text-muted'}`}>
+                {totalHrs > 0 ? `${usd(usdPerHour)}/hr` : '—'}
               </div>
-              <div className="text-xs text-text-muted">$/hr {totalHrs > 0 ? <span className={`font-mono ${clr(bbPerHour)}`}>{bbPerHour.toFixed(1)} BB</span> : ''}</div>
+              <div className="text-xs text-text-muted">$/hr {totalHrs > 0 ? <span className={`font-mono ${moneyClass(bbPerHour, 1)}`}>{fixed(bbPerHour, 1)} BB</span> : ''}</div>
             </div>
             {/* SD Won */}
             <div>
-              <div className={`text-sm font-bold font-mono ${clr(sdUSD)}`}>{fmtUSD(sdUSD)}</div>
-              <div className="text-xs text-text-muted">Showdown <span className={`font-mono ${clr(sdRateBB)}`}>{sdRateBB.toFixed(1)}/100</span></div>
+              <div className={`text-sm font-bold font-mono ${moneyClass(sdUSD)}`}>{usd(sdUSD)}</div>
+              <div className="text-xs text-text-muted">Showdown <span className={`font-mono ${moneyClass(sdRateBB, 1)}`}>{fixed(sdRateBB, 1)}/100</span></div>
             </div>
             {/* NSD Won */}
             <div>
-              <div className={`text-sm font-bold font-mono ${clr(nsdUSD)}`}>{fmtUSD(nsdUSD)}</div>
-              <div className="text-xs text-text-muted">Non-SD <span className={`font-mono ${clr(nsdRateBB)}`}>{nsdRateBB.toFixed(1)}/100</span></div>
+              <div className={`text-sm font-bold font-mono ${moneyClass(nsdUSD)}`}>{usd(nsdUSD)}</div>
+              <div className="text-xs text-text-muted">Non-SD <span className={`font-mono ${moneyClass(nsdRateBB, 1)}`}>{fixed(nsdRateBB, 1)}/100</span></div>
             </div>
             {/* Rake */}
             <div>
-              <div className="text-sm font-bold font-mono text-text-muted">{fmtUSD(rakeUSD)}</div>
-              <div className="text-xs text-text-muted">Rake <span className="font-mono">{rakePerBB.toFixed(1)}/100{jackpotBB > 0 ? ` · BBJ ${fmtUSD(jackpotUSD)}` : ''}</span></div>
+              <div className="text-sm font-bold font-mono text-text-muted">{usd(rakeUSD)}</div>
+              <div className="text-xs text-text-muted">Rake <span className="font-mono">{fixed(rakePerBB, 1)}/100{jackpotBB > 0 ? ` · BBJ ${usd(jackpotUSD)}` : ''}</span></div>
             </div>
             {/* 95% CI */}
             <div>
               {variance ? (
                 <>
                   <div className={`text-sm font-bold font-mono ${variance.ci_lower_bb100 > 0 ? 'text-green' : variance.ci_upper_bb100 < 0 ? 'text-red' : 'text-text'}`}>
-                    {variance.ci_lower_bb100.toFixed(2)} to {variance.ci_upper_bb100.toFixed(2)}
+                    {fixed(variance.ci_lower_bb100, 2)} to {fixed(variance.ci_upper_bb100, 2)}
                   </div>
-                  <div className="text-xs text-text-muted">95% CI bb/100 <span className="font-mono">σ {variance.sd_bb100.toFixed(1)}</span></div>
+                  <div className="text-xs text-text-muted">95% CI bb/100 <span className="font-mono">σ {fixed(variance.sd_bb100, 1)}</span></div>
                 </>
               ) : (
                 <div className="text-sm font-mono text-text-muted">—</div>
@@ -913,13 +891,7 @@ function BreakdownTable<T>({
 }
 
 function renderRake(r: { rake_usd: number }) {
-  return <span className="text-red">${r.rake_usd.toFixed(2)}</span>;
-}
-
-function colorVal(v: number): string {
-  if (v > 0) return 'text-green';
-  if (v < 0) return 'text-red';
-  return 'text-text-muted';
+  return <span className="text-red">${fixed(r.rake_usd, 2)}</span>;
 }
 
 const COL_WIDTHS = { label: '22%', hands: '16%', won: '18%', bb100: '16%', ev_bb100: '16%', rake: '12%' };
@@ -936,7 +908,7 @@ const stakeColumns: Column<StakeBreakdown>[] = [
     width: COL_WIDTHS.won,
     render: (r) => {
       const v = r.won_usd;
-      return <span className={colorVal(v)}>{`${v >= 0 ? '' : '-'}$${Math.abs(v).toFixed(2)}`}</span>;
+      return <span className={moneyClass(v)}>{usd(v)}</span>;
     },
   },
   {
@@ -944,14 +916,14 @@ const stakeColumns: Column<StakeBreakdown>[] = [
     label: 'bb/100',
     align: 'right',
     width: COL_WIDTHS.bb100,
-    render: (r) => <span className={colorVal(r.bb_per_100)}>{r.bb_per_100.toFixed(2)}</span>,
+    render: (r) => <span className={moneyClass(r.bb_per_100)}>{fixed(r.bb_per_100, 2)}</span>,
   },
   {
     key: 'ev_bb100',
     label: 'EV bb/100',
     align: 'right',
     width: COL_WIDTHS.ev_bb100,
-    render: (r) => <span className={colorVal(r.ev_bb_per_100)}>{r.ev_bb_per_100.toFixed(2)}</span>,
+    render: (r) => <span className={moneyClass(r.ev_bb_per_100)}>{fixed(r.ev_bb_per_100, 2)}</span>,
   },
   {
     key: 'rake',
@@ -972,7 +944,7 @@ const positionColumns: Column<PositionBreakdown>[] = [
     width: COL_WIDTHS.won,
     render: (r) => {
       const v = r.won_usd;
-      return <span className={colorVal(v)}>{`${v >= 0 ? '' : '-'}$${Math.abs(v).toFixed(2)}`}</span>;
+      return <span className={moneyClass(v)}>{usd(v)}</span>;
     },
   },
   {
@@ -980,14 +952,14 @@ const positionColumns: Column<PositionBreakdown>[] = [
     label: 'bb/100',
     align: 'right',
     width: COL_WIDTHS.bb100,
-    render: (r) => <span className={colorVal(r.bb_per_100)}>{r.bb_per_100.toFixed(2)}</span>,
+    render: (r) => <span className={moneyClass(r.bb_per_100)}>{fixed(r.bb_per_100, 2)}</span>,
   },
   {
     key: 'ev_bb100',
     label: 'EV bb/100',
     align: 'right',
     width: COL_WIDTHS.ev_bb100,
-    render: (r) => <span className={colorVal(r.ev_bb_per_100)}>{r.ev_bb_per_100.toFixed(2)}</span>,
+    render: (r) => <span className={moneyClass(r.ev_bb_per_100)}>{fixed(r.ev_bb_per_100, 2)}</span>,
   },
   {
     key: 'rake',
@@ -1008,7 +980,7 @@ const monthColumns: Column<MonthBreakdown>[] = [
     width: COL_WIDTHS.won,
     render: (r) => {
       const v = r.won_usd;
-      return <span className={colorVal(v)}>{`${v >= 0 ? '' : '-'}$${Math.abs(v).toFixed(2)}`}</span>;
+      return <span className={moneyClass(v)}>{usd(v)}</span>;
     },
   },
   {
@@ -1016,14 +988,14 @@ const monthColumns: Column<MonthBreakdown>[] = [
     label: 'bb/100',
     align: 'right',
     width: COL_WIDTHS.bb100,
-    render: (r) => <span className={colorVal(r.bb_per_100)}>{r.bb_per_100.toFixed(2)}</span>,
+    render: (r) => <span className={moneyClass(r.bb_per_100)}>{fixed(r.bb_per_100, 2)}</span>,
   },
   {
     key: 'ev_bb100',
     label: 'EV bb/100',
     align: 'right',
     width: COL_WIDTHS.ev_bb100,
-    render: (r) => <span className={colorVal(r.ev_bb_per_100)}>{r.ev_bb_per_100.toFixed(2)}</span>,
+    render: (r) => <span className={moneyClass(r.ev_bb_per_100)}>{fixed(r.ev_bb_per_100, 2)}</span>,
   },
   {
     key: 'rake',

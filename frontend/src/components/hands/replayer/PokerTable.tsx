@@ -2,6 +2,7 @@ import { useRef, useState, useEffect } from 'react';
 import type { Snapshot } from './useReplayerState';
 import { getSeatPositions, getBetPosition } from './seatLayout';
 import PlayerSeat from './PlayerSeat';
+import { fixed } from '@/lib/format';
 
 /* ── Action color mapping ──────────────────────────────────────────── */
 
@@ -90,7 +91,7 @@ export default function PokerTable({
   const isShowdown = snapshot.streetLabel === 'Result';
 
   const potDisplay = snapshot.pot > 0
-    ? showBb ? `${snapshot.pot.toFixed(1)} BB` : `$${(snapshot.pot * bbAmount).toFixed(2)}`
+    ? showBb ? `${fixed(snapshot.pot, 1)} BB` : `$${fixed((snapshot.pot * bbAmount), 2)}`
     : '';
 
   return (
@@ -174,7 +175,7 @@ export default function PokerTable({
             const isAllIn = player.lastAction?.includes('all-in') || false;
             const hasBet = player.currentBet > 0 && !isShowdown;
             const betDisplay = hasBet
-              ? showBb ? player.currentBet.toFixed(1) : `$${(player.currentBet * bbAmount).toFixed(2)}`
+              ? showBb ? fixed(player.currentBet, 1) : `$${fixed((player.currentBet * bbAmount), 2)}`
               : null;
 
             return (
@@ -218,7 +219,7 @@ export default function PokerTable({
                       className="text-[13px] font-bold text-green leading-tight"
                       style={{ textShadow: '0 1px 3px rgba(0,0,0,0.9)' }}
                     >
-                      Won {showBb ? player.collectedBb.toFixed(1) : `$${(player.collectedBb * bbAmount).toFixed(2)}`}
+                      Won {showBb ? fixed(player.collectedBb, 1) : `$${fixed((player.collectedBb * bbAmount), 2)}`}
                     </span>
                   )}
                 </div>

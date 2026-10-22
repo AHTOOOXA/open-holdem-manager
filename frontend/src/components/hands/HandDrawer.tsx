@@ -23,6 +23,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { fixed } from '@/lib/format';
 
 type ViewMode = 'visual' | 'text' | 'raw';
 
@@ -242,7 +243,7 @@ export default function HandDrawer({
                               </span>
                             </TableCell>
                             <TableCell className="py-1.5 px-2 text-right font-mono">
-                              {p.stack_bb.toFixed(1)}
+                              {fixed(p.stack_bb, 1)}
                             </TableCell>
                             <TableCell className="py-1.5 px-2">
                               <CardPair card1={p.card1} card2={p.card2} />
@@ -258,7 +259,7 @@ export default function HandDrawer({
 
                   {/* Result */}
                   <div className={`mt-1 mb-4 text-[14px] font-bold font-mono ${heroWonBb >= 0 ? 'text-green' : 'text-red'}`}>
-                    Hero {heroWonBb >= 0 ? 'wins' : 'loses'} {Math.abs(heroWonBb).toFixed(1)} BB
+                    Hero {heroWonBb >= 0 ? 'wins' : 'loses'} {fixed(Math.abs(heroWonBb), 1)} BB
                     {hand.is_cashout && <span className="text-amber-400 ml-1">(EV Cashout)</span>}
                   </div>
                 </>

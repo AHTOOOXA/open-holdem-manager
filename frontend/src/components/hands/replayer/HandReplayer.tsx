@@ -3,6 +3,7 @@ import type { HandDetail } from '@/lib/api';
 import { useReplayerState } from './useReplayerState';
 import PokerTable from './PokerTable';
 import ReplayerControls from './ReplayerControls';
+import { fixed } from '@/lib/format';
 
 export default function HandReplayer({ hand }: { hand: HandDetail }) {
   const [showBb, setShowBb] = useState(true);
@@ -36,7 +37,7 @@ export default function HandReplayer({ hand }: { hand: HandDetail }) {
       />
       {/* Result summary */}
       <div className={`text-[14px] font-bold font-mono ${heroWonBb >= 0 ? 'text-green' : 'text-red'}`}>
-        Hero {heroWonBb >= 0 ? 'wins' : 'loses'} {Math.abs(heroWonBb).toFixed(1)} BB
+        Hero {heroWonBb >= 0 ? 'wins' : 'loses'} {fixed(Math.abs(heroWonBb), 1)} BB
         {hand.is_cashout && <span className="text-amber-400 ml-1">(EV Cashout)</span>}
       </div>
       <ReplayerControls

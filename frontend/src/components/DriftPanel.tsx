@@ -6,6 +6,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
+import { fixed } from '@/lib/format';
 
 /** Drift stat key → display name mapping (drift uses DB column names) */
 const DRIFT_DISPLAY: Record<string, string> = {
@@ -63,7 +64,7 @@ function DriftStatCard({ drift }: { drift: DriftStat }) {
           <div className="min-w-0">
             <div className="text-[12px] font-semibold text-text">{displayName}</div>
             <div className="text-[11px] text-text-muted">
-              {drift.lifetime_avg.toFixed(1)}% &rarr; {drift.window_avg.toFixed(1)}%
+              {fixed(drift.lifetime_avg, 1)}% &rarr; {fixed(drift.window_avg, 1)}%
             </div>
           </div>
         </div>
@@ -72,11 +73,11 @@ function DriftStatCard({ drift }: { drift: DriftStat }) {
         <div className="space-y-1">
           <div className="font-semibold">{drift.interpretation}</div>
           <div className="text-text-muted">
-            Lifetime: {drift.lifetime_avg.toFixed(1)}% ({drift.lifetime_n.toLocaleString()} opp)
+            Lifetime: {fixed(drift.lifetime_avg, 1)}% ({drift.lifetime_n.toLocaleString()} opp)
           </div>
           <div className="text-text-muted">
-            Recent {drift.window_n.toLocaleString()} opp: {drift.window_avg.toFixed(1)}%
-            {' '}({drift.ci_lower.toFixed(1)}–{drift.ci_upper.toFixed(1)}%)
+            Recent {drift.window_n.toLocaleString()} opp: {fixed(drift.window_avg, 1)}%
+            {' '}({fixed(drift.ci_lower, 1)}–{fixed(drift.ci_upper, 1)}%)
           </div>
         </div>
       </TooltipContent>

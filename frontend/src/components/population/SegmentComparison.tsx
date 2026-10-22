@@ -7,6 +7,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { fixed } from '@/lib/format';
 
 interface SegmentStats {
   player_type: string;
@@ -22,7 +23,7 @@ interface SegmentStats {
 
 function fmt(v: number | null, decimals = 1): string {
   if (v === null || v === undefined) return '\u2014';
-  return v.toFixed(decimals);
+  return fixed(v, decimals);
 }
 
 export default function SegmentComparison({ segments }: { segments: SegmentStats[] }) {

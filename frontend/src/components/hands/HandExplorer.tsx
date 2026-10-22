@@ -25,6 +25,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { fixed } from '@/lib/format';
 
 function getDateRange(preset: string, dateFrom: string, dateTo: string): { from?: string; to?: string } {
   const today = new Date();
@@ -372,7 +373,7 @@ export default function HandExplorer({
                       }`}>
                         {Math.abs(wonUsd) < 0.005
                           ? '\u2014'
-                          : `${wonUsd < 0 ? '-' : ''}${Math.abs(wonUsd).toFixed(2)}$`}
+                          : `${wonUsd < 0 ? '-' : ''}${fixed(Math.abs(wonUsd), 2)}$`}
                       </TableCell>
                       {/* EV Diff */}
                       <TableCell className={`py-1.5 px-2 text-right font-mono text-[15px] ${
@@ -381,7 +382,7 @@ export default function HandExplorer({
                       }`}>
                         {Math.abs(evDiffUsd) < 0.005
                           ? '\u2014'
-                          : `${evDiffUsd < 0 ? '-' : ''}${Math.abs(evDiffUsd).toFixed(2)}$`}
+                          : `${evDiffUsd < 0 ? '-' : ''}${fixed(Math.abs(evDiffUsd), 2)}$`}
                       </TableCell>
                       {/* Date */}
                       <TableCell className="py-1.5 px-2 text-right text-[14px] text-text-muted whitespace-nowrap">

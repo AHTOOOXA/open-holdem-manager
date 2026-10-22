@@ -8,6 +8,7 @@ import { queryKeys } from '@/lib/query-keys';
 import FilterBar from '@/components/FilterBar';
 import EmptyState from '@/components/EmptyState';
 import { Card, CardContent } from '@/components/ui/card';
+import { fixed } from '@/lib/format';
 
 // ── Heatmap helpers ──────────────────────────────────────────────────
 
@@ -178,10 +179,10 @@ export default function CashDropPage() {
         <>
           {/* ── Financial Summary ── */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-3">
-            <SummaryCard label="Paid to Fund" value={`${s.total_paid_bb.toFixed(0)} BB`} sub={`$${s.total_paid_usd.toFixed(2)} (${s.pots_won} pots won)`} color="text-red" />
-            <SummaryCard label="Received (EV)" value={`${s.total_received_bb.toFixed(0)} BB`} sub={`$${s.total_received_usd.toFixed(2)} (${s.cash_drop_hands} drops)`} color="text-green" />
-            <SummaryCard label="Net" value={`${s.net_bb >= 0 ? '+' : ''}${s.net_bb.toFixed(0)} BB`} sub={`$${s.net_usd >= 0 ? '+' : ''}${s.net_usd.toFixed(2)}`} color={s.net_bb >= 0 ? 'text-green' : 'text-red'} />
-            <SummaryCard label="Frequency" value={s.cash_drop_hands > 0 ? `1 in ${s.frequency.toFixed(0)}` : '--'} sub={`${s.cash_drop_hands} drops in ${s.total_hands.toLocaleString()} hands`} />
+            <SummaryCard label="Paid to Fund" value={`${fixed(s.total_paid_bb, 0)} BB`} sub={`$${fixed(s.total_paid_usd, 2)} (${s.pots_won} pots won)`} color="text-red" />
+            <SummaryCard label="Received (EV)" value={`${fixed(s.total_received_bb, 0)} BB`} sub={`$${fixed(s.total_received_usd, 2)} (${s.cash_drop_hands} drops)`} color="text-green" />
+            <SummaryCard label="Net" value={`${s.net_bb >= 0 ? '+' : ''}${fixed(s.net_bb, 0)} BB`} sub={`$${s.net_usd >= 0 ? '+' : ''}${fixed(s.net_usd, 2)}`} color={s.net_bb >= 0 ? 'text-green' : 'text-red'} />
+            <SummaryCard label="Frequency" value={s.cash_drop_hands > 0 ? `1 in ${fixed(s.frequency, 0)}` : '--'} sub={`${s.cash_drop_hands} drops in ${s.total_hands.toLocaleString()} hands`} />
           </div>
 
           {/* ── Cash Drop Pots: Hero + Field ── */}
@@ -238,9 +239,9 @@ export default function CashDropPage() {
               <div className="flex gap-4 flex-wrap">
                 {data!.by_type.map(t => (
                   <div key={t.drop_bb} className="flex items-baseline gap-2">
-                    <span className="font-mono font-medium">{t.drop_bb.toFixed(0)} BB</span>
+                    <span className="font-mono font-medium">{fixed(t.drop_bb, 0)} BB</span>
                     <span className="text-text-muted text-sm">{t.count}x</span>
-                    <span className="text-green font-mono text-sm">${t.total_usd.toFixed(2)}</span>
+                    <span className="text-green font-mono text-sm">${fixed(t.total_usd, 2)}</span>
                   </div>
                 ))}
               </div>
@@ -272,7 +273,7 @@ export default function CashDropPage() {
 }
 
 function StatRow({ label, value, suffix, color }: { label: string; value: number | null; suffix?: string; color?: boolean }) {
-  const text = value !== null ? value.toFixed(1) + (suffix ?? '') : '--';
+  const text = value !== null ? fixed(value, 1) + (suffix ?? '') : '--';
   const cls = color && value !== null
     ? value >= 0 ? 'text-green' : 'text-red'
     : 'text-text';

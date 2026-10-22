@@ -21,6 +21,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { fixed } from '@/lib/format';
 
 function StatsTab({ stats }: { stats: HeroStats }) {
   const [decimals, setDecimals] = useState<0 | 1>(0);
@@ -43,10 +44,10 @@ function StatsTab({ stats }: { stats: HeroStats }) {
             <div className="flex items-center gap-3">
               <span className="text-sm text-text-muted">{stats.hands.toLocaleString()} hands</span>
               <span className={`text-sm font-bold font-mono ${wrColor}`}>
-                {wr !== null ? `${wr >= 0 ? '+' : ''}${wr.toFixed(2)} bb/100` : '\u2014'}
+                {wr !== null ? `${wr >= 0 ? '+' : ''}${fixed(wr, 2)} bb/100` : '\u2014'}
               </span>
               <span className={`text-sm font-bold font-mono ${wrEvColor}`}>
-                EV {wrEv !== null ? `${wrEv >= 0 ? '+' : ''}${wrEv.toFixed(2)}` : '\u2014'}
+                EV {wrEv !== null ? `${wrEv >= 0 ? '+' : ''}${fixed(wrEv, 2)}` : '\u2014'}
               </span>
             </div>
             <div className="flex items-center gap-2">
@@ -85,7 +86,7 @@ function H2HTab({ playerId }: { playerId: number }) {
         <span className="text-text-muted">
           Hero result:{' '}
           <span className={`font-mono font-semibold ${data.total_won_bb >= 0 ? 'text-green' : 'text-red'}`}>
-            {data.total_won_bb >= 0 ? '+' : ''}{data.total_won_bb.toFixed(1)} BB ({data.overall_bb_per_100.toFixed(1)} bb/100)
+            {data.total_won_bb >= 0 ? '+' : ''}{fixed(data.total_won_bb, 1)} BB ({fixed(data.overall_bb_per_100, 1)} bb/100)
           </span>
         </span>
       </div>
@@ -104,10 +105,10 @@ function H2HTab({ playerId }: { playerId: number }) {
               <TableCell className="py-1 px-2 font-mono">{r.hero_position}</TableCell>
               <TableCell className="py-1 px-2 text-right font-mono text-text-muted">{r.hands}</TableCell>
               <TableCell className={`py-1 px-2 text-right font-mono ${r.hero_won_bb >= 0 ? 'text-green' : 'text-red'}`}>
-                {r.hero_won_bb >= 0 ? '+' : ''}{r.hero_won_bb.toFixed(1)}
+                {r.hero_won_bb >= 0 ? '+' : ''}{fixed(r.hero_won_bb, 1)}
               </TableCell>
               <TableCell className={`py-1 px-2 text-right font-mono ${r.bb_per_100 >= 0 ? 'text-green' : 'text-red'}`}>
-                {r.bb_per_100.toFixed(1)}
+                {fixed(r.bb_per_100, 1)}
               </TableCell>
             </TableRow>
           ))}

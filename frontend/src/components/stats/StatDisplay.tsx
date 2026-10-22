@@ -15,6 +15,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
+import { fixed, signed } from '@/lib/format';
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -75,7 +76,7 @@ export function fmtStat(
   if (sv.value === null || sv.value === undefined) return { text: '--', color: 'text-text-muted' };
 
   const v = sv.value;
-  const formatted = decimals > 0 ? v.toFixed(decimals) : Math.round(v).toString();
+  const formatted = fixed(v, decimals);
 
   if (sv.sample < 10) {
     return { text: formatted, color: 'text-text-muted', sub: String(sv.sample) };
@@ -101,11 +102,10 @@ export function fmtStat(
 // ── Delta Badge ─────────────────────────────────────────────────────
 
 function DeltaBadge({ delta, decimals = 0 }: { delta: number; decimals?: number }) {
-  const sign = delta > 0 ? '+' : '';
-  const formatted = decimals > 0 ? delta.toFixed(decimals) : Math.round(delta).toString();
+  const formatted = signed(delta, decimals);
   return (
     <span className="ml-1 text-[10px] text-text-muted font-normal">
-      ({sign}{formatted})
+      ({formatted})
     </span>
   );
 }
@@ -136,10 +136,10 @@ export function DriftArrow({ drift, statKey }: { drift: DriftStat; statKey?: str
         <div className="space-y-1">
           <div className="font-semibold">{drift.interpretation}</div>
           <div className="text-text-muted">
-            Lifetime: {drift.lifetime_avg.toFixed(1)}% &rarr; Recent: {drift.window_avg.toFixed(1)}%
+            Lifetime: {fixed(drift.lifetime_avg, 1)}% &rarr; Recent: {fixed(drift.window_avg, 1)}%
           </div>
           <div className="text-text-muted">
-            CI: {drift.ci_lower.toFixed(1)}–{drift.ci_upper.toFixed(1)}%
+            CI: {fixed(drift.ci_lower, 1)}–{fixed(drift.ci_upper, 1)}%
           </div>
         </div>
       </TooltipContent>

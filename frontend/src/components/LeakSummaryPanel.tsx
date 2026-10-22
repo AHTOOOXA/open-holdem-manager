@@ -4,13 +4,14 @@ import type { HeroStats } from '@/lib/api';
 import { computeLeaks } from '@/lib/benchmarks';
 import { Card, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { fixed } from '@/lib/format';
 
 /** Stats where the value is a ratio, not a percentage */
 const RATIO_STATS = new Set(['af_flop', 'af_turn', 'af_river']);
 
 function LeakCard({ leak }: { leak: { statKey: string; displayName: string; value: number; sample: number; benchmark: { low: number; high: number; fix: string }; handFilterUrl: string } }) {
   const isRatio = RATIO_STATS.has(leak.statKey);
-  const valueDisplay = isRatio ? leak.value.toFixed(1) : `${Math.round(leak.value)}%`;
+  const valueDisplay = isRatio ? fixed(leak.value, 1) : `${Math.round(leak.value)}%`;
   const targetDisplay = isRatio
     ? `target ${leak.benchmark.low}–${leak.benchmark.high}`
     : `target ${leak.benchmark.low}–${leak.benchmark.high}%`;

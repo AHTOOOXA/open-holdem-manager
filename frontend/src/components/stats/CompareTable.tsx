@@ -18,6 +18,7 @@ import {
 import {
   TooltipProvider,
 } from '@/components/ui/tooltip';
+import { delta, fixed, pct } from '@/lib/format';
 
 // ── Row definition ───────────────────────────────────────────────────
 
@@ -89,16 +90,13 @@ const COMPARE_GROUPS: StatGroup[] = [
 
 function fmtPct(v: number | null, isAF?: boolean): string {
   if (v === null) return '\u2014';
-  if (isAF) return v.toFixed(2);
-  return `${v.toFixed(1)}%`;
+  if (isAF) return fixed(v, 2);
+  return pct(v, 1);
 }
 
 function fmtDelta(a: number | null, b: number | null, isAF?: boolean): { text: string; value: number | null } {
   if (a === null || b === null) return { text: '\u2014', value: null };
-  const d = b - a;
-  const sign = d > 0 ? '+' : '';
-  if (isAF) return { text: `${sign}${d.toFixed(2)}`, value: d };
-  return { text: `${sign}${d.toFixed(1)}`, value: d };
+  return { text: delta(a, b, isAF ? 2 : 1), value: b - a };
 }
 
 function getDeltaColor(

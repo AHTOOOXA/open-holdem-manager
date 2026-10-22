@@ -1,0 +1,98 @@
+/**
+ * App-wide number formatting. One rounding rule everywhere: banker's rounding
+ * (half to even, see `roundHalfEven`), never `toFixed` on a raw double.
+ * Sign glyphs match the old page-local helpers: ASCII "-" and "+".
+ */
+
+import { roundHalfEven, shortenCount } from './h2n';
+
+/** Fixed `digits` decimals, banker's rounding. Never prints "-0.0": a negative that rounds to zero prints unsigned. */
+export function fixed(value: number, digits = 0): string {
+  if (!Number.isFinite(value)) return String(value);
+  const r = roundHalfEven(value, digits);
+  return (r === 0 ? 0 : r).toFixed(digits);
+}
+
+/** `fixed` with trailing zeros stripped: 6.00 -> "6", 3.50 -> "3.5". */
+export function trimmed(value: number, digits = 1): string {
+  const s = fixed(value, digits);
+  return s.includes('.') ? s.replace(/\.?0+$/, '') : s;
+}
+
+/** Percent with a "%" sign: pct(12.34) -> "12.3%". */
+export function pct(value: number, digits = 1): string {
+  return `${fixed(value, digits)}%`;
+}
+
+/** Big-blind amount without unit, trailing zeros stripped: bb(6) -> "6", bb(3.5) -> "3.5". */
+export function bb(value: number, digits = 2): string {
+  return trimmed(value, digits);
+}
+
+/** Win rate in bb/100, always two decimals: "1.20". */
+export function bb100(value: number): string {
+  return fixed(value, 2);
+}
+
+/** Dollar amount: usd(-3.5) -> "-$3.50". */
+export function usd(value: number, digits = 2): string {
+  const s = fixed(Math.abs(value), digits);
+  return `${Number(s) === 0 || value >= 0 ? '' : '-'}$${s}`;
+}
+
+/** Like `usd` with an explicit "+" on positives: "+$3.50", "-$3.50", "$0.00". */
+export function signedUsd(value: number, digits = 2): string {
+  const s = usd(value, digits);
+  return value > 0 && Number(fixed(value, digits)) !== 0 ? `+${s}` : s;
+}
+
+/** Signed number with `digits` decimals: "+1.2", "-1.2", "0.0" (zero is unsigned). */
+export function signed(value: number, digits = 1): string {
+  const s = fixed(value, digits);
+  return Number(s) > 0 ? `+${s}` : s;
+}
+
+/** Signed bb amount, `digits` decimals: signedBb(3.25) -> "+3.2". */
+export function signedBb(value: number, digits = 1): string {
+  return signed(value, digits);
+}
+
+/** Hand/opportunity count with k/m shortening: 999, 1.2k, 44k, 2.5m. */
+export function count(n: number): string {
+  return shortenCount(n);
+}
+
+/** Difference b - a, signed, `digits` decimals ("+1.5", "-0.3", "0.0"). */
+export function delta(a: number, b: number, digits = 1): string {
+  return signed(b - a, digits);
+}
+
+export type MoneyTone = 'pos' | 'neg' | 'zero';
+
+/**
+ * Colour tone of a money / win-rate value. Zero rule: a value that would
+ * display as zero (|v| < half a display unit, i.e. 0.5 * 10^-digits; half a
+ * cent for the default 2 digits) is 'zero'; so is NaN. Pass the number of
+ * decimals the value is shown with.
+ */
+export function moneyTone(v: number, digits = 2): MoneyTone {
+  if (!Number.isFinite(v)) return 'zero';
+  const half = 0.5 * 10 ** -digits;
+  if (Math.abs(v) < half) return 'zero';
+  return v > 0 ? 'pos' : 'neg';
+}
+
+/** Tailwind class for a tone (tokens defined in index.css). */
+export function toneClass(tone: MoneyTone): string {
+  return tone === 'pos' ? 'text-money-pos' : tone === 'neg' ? 'text-money-neg' : 'text-money-zero';
+}
+
+/** Shorthand: toneClass(moneyTone(v, digits)). */
+export function moneyClass(v: number, digits = 2): string {
+  return toneClass(moneyTone(v, digits));
+}
+
+/** bb amount with unit: bbUnits(12.34) -> "12.3 BB". */
+export function bbUnits(value: number, digits = 1): string {
+  return `${fixed(value, digits)} BB`;
+}

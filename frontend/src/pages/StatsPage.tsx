@@ -20,6 +20,7 @@ import {
   TooltipProvider,
 } from '@/components/ui/tooltip';
 import StatsCard from '@/components/stats/StatsCard';
+import { fixed } from '@/lib/format';
 
 // ── Detail View ─────────────────────────────────────────────────────
 
@@ -220,10 +221,10 @@ function StatsListView() {
             <div className="flex items-center gap-3">
               <span className="text-sm text-text-muted">{stats.hands.toLocaleString()} hands</span>
               <span className={`text-sm font-bold font-mono ${wrColor}`}>
-                {wr !== null ? `${wr >= 0 ? '+' : ''}${wr.toFixed(2)} bb/100` : '\u2014'}
+                {wr !== null ? `${wr >= 0 ? '+' : ''}${fixed(wr, 2)} bb/100` : '\u2014'}
               </span>
               <span className={`text-sm font-bold font-mono ${wrEvColor}`}>
-                EV {wrEv !== null ? `${wrEv >= 0 ? '+' : ''}${wrEv.toFixed(2)}` : '\u2014'}
+                EV {wrEv !== null ? `${wrEv >= 0 ? '+' : ''}${fixed(wrEv, 2)}` : '\u2014'}
               </span>
             </div>
             <div className="flex items-center gap-2">
