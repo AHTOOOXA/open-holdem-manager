@@ -33,8 +33,7 @@
     "text-arbitrary": 1
   },
   "src/components/hands/CardDisplay.tsx": {
-    "hex": 3,
-    "color-fn": 3,
+    "color-fn": 1,
     "text-arbitrary": 2,
     "inline-color": 1
   },
@@ -60,13 +59,10 @@
     "text-arbitrary": 3
   },
   "src/components/hands/replayer/PlayerSeat.tsx": {
-    "hex": 3,
-    "color-fn": 2,
     "text-arbitrary": 6
   },
   "src/components/hands/replayer/PokerTable.tsx": {
-    "hex": 3,
-    "color-fn": 10,
+    "color-fn": 8,
     "text-arbitrary": 8,
     "inline-color": 6
   },
@@ -119,7 +115,6 @@
     "color-fn": 4
   },
   "src/pages/CashDropPage.tsx": {
-    "color-fn": 2,
     "text-arbitrary": 7
   },
   "src/pages/ComparePage.tsx": {
@@ -129,10 +124,7 @@
     "hex": 4
   },
   "src/pages/GraphPage.tsx": {
-    "hex": 6,
-    "color-fn": 16,
-    "text-arbitrary": 7,
-    "inline-color": 4
+    "text-arbitrary": 7
   },
   "src/pages/HandsPage.tsx": {
     "text-arbitrary": 1
@@ -150,15 +142,10 @@
     "text-arbitrary": 4
   },
   "src/pages/RangePage.tsx": {
-    "color-fn": 6,
-    "text-arbitrary": 7,
-    "toFixed": 1
+    "text-arbitrary": 7
   },
   "src/pages/SessionsPage.tsx": {
-    "hex": 16,
-    "color-fn": 14,
-    "text-arbitrary": 29,
-    "inline-color": 7
+    "text-arbitrary": 29
   },
   "src/pages/WorkspaceSettingsPage.tsx": {
     "hex": 10,

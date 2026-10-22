@@ -236,13 +236,13 @@ export default function ComparePage() {
                 <span className="text-sm font-semibold">Workspace B</span>
                 {pb && (
                   <div className="flex items-center gap-2">
-                    <Badge variant="outline" className="text-[10px] font-mono">
+                    <Badge variant="outline" className="text-[10px]">
                       {pb.hands.toLocaleString()} hands
                     </Badge>
                     {pb.win_rate_bb100 !== null && (
                       <Badge
                         variant="outline"
-                        className={`text-[10px] font-mono ${pb.win_rate_bb100 >= 0 ? 'text-green' : 'text-red'}`}
+                        className={`text-[10px] ${pb.win_rate_bb100 >= 0 ? 'text-green' : 'text-red'}`}
                       >
                         {fixed(pb.win_rate_bb100, 2)} bb/100
                       </Badge>
@@ -355,13 +355,13 @@ function PeriodCard({
           <span className="text-sm font-semibold">{label}</span>
           {summary && (
             <div className="flex items-center gap-2">
-              <Badge variant="outline" className="text-[10px] font-mono">
+              <Badge variant="outline" className="text-[10px]">
                 {summary.hands.toLocaleString()} hands
               </Badge>
               {summary.win_rate_bb100 !== null && (
                 <Badge
                   variant="outline"
-                  className={`text-[10px] font-mono ${summary.win_rate_bb100 >= 0 ? 'text-green' : 'text-red'}`}
+                  className={`text-[10px] ${summary.win_rate_bb100 >= 0 ? 'text-green' : 'text-red'}`}
                 >
                   {fixed(summary.win_rate_bb100, 2)} bb/100
                 </Badge>
@@ -437,13 +437,13 @@ function SummaryCard({
           </div>
           {hands != null && (
             <div className="flex items-center gap-2">
-              <Badge variant="outline" className="text-[10px] font-mono">
+              <Badge variant="outline" className="text-[10px]">
                 {hands.toLocaleString()} hands
               </Badge>
               {winRate !== null && winRate !== undefined && (
                 <Badge
                   variant="outline"
-                  className={`text-[10px] font-mono ${winRate >= 0 ? 'text-green' : 'text-red'}`}
+                  className={`text-[10px] ${winRate >= 0 ? 'text-green' : 'text-red'}`}
                 >
                   {fixed(winRate, 2)} bb/100
                 </Badge>
@@ -485,13 +485,13 @@ function WorkspaceCard({
           </div>
           {summary && (
             <div className="flex items-center gap-2">
-              <Badge variant="outline" className="text-[10px] font-mono">
+              <Badge variant="outline" className="text-[10px]">
                 {summary.hands.toLocaleString()} hands
               </Badge>
               {summary.win_rate_bb100 !== null && (
                 <Badge
                   variant="outline"
-                  className={`text-[10px] font-mono ${summary.win_rate_bb100 >= 0 ? 'text-green' : 'text-red'}`}
+                  className={`text-[10px] ${summary.win_rate_bb100 >= 0 ? 'text-green' : 'text-red'}`}
                 >
                   {fixed(summary.win_rate_bb100, 2)} bb/100
                 </Badge>

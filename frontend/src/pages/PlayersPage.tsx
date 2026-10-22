@@ -60,7 +60,7 @@ function IdentityCard({ identity, onClick }: { identity: Identity; onClick: () =
           )}
           <span className="font-medium text-[14px] truncate">{identity.display_name}</span>
         </div>
-        <span className="text-[12px] text-text-muted font-mono shrink-0">
+        <span className="text-[12px] text-text-muted shrink-0">
           {identity.total_hands.toLocaleString()} hands
         </span>
       </div>
@@ -415,19 +415,19 @@ export default function PlayersPage() {
                       <TableCell className="py-1.5 px-2">
                         <PlayerTypeBadge type={p.player_type} />
                       </TableCell>
-                      <TableCell className="py-1.5 px-2 text-right font-mono text-text-muted">
+                      <TableCell className="py-1.5 px-2 text-right text-text-muted">
                         {p.hands.toLocaleString()}
                       </TableCell>
-                      <TableCell className="py-1.5 px-2 text-right font-mono">
+                      <TableCell className="py-1.5 px-2 text-right">
                         {p.vpip !== null ? fixed(p.vpip, 1) : '\u2014'}
                       </TableCell>
-                      <TableCell className="py-1.5 px-2 text-right font-mono">
+                      <TableCell className="py-1.5 px-2 text-right">
                         {p.pfr !== null ? fixed(p.pfr, 1) : '\u2014'}
                       </TableCell>
-                      <TableCell className="py-1.5 px-2 text-right font-mono">
+                      <TableCell className="py-1.5 px-2 text-right">
                         {p.three_bet !== null ? fixed(p.three_bet, 1) : '\u2014'}
                       </TableCell>
-                      <TableCell className="py-1.5 px-2 text-right font-mono">
+                      <TableCell className="py-1.5 px-2 text-right">
                         {p.af !== null ? fixed(p.af, 2) : '\u2014'}
                       </TableCell>
                       <TableCell className="py-1.5 px-2 text-right text-text-muted text-[13px]">

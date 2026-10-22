@@ -35,7 +35,7 @@ export default function Actions({ items, trimFolds, precision = 1 }: { items: Ac
   }
   if (display.length === 0) return null;
   return (
-    <span className="font-mono text-[15px] whitespace-nowrap">
+    <span className="text-[15px] whitespace-nowrap">
       {display.map((a, i) => (
         <span key={i}>
           {i > 0 && ' '}

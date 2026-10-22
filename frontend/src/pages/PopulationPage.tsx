@@ -126,10 +126,10 @@ export default function PopulationPage() {
           <CardContent className="px-3 py-1.5 flex items-center justify-between">
             <div className="flex items-center gap-3">
               <span className="text-sm text-text-muted">
-                Pool: <span className="font-mono text-text">{overview.player_count.toLocaleString()}</span> players
+                Pool: <span className="text-text">{overview.player_count.toLocaleString()}</span> players
               </span>
               <span className="text-sm text-text-muted">
-                Observations: <span className="font-mono text-text">{overview.observation_count.toLocaleString()}</span>
+                Observations: <span className="text-text">{overview.observation_count.toLocaleString()}</span>
               </span>
             </div>
             <div className="flex items-center gap-2">
@@ -140,8 +140,8 @@ export default function PopulationPage() {
                 onValueChange={(v) => { if (v) setDecimals(Number(v) as 0 | 1); }}
                 className="h-8"
               >
-                <ToggleGroupItem value="0" className="h-7 px-2 text-xs font-mono">0</ToggleGroupItem>
-                <ToggleGroupItem value="1" className="h-7 px-2 text-xs font-mono">0.0</ToggleGroupItem>
+                <ToggleGroupItem value="0" className="h-7 px-2 text-xs">0</ToggleGroupItem>
+                <ToggleGroupItem value="1" className="h-7 px-2 text-xs">0.0</ToggleGroupItem>
               </ToggleGroup>
             </div>
           </CardContent>

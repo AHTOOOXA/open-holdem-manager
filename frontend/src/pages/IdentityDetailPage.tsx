@@ -35,7 +35,7 @@ function StatRow({ label, value, sample }: { label: string; value: number | null
     <div className="flex items-center justify-between py-1 text-[13px]">
       <span className="text-text-muted">{label}</span>
       <div className="flex items-center gap-2">
-        <span className="font-mono">{value !== null ? fixed(value, 1) : '\u2014'}</span>
+        {value !== null ? fixed(value, 1) : '\u2014'}
         <span className="text-[11px] text-text-muted">({sample})</span>
       </div>
     </div>
@@ -193,7 +193,7 @@ export default function IdentityDetailPage() {
             <div className="w-3 h-3 rounded-full" style={{ backgroundColor: identity.color }} />
           )}
           <h1 className="text-lg font-semibold">{identity.display_name}</h1>
-          <span className="text-[13px] text-text-muted font-mono">
+          <span className="text-[13px] text-text-muted">
             {identity.total_hands.toLocaleString()} hands
           </span>
         </div>

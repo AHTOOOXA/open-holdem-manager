@@ -220,10 +220,10 @@ function StatsListView() {
           <CardContent className="px-3 py-1.5 flex items-center justify-between">
             <div className="flex items-center gap-3">
               <span className="text-sm text-text-muted">{stats.hands.toLocaleString()} hands</span>
-              <span className={`text-sm font-bold font-mono ${wrColor}`}>
+              <span className={`text-sm font-bold ${wrColor}`}>
                 {wr !== null ? `${wr >= 0 ? '+' : ''}${fixed(wr, 2)} bb/100` : '\u2014'}
               </span>
-              <span className={`text-sm font-bold font-mono ${wrEvColor}`}>
+              <span className={`text-sm font-bold ${wrEvColor}`}>
                 EV {wrEv !== null ? `${wrEv >= 0 ? '+' : ''}${fixed(wrEv, 2)}` : '\u2014'}
               </span>
             </div>
@@ -235,8 +235,8 @@ function StatsListView() {
                 onValueChange={(v) => { if (v) setDecimals(Number(v) as 0 | 1); }}
                 className="h-8"
               >
-                <ToggleGroupItem value="0" className="h-7 px-2 text-xs font-mono">0</ToggleGroupItem>
-                <ToggleGroupItem value="1" className="h-7 px-2 text-xs font-mono">0.0</ToggleGroupItem>
+                <ToggleGroupItem value="0" className="h-7 px-2 text-xs">0</ToggleGroupItem>
+                <ToggleGroupItem value="1" className="h-7 px-2 text-xs">0.0</ToggleGroupItem>
               </ToggleGroup>
             </div>
           </CardContent>

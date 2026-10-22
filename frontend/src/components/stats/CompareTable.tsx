@@ -182,19 +182,19 @@ export default function CompareTable({ statsA, statsB, labelA, labelB }: Compare
                         <TableCell className="px-3 py-1.5 text-sm font-medium">
                           {row.label}
                         </TableCell>
-                        <TableCell className={`px-3 py-1.5 text-right font-mono text-sm ${colorA}`}>
+                        <TableCell className={`px-3 py-1.5 text-right text-sm ${colorA}`}>
                           {fmtPct(valA.value, row.isAF)}
                         </TableCell>
-                        <TableCell className="px-3 py-1.5 text-right font-mono text-xs text-text-muted">
+                        <TableCell className="px-3 py-1.5 text-right text-xs text-text-muted">
                           {valA.sample > 0 ? valA.sample.toLocaleString() : '\u2014'}
                         </TableCell>
-                        <TableCell className={`px-3 py-1.5 text-right font-mono text-sm ${colorB}`}>
+                        <TableCell className={`px-3 py-1.5 text-right text-sm ${colorB}`}>
                           {fmtPct(valB.value, row.isAF)}
                         </TableCell>
-                        <TableCell className="px-3 py-1.5 text-right font-mono text-xs text-text-muted">
+                        <TableCell className="px-3 py-1.5 text-right text-xs text-text-muted">
                           {valB.sample > 0 ? valB.sample.toLocaleString() : '\u2014'}
                         </TableCell>
-                        <TableCell className={`px-3 py-1.5 text-right font-mono text-sm ${lowN ? 'text-text-muted' : deltaColor}`}>
+                        <TableCell className={`px-3 py-1.5 text-right text-sm ${lowN ? 'text-text-muted' : deltaColor}`}>
                           {delta.text}
                         </TableCell>
                         <TableCell className="px-3 py-1.5 text-center text-xs text-text-muted">

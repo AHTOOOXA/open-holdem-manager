@@ -194,7 +194,7 @@ export function StatCell({
   );
 
   const cellClass = [
-    'py-1 px-1.5 text-center font-mono text-[13px] leading-snug',
+    'py-1 px-1.5 text-center text-[13px] leading-snug',
     clickable ? 'cursor-pointer hover:bg-primary/10 transition-colors' : '',
   ].join(' ');
 
@@ -217,7 +217,7 @@ export function StatCell({
         <TooltipContent side="top" className="max-w-[280px] text-xs">
           <div className="space-y-1">
             <div className="font-semibold">{displayName}{position && position !== 'total' ? ` (${position.toUpperCase()})` : ''}</div>
-            <div>Your value: <span className={`font-mono font-semibold ${color}`}>{text}</span></div>
+            <div>Your value: <span className={`font-semibold ${color}`}>{text}</span></div>
             <div className="text-text-muted">Target: {benchmark.low}–{benchmark.high}</div>
             {tip && <div className="text-text-muted">{tip}</div>}
           </div>
@@ -315,7 +315,7 @@ export function KVGrid({
         };
 
         const valueSpan = (
-          <span className={`font-mono text-[13px] ${color}`}>
+          <span className={`text-[13px] ${color}`}>
             {text}
             {sub && <sub className="text-[9px] ml-0.5 text-text-muted select-none">{sub}</sub>}
             {drift && <DriftArrow drift={drift} statKey={item.statKey} />}
@@ -340,7 +340,7 @@ export function KVGrid({
                 <TooltipContent side="top" className="max-w-[280px] text-xs">
                   <div className="space-y-1">
                     <div className="font-semibold">{displayName}</div>
-                    <div>Your value: <span className={`font-mono font-semibold ${color}`}>{text}</span></div>
+                    <div>Your value: <span className={`font-semibold ${color}`}>{text}</span></div>
                     <div className="text-text-muted">Target: {benchmark!.low}–{benchmark!.high}</div>
                     {tip && <div className="text-text-muted">{tip}</div>}
                   </div>
@@ -417,7 +417,7 @@ export function InlineStat({ sv, statKey, drillKey, position, delta, defaultDeci
   };
 
   const inner = (
-    <span className={`font-mono text-[13px] ${color}`}>
+    <span className={`text-[13px] ${color}`}>
       {text}
       {sub && <sub className="text-[9px] ml-0.5 text-text-muted select-none">{sub}</sub>}
       {drift && <DriftArrow drift={drift} statKey={statKey} />}
@@ -443,7 +443,7 @@ export function InlineStat({ sv, statKey, drillKey, position, delta, defaultDeci
         <TooltipContent side="top" className="max-w-[280px] text-xs">
           <div className="space-y-1">
             <div className="font-semibold">{displayName}</div>
-            <div>Your value: <span className={`font-mono font-semibold ${color}`}>{text}</span></div>
+            <div>Your value: <span className={`font-semibold ${color}`}>{text}</span></div>
             <div className="text-text-muted">Target: {benchmark!.low}–{benchmark!.high}</div>
             {tip && <div className="text-text-muted">{tip}</div>}
           </div>
