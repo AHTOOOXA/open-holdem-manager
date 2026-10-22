@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useCallback, useEffect, useRef, type ReactNode } from 'react';
-import { uploadFilesStream, importH2NStream, rebuildHands, getSettings, updateSettings, getHealth, clearDatabase, exportDb, importDb } from '@/lib/api';
+import { uploadFilesStream, importH2NStream, rebuildHands, getSettings, getHealth, clearDatabase, exportDb, importDb } from '@/lib/api';
 import type { ImportResult, ImportProgress, Settings, HealthResponse } from '@/lib/api';
 import { queryClient } from '@/lib/query-client';
 
@@ -29,7 +29,6 @@ interface ImportActions {
   startRebuild: () => void;
   clearDb: () => Promise<void>;
   dismiss: () => void;
-  updateHeroName: (name: string) => Promise<void>;
   refreshHandCount: () => Promise<void>;
   exportDatabase: () => Promise<void>;
   importDatabase: (file: File) => Promise<void>;
@@ -189,15 +188,6 @@ function ImportProvider({ children }: { children: ReactNode }) {
     setError(null);
   }, []);
 
-  const updateHeroName = useCallback(async (name: string) => {
-    const updated = await updateSettings({
-      hero_username: name,
-      hero_site: settings?.hero_site || 'GG',
-    });
-    setSettings(updated);
-    queryClient.invalidateQueries();
-  }, [settings]);
-
   const exportDatabase = useCallback(async () => {
     await exportDb();
   }, []);
@@ -213,7 +203,7 @@ function ImportProvider({ children }: { children: ReactNode }) {
       value={{
         phase, fileInfo, sourceLabel, progress, result, error, handCount, settings,
         autoRebuildProgress,
-        startImport, startH2NImport, startRebuild, clearDb, dismiss, updateHeroName, refreshHandCount,
+        startImport, startH2NImport, startRebuild, clearDb, dismiss, refreshHandCount,
         exportDatabase, importDatabase, showImportOverlay, setShowImportOverlay,
       }}
     >

@@ -216,7 +216,7 @@ export default function ComparePage() {
           <SummaryCard
             label="Hero"
             variant="a"
-            info={activeWorkspace ? `${activeWorkspace.hero_username} @ ${activeWorkspace.name}` : undefined}
+            info={activeWorkspace ? `${activeWorkspace.hero_username || 'no hero yet'} @ ${activeWorkspace.name}` : undefined}
             hands={pa?.hands}
             winRate={pa?.win_rate_bb100}
           />
@@ -269,7 +269,7 @@ export default function ComparePage() {
                   <SelectItem value="__none__">Select workspace...</SelectItem>
                   {workspaces.map((ws) => (
                     <SelectItem key={ws.id} value={String(ws.id)}>
-                      {ws.name} ({ws.hero_username})
+                      {ws.name} ({ws.hero_username || 'no hero yet'})
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -487,7 +487,7 @@ function WorkspaceCard({
             <span className="text-sm font-semibold">{label}</span>
             {workspace && (
               <span className="text-xs text-text-muted ml-2">
-                {workspace.name} ({workspace.hero_username})
+                {workspace.name} ({workspace.hero_username || 'no hero yet'})
               </span>
             )}
           </div>

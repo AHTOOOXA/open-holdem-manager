@@ -120,7 +120,7 @@ export default function GeneralPage() {
   };
 
   const hasFilters = !!(stakes || gameMode || dateFrom || dateTo);
-  const playerName = data?.player || activeWorkspace?.hero_username || 'Hero';
+  const playerName = data?.player || activeWorkspace?.hero_username || 'No hero yet';
   const siteName = data?.site || activeWorkspace?.hero_site || '';
   const selectedMeta = selectedCellId ? GENERAL_CELLS[selectedCellId] : undefined;
   // Expression stats only highlight; action stats open the detail page. The

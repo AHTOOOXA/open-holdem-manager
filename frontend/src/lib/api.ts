@@ -1647,6 +1647,66 @@ export async function deleteWorkspace(id: number): Promise<void> {
   if (!res.ok) throw new Error('Failed to delete workspace');
 }
 
+// ── Hero accounts ────────────────────────────────────────────────────
+
+export interface Site {
+  code: string;
+  name: string;
+}
+
+export interface HeroAccount {
+  site: string;
+  site_name: string;
+  username: string;
+  source: 'manual' | 'auto';
+  hand_count: number;
+}
+
+export interface ActiveHero {
+  site: string;
+  site_name: string;
+  username: string;
+  hand_count: number;
+}
+
+export interface HeroesResponse {
+  auto_detect: boolean;
+  accounts: HeroAccount[];
+  active: ActiveHero | null;
+}
+
+export async function getSites(): Promise<Site[]> {
+  const res = await fetch(`${BASE}/sites`);
+  if (!res.ok) throw new Error('Failed to fetch sites');
+  return res.json();
+}
+
+export async function getHeroes(workspaceId: number): Promise<HeroesResponse> {
+  const res = await fetch(`${BASE}/workspaces/${workspaceId}/heroes`);
+  if (!res.ok) throw new Error('Failed to fetch heroes');
+  return res.json();
+}
+
+export async function setManualHeroes(workspaceId: number, site: string, usernames: string[]): Promise<HeroesResponse> {
+  const res = await fetch(`${BASE}/workspaces/${workspaceId}/heroes/manual`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ site, usernames }),
+  });
+  if (!res.ok) throw new Error('Failed to save hero nicknames');
+  return res.json();
+}
+
+export async function setHeroAutoDetect(workspaceId: number, autoDetect: boolean): Promise<HeroesResponse> {
+  const res = await fetch(`${BASE}/workspaces/${workspaceId}/heroes`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ auto_detect: autoDetect }),
+  });
+  if (!res.ok) throw new Error('Failed to update auto detection');
+  return res.json();
+}
+
 // ── Checkpoint CRUD ──────────────────────────────────────────────────
 
 export async function getCheckpoints(workspaceId: number): Promise<Checkpoint[]> {

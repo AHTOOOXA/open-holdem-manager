@@ -1,4 +1,5 @@
 import { useState, useCallback } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Pencil, Trash2, Bookmark, Plus } from 'lucide-react';
 import { useWorkspace } from '@/contexts/WorkspaceContext';
 import type { Workspace, Checkpoint } from '@/contexts/WorkspaceContext';
@@ -9,7 +10,10 @@ import {
   createCheckpoint,
   updateCheckpoint,
   deleteCheckpoint,
+  getSites,
 } from '@/lib/api';
+import HeroAccountsSection from '@/components/HeroAccountsSection';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -84,6 +88,9 @@ export default function WorkspaceSettingsPage() {
   const [isCreating, setIsCreating] = useState(false);
   const [editName, setEditName] = useState('');
   const [editHero, setEditHero] = useState('');
+  const [editHeroSite, setEditHeroSite] = useState('');
+  const sitesQuery = useQuery({ queryKey: ['sites'], queryFn: getSites, staleTime: Infinity });
+  const sites = sitesQuery.data ?? [];
   const [editDesc, setEditDesc] = useState('');
   const [editColor, setEditColor] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -117,7 +124,6 @@ export default function WorkspaceSettingsPage() {
     setIsCreating(false);
     setEditWs(ws);
     setEditName(ws.name);
-    setEditHero(ws.hero_username);
     setEditDesc(ws.description ?? '');
     setEditColor(ws.color);
   }, []);
@@ -126,7 +132,8 @@ export default function WorkspaceSettingsPage() {
     setEditWs(null);
     setIsCreating(true);
     setEditName('');
-    setEditHero('Hero');
+    setEditHero('');
+    setEditHeroSite('');
     setEditDesc('');
     setEditColor(null);
   }, []);
@@ -143,14 +150,15 @@ export default function WorkspaceSettingsPage() {
       if (isCreating) {
         await createWorkspace({
           name: editName.trim(),
-          hero_username: editHero.trim() || 'Hero',
+          ...(editHero.trim()
+            ? { hero_username: editHero.trim(), ...(editHeroSite ? { hero_site: editHeroSite } : {}) }
+            : {}),
           description: editDesc.trim() || undefined,
           color: editColor ?? undefined,
         });
       } else if (editWs) {
         await updateWorkspace(editWs.id, {
           name: editName.trim(),
-          hero_username: editHero.trim() || 'Hero',
           description: editDesc.trim() || undefined,
           color: editColor ?? undefined,
         });
@@ -256,7 +264,7 @@ export default function WorkspaceSettingsPage() {
                       {isActive && <Badge variant="secondary" className="text-[10px] h-4">Active</Badge>}
                     </div>
                     <div className="text-xs text-text-muted mt-0.5">
-                      Hero: {ws.hero_username} · {ws.hand_count.toLocaleString()} hands
+                      {ws.hero_username ? `Hero: ${ws.hero_username}` : 'No hero yet'} · {ws.hand_count.toLocaleString()} hands
                       {ws.date_range.min && (
                         <> · {formatDate(ws.date_range.min)} – {formatDate(ws.date_range.max)}</>
                       )}
@@ -372,7 +380,7 @@ export default function WorkspaceSettingsPage() {
 
       {/* Edit / Create Workspace Dialog */}
       <Dialog open={!!editWs || isCreating} onOpenChange={(open) => { if (!open) closeWsDialog(); }}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className={isCreating ? 'sm:max-w-md' : 'sm:max-w-xl'}>
           <DialogHeader>
             <DialogTitle>{isCreating ? 'New Workspace' : 'Edit Workspace'}</DialogTitle>
             <DialogDescription>
@@ -389,10 +397,32 @@ export default function WorkspaceSettingsPage() {
                 onKeyDown={(e) => { if (e.key === 'Enter' && editName.trim()) handleSave(); }}
               />
             </div>
-            <div className="flex flex-col gap-1.5">
-              <label className="text-sm font-medium">Hero Username</label>
-              <Input value={editHero} onChange={(e) => setEditHero(e.target.value)} />
-            </div>
+            {isCreating ? (
+              <div className="flex flex-col gap-1.5">
+                <label className="text-sm font-medium">
+                  Hero nickname <span className="text-muted-foreground font-normal">(optional)</span>
+                </label>
+                <div className="flex gap-2">
+                  <Select value={editHeroSite} onValueChange={setEditHeroSite}>
+                    <SelectTrigger aria-label="Site" className="w-40 shrink-0">
+                      <SelectValue placeholder="Site" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {sites.map((s) => (
+                        <SelectItem key={s.code} value={s.code}>{s.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Input
+                    value={editHero}
+                    onChange={(e) => setEditHero(e.target.value)}
+                    placeholder="Nickname"
+                  />
+                </div>
+              </div>
+            ) : (
+              editWs && <HeroAccountsSection workspaceId={editWs.id} workspaceName={editWs.name} />
+            )}
             <div className="flex flex-col gap-1.5">
               <label className="text-sm font-medium">
                 Description <span className="text-muted-foreground font-normal">(optional)</span>
