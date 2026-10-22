@@ -1,8 +1,7 @@
 import { ArrowRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { NextActions, Ratio, SplitRow, StrengthBucket } from '@/lib/api-general';
-import { H2N_THEME } from '@/lib/h2n-layout';
-import { POPUP_THEME, formatRatio, popupTableHeaderStyle } from '@/lib/general-notation';
+import { POPUP_TABLE_HEADER, formatRatio } from '@/lib/general-notation';
 import StrengthBar from './StrengthBar';
 
 /** Selected row (and optionally a hand-value segment inside its mini bar). */
@@ -25,7 +24,7 @@ interface SplitTableProps {
 
 function NextValue({ r }: { r: Ratio }) {
   const d = formatRatio(r);
-  return <span style={{ opacity: d.opacity }}>{d.text}</span>;
+  return <span className={d.opacity < 1 ? 'text-subtle-foreground' : undefined}>{d.text}</span>;
 }
 
 function NextGroup({ items }: { items: Ratio[] }) {
@@ -33,7 +32,7 @@ function NextGroup({ items }: { items: Ratio[] }) {
     <span className="whitespace-nowrap">
       {items.map((r, i) => (
         <span key={i}>
-          {i > 0 && <span className="text-white/40">/</span>}
+          {i > 0 && <span className="text-subtle-foreground">/</span>}
           <NextValue r={r} />
         </span>
       ))}
@@ -69,7 +68,7 @@ export function SplitTable({
     : '120px 90px 18px 96px 70px';
 
   if (rows.length === 0) {
-    return <p className="px-4 py-4 text-sm text-white/50">{emptyText}</p>;
+    return <p className="px-4 py-4 text-sm text-muted-foreground">{emptyText}</p>;
   }
 
   return (
@@ -78,8 +77,8 @@ export function SplitTable({
     // contain interactive children.
     <div role="group" aria-label={headerLabel} className="pb-2">
       <div
-        className="grid items-center gap-x-1 px-4 text-sm"
-        style={{ ...popupTableHeaderStyle, gridTemplateColumns: columns, height: 41 }}
+        className={cn('grid items-center gap-x-1 px-4 text-sm', POPUP_TABLE_HEADER)}
+        style={{ gridTemplateColumns: columns, height: 41 }}
       >
         <span className="truncate">{headerLabel}</span>
         <span className="truncate" title="Frequency, %">
@@ -106,17 +105,11 @@ export function SplitTable({
               // Mouse convenience: the whole row selects. Keyboard / AT use the label button.
               onClick={() => !disabled && onSelectRow(row)}
               className={cn(
-                'grid w-full items-center gap-x-1 px-4 text-sm',
-                disabled ? 'cursor-default opacity-30' : 'cursor-pointer focus-within:bg-white/5',
-                !selected && !disabled && 'hover:bg-white/[0.04]',
+                'grid h-row-dense w-full items-center gap-x-1 px-4 text-sm leading-4.5 text-foreground',
+                disabled ? 'cursor-default opacity-30' : 'cursor-pointer',
+                selected ? 'bg-selection' : !disabled && 'hover:bg-overlay-hover',
               )}
-              style={{
-                gridTemplateColumns: columns,
-                height: 26.67,
-                lineHeight: H2N_THEME.lineHeight,
-                background: selected ? POPUP_THEME.rowSelected : undefined,
-                color: '#E8E8E8',
-              }}
+              style={{ gridTemplateColumns: columns }}
             >
               <button
                 type="button"
@@ -124,7 +117,7 @@ export function SplitTable({
                 aria-pressed={selected}
                 aria-label={`${row.label}: ${freq.text}${freq.text === '--' ? '' : '%'}, ${row.cases} of ${row.opps}`}
                 title={row.label}
-                className="min-w-0 truncate rounded-[2px] text-left outline-none enabled:cursor-pointer focus-visible:ring-1 focus-visible:ring-white/40 disabled:cursor-default"
+                className="min-w-0 truncate rounded-cell text-left outline-none enabled:cursor-pointer focus-visible:ring-2 focus-visible:ring-primary disabled:cursor-default"
                 onClick={(e) => {
                   e.stopPropagation();
                   onSelectRow(row);
@@ -132,13 +125,9 @@ export function SplitTable({
               >
                 {row.label}
               </button>
-              <span aria-hidden className="flex items-end gap-1" style={{ opacity: freq.opacity }}>
-                <span>{freq.text}</span>
-                {freq.sampleText && (
-                  <span style={{ fontSize: H2N_THEME.sampleFontSize, color: H2N_THEME.sample, lineHeight: 'normal' }}>
-                    {freq.sampleText}
-                  </span>
-                )}
+              <span aria-hidden className="flex items-end gap-1">
+                <span className={freq.opacity < 1 ? 'text-subtle-foreground' : undefined}>{freq.text}</span>
+                {freq.sampleText && <span className="text-2xs text-sample">{freq.sampleText}</span>}
               </span>
               {showRange && (
                 <span className="flex min-w-0 items-center pr-1">
@@ -147,14 +136,14 @@ export function SplitTable({
                       strength={row.strength}
                       width="100%"
                       height={14}
-                      labelSize={10}
+                      compact
                       selectedKey={selected ? (selection?.bucket ?? null) : null}
                       onSelect={disabled ? undefined : (b) => onSelectSegment(row, b)}
                     />
                   )}
                 </span>
               )}
-              <ArrowRight aria-hidden className="size-3.5 text-white/30" />
+              <ArrowRight aria-hidden className="size-3.5 text-subtle-foreground" />
               <span>{fcr}</span>
               <span>{bx}</span>
             </div>

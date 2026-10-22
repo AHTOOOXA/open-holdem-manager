@@ -1,6 +1,6 @@
 /**
  * The H2N-style "General" screen as data: which cells exist, where they sit,
- * and what colour each one uses. Layout: the reference
+ * and which text tone each one uses. Layout: the reference
  * screenshot of Hand2Note's General screen (docs/specs/H2N-COMPATIBLE-STATS.md §3.6, §4).
  *
  * Cell ids are `section.stat.column` (e.g. `preflop.open_raise.EP`). They are
@@ -17,12 +17,13 @@
 
 import type { H2NUnits } from './h2n-format';
 
-// ── Colours ────────────────────────────────────────────────────────
+// ── Tones ──────────────────────────────────────────────────────────
 
-export type H2NColorKey =
+/** Text role of a layout cell; the value never changes it (win rate aside, see GeneralGrid). */
+export type GeneralTone =
   | 'title'
   | 'heading'
-  | 'lightgray'
+  | 'value'
   | 'ep'
   | 'mp'
   | 'co'
@@ -34,51 +35,28 @@ export type H2NColorKey =
   | 'river'
   | 'winrate';
 
-/** Per-column font colours. The value never changes the colour. */
-export const H2N_COLORS: Record<H2NColorKey, string> = {
-  title: '#999999', // row labels, column headers
-  heading: '#D5D5D5', // PRE-FLOP / POSTFLOP and block headings
-  lightgray: '#D3D3D3', // Total columns, right list, showdown rows, top-line values
-  ep: '#F57373',
-  mp: '#F5AE73',
-  co: '#F5CA73',
-  btn: '#5CC45C',
-  sb: '#459393',
-  bb: '#566EA4',
-  flop: '#F06060',
-  turn: '#F3B562',
-  river: '#8CBEB2',
-  winrate: '#C5FF99',
+/**
+ * Text colour class per tone (OHM tokens, src/index.css). Same places as
+ * Hand2Note: labels / column titles muted, headings and Total columns in the
+ * foreground, positional columns in their position colour, postflop columns
+ * in their street colour. `winrate` is the zero tone here; the stat cell
+ * picks money-pos / money-neg from the value.
+ */
+export const GENERAL_TONE_CLASS: Record<GeneralTone, string> = {
+  title: 'text-muted-foreground', // row labels, column headers
+  heading: 'text-foreground', // PRE-FLOP / POSTFLOP and block headings
+  value: 'text-foreground', // Total columns, right list, showdown rows, top-line values
+  ep: 'text-pos-ep',
+  mp: 'text-pos-mp',
+  co: 'text-pos-co',
+  btn: 'text-pos-btn',
+  sb: 'text-pos-sb',
+  bb: 'text-pos-bb',
+  flop: 'text-street-flop',
+  turn: 'text-street-turn',
+  river: 'text-street-river',
+  winrate: 'text-money-zero',
 };
-
-/** Suggested colour for a negative win rate (the screenshot only shows a positive one). */
-export const H2N_WINRATE_NEGATIVE = '#F57373';
-
-/** Panel and overlay colours of the screen. */
-export const H2N_THEME = {
-  pageBg: '#2C2C2C',
-  popupBg: '#282828',
-  outerBg: '#212121',
-  border: 'rgba(255,255,255,0.1)',
-  muted: 'rgba(255,255,255,0.5)',
-  sample: '#888888',
-  selectedOverlay: 'rgba(255,255,130,0.2)',
-  hoverOverlay: 'rgba(255,255,130,0.06)',
-  fontFamily: '"Segoe UI", "Selawik", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif',
-  /** Normal text: 14px on an 18.67px line + 4px padding top/bottom = a 26.67px row. */
-  fontSize: 14,
-  lineHeight: '18.67px',
-  /** Section titles (PRE-FLOP / POSTFLOP). */
-  sectionFontSize: 18,
-  sectionLineHeight: '24px',
-  sampleFontSize: 10,
-  /** Left inset of the page content. */
-  pageInset: 16,
-  /** Gap between tables on the page. */
-  pageGap: 8,
-  /** Padding of every cell (empty cells keep it, so spacers are 8px). */
-  cellPadding: 4,
-} as const;
 
 // ── Cell metadata ──────────────────────────────────────────────────
 
@@ -318,9 +296,9 @@ export type CellAlign = 'left' | 'center';
 
 export type LayoutCell =
   | { type: 'empty'; span?: number }
-  | { type: 'text'; text: string; color: H2NColorKey; section?: boolean; align?: CellAlign; span?: number }
-  | { type: 'stat'; id: string; color: H2NColorKey; align?: CellAlign; span?: number }
-  | { type: 'nickname'; color: H2NColorKey };
+  | { type: 'text'; text: string; tone: GeneralTone; section?: boolean; align?: CellAlign; span?: number }
+  | { type: 'stat'; id: string; tone: GeneralTone; align?: CellAlign; span?: number }
+  | { type: 'nickname'; tone: GeneralTone };
 
 export interface LayoutTable {
   id: string;
@@ -338,30 +316,30 @@ function empties(n: number): LayoutCell[] {
   return Array.from({ length: n }, () => E);
 }
 
-/** Row label / column header in the Title font. */
+/** Row label / column header in the title (muted) tone. */
 function label(text: string, align: CellAlign = 'left', span?: number): LayoutCell {
-  return { type: 'text', text, color: 'title', align, span };
+  return { type: 'text', text, tone: 'title', align, span };
 }
 
 function heading(text: string, span?: number): LayoutCell {
-  return { type: 'text', text, color: 'heading', align: 'left', span };
+  return { type: 'text', text, tone: 'heading', align: 'left', span };
 }
 
 function section(text: string): LayoutCell {
-  return { type: 'text', text, color: 'heading', section: true, align: 'left' };
+  return { type: 'text', text, tone: 'heading', section: true, align: 'left' };
 }
 
-function stat(id: string | undefined, color: H2NColorKey, align: CellAlign = 'center', span?: number): LayoutCell {
+function stat(id: string | undefined, tone: GeneralTone, align: CellAlign = 'center', span?: number): LayoutCell {
   if (!id) return E;
-  return { type: 'stat', id, color, align, span };
+  return { type: 'stat', id, tone, align, span };
 }
 
-const POS_COLORS: Record<PosCol, H2NColorKey> = {
-  Total: 'lightgray', EP: 'ep', MP: 'mp', CO: 'co', BTN: 'btn', SB: 'sb', BB: 'bb',
+const POS_TONES: Record<PosCol, GeneralTone> = {
+  Total: 'value', EP: 'ep', MP: 'mp', CO: 'co', BTN: 'btn', SB: 'sb', BB: 'bb',
 };
 
-function posCells(ids: Partial<Record<PosCol, string>>, cols: PosCol[], overrides: Partial<Record<PosCol, H2NColorKey>> = {}) {
-  return cols.map((c) => stat(ids[c], overrides[c] ?? POS_COLORS[c]));
+function posCells(ids: Partial<Record<PosCol, string>>, cols: PosCol[], overrides: Partial<Record<PosCol, GeneralTone>> = {}) {
+  return cols.map((c) => stat(ids[c], overrides[c] ?? POS_TONES[c]));
 }
 
 const PRE_COLS: PosCol[] = ['Total', 'EP', 'MP', 'CO', 'BTN', 'SB', 'BB'];
@@ -380,15 +358,15 @@ const SUMMARY_TABLE: LayoutTable = {
   marginBottom: 8,
   rows: [
     [
-      { type: 'nickname', color: 'lightgray' },
-      stat(SUMMARY.hands, 'lightgray'),
+      { type: 'nickname', tone: 'value' },
+      stat(SUMMARY.hands, 'value'),
       label('hands'),
       stat(SUMMARY.bb100, 'winrate'),
       label('bb/100'),
       label('VPIP'),
-      stat(SUMMARY.vpip, 'lightgray', 'left'),
+      stat(SUMMARY.vpip, 'value', 'left'),
       label('PFR'),
-      stat(SUMMARY.pfr, 'lightgray', 'left'),
+      stat(SUMMARY.pfr, 'value', 'left'),
     ],
   ],
 };
@@ -407,7 +385,7 @@ const RIGHT_LIST: [string, string][] = [
 
 function rightList(i: number): LayoutCell[] {
   const [text, id] = RIGHT_LIST[i];
-  return [E, label(text), stat(id, 'lightgray', 'left')];
+  return [E, label(text), stat(id, 'value', 'left')];
 }
 
 /** PRE-FLOP: label + 7 positional columns, a 59px gap, then the label/value list. */
@@ -420,8 +398,8 @@ const PREFLOP_TABLE: LayoutTable = {
     [label('Open Raise'), ...posCells(OR, PRE_COLS), ...rightList(1)],
     [label('Fold to 3Bet'), ...posCells(F3B, PRE_COLS), ...rightList(2)],
     [label('Call Open Raise'), ...posCells(COR, PRE_COLS), ...rightList(3)],
-    // The screenshot draws 3-Bet / BB in LightGray rather than the BB column colour.
-    [label('3-Bet'), ...posCells(TB, PRE_COLS, { BB: 'lightgray' }), ...rightList(4)],
+    // The reference draws 3-Bet / BB in the value tone rather than the BB column colour.
+    [label('3-Bet'), ...posCells(TB, PRE_COLS, { BB: 'value' }), ...rightList(4)],
     [label('3-Bet In Position'), ...posCells(TBIP, PRE_COLS), ...rightList(5)],
     [label('3-Bet Out of Position'), ...posCells(TBOOP, PRE_COLS), ...rightList(6)],
     [...empties(8), ...rightList(7)],
@@ -484,9 +462,9 @@ const POSTFLOP_TABLE: LayoutTable = {
       label('Bet Out of Position Turn'), stat(VS_MISSED.betOop, 'turn'), label('Check-Fold', 'center', 2), stat(VS_MISSED.checkFoldOop, 'turn'), E, E,
     ],
     empties(13),
-    [label('Went to Showdown'), stat(SHOWDOWN.wtsd, 'lightgray'), ...empties(11)],
-    [label('Won at Showdown'), stat(SHOWDOWN.wsd, 'lightgray'), ...empties(11)],
-    [label('Won When Saw Flop'), stat(SHOWDOWN.wwsf, 'lightgray'), ...empties(11)],
+    [label('Went to Showdown'), stat(SHOWDOWN.wtsd, 'value'), ...empties(11)],
+    [label('Won at Showdown'), stat(SHOWDOWN.wsd, 'value'), ...empties(11)],
+    [label('Won When Saw Flop'), stat(SHOWDOWN.wwsf, 'value'), ...empties(11)],
     empties(13),
   ],
 };

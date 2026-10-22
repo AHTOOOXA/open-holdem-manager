@@ -25,8 +25,7 @@ import type { GeneralCell, GeneralResponse, HandsSelection } from '@/lib/api-gen
 import { getPresetDates } from '@/lib/date-presets';
 import type { DatePreset } from '@/lib/date-presets';
 import { formatHands } from '@/lib/h2n-format';
-import { GENERAL_CELLS, H2N_THEME, SUMMARY_CELL_IDS } from '@/lib/h2n-layout';
-import { POPUP_THEME } from '@/lib/general-notation';
+import { GENERAL_CELLS, SUMMARY_CELL_IDS } from '@/lib/h2n-layout';
 
 /** Hands and bb/100 also travel as top-level fields; make sure the grid sees them as cells. */
 function cellsWithSummary(res: GeneralResponse): Record<string, GeneralCell> {
@@ -45,6 +44,10 @@ function downloadJson(data: unknown, filename: string) {
   a.click();
   URL.revokeObjectURL(url);
 }
+
+/** Line tab of the page header: muted, active in the foreground over a 2px primary indicator. */
+const PAGE_TAB =
+  'flex-none rounded-none px-0 text-sm font-medium tracking-normal text-muted-foreground after:bg-primary hover:text-foreground data-[state=active]:text-foreground';
 
 // ── Page ────────────────────────────────────────────────────────────
 
@@ -129,10 +132,7 @@ export default function GeneralPage() {
 
   return (
     // contain:inline-size keeps the wide pane row from stretching the app shell; the row scrolls instead.
-    <div
-      className="-m-4 flex h-[calc(100svh-2.5rem)] min-h-0 flex-col [contain:inline-size]"
-      style={{ background: H2N_THEME.outerBg }}
-    >
+    <div className="-m-4 flex h-[calc(100svh-2.5rem)] min-h-0 flex-col bg-surface-sunken [contain:inline-size]">
       <div className="p-2">
         <FilterBar
           stakes={stakes}
@@ -167,28 +167,27 @@ export default function GeneralPage() {
         {/* Page 0: General */}
         <section
           aria-label="General statistics"
-          className="flex h-full min-w-[670px] shrink-0 flex-col"
-          style={{ background: H2N_THEME.pageBg, fontFamily: H2N_THEME.fontFamily }}
+          className="flex h-full min-w-[670px] shrink-0 flex-col bg-card"
         >
           <header className="flex items-center gap-2 px-4 py-2 text-sm">
-            <div className="flex items-center gap-2 px-3 py-2 text-[#D3D3D3]" title="Selected player">
-              <UserRound className="size-4 text-white/60" aria-hidden />
-              <span className="size-1.5 rounded-full bg-[#F57373]" aria-hidden />
+            <div className="flex items-center gap-2 px-3 py-2 text-foreground" title="Selected player">
+              <UserRound className="size-4 text-muted-foreground" aria-hidden />
+              <span className="size-1.5 rounded-full bg-primary" aria-hidden />
               <span>
                 {playerName}
                 {siteName && (
                   <>
-                    ,<span className="ml-1 text-white/50">{siteName}</span>
+                    ,<span className="ml-1 text-muted-foreground">{siteName}</span>
                   </>
                 )}
               </span>
             </div>
             {data?.mock && (
-              <Badge variant="outline" className="border-white/15 text-white/50" title="The stats endpoint is not available yet; showing sample numbers">
+              <Badge variant="outline" className="border-border text-muted-foreground" title="The stats endpoint is not available yet; showing sample numbers">
                 Sample data
               </Badge>
             )}
-            <span className="ml-auto flex items-center gap-2 text-white/50">
+            <span className="ml-auto flex items-center gap-2 text-muted-foreground">
               {isFetching && !isPending && (
                 <RefreshCw className="size-3 animate-spin" aria-label="Updating" role="status" />
               )}
@@ -196,7 +195,7 @@ export default function GeneralPage() {
             </span>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon" className="size-8 text-white/60" aria-label="General page menu">
+                <Button variant="ghost" size="icon" className="size-8 text-muted-foreground hover:text-foreground" aria-label="General page menu">
                   <Settings />
                 </Button>
               </DropdownMenuTrigger>
@@ -214,31 +213,25 @@ export default function GeneralPage() {
 
           <Tabs value={tab} onValueChange={setTab} className="min-h-0 flex-1 gap-0">
             <TabsList variant="line" className="h-auto gap-4 px-4 pb-1">
-              <TabsTrigger
-                value="general"
-                className="flex-none rounded-none px-0 text-sm font-normal tracking-normal data-[state=active]:text-[#D5D5D5]"
-              >
+              <TabsTrigger value="general" className={PAGE_TAB}>
                 GENERAL
               </TabsTrigger>
-              <TabsTrigger
-                value="notes"
-                className="flex-none rounded-none px-0 text-sm font-normal data-[state=active]:text-[#D5D5D5]"
-              >
+              <TabsTrigger value="notes" className={PAGE_TAB}>
                 Notes
               </TabsTrigger>
             </TabsList>
-            <div className="mx-0 h-px bg-white/10" />
+            <div className="mx-0 h-px bg-border" />
 
             <TabsContent value="general" className="min-h-0">
               <ScrollArea className="h-full">
                 <div className="pt-4 pb-4">
                   {isPending ? (
-                    <p className="px-4 text-sm text-white/50">Loading…</p>
+                    <p className="px-4 text-sm text-muted-foreground">Loading…</p>
                   ) : isError && !data ? (
                     <div role="alert" className="flex flex-col items-start gap-3 px-4">
-                      <p className="text-sm text-white/70">Could not load statistics.</p>
+                      <p className="text-sm text-foreground">Could not load statistics.</p>
                       {error instanceof Error && error.message && (
-                        <p className="text-sm text-white/50">{error.message}</p>
+                        <p className="text-sm text-muted-foreground">{error.message}</p>
                       )}
                       <Button variant="outline" size="sm" onClick={() => void refetch()} disabled={isFetching}>
                         <RefreshCw className={isFetching ? 'animate-spin' : undefined} /> Retry
@@ -256,7 +249,7 @@ export default function GeneralPage() {
                       aria-busy={isPlaceholderData || undefined}
                     >
                       {isError && (
-                        <div role="alert" className="mb-3 flex items-center gap-3 px-4 text-sm text-white/60">
+                        <div role="alert" className="mb-3 flex items-center gap-3 px-4 text-sm text-muted-foreground">
                           <span>
                             Could not refresh statistics
                             {error instanceof Error && error.message ? `: ${error.message}` : '.'}
@@ -279,7 +272,7 @@ export default function GeneralPage() {
               </ScrollArea>
             </TabsContent>
             <TabsContent value="notes" className="px-4 pt-4">
-              <p className="text-sm text-white/50">Player notes are not supported yet.</p>
+              <p className="text-sm text-muted-foreground">Player notes are not supported yet.</p>
             </TabsContent>
           </Tabs>
         </section>
@@ -301,8 +294,7 @@ export default function GeneralPage() {
         {popupOpen && selectedCellId && handsSelection ? (
           <section
             aria-label={`Hands: ${handsSelection.label}`}
-            className="flex h-full min-w-[420px] flex-1 flex-col border-l border-white/5 pt-1"
-            style={{ background: POPUP_THEME.headerBg }}
+            className="flex h-full min-w-[420px] flex-1 flex-col border-l border-border-subtle bg-surface-sunken pt-1"
           >
             <GeneralHandList
               key={`${selectedCellId}|${handsSelection.bucket ?? ''}|${handsSelection.board ?? ''}|${handsSelection.size ?? ''}`}

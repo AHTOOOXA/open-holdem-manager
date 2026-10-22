@@ -14,9 +14,9 @@ import type {
   SplitRow,
   StrengthBucket,
 } from '@/lib/api-general';
-import { H2N_THEME } from '@/lib/h2n-layout';
 import type { GeneralCellMeta } from '@/lib/h2n-layout';
-import { POPUP_THEME, formatRatio, popupTitle } from '@/lib/general-notation';
+import { formatRatio, popupTitle } from '@/lib/general-notation';
+import { cn } from '@/lib/utils';
 import { statAction, statTitle } from '@/lib/general-titles';
 import BetSizesTab from './BetSizesTab';
 import BoardsTab from './BoardsTab';
@@ -48,13 +48,11 @@ function titleFor(meta: GeneralCellMeta): string {
 function RatioValue({ r, large }: { r: Ratio | { cases: number; opps: number }; large?: boolean }) {
   const d = formatRatio(r);
   return (
-    <span className="inline-flex items-end gap-1" style={{ opacity: d.opacity }}>
-      <span style={{ color: POPUP_THEME.value, fontSize: large ? 15 : 14 }}>{d.text}</span>
-      {d.sampleText && (
-        <span style={{ fontSize: H2N_THEME.sampleFontSize, color: H2N_THEME.sample, lineHeight: 'normal' }}>
-          {d.sampleText}
-        </span>
-      )}
+    <span className="inline-flex items-end gap-1">
+      <span className={cn(large ? 'text-base' : 'text-sm', d.opacity < 1 ? 'text-subtle-foreground' : 'text-foreground')}>
+        {d.text}
+      </span>
+      {d.sampleText && <span className="text-2xs text-sample">{d.sampleText}</span>}
     </span>
   );
 }
@@ -63,7 +61,7 @@ function SummaryItem({ r, label }: { r: Ratio; label: string }) {
   return (
     <div className="flex flex-col">
       <RatioValue r={r} />
-      <span style={{ color: POPUP_THEME.label }}>{label}</span>
+      <span className="text-muted-foreground">{label}</span>
     </div>
   );
 }
@@ -82,13 +80,13 @@ function SummaryRow({ detail }: { detail: CellDetail }) {
     right.push(<SummaryItem key="b" r={next.bet} label="Bet" />, <SummaryItem key="x" r={next.check} label="Check" />);
   }
   return (
-    <div className="flex items-stretch gap-4 text-sm" style={{ lineHeight: '18.67px' }}>
+    <div className="flex items-stretch gap-4 text-sm leading-4.5">
       <SummaryItem r={won_hand} label="Won Hand" />
       <SummaryItem r={wtsd} label="WTSD" />
       <SummaryItem r={wsd} label="W%SD" />
       {right.length > 0 && (
         <>
-          <div aria-hidden className="w-px self-stretch" style={{ background: POPUP_THEME.divider }} />
+          <div aria-hidden className="w-px self-stretch bg-border" />
           {right}
         </>
       )}
@@ -153,20 +151,20 @@ export default function StatPopup({ cellId, meta, params, selection, onSelect, o
   return (
     <section
       aria-label={`Stat detail: ${title}`}
-      className="flex h-full w-[517px] shrink-0 flex-col border-l border-white/5"
-      style={{ background: POPUP_THEME.bodyBg, fontFamily: H2N_THEME.fontFamily, fontSize: H2N_THEME.fontSize }}
+      className="flex h-full w-[517px] shrink-0 flex-col border-l border-border-subtle bg-surface-raised text-sm"
     >
       {/* Header: title, stat value + bars, summary */}
-      <div className="shrink-0 px-4 pt-3 pb-6" style={{ background: POPUP_THEME.headerBg }}>
+      <div className="shrink-0 bg-surface-sunken px-4 pt-3 pb-6">
         <div className="flex items-center justify-between gap-2">
-          <span
-            className="inline-flex min-w-0 items-center gap-2 rounded-full px-4 text-[15px] text-white"
-            style={{ background: POPUP_THEME.titlePill, lineHeight: '33px' }}
-          >
+          <span className="inline-flex h-6 min-w-0 items-center gap-1.5 rounded-pill bg-muted px-2 text-xs text-foreground">
             <span className="truncate">{title}</span>
             <Tooltip>
               <TooltipTrigger asChild>
-                <button type="button" className="shrink-0 cursor-help text-[#C3C3C3]" aria-label="About this stat">
+                <button
+                  type="button"
+                  className="shrink-0 cursor-help rounded-pill text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-primary"
+                  aria-label="About this stat"
+                >
                   <Info className="size-3.5" />
                 </button>
               </TooltipTrigger>
@@ -175,7 +173,7 @@ export default function StatPopup({ cellId, meta, params, selection, onSelect, o
                   <div className="font-medium">{title}</div>
                   {data && (
                     <>
-                      <div className="font-mono text-[11px] opacity-80">{data.notation}</div>
+                      <div className="font-mono text-label opacity-80">{data.notation}</div>
                       <div className="opacity-80">
                         {data.cases.toLocaleString()} of {data.opps.toLocaleString()} opportunities
                         {data.replay_failed > 0 ? ` · ${data.replay_failed} hands could not be replayed` : ''}
@@ -189,7 +187,7 @@ export default function StatPopup({ cellId, meta, params, selection, onSelect, o
           <Button
             variant="ghost"
             size="icon"
-            className="size-8 shrink-0 text-[#A8A8A8] hover:text-white"
+            className="size-8 shrink-0 text-muted-foreground hover:text-foreground"
             onClick={onClose}
             aria-label="Close stat detail"
           >
@@ -197,16 +195,16 @@ export default function StatPopup({ cellId, meta, params, selection, onSelect, o
           </Button>
         </div>
 
-        <div className="mt-5 grid items-center gap-y-[10px]" style={{ gridTemplateColumns: '72px 32px auto' }}>
-          <span style={{ color: POPUP_THEME.label }}>Stat Value</span>
-          <span>{data ? <RatioValue r={data} large /> : <span className="text-white/30">…</span>}</span>
+        <div className="mt-5 grid items-center gap-y-2.5" style={{ gridTemplateColumns: '72px 32px auto' }}>
+          <span className="text-muted-foreground">Stat Value</span>
+          <span>{data ? <RatioValue r={data} large /> : <span className="text-subtle-foreground">…</span>}</span>
           {!isPreflop ? (
             <StrengthBar strength={data?.strength} selectedKey={plainBucket} onSelect={selectBucket} />
           ) : (
             <span />
           )}
-          <span style={{ color: POPUP_THEME.label }}>Vs-User</span>
-          <span className="text-[#595959]">--</span>
+          <span className="text-muted-foreground">Vs-User</span>
+          <span className="text-subtle-foreground">--</span>
           {!isPreflop ? <StrengthBar strength={null} /> : <span />}
         </div>
 
@@ -220,7 +218,7 @@ export default function StatPopup({ cellId, meta, params, selection, onSelect, o
             <TabsTrigger
               key={t}
               value={t}
-              className="flex-none rounded-none px-0 text-[15px] font-semibold text-[#737373] after:bg-white data-[state=active]:text-white dark:text-[#737373] dark:data-[state=active]:text-white"
+              className="flex-none rounded-none px-0 text-sm font-medium text-muted-foreground after:bg-primary hover:text-foreground data-[state=active]:text-foreground"
             >
               {TAB_LABELS[t]}
             </TabsTrigger>
@@ -228,9 +226,9 @@ export default function StatPopup({ cellId, meta, params, selection, onSelect, o
         </TabsList>
 
         {isPending ? (
-          <p className="px-4 py-4 text-sm text-white/50">Loading…</p>
+          <p className="px-4 py-4 text-sm text-muted-foreground">Loading…</p>
         ) : isError || !data ? (
-          <p className="px-4 py-4 text-sm text-white/50">{(error as Error)?.message ?? 'Could not load the stat.'}</p>
+          <p className="px-4 py-4 text-sm text-muted-foreground">{(error as Error)?.message ?? 'Could not load the stat.'}</p>
         ) : (
           <>
             {!isPreflop && (

@@ -1,13 +1,7 @@
 import { cn } from '@/lib/utils';
 import type { Strength, StrengthBucket } from '@/lib/api-general';
-import { H2N_THEME } from '@/lib/h2n-layout';
-import {
-  POPUP_THEME,
-  barWidthPct,
-  formatFrequency,
-  formatRangeCount,
-  popupTableHeaderStyle,
-} from '@/lib/general-notation';
+import { POPUP_TABLE_HEADER, barWidthPct, formatFrequency, formatRangeCount } from '@/lib/general-notation';
+import { hvColor } from '@/lib/hv-color';
 
 /**
  * Column template shared by the header and the rows (Hand Value | Frequency | Range).
@@ -32,7 +26,7 @@ interface RangeTabProps {
  */
 export default function RangeTab({ strength, selectedKey, onSelect }: RangeTabProps) {
   if (!strength) {
-    return <p className="px-4 py-4 text-sm text-white/50">Preflop stats have no hand values.</p>;
+    return <p className="px-4 py-4 text-sm text-muted-foreground">Preflop stats have no hand values.</p>;
   }
   const total = strength.total;
   const max = strength.buckets.reduce((m, b) => Math.max(m, b.count), 0);
@@ -40,8 +34,8 @@ export default function RangeTab({ strength, selectedKey, onSelect }: RangeTabPr
   return (
     <div role="listbox" aria-label="Hand values" className="pb-2">
       <div
-        className="grid items-center px-4 text-sm"
-        style={{ ...popupTableHeaderStyle, gridTemplateColumns: COLUMNS, height: 41 }}
+        className={cn('grid items-center px-4 text-sm', POPUP_TABLE_HEADER)}
+        style={{ gridTemplateColumns: COLUMNS, height: 41 }}
       >
         <span>Hand Value</span>
         <span className="max-w-[78px] truncate" title="Frequency, %">
@@ -63,18 +57,13 @@ export default function RangeTab({ strength, selectedKey, onSelect }: RangeTabPr
               title={b.description}
               onClick={() => onSelect(b)}
               className={cn(
-                'grid w-full items-center justify-start px-4 text-left text-sm outline-none',
-                empty ? 'cursor-default opacity-30' : 'cursor-pointer focus-visible:bg-white/5',
-                !selected && !empty && 'hover:bg-white/[0.04]',
+                'grid h-row-dense w-full items-center justify-start px-4 text-left text-sm leading-4.5 text-foreground outline-none',
+                empty
+                  ? 'cursor-default font-extralight opacity-30'
+                  : 'cursor-pointer font-normal focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-inset',
+                selected ? 'bg-selection' : !empty && 'hover:bg-overlay-hover',
               )}
-              style={{
-                gridTemplateColumns: COLUMNS,
-                height: 26.67,
-                lineHeight: H2N_THEME.lineHeight,
-                fontWeight: empty ? 200 : 400,
-                background: selected ? POPUP_THEME.rowSelected : undefined,
-                color: '#E8E8E8',
-              }}
+              style={{ gridTemplateColumns: COLUMNS }}
             >
               <span className="truncate pr-2">{b.label}</span>
               <span>{formatFrequency(b.count, total)}</span>
@@ -83,10 +72,10 @@ export default function RangeTab({ strength, selectedKey, onSelect }: RangeTabPr
                   <>
                     <span
                       aria-hidden
-                      className="block h-[6px]"
-                      style={{ width: `${barWidthPct(b.count, max)}%`, background: b.color }}
+                      className="block h-1.5"
+                      style={{ width: `${barWidthPct(b.count, max)}%`, background: hvColor(b.key) }}
                     />
-                    <span className="shrink-0 text-[#D3D3D3]">{formatRangeCount(b.count)}</span>
+                    <span className="shrink-0 text-muted-foreground">{formatRangeCount(b.count)}</span>
                   </>
                 )}
               </span>
