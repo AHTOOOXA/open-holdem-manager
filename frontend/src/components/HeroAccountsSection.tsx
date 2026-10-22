@@ -44,6 +44,7 @@ interface NicknamesFormProps {
   initialSite: string;
   initialNames: string[];
   saving: boolean;
+  error: string | null;
   onCancel: () => void;
   onSave: (site: string, names: string[]) => void;
 }
@@ -51,7 +52,7 @@ interface NicknamesFormProps {
 let nextRowId = 0;
 const makeRow = (value: string): Row => ({ id: nextRowId++, value });
 
-function NicknamesForm({ sites, initialSite, initialNames, saving, onCancel, onSave }: NicknamesFormProps) {
+function NicknamesForm({ sites, initialSite, initialNames, saving, error, onCancel, onSave }: NicknamesFormProps) {
   const [site, setSite] = useState(initialSite);
   const [rows, setRows] = useState<Row[]>(() =>
     (initialNames.length ? initialNames : ['']).map(makeRow),
@@ -121,6 +122,7 @@ function NicknamesForm({ sites, initialSite, initialNames, saving, onCancel, onS
           </div>
         </div>
       </div>
+      {error && <p role="alert" className="text-xs text-red">{error}</p>}
       <DialogFooter>
         <Button variant="outline" onClick={onCancel} disabled={saving}>Cancel</Button>
         <Button onClick={() => onSave(site, names)} disabled={!site || saving}>
@@ -137,6 +139,7 @@ export default function HeroAccountsSection({ workspaceId, workspaceName }: { wo
   const queryClient = useQueryClient();
   const [dialog, setDialog] = useState<DialogState>(null);
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const sitesQuery = useQuery({ queryKey: ['sites'], queryFn: getSites, staleTime: Infinity });
   const heroesQuery = useQuery({
@@ -153,28 +156,36 @@ export default function HeroAccountsSection({ workspaceId, workspaceName }: { wo
   // The active hero drives every stat screen, so refresh everything after a change.
   const refresh = () => queryClient.invalidateQueries();
 
+  const run = async (action: () => Promise<void>) => {
+    setError(null);
+    try {
+      await action();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not save hero accounts.');
+    }
+  };
+
   const saveSite = async (site: string, names: string[]) => {
     const editSite = dialog?.editSite ?? null;
     setSaving(true);
-    try {
+    await run(async () => {
       if (editSite && editSite !== site) await setManualHeroes(workspaceId, editSite, []);
       await setManualHeroes(workspaceId, site, names);
       await refresh();
       setDialog(null);
-    } finally {
-      setSaving(false);
-    }
+    });
+    setSaving(false);
   };
 
-  const removeSite = async (site: string) => {
+  const removeSite = (site: string) => run(async () => {
     await setManualHeroes(workspaceId, site, []);
     await refresh();
-  };
+  });
 
-  const toggleAuto = async (checked: boolean) => {
+  const toggleAuto = (checked: boolean) => run(async () => {
     await setHeroAutoDetect(workspaceId, checked);
     await refresh();
-  };
+  });
 
   const editing = dialog?.editSite ?? null;
   const editingNames = editing
@@ -187,6 +198,7 @@ export default function HeroAccountsSection({ workspaceId, workspaceName }: { wo
         <div className="flex flex-col gap-0.5">
           <span className="text-sm font-medium">Hero accounts</span>
           <p className="text-xs text-text-muted">{heroSummary(heroes?.active ?? null)}</p>
+          {error && !dialog && <p role="alert" className="text-xs text-red">{error}</p>}
         </div>
         <Button
           type="button"
@@ -194,7 +206,7 @@ export default function HeroAccountsSection({ workspaceId, workspaceName }: { wo
           size="sm"
           className="shrink-0"
           disabled={sites.length === 0}
-          onClick={() => setDialog({ editSite: null })}
+          onClick={() => { setError(null); setDialog({ editSite: null }); }}
         >
           <Plus className="size-4" />
           Add hero nicknames…
@@ -218,7 +230,7 @@ export default function HeroAccountsSection({ workspaceId, workspaceName }: { wo
                     variant="ghost"
                     size="icon-sm"
                     aria-label={`Edit ${g.site_name} nicknames`}
-                    onClick={() => setDialog({ editSite: g.site })}
+                    onClick={() => { setError(null); setDialog({ editSite: g.site }); }}
                   >
                     <Pencil className="size-4" />
                   </Button>
@@ -281,6 +293,7 @@ export default function HeroAccountsSection({ workspaceId, workspaceName }: { wo
               initialSite={editing ?? firstSiteWithoutManual(sites, accounts)}
               initialNames={editingNames}
               saving={saving}
+              error={error}
               onCancel={() => setDialog(null)}
               onSave={saveSite}
             />
