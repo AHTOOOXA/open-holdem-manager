@@ -121,6 +121,7 @@ export interface StrengthBucket {
   index: number;
   key: string;
   label: string;
+  /** Hand2Note's colour from the backend; the UI draws hvColor(key) instead. */
   color: string;
   weak: boolean;
   description: string;
