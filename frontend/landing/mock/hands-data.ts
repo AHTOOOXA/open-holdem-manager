@@ -31,6 +31,8 @@ const mockHands: HandSummary[] = [
     river_card: 'Qd',
     river_pot: 28.5,
     river_actions: [villain('X'), hero('B', 18), villain('F')],
+    rit_boards: 1,
+    is_cashout: false,
   },
   {
     id: 'RC0000000002',
@@ -53,6 +55,8 @@ const mockHands: HandSummary[] = [
     river_card: null,
     river_pot: 0,
     river_actions: [],
+    rit_boards: 1,
+    is_cashout: false,
   },
   {
     id: 'RC0000000003',
@@ -75,6 +79,8 @@ const mockHands: HandSummary[] = [
     river_card: null,
     river_pot: 0,
     river_actions: [],
+    rit_boards: 1,
+    is_cashout: false,
   },
   {
     id: 'RC0000000004',
@@ -97,6 +103,8 @@ const mockHands: HandSummary[] = [
     river_card: '7d',
     river_pot: 57.5,
     river_actions: [hero('B', 38), villain('F')],
+    rit_boards: 1,
+    is_cashout: false,
   },
   {
     id: 'RC0000000005',
@@ -119,6 +127,8 @@ const mockHands: HandSummary[] = [
     river_card: null,
     river_pot: 0,
     river_actions: [],
+    rit_boards: 1,
+    is_cashout: false,
   },
   {
     id: 'RC0000000006',
@@ -141,6 +151,8 @@ const mockHands: HandSummary[] = [
     river_card: 'Kd',
     river_pot: 107.5,
     river_actions: [],
+    rit_boards: 1,
+    is_cashout: false,
   },
   {
     id: 'RC0000000007',
@@ -163,6 +175,8 @@ const mockHands: HandSummary[] = [
     river_card: 'Ah',
     river_pot: 200,
     river_actions: [],
+    rit_boards: 1,
+    is_cashout: false,
   },
   {
     id: 'RC0000000008',
@@ -185,6 +199,8 @@ const mockHands: HandSummary[] = [
     river_card: null,
     river_pot: 0,
     river_actions: [],
+    rit_boards: 1,
+    is_cashout: false,
   },
   {
     id: 'RC0000000009',
@@ -207,6 +223,8 @@ const mockHands: HandSummary[] = [
     river_card: '6d',
     river_pot: 14,
     river_actions: [hero('B', 10), villain('F')],
+    rit_boards: 1,
+    is_cashout: false,
   },
   {
     id: 'RC0000000010',
@@ -229,6 +247,8 @@ const mockHands: HandSummary[] = [
     river_card: null,
     river_pot: 0,
     river_actions: [],
+    rit_boards: 1,
+    is_cashout: false,
   },
 ];
 
@@ -264,6 +284,9 @@ export const mockHandDetails: Record<string, HandDetail> = {
     ],
     tags: ['bluff-catcher'],
     note: null,
+    extra_boards: [],
+    rit_boards: 1,
+    is_cashout: false,
   },
 };
 

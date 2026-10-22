@@ -111,6 +111,9 @@ function fromCompact(c: CompactHand): HandDetail {
     actions,
     tags: [],
     note: null,
+    extra_boards: [],
+    rit_boards: 1,
+    is_cashout: false,
   };
 }
 
