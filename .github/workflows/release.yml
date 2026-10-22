@@ -34,6 +34,8 @@ jobs:
             platform: mac
           - os: windows-latest
             platform: win
+          - os: ubuntu-22.04 # oldest supported runner = lowest glibc baseline for the AppImage
+            platform: linux
 
     runs-on: ${{ matrix.os }}
 
@@ -113,6 +115,7 @@ jobs:
             release/*.dmg
             release/*.zip
             release/*.exe
+            release/*.AppImage
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -123,6 +126,7 @@ jobs:
             release/*.dmg
             release/*.zip
             release/*.exe
+            release/*.AppImage
             release/*.blockmap
             release/latest*.yml
 
@@ -143,7 +147,7 @@ jobs:
 
       - name: Generate SHA256SUMS
         working-directory: dist
-        run: sha256sum *.dmg *.zip *.exe > SHA256SUMS.txt && cat SHA256SUMS.txt
+        run: sha256sum *.dmg *.zip *.exe *.AppImage > SHA256SUMS.txt && cat SHA256SUMS.txt
 
       - name: Create draft release
         run: >

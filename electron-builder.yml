@@ -51,5 +51,9 @@ nsis:
   deleteAppDataOnUninstall: false
 
 linux:
+  category: Utility
+  icon: build/icon.png
+  # Version-less so download links stay stable; latest-linux.yml must match this name
+  artifactName: "Open-Holdem-Manager.${ext}"
   target:
     - AppImage

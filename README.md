@@ -10,8 +10,11 @@ Local poker hand history tracker for GGPoker Rush & Cash. Parses hand histories,
 |----------|----------|
 | macOS (Apple Silicon) | [Open-Holdem-Manager.dmg](https://github.com/AHTOOOXA/open-holdem-manager/releases/latest/download/Open-Holdem-Manager-arm64.dmg) |
 | Windows | [Open-Holdem-Manager-Setup.exe](https://github.com/AHTOOOXA/open-holdem-manager/releases/latest/download/Open-Holdem-Manager-Setup.exe) |
+| Linux (x86_64) | [Open-Holdem-Manager.AppImage](https://github.com/AHTOOOXA/open-holdem-manager/releases/latest/download/Open-Holdem-Manager.AppImage) |
 
 [All releases](https://github.com/AHTOOOXA/open-holdem-manager/releases)
+
+> **Linux note:** make the AppImage executable before running it: `chmod +x Open-Holdem-Manager.AppImage`. It needs FUSE 2 (`libfuse2`; on Ubuntu 22.04+ `sudo apt install libfuse2`).
 
 > **macOS note:** The app is not code-signed yet. macOS will show "app is damaged and can't be opened." To fix, run in Terminal after installing:
 > ```
@@ -32,6 +35,7 @@ Or compare the checksum with `SHA256SUMS.txt` from the same release:
 ```bash
 shasum -a 256 Open-Holdem-Manager-arm64.dmg                    # macOS
 Get-FileHash Open-Holdem-Manager-Setup.exe -Algorithm SHA256   # Windows PowerShell
+sha256sum Open-Holdem-Manager.AppImage                          # Linux
 ```
 
 ## Privacy & network

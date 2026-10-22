@@ -11,10 +11,11 @@ interface ReleaseData {
   html_url: string;
 }
 
-function detectPlatform(): 'mac' | 'windows' | 'unknown' {
+function detectPlatform(): 'mac' | 'windows' | 'linux' | 'unknown' {
   const ua = navigator.userAgent.toLowerCase();
   if (ua.includes('mac')) return 'mac';
   if (ua.includes('win')) return 'windows';
+  if (ua.includes('linux') && !ua.includes('android')) return 'linux';
   return 'unknown';
 }
 
@@ -31,10 +32,12 @@ export default function HeroSection() {
 
   const dmgUrl = release?.assets.find((a) => a.name.endsWith('.dmg'))?.browser_download_url;
   const exeUrl = release?.assets.find((a) => a.name.endsWith('.exe'))?.browser_download_url;
-  const primaryUrl = platform === 'mac' ? dmgUrl : platform === 'windows' ? exeUrl : undefined;
-  const primaryLabel = platform === 'mac' ? 'Download for macOS' : platform === 'windows' ? 'Download for Windows' : 'Download';
-  const secondaryUrl = platform === 'mac' ? exeUrl : platform === 'windows' ? dmgUrl : undefined;
-  const secondaryLabel = platform === 'mac' ? 'Windows' : platform === 'windows' ? 'macOS' : '';
+  const appImageUrl = release?.assets.find((a) => a.name.endsWith('.AppImage'))?.browser_download_url;
+  const urls = { mac: dmgUrl, windows: exeUrl, linux: appImageUrl } as const;
+  const names = { mac: 'macOS', windows: 'Windows', linux: 'Linux' } as const;
+  const primaryUrl = platform === 'unknown' ? undefined : urls[platform];
+  const primaryLabel = platform === 'unknown' ? 'Download' : `Download for ${names[platform]}`;
+  const others = (['mac', 'windows', 'linux'] as const).filter((p) => p !== platform && urls[p]);
   const fallbackUrl = release?.html_url ?? 'https://github.com/AHTOOOXA/open-holdem-manager/releases/latest';
 
   return (
@@ -57,15 +60,22 @@ export default function HeroSection() {
           >
             {primaryLabel}
           </a>
-          {secondaryUrl && (
+          {platform !== 'unknown' && others.map((p) => (
             <a
-              href={secondaryUrl}
+              key={p}
+              href={urls[p]}
               className="text-sm text-text-muted hover:text-text transition-colors"
             >
-              Also available for {secondaryLabel}
+              Also available for {names[p]}
             </a>
-          )}
+          ))}
         </div>
+
+        {platform === 'linux' && (
+          <p className="mt-3 text-xs text-text-muted">
+            After downloading: <code>chmod +x Open-Holdem-Manager.AppImage</code>
+          </p>
+        )}
 
         {release && (
           <p className="mt-3 text-xs text-text-muted">

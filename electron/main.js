@@ -6,7 +6,7 @@ const net = require('net');
 const http = require('http');
 const https = require('https');
 
-// Windows: electron-updater, but only downloads/installs when the user clicks.
+// Windows and Linux (AppImage): electron-updater, but only downloads/installs when the user clicks.
 // macOS: requires Apple Developer account ($99/yr) for code signing, so we
 // fall back to GitHub API release checking with manual download.
 // TODO: Buy Apple Developer account and enable autoUpdater on macOS too.
@@ -209,7 +209,7 @@ function stopBackend() {
 }
 
 // --- Update system ---
-// Windows: electron-updater, user-initiated download and install
+// Windows/Linux: electron-updater, user-initiated download and install
 // macOS: GitHub API checker (manual download until we get Apple signing)
 
 const REPO_OWNER = 'AHTOOOXA';
@@ -217,7 +217,7 @@ const REPO_NAME = 'open-holdem-manager';
 
 let updateState = { available: null, downloading: false, downloaded: false };
 
-// --- Windows: electron-updater ---
+// --- Windows / Linux AppImage: electron-updater ---
 
 function setupAutoUpdater() {
   // Nothing is downloaded or installed without a click. Builds are unsigned,
