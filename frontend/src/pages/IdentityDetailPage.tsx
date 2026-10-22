@@ -19,6 +19,7 @@ import {
 } from '@/components/ui/dialog';
 import { ArrowLeft, Plus, Trash2, X } from 'lucide-react';
 import { useWorkspace } from '@/contexts/WorkspaceContext';
+import { fixed } from '@/lib/format';
 
 const WELL_KNOWN_TAGS = ['me', 'student', 'reg', 'fish', 'coach'] as const;
 const TAG_COLORS: Record<string, string> = {
@@ -34,7 +35,7 @@ function StatRow({ label, value, sample }: { label: string; value: number | null
     <div className="flex items-center justify-between py-1 text-[13px]">
       <span className="text-text-muted">{label}</span>
       <div className="flex items-center gap-2">
-        <span className="font-mono">{value !== null ? value.toFixed(1) : '\u2014'}</span>
+        <span className="font-mono">{value !== null ? fixed(value, 1) : '\u2014'}</span>
         <span className="text-[11px] text-text-muted">({sample})</span>
       </div>
     </div>

@@ -44,41 +44,15 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { queryClient } from '@/lib/query-client';
+import { fixed, usd, moneyClass, bbUnits, formatClockTime, formatSessionDate } from '@/lib/format';
 
 // ── Helpers ──────────────────────────────────────────────────────────
-
-function formatSessionDate(iso: string): string {
-  if (!iso) return '';
-  const d = new Date(iso);
-  return d.toLocaleDateString('en-US', {
-    weekday: 'short',
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-  });
-}
-
-function formatTime(iso: string): string {
-  if (!iso) return '';
-  const d = new Date(iso);
-  return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
-}
 
 function formatDuration(mins: number): string {
   if (mins < 60) return `${Math.round(mins)}m`;
   const h = Math.floor(mins / 60);
   const m = Math.round(mins % 60);
   return m > 0 ? `${h}h ${m}m` : `${h}h`;
-}
-
-const clr = (v: number) => v >= 0 ? 'text-green' : 'text-red';
-const fmtUSD = (v: number) => `${v >= 0 ? '' : '-'}$${Math.abs(v).toFixed(2)}`;
-const fmtBB = (v: number) => `${v.toFixed(1)} BB`;
-
-function colorVal(v: number): string {
-  if (v > 0) return 'text-green';
-  if (v < 0) return 'text-red';
-  return 'text-text-muted';
 }
 
 // ── Main Component ───────────────────────────────────────────────────
@@ -279,7 +253,7 @@ function SessionDetail({ index }: { index: number }) {
           {formatSessionDate(stats.start_time)}
         </h1>
         <span className="text-sm text-text-muted">
-          {formatTime(stats.start_time)} – {formatTime(stats.end_time)}
+          {formatClockTime(stats.start_time)} – {formatClockTime(stats.end_time)}
         </span>
         <Badge variant="secondary">{formatDuration(stats.duration_minutes)}</Badge>
         {stats.stakes.map(st => (
@@ -404,9 +378,9 @@ function SessionDetail({ index }: { index: number }) {
         </div>
         <div className="grid grid-cols-2 border-t border-border">
           <div className="px-4 py-3 grid grid-cols-2 gap-x-4">
-            <div className={`text-xl font-bold font-mono ${clr(stats.won_usd)}`}>{fmtUSD(stats.won_usd)}</div>
-            <div className={`text-xl font-bold font-mono ${clr(stats.bb_per_100)}`}>{stats.bb_per_100.toFixed(2)}</div>
-            <div className={`text-sm font-mono ${clr(stats.won_bb)}`}>{fmtBB(stats.won_bb)}</div>
+            <div className={`text-xl font-bold font-mono ${moneyClass(stats.won_usd)}`}>{usd(stats.won_usd)}</div>
+            <div className={`text-xl font-bold font-mono ${moneyClass(stats.bb_per_100)}`}>{fixed(stats.bb_per_100, 2)}</div>
+            <div className={`text-sm font-mono ${moneyClass(stats.won_bb, 1)}`}>{bbUnits(stats.won_bb)}</div>
             <div className="text-sm font-mono text-text-muted">bb/100</div>
             <div className="text-[10px] text-text-muted uppercase tracking-wide">Won</div>
             <div className="text-[10px] text-text-muted uppercase tracking-wide">Rate</div>
@@ -414,9 +388,9 @@ function SessionDetail({ index }: { index: number }) {
           <div className="px-4 py-3 border-l border-border grid grid-cols-2 gap-x-4">
             {hasEVData ? (
               <>
-                <div className={`text-xl font-bold font-mono ${clr(stats.ev_usd)}`}>{fmtUSD(stats.ev_usd)}</div>
-                <div className={`text-xl font-bold font-mono ${clr(stats.ev_bb_per_100)}`}>{stats.ev_bb_per_100.toFixed(2)}</div>
-                <div className={`text-sm font-mono ${clr(stats.ev_bb)}`}>{fmtBB(stats.ev_bb)}</div>
+                <div className={`text-xl font-bold font-mono ${moneyClass(stats.ev_usd)}`}>{usd(stats.ev_usd)}</div>
+                <div className={`text-xl font-bold font-mono ${moneyClass(stats.ev_bb_per_100)}`}>{fixed(stats.ev_bb_per_100, 2)}</div>
+                <div className={`text-sm font-mono ${moneyClass(stats.ev_bb)}`}>{bbUnits(stats.ev_bb)}</div>
                 <div className="text-sm font-mono text-text-muted">EV bb/100</div>
                 <div className="text-[10px] text-text-muted uppercase tracking-wide">Won EV</div>
                 <div className="text-[10px] text-text-muted uppercase tracking-wide">EV Rate</div>
@@ -435,24 +409,24 @@ function SessionDetail({ index }: { index: number }) {
         </div>
         <div className="grid grid-cols-5 gap-x-6 px-4 py-2.5 border-t border-border">
           <div>
-            <div className={`text-sm font-bold font-mono ${durationHrs > 0 ? clr(stats.usd_per_hour) : 'text-text-muted'}`}>
-              {durationHrs > 0 ? `${stats.usd_per_hour >= 0 ? '' : '-'}$${Math.abs(stats.usd_per_hour).toFixed(2)}/hr` : '\u2014'}
+            <div className={`text-sm font-bold font-mono ${durationHrs > 0 ? moneyClass(stats.usd_per_hour) : 'text-text-muted'}`}>
+              {durationHrs > 0 ? `${usd(stats.usd_per_hour)}/hr` : '\u2014'}
             </div>
             <div className="text-xs text-text-muted">
-              $/hr {durationHrs > 0 && <span className={`font-mono ${clr(stats.bb_per_hour)}`}>{stats.bb_per_hour.toFixed(1)} BB</span>}
+              $/hr {durationHrs > 0 && <span className={`font-mono ${moneyClass(stats.bb_per_hour, 1)}`}>{fixed(stats.bb_per_hour, 1)} BB</span>}
             </div>
           </div>
           <div>
-            <div className={`text-sm font-bold font-mono ${clr(sdUSD)}`}>{fmtUSD(sdUSD)}</div>
-            <div className="text-xs text-text-muted">Showdown <span className={`font-mono ${clr(sdRateBB)}`}>{sdRateBB.toFixed(1)}/100</span></div>
+            <div className={`text-sm font-bold font-mono ${moneyClass(sdUSD)}`}>{usd(sdUSD)}</div>
+            <div className="text-xs text-text-muted">Showdown <span className={`font-mono ${moneyClass(sdRateBB, 1)}`}>{fixed(sdRateBB, 1)}/100</span></div>
           </div>
           <div>
-            <div className={`text-sm font-bold font-mono ${clr(nsdUSD)}`}>{fmtUSD(nsdUSD)}</div>
-            <div className="text-xs text-text-muted">Non-SD <span className={`font-mono ${clr(nsdRateBB)}`}>{nsdRateBB.toFixed(1)}/100</span></div>
+            <div className={`text-sm font-bold font-mono ${moneyClass(nsdUSD)}`}>{usd(nsdUSD)}</div>
+            <div className="text-xs text-text-muted">Non-SD <span className={`font-mono ${moneyClass(nsdRateBB, 1)}`}>{fixed(nsdRateBB, 1)}/100</span></div>
           </div>
           <div>
-            <div className="text-sm font-bold font-mono text-text-muted">{fmtUSD(stats.rake_usd)}</div>
-            <div className="text-xs text-text-muted">Rake <span className="font-mono">{fmtBB(stats.rake_bb)}</span></div>
+            <div className="text-sm font-bold font-mono text-text-muted">{usd(stats.rake_usd)}</div>
+            <div className="text-xs text-text-muted">Rake <span className="font-mono">{bbUnits(stats.rake_bb)}</span></div>
           </div>
           <div>
             <div className="text-sm font-bold font-mono text-text">{stats.hands_per_hour > 0 ? Math.round(stats.hands_per_hour) : '\u2014'}</div>
@@ -582,7 +556,7 @@ function SessionDetail({ index }: { index: number }) {
                         }`}>
                           {Math.abs(wonUsd) < 0.005
                             ? '\u2014'
-                            : `${wonUsd < 0 ? '-' : ''}${Math.abs(wonUsd).toFixed(2)}$`}
+                            : `${wonUsd < 0 ? '-' : ''}${fixed(Math.abs(wonUsd), 2)}$`}
                         </TableCell>
                         <TableCell className="py-1.5 px-2 text-right text-[14px] text-text-muted whitespace-nowrap">
                           {formatRelativeDate(h.played_at)}
@@ -636,7 +610,7 @@ function SessionRow({
     >
       <TableCell className="px-3 py-1.5 font-mono text-text">
         {formatSessionDate(s.start_time)}
-        <span className="text-text-muted ml-1.5 text-xs">{formatTime(s.start_time)}</span>
+        <span className="text-text-muted ml-1.5 text-xs">{formatClockTime(s.start_time)}</span>
       </TableCell>
       <TableCell className="px-3 py-1.5 font-mono text-text-muted text-right">
         {formatDuration(s.duration_minutes)}
@@ -649,9 +623,9 @@ function SessionRow({
           ))}
         </div>
       </TableCell>
-      <TableCell className={`px-3 py-1.5 font-mono text-right ${colorVal(s.won_usd)}`}>{fmtUSD(s.won_usd)}</TableCell>
-      <TableCell className={`px-3 py-1.5 font-mono text-right ${colorVal(s.bb_per_100)}`}>{s.bb_per_100.toFixed(2)}</TableCell>
-      <TableCell className={`px-3 py-1.5 font-mono text-right ${colorVal(s.ev_bb_per_100)}`}>{s.ev_bb_per_100.toFixed(2)}</TableCell>
+      <TableCell className={`px-3 py-1.5 font-mono text-right ${moneyClass(s.won_usd)}`}>{usd(s.won_usd)}</TableCell>
+      <TableCell className={`px-3 py-1.5 font-mono text-right ${moneyClass(s.bb_per_100)}`}>{fixed(s.bb_per_100, 2)}</TableCell>
+      <TableCell className={`px-3 py-1.5 font-mono text-right ${moneyClass(s.ev_bb_per_100)}`}>{fixed(s.ev_bb_per_100, 2)}</TableCell>
     </TableRow>
   );
 }
@@ -679,7 +653,7 @@ function LatestSessionRow({
       >
         <TableCell className="px-3 py-1.5 font-mono text-text">
           {formatSessionDate(s.start_time)}
-          <span className="text-text-muted ml-1.5 text-xs">{formatTime(s.start_time)}</span>
+          <span className="text-text-muted ml-1.5 text-xs">{formatClockTime(s.start_time)}</span>
         </TableCell>
         <TableCell className="px-3 py-1.5 font-mono text-text-muted text-right">
           {formatDuration(s.duration_minutes)}
@@ -692,9 +666,9 @@ function LatestSessionRow({
             ))}
           </div>
         </TableCell>
-        <TableCell className={`px-3 py-1.5 font-mono text-right ${colorVal(s.won_usd)}`}>{fmtUSD(s.won_usd)}</TableCell>
-        <TableCell className={`px-3 py-1.5 font-mono text-right ${colorVal(s.bb_per_100)}`}>{s.bb_per_100.toFixed(2)}</TableCell>
-        <TableCell className={`px-3 py-1.5 font-mono text-right ${colorVal(s.ev_bb_per_100)}`}>{s.ev_bb_per_100.toFixed(2)}</TableCell>
+        <TableCell className={`px-3 py-1.5 font-mono text-right ${moneyClass(s.won_usd)}`}>{usd(s.won_usd)}</TableCell>
+        <TableCell className={`px-3 py-1.5 font-mono text-right ${moneyClass(s.bb_per_100)}`}>{fixed(s.bb_per_100, 2)}</TableCell>
+        <TableCell className={`px-3 py-1.5 font-mono text-right ${moneyClass(s.ev_bb_per_100)}`}>{fixed(s.ev_bb_per_100, 2)}</TableCell>
       </TableRow>
 
       {/* Expanded detail row */}
@@ -754,22 +728,22 @@ function LatestSessionRow({
             {/* Key stats */}
             <div className="border-l border-border/50 px-4 py-2 flex flex-col justify-center gap-1">
               <div className="grid grid-cols-2 gap-x-3">
-                <div className={`text-lg font-bold font-mono ${clr(s.won_usd)}`}>{fmtUSD(s.won_usd)}</div>
-                <div className={`text-lg font-bold font-mono ${clr(s.bb_per_100)}`}>{s.bb_per_100.toFixed(2)}</div>
-                <div className={`text-xs font-mono ${clr(s.won_bb)}`}>{fmtBB(s.won_bb)}</div>
+                <div className={`text-lg font-bold font-mono ${moneyClass(s.won_usd)}`}>{usd(s.won_usd)}</div>
+                <div className={`text-lg font-bold font-mono ${moneyClass(s.bb_per_100)}`}>{fixed(s.bb_per_100, 2)}</div>
+                <div className={`text-xs font-mono ${moneyClass(s.won_bb, 1)}`}>{bbUnits(s.won_bb)}</div>
                 <div className="text-xs font-mono text-text-muted">bb/100</div>
               </div>
               {hasEVData && (
                 <div className="grid grid-cols-2 gap-x-3 pt-1 border-t border-border/50">
-                  <div className={`text-sm font-bold font-mono ${clr(s.ev_usd)}`}>{fmtUSD(s.ev_usd)}</div>
-                  <div className={`text-sm font-bold font-mono ${clr(s.ev_bb_per_100)}`}>{s.ev_bb_per_100.toFixed(2)}</div>
+                  <div className={`text-sm font-bold font-mono ${moneyClass(s.ev_usd)}`}>{usd(s.ev_usd)}</div>
+                  <div className={`text-sm font-bold font-mono ${moneyClass(s.ev_bb_per_100)}`}>{fixed(s.ev_bb_per_100, 2)}</div>
                   <div className="text-[10px] text-text-muted">EV Won</div>
                   <div className="text-[10px] text-text-muted">EV bb/100</div>
                 </div>
               )}
               <div className="flex items-center gap-3 pt-1 border-t border-border/50 text-xs text-text-muted font-mono">
-                <span className={durationHrs > 0 ? clr(stats?.usd_per_hour ?? 0) : ''}>
-                  {durationHrs > 0 && stats ? `${stats.usd_per_hour >= 0 ? '' : '-'}$${Math.abs(stats.usd_per_hour).toFixed(2)}/hr` : '\u2014'}
+                <span className={durationHrs > 0 ? moneyClass(stats?.usd_per_hour ?? 0) : ''}>
+                  {durationHrs > 0 && stats ? `${usd(stats.usd_per_hour)}/hr` : '\u2014'}
                 </span>
                 <span>{s.hands} hands</span>
                 <span>{stats?.hands_per_hour ? `${Math.round(stats.hands_per_hour)}/hr` : ''}</span>
@@ -801,7 +775,7 @@ function MiniStatBox({ label, value }: { label: string; value: number | null }) 
   return (
     <div className="bg-background px-2 py-1.5 text-center">
       <div className="text-sm font-bold font-mono text-text">
-        {value !== null ? `${value.toFixed(1)}` : '\u2014'}
+        {value !== null ? `${fixed(value, 1)}` : '\u2014'}
       </div>
       <div className="text-[9px] text-text-muted uppercase tracking-wide">{label}</div>
     </div>
@@ -814,7 +788,7 @@ function PlayStatBox({ label, value }: { label: string; value: number | null }) 
   return (
     <div className="bg-background px-3 py-2.5 text-center">
       <div className="text-lg font-bold font-mono text-text">
-        {value !== null ? `${value.toFixed(1)}%` : '\u2014'}
+        {value !== null ? `${fixed(value, 1)}%` : '\u2014'}
       </div>
       <div className="text-[10px] text-text-muted uppercase tracking-wide">{label}</div>
     </div>
@@ -845,11 +819,11 @@ function BigHandsCard({
           >
             <CardBoxPair card1={h.card1} card2={h.card2} />
             <Badge variant="secondary" className="text-[11px] px-1.5 py-0">{h.position}</Badge>
-            <span className={`font-mono font-semibold ${clr(h.won_bb)}`}>
-              {h.won_bb > 0 ? '+' : ''}{h.won_bb.toFixed(1)} BB
+            <span className={`font-mono font-semibold ${moneyClass(h.won_bb, 1)}`}>
+              {h.won_bb > 0 ? '+' : ''}{fixed(h.won_bb, 1)} BB
             </span>
-            <span className={`font-mono text-sm ${clr(h.won_usd)}`}>
-              {fmtUSD(h.won_usd)}
+            <span className={`font-mono text-sm ${moneyClass(h.won_usd)}`}>
+              {usd(h.won_usd)}
             </span>
             <span className="text-xs text-text-muted ml-auto">{formatStakes(h.stakes)}</span>
           </div>
@@ -892,14 +866,14 @@ function SessionTooltip({ active, payload, label, unit }: SessionTooltipProps) {
     }}>
       {point?.played_at && (
         <div style={{ marginBottom: 4, color: 'oklch(0.709 0.01 56.259)' }}>
-          {new Date(point.played_at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })}
+          {formatClockTime(point.played_at)}
         </div>
       )}
       <div style={{ marginBottom: 6, fontWeight: 600 }}>Hand #{Number(label)}</div>
       {payload.map((entry, i) => (
         <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
           <span style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: entry.color, display: 'inline-block', flexShrink: 0 }} />
-          <span>{names[entry.name] ?? entry.name}: {prefix}{entry.value.toFixed(2)}{suffix}</span>
+          <span>{names[entry.name] ?? entry.name}: {prefix}{fixed(entry.value, 2)}{suffix}</span>
         </div>
       ))}
     </div>

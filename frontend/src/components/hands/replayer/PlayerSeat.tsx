@@ -1,4 +1,5 @@
 import type { PlayerSnapshot } from './useReplayerState';
+import { fixed } from '@/lib/format';
 
 export default function PlayerSeat({
   player,
@@ -28,8 +29,8 @@ export default function PlayerSeat({
   const opacityClass = isFolded && !isShowdown ? 'opacity-25' : '';
 
   const stackDisplay = showBb
-    ? `${player.stack.toFixed(1)}`
-    : `$${(player.stack * bbAmount).toFixed(2)}`;
+    ? `${fixed(player.stack, 1)}`
+    : `$${fixed((player.stack * bbAmount), 2)}`;
 
   const displayName = player.isHero
     ? 'Hero'

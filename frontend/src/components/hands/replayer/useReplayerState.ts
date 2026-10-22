@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import type { HandDetail, HandAction, BoardCards } from '@/lib/api';
+import { fixed } from '@/lib/format';
 
 /**
  * Build per-slot extra board cards from BoardCards, inheriting shared cards from Board 1.
@@ -208,7 +209,7 @@ function buildSnapshots(hand: HandDetail): Snapshot[] {
             p.stack -= callAmt;
             p.currentBet = prevBet + callAmt;
             pot += callAmt;
-            p.lastAction = `Call ${callAmt.toFixed(1)}`;
+            p.lastAction = `Call ${fixed(callAmt, 1)}`;
             break;
           }
           case 'bet': {
@@ -216,7 +217,7 @@ function buildSnapshots(hand: HandDetail): Snapshot[] {
             p.stack -= betAmt;
             p.currentBet = betAmt;
             pot += betAmt;
-            p.lastAction = `Bet ${betAmt.toFixed(1)}`;
+            p.lastAction = `Bet ${fixed(betAmt, 1)}`;
             break;
           }
           case 'raise': {
@@ -226,7 +227,7 @@ function buildSnapshots(hand: HandDetail): Snapshot[] {
             p.stack -= increment;
             p.currentBet = raiseToAmt;
             pot += increment;
-            p.lastAction = `Raise ${raiseToAmt.toFixed(1)}`;
+            p.lastAction = `Raise ${fixed(raiseToAmt, 1)}`;
             break;
           }
         }
@@ -274,7 +275,7 @@ function buildSnapshots(hand: HandDetail): Snapshot[] {
       card2: orig.card2,
       collectedBb,
       currentBet: 0,
-      lastAction: collectedBb > 0 ? `Won ${collectedBb.toFixed(1)}` : p.isFolded ? 'Fold' : null,
+      lastAction: collectedBb > 0 ? `Won ${fixed(collectedBb, 1)}` : p.isFolded ? 'Fold' : null,
     };
   });
 

@@ -14,6 +14,7 @@ import {
   TooltipTrigger,
   TooltipContent,
 } from '@/components/ui/tooltip';
+import { count } from '@/lib/format';
 
 function ColorDot({ color, size = 'sm' }: { color: string | null; size?: 'sm' | 'md' }) {
   return (
@@ -22,11 +23,6 @@ function ColorDot({ color, size = 'sm' }: { color: string | null; size?: 'sm' | 
       style={{ backgroundColor: color ?? '#6b7280' }}
     />
   );
-}
-
-function formatCount(n: number): string {
-  if (n >= 1000) return `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k`;
-  return String(n);
 }
 
 export default function WorkspaceSwitcher() {
@@ -49,7 +45,7 @@ export default function WorkspaceSwitcher() {
             <span className="flex-1 truncate">{ws.name}</span>
             {ws.hand_count > 0 && (
               <span className="text-[11px] text-muted-foreground tabular-nums">
-                {formatCount(ws.hand_count)}
+                {count(ws.hand_count)}
               </span>
             )}
           </DropdownMenuItem>

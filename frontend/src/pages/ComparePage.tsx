@@ -20,19 +20,11 @@ import {
 import CompareTable from '@/components/stats/CompareTable';
 import { formatStakes } from '@/lib/utils';
 import { formatLocalDate } from '@/lib/date';
+import { fixed, formatCheckpointDateTime } from '@/lib/format';
 
 type CompareMode = 'periods' | 'population' | 'workspace';
 
 // ── Helpers ──────────────────────────────────────────────────────────
-
-function formatCpDate(iso: string): string {
-  const d = new Date(iso);
-  const date = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-  const hh = String(d.getHours()).padStart(2, '0');
-  const mm = String(d.getMinutes()).padStart(2, '0');
-  const time = `${hh}:${mm}`;
-  return time !== '00:00' ? `${date} ${time}` : date;
-}
 
 // ── Main Component ───────────────────────────────────────────────────
 
@@ -252,7 +244,7 @@ export default function ComparePage() {
                         variant="outline"
                         className={`text-[10px] font-mono ${pb.win_rate_bb100 >= 0 ? 'text-green' : 'text-red'}`}
                       >
-                        {pb.win_rate_bb100.toFixed(2)} bb/100
+                        {fixed(pb.win_rate_bb100, 2)} bb/100
                       </Badge>
                     )}
                   </div>
@@ -371,7 +363,7 @@ function PeriodCard({
                   variant="outline"
                   className={`text-[10px] font-mono ${summary.win_rate_bb100 >= 0 ? 'text-green' : 'text-red'}`}
                 >
-                  {summary.win_rate_bb100.toFixed(2)} bb/100
+                  {fixed(summary.win_rate_bb100, 2)} bb/100
                 </Badge>
               )}
             </div>
@@ -389,7 +381,7 @@ function PeriodCard({
                 <SelectItem key={cp.id} value={String(cp.id)}>
                   {cp.name}
                   <span className="text-muted-foreground ml-1.5 text-xs">
-                    ({formatCpDate(cp.checkpoint_at)})
+                    ({formatCheckpointDateTime(cp.checkpoint_at)})
                   </span>
                 </SelectItem>
               ))}
@@ -453,7 +445,7 @@ function SummaryCard({
                   variant="outline"
                   className={`text-[10px] font-mono ${winRate >= 0 ? 'text-green' : 'text-red'}`}
                 >
-                  {winRate.toFixed(2)} bb/100
+                  {fixed(winRate, 2)} bb/100
                 </Badge>
               )}
             </div>
@@ -501,7 +493,7 @@ function WorkspaceCard({
                   variant="outline"
                   className={`text-[10px] font-mono ${summary.win_rate_bb100 >= 0 ? 'text-green' : 'text-red'}`}
                 >
-                  {summary.win_rate_bb100.toFixed(2)} bb/100
+                  {fixed(summary.win_rate_bb100, 2)} bb/100
                 </Badge>
               )}
             </div>

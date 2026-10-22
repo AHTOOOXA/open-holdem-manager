@@ -1,4 +1,5 @@
 import type { ActionItem } from '@/lib/api';
+import { bb } from '@/lib/format';
 
 export const ACTION_COLORS: Record<string, string> = {
   R: 'text-yellow',
@@ -10,10 +11,8 @@ export const ACTION_COLORS: Record<string, string> = {
 
 /** Format a BB amount. Precision 1 keeps 2.5bb opens readable; trailing ".0" is dropped. */
 export function formatBb(v: number, precision: number): string {
-  if (precision === 0) return Math.round(v).toString();
-  const s = v.toFixed(precision);
-  // Strip trailing zeros after decimal: "6.0" → "6", "3.50" → "3.5"
-  return s.replace(/\.?0+$/, '');
+  // Trailing zeros stripped: "6.0" → "6", "3.50" → "3.5"
+  return bb(v, precision);
 }
 
 /** Plain-text summary for title/tooltip (matches trimFolds + precision logic). */

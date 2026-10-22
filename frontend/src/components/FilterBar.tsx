@@ -25,6 +25,7 @@ import {
   DialogDescription,
   DialogFooter,
 } from '@/components/ui/dialog';
+import { formatHHMM } from '@/lib/format';
 
 const GAME_MODE_LABELS: Record<string, string> = {
   '': 'Regular',
@@ -66,7 +67,7 @@ interface FilterBarProps {
 function formatCheckpointDate(isoDate: string): string {
   try {
     const d = new Date(isoDate);
-    const time = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+    const time = formatHHMM(d);
     const hasTime = time !== '00:00';
     const dateStr = format(d, 'MMM d');
     return hasTime ? `${dateStr} ${time}` : dateStr;

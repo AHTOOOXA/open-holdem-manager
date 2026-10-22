@@ -1,5 +1,6 @@
 import type { HandAction, BoardCards } from '@/lib/api';
 import { CardBoxRow } from './CardDisplay';
+import { fixed } from '@/lib/format';
 
 const ACTION_COLORS: Record<string, string> = {
   fold: 'text-text-muted',
@@ -45,7 +46,7 @@ function StreetSection({
                 {a.action}
               </span>
               {a.amount_bb !== null && a.amount_bb !== undefined && (
-                <span className="text-text">{a.amount_bb.toFixed(1)} BB</span>
+                <span className="text-text">{fixed(a.amount_bb, 1)} BB</span>
               )}
               {a.is_all_in && (
                 <span className="text-red text-[10px] font-bold uppercase tracking-wide">

@@ -34,6 +34,7 @@ import {
 } from '@/components/ui/table';
 import { useWorkspace } from '@/contexts/WorkspaceContext';
 import { Plus, UserPlus, Users } from 'lucide-react';
+import { fixed } from '@/lib/format';
 
 const PLAYER_TYPES = ['All', 'NIT', 'TAG', 'LAG', 'REC', 'MAN', 'UNK'] as const;
 const WELL_KNOWN_TAGS = ['me', 'student', 'reg', 'fish', 'coach'] as const;
@@ -418,16 +419,16 @@ export default function PlayersPage() {
                         {p.hands.toLocaleString()}
                       </TableCell>
                       <TableCell className="py-1.5 px-2 text-right font-mono">
-                        {p.vpip !== null ? p.vpip.toFixed(1) : '\u2014'}
+                        {p.vpip !== null ? fixed(p.vpip, 1) : '\u2014'}
                       </TableCell>
                       <TableCell className="py-1.5 px-2 text-right font-mono">
-                        {p.pfr !== null ? p.pfr.toFixed(1) : '\u2014'}
+                        {p.pfr !== null ? fixed(p.pfr, 1) : '\u2014'}
                       </TableCell>
                       <TableCell className="py-1.5 px-2 text-right font-mono">
-                        {p.three_bet !== null ? p.three_bet.toFixed(1) : '\u2014'}
+                        {p.three_bet !== null ? fixed(p.three_bet, 1) : '\u2014'}
                       </TableCell>
                       <TableCell className="py-1.5 px-2 text-right font-mono">
-                        {p.af !== null ? p.af.toFixed(2) : '\u2014'}
+                        {p.af !== null ? fixed(p.af, 2) : '\u2014'}
                       </TableCell>
                       <TableCell className="py-1.5 px-2 text-right text-text-muted text-[13px]">
                         {p.last_seen ? formatRelativeDate(p.last_seen) : '\u2014'}

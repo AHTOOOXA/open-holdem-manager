@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
+import { fixed } from '@/lib/format';
 
 export default function ImportOverlay() {
   const { phase, fileInfo, sourceLabel, progress, result, error, dismiss } = useImport();
@@ -50,7 +51,7 @@ export default function ImportOverlay() {
                     {sourceLabel
                       ? `Processing ${progress?.total_hands?.toLocaleString() ?? '...'} hands from ${sourceLabel}...`
                       : fileInfo && !progress?.total_hands
-                      ? `Uploading ${fileInfo.count} file${fileInfo.count !== 1 ? 's' : ''} (${(fileInfo.size / 1024).toFixed(0)} KB)...`
+                      ? `Uploading ${fileInfo.count} file${fileInfo.count !== 1 ? 's' : ''} (${fixed((fileInfo.size / 1024), 0)} KB)...`
                       : `Processing ${progress?.total_hands?.toLocaleString() ?? '...'} hands from ${progress?.files ?? fileInfo?.count ?? '?'} file${(progress?.files ?? fileInfo?.count ?? 0) !== 1 ? 's' : ''}...`}
                   </p>
                   {progress?.total != null && progress.total > 0 && (
@@ -80,7 +81,7 @@ export default function ImportOverlay() {
                   {sourceLabel
                     ? `Reading ${sourceLabel}...`
                     : fileInfo
-                    ? `Uploading ${fileInfo.count} file${fileInfo.count !== 1 ? 's' : ''} (${(fileInfo.size / 1024).toFixed(0)} KB)...`
+                    ? `Uploading ${fileInfo.count} file${fileInfo.count !== 1 ? 's' : ''} (${fixed((fileInfo.size / 1024), 0)} KB)...`
                     : 'Uploading...'}
                 </p>
               )}
@@ -95,7 +96,7 @@ export default function ImportOverlay() {
               <CardTitle className="text-base">Import Complete</CardTitle>
               {result.elapsed_ms != null && result.imported > 0 && (
                 <p className="text-sm text-text-muted">
-                  {result.imported.toLocaleString()} hands in {(result.elapsed_ms / 1000).toFixed(1)}s
+                  {result.imported.toLocaleString()} hands in {fixed((result.elapsed_ms / 1000), 1)}s
                   ({result.hands_per_sec?.toLocaleString()} h/s)
                 </p>
               )}

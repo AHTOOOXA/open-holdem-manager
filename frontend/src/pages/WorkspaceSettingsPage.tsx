@@ -36,6 +36,7 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
 } from '@/components/ui/dropdown-menu';
+import { formatMediumDate, formatCheckpointDateTime, formatHHMM } from '@/lib/format';
 
 const PRESET_COLORS = [
   { label: 'Gray', value: null },
@@ -56,21 +57,6 @@ function ColorDot({ color, className }: { color: string | null; className?: stri
       style={{ backgroundColor: color ?? '#6b7280' }}
     />
   );
-}
-
-function formatDate(iso: string | null): string {
-  if (!iso) return '—';
-  const d = new Date(iso);
-  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-}
-
-function formatCheckpointDateTime(iso: string): string {
-  const d = new Date(iso);
-  const date = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-  const hh = String(d.getHours()).padStart(2, '0');
-  const mm = String(d.getMinutes()).padStart(2, '0');
-  const time = `${hh}:${mm}`;
-  return time !== '00:00' ? `${date} ${time}` : date;
 }
 
 export default function WorkspaceSettingsPage() {
@@ -268,7 +254,7 @@ export default function WorkspaceSettingsPage() {
                     <div className="text-xs text-text-muted mt-0.5">
                       {ws.hero_username ? `Hero: ${ws.hero_username}` : 'No hero yet'} · {ws.hand_count.toLocaleString()} hands
                       {ws.date_range.min && (
-                        <> · {formatDate(ws.date_range.min)} – {formatDate(ws.date_range.max)}</>
+                        <> · {formatMediumDate(ws.date_range.min)} – {formatMediumDate(ws.date_range.max)}</>
                       )}
                     </div>
                   </div>
@@ -355,7 +341,7 @@ export default function WorkspaceSettingsPage() {
                               setEditCpWsId(ws.id);
                               setEditCpName(cp.name);
                               setEditCpDate(cp.checkpoint_at.slice(0, 10));
-                              setEditCpTime(`${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`);
+                              setEditCpTime(formatHHMM(d));
                               setEditCpNote(cp.note ?? '');
                             }}
                           >

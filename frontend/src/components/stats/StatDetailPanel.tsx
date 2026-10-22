@@ -3,6 +3,7 @@ import { getStatDetailHands } from '@/lib/api';
 import { queryKeys } from '@/lib/query-keys';
 import { getStatDisplayName } from '@/lib/stat-registry';
 import HandExplorer from '@/components/hands/HandExplorer';
+import { fixed } from '@/lib/format';
 
 interface StatDetailPanelProps {
   statKey: string;
@@ -46,7 +47,7 @@ export default function StatDetailPanel({
   });
 
   const pct = statData && statData.opportunity_count > 0
-    ? ((statData.action_count / statData.opportunity_count) * 100).toFixed(1)
+    ? fixed(((statData.action_count / statData.opportunity_count) * 100), 1)
     : null;
 
   return (
