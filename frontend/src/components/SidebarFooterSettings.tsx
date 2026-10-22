@@ -1,9 +1,13 @@
 import { useState, useRef, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { Settings, RefreshCw, Trash2, Download, Upload, RotateCw, ExternalLink, ArrowDownToLine } from 'lucide-react';
 import { useImport } from '@/contexts/ImportContext';
 import { useWorkspace } from '@/contexts/WorkspaceContext';
 import { SidebarFooter, SidebarMenu, SidebarMenuItem, SidebarMenuButton } from '@/components/ui/sidebar';
-import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
+import { getHeroes } from '@/lib/api';
+import { heroLabel } from '@/lib/hero-accounts';
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -14,12 +18,15 @@ import {
 } from '@/components/ui/dropdown-menu';
 
 export default function SidebarFooterSettings() {
-  const { phase, updateHeroName, startRebuild, clearDb, exportDatabase, importDatabase } = useImport();
+  const { phase, startRebuild, clearDb, exportDatabase, importDatabase } = useImport();
   const { activeWorkspace } = useWorkspace();
-  const heroUsername = activeWorkspace?.hero_username ?? null;
+  const navigate = useNavigate();
+  const { data: heroes } = useQuery({
+    queryKey: ['heroes', activeWorkspace?.id],
+    queryFn: () => getHeroes(activeWorkspace!.id),
+    enabled: !!activeWorkspace,
+  });
   const handCount = activeWorkspace?.hand_count ?? 0;
-  const [editing, setEditing] = useState(false);
-  const [nameInput, setNameInput] = useState('');
   const dbFileRef = useRef<HTMLInputElement>(null);
   const [updateVersion, setUpdateVersion] = useState<string | null>(null);
   const [updateReady, setUpdateReady] = useState(false);
@@ -36,47 +43,22 @@ export default function SidebarFooterSettings() {
     return () => window.removeEventListener('ohm-update-state', handler);
   }, []);
 
-  const startEdit = () => {
-    setNameInput(heroUsername || '');
-    setEditing(true);
-  };
-
-  const saveEdit = async () => {
-    const trimmed = nameInput.trim();
-    if (!trimmed) return;
-    await updateHeroName(trimmed);
-    setEditing(false);
-  };
-
   return (
     <SidebarFooter>
       <SidebarMenu>
         <SidebarMenuItem>
-          {editing ? (
-            <div className="px-2 py-1">
-              <Input
-                className="h-7 text-xs"
-                value={nameInput}
-                onChange={(e) => setNameInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') saveEdit();
-                  if (e.key === 'Escape') setEditing(false);
-                }}
-                autoFocus
-                placeholder="Hero username"
-              />
-            </div>
-          ) : (
-            <div
-              className="flex items-center justify-between px-2 py-1 group-data-[collapsible=icon]:hidden cursor-pointer hover:bg-sidebar-accent rounded-md"
-              onClick={startEdit}
-            >
+          <Button
+            type="button"
+            variant="ghost"
+            className="h-auto w-full justify-start px-2 py-1 text-left group-data-[collapsible=icon]:hidden hover:bg-sidebar-accent"
+            title="Hero accounts"
+            onClick={() => navigate('/settings/workspaces')}
+          >
               <div className="min-w-0">
-                <div className="text-xs font-medium truncate">{heroUsername || 'Set hero name'}</div>
+                <div className="text-xs font-medium truncate">{heroLabel(heroes?.active)}</div>
                 <div className="text-[10px] text-text-muted">{handCount.toLocaleString()} hands</div>
               </div>
-            </div>
-          )}
+          </Button>
         </SidebarMenuItem>
         <SidebarMenuItem>
           <DropdownMenu>
