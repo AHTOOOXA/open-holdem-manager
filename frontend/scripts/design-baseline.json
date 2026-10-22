@@ -1,10 +1,20 @@
 {
+  "landing/components/HeroSection.tsx": {
+    "palette": 1
+  },
   "landing/components/SharedHandPage.tsx": {
     "text-arbitrary": 1,
-    "toFixed": 1
+    "toFixed": 1,
+    "palette": 2
+  },
+  "landing/LandingApp.tsx": {
+    "palette": 1
   },
   "src/components/DriftPanel.tsx": {
     "text-arbitrary": 5
+  },
+  "src/components/general/GeneralHandRow.tsx": {
+    "palette": 1
   },
   "src/components/hands/Actions.tsx": {
     "text-arbitrary": 1
@@ -12,13 +22,16 @@
   "src/components/hands/CardDisplay.tsx": {
     "color-fn": 1,
     "text-arbitrary": 2,
-    "inline-color": 1
+    "inline-color": 1,
+    "palette": 1
   },
   "src/components/hands/HandActions.tsx": {
-    "text-arbitrary": 6
+    "text-arbitrary": 6,
+    "palette": 2
   },
   "src/components/hands/HandDrawer.tsx": {
-    "text-arbitrary": 13
+    "text-arbitrary": 13,
+    "palette": 1
   },
   "src/components/hands/HandExplorer.tsx": {
     "text-arbitrary": 14
@@ -27,21 +40,25 @@
     "text-arbitrary": 7
   },
   "src/components/hands/HandTypeBadge.tsx": {
-    "text-arbitrary": 2
+    "text-arbitrary": 2,
+    "palette": 4
   },
   "src/components/hands/Pagination.tsx": {
     "text-arbitrary": 1
   },
   "src/components/hands/replayer/HandReplayer.tsx": {
-    "text-arbitrary": 3
+    "text-arbitrary": 3,
+    "palette": 7
   },
   "src/components/hands/replayer/PlayerSeat.tsx": {
-    "text-arbitrary": 6
+    "text-arbitrary": 6,
+    "palette": 3
   },
   "src/components/hands/replayer/PokerTable.tsx": {
     "color-fn": 8,
     "text-arbitrary": 8,
-    "inline-color": 6
+    "inline-color": 6,
+    "palette": 8
   },
   "src/components/hands/replayer/ReplayerControls.tsx": {
     "text-arbitrary": 4
@@ -59,10 +76,12 @@
     "text-arbitrary": 7
   },
   "src/components/PlayerTypeBadge.tsx": {
-    "text-arbitrary": 1
+    "text-arbitrary": 1,
+    "palette": 12
   },
   "src/components/population/ConfidenceBadge.tsx": {
-    "text-arbitrary": 1
+    "text-arbitrary": 1,
+    "palette": 6
   },
   "src/components/population/SegmentComparison.tsx": {
     "text-arbitrary": 2
@@ -79,6 +98,18 @@
   "src/components/stats/StatsCard.tsx": {
     "text-arbitrary": 20
   },
+  "src/components/ui/badge.tsx": {
+    "palette": 1
+  },
+  "src/components/ui/button.tsx": {
+    "palette": 1
+  },
+  "src/components/ui/dialog.tsx": {
+    "palette": 1
+  },
+  "src/components/ui/sheet.tsx": {
+    "palette": 1
+  },
   "src/components/WorkspaceSwitcher.tsx": {
     "hex": 1,
     "text-arbitrary": 1
@@ -90,22 +121,27 @@
     "text-arbitrary": 8
   },
   "src/pages/GraphPage.tsx": {
-    "text-arbitrary": 7
+    "text-arbitrary": 7,
+    "palette": 1
   },
   "src/pages/HandsPage.tsx": {
     "text-arbitrary": 1
   },
   "src/pages/IdentityDetailPage.tsx": {
-    "text-arbitrary": 22
+    "text-arbitrary": 22,
+    "palette": 9
   },
   "src/pages/PlayerProfilePage.tsx": {
-    "text-arbitrary": 9
+    "text-arbitrary": 9,
+    "palette": 6
   },
   "src/pages/PlayersPage.tsx": {
-    "text-arbitrary": 25
+    "text-arbitrary": 25,
+    "palette": 9
   },
   "src/pages/PopulationPage.tsx": {
-    "text-arbitrary": 4
+    "text-arbitrary": 4,
+    "palette": 9
   },
   "src/pages/RangePage.tsx": {
     "text-arbitrary": 7
@@ -115,6 +151,7 @@
   },
   "src/pages/WorkspaceSettingsPage.tsx": {
     "hex": 10,
-    "text-arbitrary": 1
+    "text-arbitrary": 1,
+    "palette": 1
   }
 }

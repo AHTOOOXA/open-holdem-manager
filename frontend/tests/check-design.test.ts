@@ -14,6 +14,7 @@ import {
   findColorFn,
   findHex,
   findInlineColor,
+  findPalette,
   findTextArbitrary,
   findToFixed,
   main,
@@ -58,8 +59,55 @@ test('inline-color: literal vs variable values', () => {
   assert.equal(n(findInlineColor(`<i style={{ width: 10, borderColor: 'tomato', fill: cond ? a : b }} />`)), 1);
   assert.equal(n(findInlineColor(`<i style={{\n  stroke: 'blue',\n  boxShadow: '0 0 1px red',\n}} />`)), 2);
   assert.equal(n(findInlineColor(`<i style={{ background: 'transparent' }} />`)), 0);
-  assert.equal(n(findInlineColor(`const s = { color: 'red' };`)), 0); // outside style={{ }}
+  assert.equal(n(findInlineColor(`const s = { color: 'red' };`)), 1); // named colour outside style={{ }}
+  assert.equal(n(findInlineColor(`const s = { color: theme.fg, fill: 'currentColor', stroke: 'none', background: 'var(--x)' };`)), 0);
   assert.equal(n(findInlineColor(`<i style={{ backgroundImage: 'x', accentcolor: 'red' }} />`)), 0);
+});
+
+test('inline-color: named colours, border shorthands, JSX attributes', () => {
+  assert.equal(n(findInlineColor(`const a = { color: 'white', fill: "Black", background: 'gray' };`)), 3);
+  assert.equal(n(findInlineColor(`const a = { color: 'inherit', label: 'red' };`)), 0);
+  assert.equal(n(findInlineColor(`<i style={{ border: '1px solid red' }} />`)), 1);
+  assert.equal(n(findInlineColor(`const s = { outline: '2px dashed #fff', borderTop: "1px solid rgba(0,0,0,.2)" };`)), 2);
+  assert.equal(n(findInlineColor(`const s = { border: '1px solid var(--color-red)', outline: 'none', borderLeft: '1px solid ' + c };`)), 0);
+  assert.equal(n(findInlineColor(`const s = { border: \`1px solid \${c}\` };`)), 0);
+  assert.equal(n(findInlineColor(`const v = { outline: "bg-background shadow-[0_0_0_1px_hsl(var(--x))] text-white" };`)), 0); // cva variant, not CSS
+  assert.equal(n(findInlineColor(`<path fill="#fff" stroke="red" stopColor='white' color="black" />`)), 4);
+  assert.equal(n(findInlineColor(`<path fill="currentColor" stroke="none" color="var(--color-red)" fill="url(#g)" />`)), 0);
+  assert.equal(n(findInlineColor(`<stop stopColor={'#abc'} data-color="red" />`)), 1);
+  assert.equal(n(findInlineColor(`<i style={{ color: 'red' }} />`)), 1); // no double count
+});
+
+test('palette: default Tailwind colours and white/black', () => {
+  assert.equal(n(findPalette(`"text-red-500 bg-blue-600/50 hover:border-gray-200 dark:from-emerald-950"`)), 4);
+  assert.equal(n(findPalette(`"data-[state=open]:bg-slate-50 [&>svg]:text-white bg-black/60 border-white/10 text-black border-black"`)), 6);
+  assert.equal(n(findPalette(`"ring-sky-400 outline-lime-100 fill-pink-300 stroke-rose-700 decoration-teal-500 divide-zinc-800 shadow-cyan-500/20 caret-amber-400 accent-indigo-500 placeholder-stone-400 via-violet-200 to-fuchsia-100 text-orange-50 text-yellow-900 text-purple-600 text-neutral-300 text-green-500"`)), 17);
+});
+
+test('palette: token utilities and legacy aliases are not flagged', () => {
+  assert.equal(n(findPalette(`"text-money-pos bg-tag-3 text-pos-bb bg-suit-h text-red text-green bg-surface border-border"`)), 0);
+  assert.equal(n(findPalette(`"text-red-5000 text-red-foo bg-blue-50x text-whitespace text-white-ish my-text-red-500 text-black-brand"`)), 0);
+  assert.equal(n(findPalette(`// text-red-500\n/* bg-white */`)), 0);
+  assert.equal(n(findPalette(`"bg-white-label text-red-500x"`)), 0);
+});
+
+test('ratchet: palette and named colours fail the check; walk skips only top-level build dirs', () => {
+  const root = tmpTree({
+    'src/ok.tsx': `export const a = 1;\n`,
+    'src/dist/build.tsx': `export const a = 'text-red-500';\n`,
+    'src/components/distribution/D.tsx': `export const a = 'text-red-500';\n`,
+    'src/node_modules/x/y.tsx': `export const a = 'text-red-500';\n`,
+  });
+  const log = () => {};
+  const scan = scanTree(root);
+  assert.deepEqual(Object.keys(scan), ['src/components/distribution/D.tsx']);
+  fs.rmSync(path.join(root, 'src/components'), { recursive: true });
+  assert.equal(main([], root, log), 0);
+  fs.writeFileSync(path.join(root, 'src/tmp.tsx'), `export const a = <i className="text-red-500" />;\n`);
+  assert.equal(main([], root, log), 1);
+  fs.writeFileSync(path.join(root, 'src/tmp.tsx'), `export const a = <i style={{ color: 'red' }} />;\n`);
+  assert.equal(main([], root, log), 1);
+  fs.rmSync(root, { recursive: true });
 });
 
 test('toFixed', () => {
