@@ -114,6 +114,29 @@
   --color-tag-8: var(--tag-8);
   --color-tag-9: var(--tag-9);
 
+  /* Hand-value categories (stat popup strength bars; key = backend
+     hand_value.py key with "_" -> "-"; components go through hvColor()) */
+  --color-hv-trash: var(--hv-trash);
+  --color-hv-missed-trash: var(--hv-missed-trash);
+  --color-hv-kq-kj-qj: var(--hv-kq-kj-qj);
+  --color-hv-missed-overcards: var(--hv-missed-overcards);
+  --color-hv-ace-high: var(--hv-ace-high);
+  --color-hv-overcards-akj: var(--hv-overcards-akj);
+  --color-hv-gutshot: var(--hv-gutshot);
+  --color-hv-draw: var(--hv-draw);
+  --color-hv-missed-draw: var(--hv-missed-draw);
+  --color-hv-draw-pair: var(--hv-draw-pair);
+  --color-hv-low-pockets: var(--hv-low-pockets);
+  --color-hv-low-pair: var(--hv-low-pair);
+  --color-hv-middle-pair: var(--hv-middle-pair);
+  --color-hv-tpwk: var(--hv-tpwk);
+  --color-hv-tpgk: var(--hv-tpgk);
+  --color-hv-tptk: var(--hv-tptk);
+  --color-hv-overpair: var(--hv-overpair);
+  --color-hv-set: var(--hv-set);
+  --color-hv-two-pairs-plus: var(--hv-two-pairs-plus);
+  --color-hv-other: var(--hv-other);
+
   /* Legacy names, kept as aliases until call sites move to the roles above */
   --color-surface: var(--card);
   --color-surface-hover: var(--muted);
@@ -262,6 +285,35 @@
   --tag-7: oklch(0.65 0.20 25);
   --tag-8: oklch(0.82 0.15 90);
   --tag-9: oklch(0.75 0.12 210);
+
+  /* Hand-value categories, weak -> strong: air in stone greys, draws in blues,
+     weak pairs in violets, top pair in teal/green, strong made hands in
+     reds. Amber stays free for the selection ring. Neighbours in every
+     street's order differ by >= 0.09 in OKLab, every colour is >= 3:1
+     against surface-sunken and surface-raised, and the "NN% weak" pill
+     (bg-background/75, foreground text) stays >= 11:1 over every one.
+     A river "missed_*" key shares its flop/turn counterpart's colour
+     (never on the same bar). */
+  --hv-trash: oklch(0.535 0.012 60);
+  --hv-missed-trash: oklch(0.535 0.012 60);
+  --hv-kq-kj-qj: oklch(0.625 0.02 60);
+  --hv-missed-overcards: oklch(0.625 0.02 60);
+  --hv-ace-high: oklch(0.715 0.025 60);
+  --hv-overcards-akj: oklch(0.805 0.03 60);
+  --hv-gutshot: oklch(0.79 0.09 225);
+  --hv-draw: oklch(0.66 0.12 245);
+  --hv-missed-draw: oklch(0.66 0.12 245);
+  --hv-draw-pair: oklch(0.56 0.13 265);
+  --hv-low-pockets: oklch(0.555 0.13 300);
+  --hv-low-pair: oklch(0.645 0.14 305);
+  --hv-middle-pair: oklch(0.74 0.12 310);
+  --hv-tpwk: oklch(0.75 0.11 175);
+  --hv-tpgk: oklch(0.64 0.14 150);
+  --hv-tptk: oklch(0.64 0.14 150);
+  --hv-overpair: oklch(0.66 0.15 42);
+  --hv-set: oklch(0.585 0.19 18);
+  --hv-two-pairs-plus: oklch(0.70 0.18 350);
+  --hv-other: oklch(0.62 0 0);
 
   /* Layers and motion (use as z-(--z-modal), duration-(--motion-fast)) */
   --z-sticky: 10;

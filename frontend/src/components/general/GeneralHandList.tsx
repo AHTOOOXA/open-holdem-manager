@@ -11,8 +11,7 @@ import {
   getCellHands,
 } from '@/lib/api-general';
 import type { GeneralFilterParams, HandsFilter, HandsOrder, HandsSort } from '@/lib/api-general';
-import { H2N_THEME } from '@/lib/h2n-layout';
-import { POPUP_THEME, formatRangeCount } from '@/lib/general-notation';
+import { formatRangeCount } from '@/lib/general-notation';
 import type { HandStreet } from '@/lib/general-notation';
 import GeneralHandRow from './GeneralHandRow';
 
@@ -86,24 +85,21 @@ export default function GeneralHandList({ cellId, params, filter, title, onClose
   const openIndex = openHandId ? rows.findIndex((r) => r.hand_id === openHandId) : -1;
 
   return (
-    <div className="flex h-full min-h-0 flex-col" style={{ fontFamily: H2N_THEME.fontFamily }}>
+    <div className="flex h-full min-h-0 flex-col">
       <div className="flex shrink-0 items-center gap-3 px-4 py-2">
         {title && (
-          <span
-            className="rounded-full px-4 text-sm whitespace-nowrap text-white"
-            style={{ background: POPUP_THEME.titlePill, lineHeight: '33px' }}
-          >
+          <span className="inline-flex h-6 items-center rounded-pill bg-muted px-2 text-xs whitespace-nowrap text-foreground">
             {title}
           </span>
         )}
-        <span className="text-sm whitespace-nowrap" style={{ color: POPUP_THEME.label }}>
+        <span className="text-sm whitespace-nowrap text-muted-foreground">
           {data
             ? `${formatRangeCount(total)} hand${total === 1 ? '' : 's'}${total > HANDS_MAX_ROWS ? `, first ${HANDS_MAX_ROWS}` : ''}`
             : ''}
         </span>
         <div className="ml-auto flex items-center gap-1">
           <Select value={sortValue} onValueChange={setSortValue}>
-            <SelectTrigger size="sm" className="h-7 w-[132px] border-white/10 bg-transparent text-xs text-white/70" aria-label="Sort hands">
+            <SelectTrigger size="sm" className="h-7 w-[132px] border-border bg-transparent text-xs text-muted-foreground" aria-label="Sort hands">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -115,7 +111,7 @@ export default function GeneralHandList({ cellId, params, filter, title, onClose
             </SelectContent>
           </Select>
           {onClose && (
-            <Button variant="ghost" size="icon" className="size-8 text-white/60" onClick={onClose} aria-label="Close hands">
+            <Button variant="ghost" size="icon" className="size-8 text-muted-foreground hover:text-foreground" onClick={onClose} aria-label="Close hands">
               <X />
             </Button>
           )}
@@ -124,14 +120,14 @@ export default function GeneralHandList({ cellId, params, filter, title, onClose
 
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto">
         {isPending ? (
-          <p className="px-4 py-2 text-sm text-white/50">Loading hands…</p>
+          <p className="px-4 py-2 text-sm text-muted-foreground">Loading hands…</p>
         ) : isError ? (
-          <p className="px-4 py-2 text-sm text-white/50">{(error as Error)?.message ?? 'Could not load hands.'}</p>
+          <p className="px-4 py-2 text-sm text-muted-foreground">{(error as Error)?.message ?? 'Could not load hands.'}</p>
         ) : rows.length === 0 ? (
-          <p className="px-4 py-2 text-sm text-white/50">No hands.</p>
+          <p className="px-4 py-2 text-sm text-muted-foreground">No hands.</p>
         ) : (
           <>
-            <table className="border-collapse text-[14px]" style={{ lineHeight: H2N_THEME.lineHeight }}>
+            <table className="border-collapse text-sm leading-4.5">
               <tbody>
                 {rows.map((r) => (
                   <GeneralHandRow
@@ -146,7 +142,7 @@ export default function GeneralHandList({ cellId, params, filter, title, onClose
               </tbody>
             </table>
             <div ref={sentinelRef} className="h-px" />
-            {isFetchingNextPage && <p className="px-4 py-2 text-sm text-white/50">Loading more…</p>}
+            {isFetchingNextPage && <p className="px-4 py-2 text-sm text-muted-foreground">Loading more…</p>}
           </>
         )}
       </div>

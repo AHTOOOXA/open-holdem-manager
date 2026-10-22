@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent } from 'react';
-import { GENERAL_CELLS, GENERAL_LAYOUT, H2N_COLORS, H2N_THEME } from '@/lib/h2n-layout';
+import { GENERAL_CELLS, GENERAL_LAYOUT } from '@/lib/h2n-layout';
 import type { LayoutCell, LayoutTable } from '@/lib/h2n-layout';
 import type { H2NCellInput } from '@/lib/h2n-format';
 import { H2NEmptyCell, H2NStatCell, H2NTextCell } from './H2NCell';
@@ -104,14 +104,14 @@ export default function GeneralGrid({
           <H2NTextCell
             key={key}
             text={cell.text}
-            color={cell.color}
+            tone={cell.tone}
             section={cell.section}
             align={cell.align}
             span={cell.span}
           />
         );
       case 'nickname':
-        return <H2NTextCell key={key} text={playerName} color={cell.color} />;
+        return <H2NTextCell key={key} text={playerName} tone={cell.tone} />;
       case 'stat': {
         const meta = GENERAL_CELLS[cell.id];
         if (!meta) return <H2NEmptyCell key={key} span={cell.span} />;
@@ -120,7 +120,7 @@ export default function GeneralGrid({
             key={key}
             meta={meta}
             data={cells[cell.id]}
-            color={cell.color}
+            tone={cell.tone}
             align={cell.align}
             span={cell.span}
             selected={selectedCellId === cell.id}
@@ -139,17 +139,8 @@ export default function GeneralGrid({
       role="group"
       aria-label="Statistics. Use the arrow keys to move between cells, Enter to open one."
       onKeyDown={handleKeyDown}
-      className="grid content-start items-start justify-start"
-      style={{
-        gap: H2N_THEME.pageGap,
-        paddingLeft: H2N_THEME.pageInset,
-        paddingRight: H2N_THEME.pageInset,
-        fontFamily: H2N_THEME.fontFamily,
-        fontSize: H2N_THEME.fontSize,
-        lineHeight: H2N_THEME.lineHeight,
-        fontWeight: 400,
-        color: H2N_COLORS.lightgray,
-      }}
+      // 14px text on an 18px line + 4px cell padding = a 26px row (h-row-dense); tables 8px apart, 16px inset.
+      className="grid content-start items-start justify-start gap-2 px-4 text-sm leading-4.5 font-normal text-foreground"
     >
       {layout.map((table) => (
         <div

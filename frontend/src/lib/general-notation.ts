@@ -1,7 +1,7 @@
 /**
  * Pure helpers for the General screen's stat popup and hands list
  * (docs/specs/H2N-COMPATIBLE-STATS.md section 6): number formats,
- * the action-token notation, card and position colours.
+ * the action-token notation, card and position colour classes.
  *
  * No React here, so tests can run them from plain node
  * (frontend/tests/general-notation.test.ts).
@@ -22,60 +22,38 @@ export {
 } from './format/notation';
 export type { RatioLike, RatioDisplay } from './format/notation';
 
-// ── Colours ────────────────────────────────────────────────────────
+// ── Colours (token classes, src/index.css) ─────────────────────────
 
-/** Four-colour deck: tile fill per suit, rank drawn in white. */
-export const SUIT_COLORS: Record<string, string> = {
-  s: '#525252',
-  h: '#801000',
-  c: '#018001',
-  d: '#0059B3',
+/** Card tile fill per suit (four-colour deck); the rank is drawn in white on it. */
+const SUIT_CLASSES: Record<string, string> = {
+  s: 'bg-suit-s',
+  h: 'bg-suit-h',
+  c: 'bg-suit-c',
+  d: 'bg-suit-d',
 };
 
-/** Token colour = position of the player who acted. */
-export const POSITION_COLORS: Record<string, string> = {
-  BTN: '#00FF00',
-  CO: '#EEEE2A',
-  MP: '#FF9E1C',
-  EP: '#FF6B6B',
-  UTG: '#FF6B6B',
-  SB: '#00FFFF',
-  BB: '#5CA0FF',
-  STRADDLE: '#C98CFF',
-};
-
-export function positionColor(pos: string | null | undefined): string {
-  if (!pos) return '#FFFFFF';
-  return POSITION_COLORS[pos.toUpperCase()] ?? '#FFFFFF';
+export function suitClass(suit: string): string {
+  return SUIT_CLASSES[suit] ?? SUIT_CLASSES.s;
 }
 
-/** Colours of the popup and hands panes, sampled from the reference screenshot. */
-export const POPUP_THEME = {
-  /** Header, stat value and summary area of the popup; also the hands pane. */
-  headerBg: '#212121',
-  /** Tabs and tables area of the popup. */
-  bodyBg: '#282828',
-  titlePill: '#646464',
-  label: '#8A8A8A',
-  value: '#FFFFFF',
-  tabInactive: '#737373',
-  divider: '#383838',
-  tableRule: '#1B1B1B',
-  rowSelected: '#505038',
-  rowHover: 'rgba(255,255,255,0.04)',
-  segmentOutline: '#FAFF82',
-  weakPill: 'rgba(33,33,33,0.75)',
-  emptyBar: '#2A2A2A',
-  emptyBarBorder: '#363636',
-  handValue: '#FFFFFF80',
-  plusN: '#8A8A8A',
-} as const;
+/** Action-token colour = position of the player who acted; same palette as the General columns. */
+const POSITION_CLASSES: Record<string, string> = {
+  EP: 'text-pos-ep',
+  UTG: 'text-pos-ep',
+  MP: 'text-pos-mp',
+  CO: 'text-pos-co',
+  BTN: 'text-pos-btn',
+  SB: 'text-pos-sb',
+  BB: 'text-pos-bb',
+};
 
-/** Header row of the popup tables (grey text over a dark rule). */
-export const popupTableHeaderStyle = {
-  color: POPUP_THEME.label,
-  borderBottom: `1px solid ${POPUP_THEME.tableRule}`,
-} as const;
+export function positionClass(pos: string | null | undefined): string {
+  if (!pos) return 'text-foreground';
+  return POSITION_CLASSES[pos.toUpperCase()] ?? 'text-foreground';
+}
+
+/** Header row of the popup tables: column titles in the muted level over a rule. */
+export const POPUP_TABLE_HEADER = 'border-b border-border text-muted-foreground';
 
 // ── Cards ──────────────────────────────────────────────────────────
 

@@ -1,16 +1,16 @@
 import type { CSSProperties, ReactNode } from 'react';
 import { cn, formatStakes } from '@/lib/utils';
+import { usd } from '@/lib/format';
 import type { ActionToken, HandRow, StreetCell } from '@/lib/api-general';
 import {
-  POPUP_THEME,
-  SUIT_COLORS,
   cardParts,
   formatBbAmount,
   formatHandDate,
   formatSignedBb,
   HAND_STREETS,
-  positionColor,
+  positionClass,
   splitTokens,
+  suitClass,
   tokenText,
 } from '@/lib/general-notation';
 import type { HandStreet } from '@/lib/general-notation';
@@ -42,7 +42,7 @@ export function cardName(card: string): string {
   return rank && suit ? `${rank} of ${suit}` : card;
 }
 
-/** A card as a small tile filled with its suit colour (four-colour deck). */
+/** A card as a small tile filled with its suit token (four-colour deck), rank in white. */
 export function CardTile({ card }: { card: string }) {
   const p = cardParts(card);
   if (!p) return null;
@@ -51,8 +51,10 @@ export function CardTile({ card }: { card: string }) {
     <span
       role="img"
       aria-label={name}
-      className="inline-flex h-[22px] w-4 shrink-0 items-center justify-center rounded-[3px] text-[14px] leading-none text-white"
-      style={{ background: SUIT_COLORS[p.suit] ?? SUIT_COLORS.s }}
+      className={cn(
+        'inline-flex h-[22px] w-4 shrink-0 items-center justify-center rounded-cell text-sm leading-none text-white',
+        suitClass(p.suit),
+      )}
       title={name}
     >
       <span aria-hidden="true">{p.rank}</span>
@@ -70,24 +72,21 @@ function CardGroup({ cards }: { cards: string[] }) {
   );
 }
 
-/** Dashed 2px underline in the token's colour, drawn as a background so the dash pattern is fixed. */
-function heroUnderline(color: string): CSSProperties {
-  return {
-    backgroundImage: `repeating-linear-gradient(to right, ${color} 0 4px, transparent 4px 6px)`,
-    backgroundSize: '100% 2px',
-    backgroundPosition: '0 100%',
-    backgroundRepeat: 'no-repeat',
-    paddingBottom: 3,
-  };
-}
+/** Dashed 2px underline in the token's own colour (currentColor), drawn as a background so the dash pattern is fixed. */
+const HERO_UNDERLINE: CSSProperties = {
+  backgroundImage: 'repeating-linear-gradient(to right, currentColor 0 4px, transparent 4px 6px)',
+  backgroundSize: '100% 2px',
+  backgroundPosition: '0 100%',
+  backgroundRepeat: 'no-repeat',
+  paddingBottom: 3,
+};
 
 function Token({ a }: { a: ActionToken }) {
-  const color = positionColor(a.pos);
   const text = tokenText(a);
   return (
     <span
-      className="whitespace-nowrap"
-      style={{ color, ...(a.hero ? heroUnderline(color) : null) }}
+      className={cn('whitespace-nowrap', positionClass(a.pos))}
+      style={a.hero ? HERO_UNDERLINE : undefined}
       title={`${a.player || a.pos}${a.pos ? ` (${a.pos})` : ''}${a.hero ? ' · hero' : ''}`}
     >
       {text}
@@ -113,8 +112,7 @@ function Actions({
       {hidden > 0 && (
         <button
           type="button"
-          className="cursor-pointer underline decoration-dotted underline-offset-4"
-          style={{ color: POPUP_THEME.plusN }}
+          className="cursor-pointer rounded-cell text-muted-foreground underline decoration-dotted underline-offset-4 outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-primary"
           title={`Show ${hidden} more action${hidden > 1 ? 's' : ''} on the ${street.street} for every hand`}
           onClick={(e) => {
             e.stopPropagation();
@@ -126,6 +124,11 @@ function Actions({
       )}
     </span>
   );
+}
+
+/** Won column: green for a win, red for a loss, neutral for exactly zero. */
+function wonClass(won: number): string {
+  return won > 0 ? 'text-money-pos' : won < 0 ? 'text-money-neg' : 'text-money-zero';
 }
 
 function Td({ children, className, style }: { children?: ReactNode; className?: string; style?: CSSProperties }) {
@@ -166,14 +169,13 @@ export default function GeneralHandRow({ row, expandedStreets, onExpandStreet, s
       data-hand-id={row.hand_id}
       aria-current={selected ? 'true' : undefined}
       onClick={() => onOpen(row.hand_id)}
-      className={cn('cursor-pointer focus-within:bg-white/5', !selected && 'hover:bg-white/[0.04]')}
-      style={{
-        height: 38.67,
-        borderBottom: `1px solid ${POPUP_THEME.divider}`,
-        background: selected ? POPUP_THEME.rowSelected : undefined,
-      }}
+      className={cn(
+        'cursor-pointer border-b border-border',
+        selected ? 'bg-selection' : 'hover:bg-overlay-hover focus-within:bg-overlay-hover',
+      )}
+      style={{ height: 38.67 }}
     >
-      <Td className="pl-4" style={{ color: POPUP_THEME.handValue }}>
+      <Td className="pl-4 text-muted-foreground">
         <Stacked>
           {row.hand_value.map((v, i) => (
             <span key={i}>{v.label}</span>
@@ -183,19 +185,19 @@ export default function GeneralHandRow({ row, expandedStreets, onExpandStreet, s
       <Td>
         <button
           type="button"
-          className="flex cursor-pointer rounded-[3px] outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+          className="flex cursor-pointer rounded-control outline-none focus-visible:ring-2 focus-visible:ring-primary"
           aria-label={`Open hand${row.hole_cards.length ? ` ${row.hole_cards.map(cardName).join(', ')}` : ''}${row.played_at ? `, ${formatHandDate(row.played_at)}` : ''}`}
           onClick={(e) => {
             e.stopPropagation();
             onOpen(row.hand_id);
           }}
         >
-          {row.hole_cards.length ? <CardGroup cards={row.hole_cards} /> : <span className="text-white/40">??</span>}
+          {row.hole_cards.length ? <CardGroup cards={row.hole_cards} /> : <span className="text-subtle-foreground">??</span>}
         </button>
       </Td>
       {row.error ? (
         // Spans exactly the street cells: preflop actions + (cards, pot, actions) x 3 streets.
-        <td colSpan={1 + 3 * (HAND_STREETS.length - 1)} className="px-[5px] text-sm text-white/40">
+        <td colSpan={1 + 3 * (HAND_STREETS.length - 1)} className="px-[5px] text-sm text-subtle-foreground">
           {row.error}
         </td>
       ) : (
@@ -222,8 +224,8 @@ export default function GeneralHandRow({ row, expandedStreets, onExpandStreet, s
                   ))}
                 </Stacked>
               </Td>,
-              <Td key={`${name}-p`} className="text-white">
-                <span title={st.pot != null ? `$${st.pot.toFixed(2)}` : undefined}>
+              <Td key={`${name}-p`} className="text-foreground">
+                <span title={st.pot != null ? usd(st.pot) : undefined}>
                   {st.pot_bb != null ? formatBbAmount(st.pot_bb) : ''}
                 </span>
               </Td>,
@@ -238,17 +240,14 @@ export default function GeneralHandRow({ row, expandedStreets, onExpandStreet, s
           })}
         </>
       )}
-      <Td className="pl-3 text-white/60">{row.stakes ? formatStakes(row.stakes) : ''}</Td>
-      <Td
-        className="text-right tabular-nums"
-        style={{ color: won == null ? undefined : won > 0 ? '#5CC45C' : won < 0 ? '#F57373' : '#D3D3D3' }}
-      >
-        <span title={row.won != null ? `$${row.won.toFixed(2)}` : undefined}>{formatSignedBb(won)}</span>
+      <Td className="pl-3 text-muted-foreground">{row.stakes ? formatStakes(row.stakes) : ''}</Td>
+      <Td className={cn('text-right tabular-nums', won != null && wonClass(won))}>
+        <span title={row.won != null ? usd(row.won) : undefined}>{formatSignedBb(won)}</span>
       </Td>
-      <Td className="text-right text-white/60 tabular-nums">
+      <Td className="text-right text-muted-foreground tabular-nums">
         {ev != null && Math.abs(ev) > 1e-9 ? formatSignedBb(ev) : ''}
       </Td>
-      <Td className="pr-4 text-white/50">{formatHandDate(row.played_at)}</Td>
+      <Td className="pr-4 text-muted-foreground">{formatHandDate(row.played_at)}</Td>
     </tr>
   );
 }

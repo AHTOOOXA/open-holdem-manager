@@ -18,7 +18,7 @@ import {
   formatSignedBb,
   formatWeak,
   popupTitle,
-  positionColor,
+  positionClass,
   splitTokens,
   tokenText,
 } from '../src/lib/general-notation';
@@ -68,14 +68,15 @@ test('at most three tokens per street, the rest behind +N', () => {
   assert.deepEqual(splitTokens(['X', 'X'], false), { shown: ['X', 'X'], hidden: 0 });
 });
 
-test('position colours', () => {
-  assert.equal(positionColor('BTN'), '#00FF00');
-  assert.equal(positionColor('CO'), '#EEEE2A');
-  assert.equal(positionColor('MP'), '#FF9E1C');
-  assert.equal(positionColor('EP'), '#FF6B6B');
-  assert.equal(positionColor('SB'), '#00FFFF');
-  assert.equal(positionColor('BB'), '#5CA0FF');
-  assert.equal(positionColor(''), '#FFFFFF');
+test('position colours: the General column tokens', () => {
+  assert.equal(positionClass('BTN'), 'text-pos-btn');
+  assert.equal(positionClass('CO'), 'text-pos-co');
+  assert.equal(positionClass('MP'), 'text-pos-mp');
+  assert.equal(positionClass('EP'), 'text-pos-ep');
+  assert.equal(positionClass('SB'), 'text-pos-sb');
+  assert.equal(positionClass('bb'), 'text-pos-bb');
+  assert.equal(positionClass(''), 'text-foreground');
+  assert.equal(positionClass('XX'), 'text-foreground');
 });
 
 test('Range tab frequency, weak label and counts (screenshot numbers)', () => {
