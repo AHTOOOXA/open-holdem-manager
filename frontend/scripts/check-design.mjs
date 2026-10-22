@@ -10,7 +10,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-export const RULES = ['hex', 'color-fn', 'text-arbitrary', 'inline-color', 'toFixed'];
+export const RULES = ['hex', 'color-fn', 'text-arbitrary', 'inline-color', 'toFixed', 'palette'];
+/** Only these top-level folders (directly under a scan dir's root) are skipped by walk(). */
+export const SKIP_DIRS = ['dist', 'dist-landing', 'node_modules'];
 export const SCAN_DIRS = ['src', 'landing'];
 
 /** Replace // and block comments with spaces (newlines kept so line numbers hold). String-aware. */
@@ -84,7 +86,44 @@ export const HEX_RE = /#(?:[0-9a-fA-F]{8}|[0-9a-fA-F]{6}|[0-9a-fA-F]{4}|[0-9a-fA
 export const COLOR_FN_RE = /(?<![\w$.])(?:rgba?|hsla?|oklch|oklab|color-mix)\(/g;
 export const TEXT_ARBITRARY_RE = /(?<![\w-])text-\[-?(?:\d+\.?\d*|\.\d+)(?:px|rem|em)\]/g;
 export const TO_FIXED_RE = /\.toFixed\(/g;
+const PALETTE_HUES =
+  'red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose|slate|gray|zinc|neutral|stone';
+const PALETTE_PREFIXES =
+  'text|bg|border|ring|outline|fill|stroke|from|via|to|decoration|divide|placeholder|caret|accent|shadow';
+const PALETTE_SHADES = '950|900|800|700|600|500|400|300|200|100|50';
+const OPACITY = '(?:\\/(?:\\d+|\\[[^\\]\\s]+\\]))?';
+/** `text-red-500`, `hover:bg-blue-600/50`, `data-[x]:border-gray-200`, plus `text-white`, `bg-black/50`, ... */
+export const PALETTE_RE = new RegExp(
+  `(?<![\\w-])(?:(?:${PALETTE_PREFIXES})-(?:${PALETTE_HUES})-(?:${PALETTE_SHADES})|(?:text|bg|border)-(?:white|black))${OPACITY}(?![\\w-])`,
+  'g',
+);
+export function findPalette(src) {
+  return regexHits(stripComments(src), PALETTE_RE);
+}
+
+export const NAMED_COLORS = new Set(
+  (
+    'red orange yellow green blue purple pink brown cyan magenta lime teal navy maroon olive silver gold aqua fuchsia ' +
+    'indigo violet white black gray grey tomato crimson coral salmon khaki lavender turquoise orchid plum tan beige ' +
+    'ivory snow azure skyblue lightblue lightgreen lightgray lightgrey lightyellow lightpink darkgray darkgrey darkred ' +
+    'darkgreen darkblue darkorange darkcyan dimgray dimgrey slategray slategrey steelblue royalblue firebrick hotpink ' +
+    'deeppink limegreen forestgreen seagreen chocolate sienna peru wheat linen gainsboro whitesmoke aliceblue ' +
+    'rebeccapurple orangered goldenrod mintcream honeydew mistyrose'
+  ).split(' '),
+);
+const isNamedColor = (v) => NAMED_COLORS.has(v.trim().toLowerCase());
+/** hex, colour function or named colour word anywhere in a shorthand value (`1px solid red`). */
+function hasColorToken(value) {
+  const v = value.replace(/var\([^)]*\)/g, ' ').replace(/\$\{[^}]*\}/g, ' ');
+  if (new RegExp(HEX_RE.source).test(v) || /(?:rgba?|hsla?|oklch|oklab|color-mix)\(/.test(v)) return true;
+  return v.split(/[^a-zA-Z]+/).some((t) => t && NAMED_COLORS.has(t.toLowerCase()));
+}
+
 const INLINE_KEYS = 'color|background|backgroundColor|borderColor|fill|stroke|outlineColor|boxShadow|textShadow';
+const BORDER_KEYS = 'border|borderTop|borderRight|borderBottom|borderLeft|outline';
+const BORDER_KEY_RE = new RegExp(`(?<![\\w$.-])(?:${BORDER_KEYS})\\s*:\\s*(['"\`])`, 'g');
+const TAILWIND_CLASS_RE = /(?:^|\s)(?:[\w-]+:)*-?(?:bg|text|border|ring|shadow|outline|fill|stroke|flex|grid|p|m|px|py|w|h)-[\w[]/;
+const JSX_COLOR_ATTR_RE = /(?<=\s)(?:fill|stroke|stopColor|color|floodColor|lightingColor)\s*=\s*\{?\s*(['"])([^'"\n]*)\1/g;
 const INLINE_KEY_RE = new RegExp(`(?<![\\w$.-])(?:${INLINE_KEYS})\\s*:\\s*(['"\`])`, 'g');
 const INLINE_KEYWORDS = /^(?:none|transparent|inherit|initial|unset|currentcolor)$/i;
 
@@ -128,27 +167,51 @@ function balanced(src, start) {
   return null;
 }
 
-/** Colour-ish keys inside `style={{ ... }}` whose value is a plain string literal. */
+/** Literal value of the string starting right after the opening quote `q` at `valStart`, or null. */
+function literalAt(text, valStart, q) {
+  const valEnd = text.indexOf(q, valStart);
+  return valEnd < 0 ? null : text.slice(valStart, valEnd);
+}
+
+/**
+ * - colour keys inside `style={{ ... }}` with any string-literal value (not var()/keywords);
+ * - colour keys anywhere else with a bare named colour (`{ color: 'red' }`);
+ * - `border`/`outline` shorthands (anywhere) whose literal contains a hex, colour function or named colour;
+ * - JSX `fill="..."`, `stroke=`, `stopColor=`, `color=` with a literal hex or named colour.
+ */
 export function findInlineColor(src) {
   const clean = stripComments(src);
   const hits = [];
+  const styleRanges = [];
   for (const s of clean.matchAll(/style\s*=\s*\{\s*\{/g)) {
     const open = clean.indexOf('{', s.index + s[0].indexOf('{') + 1);
     const obj = balanced(clean, open);
-    if (!obj) continue;
-    for (const m of obj.text.matchAll(INLINE_KEY_RE)) {
-      const q = m[1];
-      const valStart = m.index + m[0].length;
-      const valEnd = obj.text.indexOf(q, valStart);
-      if (valEnd < 0) continue;
-      const value = obj.text.slice(valStart, valEnd);
-      if (q === '`' && value.includes('${')) continue; // expression, not a literal
+    if (obj) styleRanges.push([open, obj.end]);
+  }
+  const inStyle = (i) => styleRanges.some(([a, b]) => i > a && i < b);
+  const add = (index, text) => hits.push({ line: lineOf(clean, index), match: text });
+
+  for (const m of clean.matchAll(INLINE_KEY_RE)) {
+    const value = literalAt(clean, m.index + m[0].length, m[1]);
+    if (value === null) continue;
+    if (m[1] === '`' && value.includes('${')) continue; // expression, not a literal
+    if (inStyle(m.index)) {
       if (/^\s*var\(/.test(value) || INLINE_KEYWORDS.test(value.trim())) continue;
-      // `'a' + x`, `'#fff' ? ..` style continuations are still literals-led; count them.
-      hits.push({ line: lineOf(clean, open + m.index), match: m[0] + value });
+      add(m.index, m[0] + value);
+    } else if (isNamedColor(value)) {
+      add(m.index, m[0] + value);
     }
   }
-  return hits;
+  for (const m of clean.matchAll(BORDER_KEY_RE)) {
+    const value = literalAt(clean, m.index + m[0].length, m[1]);
+    // skip Tailwind class strings (e.g. a cva `outline:` variant key)
+    if (value !== null && !TAILWIND_CLASS_RE.test(value) && hasColorToken(value)) add(m.index, m[0] + value);
+  }
+  for (const m of clean.matchAll(JSX_COLOR_ATTR_RE)) {
+    const v = m[2].trim();
+    if (isNamedColor(v) || new RegExp(`^${HEX_RE.source}$`).test(v)) add(m.index, m[0]);
+  }
+  return hits.sort((x, y) => x.line - y.line);
 }
 
 export const MATCHERS = {
@@ -157,6 +220,7 @@ export const MATCHERS = {
   'text-arbitrary': findTextArbitrary,
   'inline-color': findInlineColor,
   toFixed: findToFixed,
+  palette: findPalette,
 };
 
 /** { rule: [{line, match}] } for non-empty rules, minus `exempt` rules. */
@@ -176,12 +240,12 @@ export function exemptRules(file, allow) {
   return [...rules];
 }
 
-function walk(dir, root, out) {
+function walk(dir, root, out, top = true) {
   if (!fs.existsSync(dir)) return;
   for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
-    if (ent.name === 'node_modules' || ent.name.startsWith('dist')) continue;
+    if (ent.name === 'node_modules' || (top && SKIP_DIRS.includes(ent.name))) continue;
     const full = path.join(dir, ent.name);
-    if (ent.isDirectory()) walk(full, root, out);
+    if (ent.isDirectory()) walk(full, root, out, false);
     else if (/\.(ts|tsx)$/.test(ent.name) && !ent.name.endsWith('.d.ts')) {
       out.push(path.relative(root, full).split(path.sep).join('/'));
     }
