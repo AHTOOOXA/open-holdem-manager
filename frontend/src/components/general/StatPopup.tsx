@@ -213,7 +213,7 @@ export default function StatPopup({ cellId, meta, params, selection, onSelect, o
 
       {/* Tabs */}
       <Tabs value={tab} onValueChange={changeTab} className="min-h-0 flex-1 gap-0">
-        <TabsList variant="line" className="h-auto shrink-0 gap-8 px-4 pt-3 pb-2">
+        <TabsList variant="line" className="h-11 shrink-0 gap-8 px-4 pt-2">
           {tabs.map((t) => (
             <TabsTrigger
               key={t}

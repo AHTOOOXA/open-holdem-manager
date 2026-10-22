@@ -212,7 +212,7 @@ export default function GeneralPage() {
           </header>
 
           <Tabs value={tab} onValueChange={setTab} className="min-h-0 flex-1 gap-0">
-            <TabsList variant="line" className="h-auto gap-4 px-4 pb-1">
+            <TabsList variant="line" className="h-9 gap-4 px-4">
               <TabsTrigger value="general" className={PAGE_TAB}>
                 GENERAL
               </TabsTrigger>
