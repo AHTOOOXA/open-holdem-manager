@@ -27,6 +27,9 @@ export default function ImportOverlay() {
               <span className="w-2 h-2 rounded-full" style={{ background: activeWorkspace.color }} />
             )}
           </div>
+          <p className="text-xs text-text-muted text-center mt-2">
+            GGPoker players: close the GG client before running OHM. It is for review after your session.
+          </p>
           {workspaces.length > 1 && (
             <p className="text-xs text-text-muted text-center mt-1">
               Wrong workspace? Switch in the sidebar first.
