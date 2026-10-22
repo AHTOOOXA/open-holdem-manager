@@ -1,11 +1,12 @@
 from fastapi import APIRouter, HTTPException
 from app.db import get_db, db_lock, get_read_cursor
+from app.heroes import resolve_hero, add_manual_account, invalidate_hero_cache
 from app.models import WorkspaceResponse, CreateWorkspace, UpdateWorkspace
 
 router = APIRouter()
 
 
-def _row_to_response(row) -> WorkspaceResponse:
+def _row_to_response(row, db) -> WorkspaceResponse:
     """Convert a workspace query row to WorkspaceResponse."""
     date_range: dict[str, str | None] = {}
     if row[7] is not None:
@@ -17,11 +18,12 @@ def _row_to_response(row) -> WorkspaceResponse:
     else:
         date_range["max"] = None
 
+    hero = resolve_hero(db, row[0])
     return WorkspaceResponse(
         id=row[0],
         name=row[1],
-        hero_username=row[2],
-        hero_site=row[3],
+        hero_username=hero.username if hero else "",
+        hero_site=hero.site_code if hero else "",
         description=row[4],
         color=row[5],
         hand_count=int(row[6] or 0),
@@ -52,7 +54,7 @@ def list_workspaces():
                  w.description, w.color, w.created_at
         ORDER BY w.created_at ASC
     """).fetchall()
-    return [_row_to_response(r) for r in rows]
+    return [_row_to_response(r, db) for r in rows]
 
 
 @router.post("/workspaces", response_model=WorkspaceResponse, status_code=201)
@@ -71,8 +73,11 @@ def create_workspace(body: CreateWorkspace):
         db.execute(
             "INSERT INTO workspaces (id, name, hero_username, hero_site, description, color) "
             "VALUES (?, ?, ?, ?, ?, ?)",
-            [new_id, body.name, body.hero_username, body.hero_site, body.description, body.color],
+            [new_id, body.name, body.hero_username or "Hero", body.hero_site or "GG",
+             body.description, body.color],
         )
+        if body.hero_username and body.hero_username.strip() and body.hero_site and body.hero_site.strip():
+            add_manual_account(db, new_id, body.hero_site.strip(), body.hero_username)
 
         row = db.execute(f"""
             {_LIST_SQL}
@@ -81,7 +86,7 @@ def create_workspace(body: CreateWorkspace):
                      w.description, w.color, w.created_at
         """, [new_id]).fetchone()
 
-        return _row_to_response(row)
+        return _row_to_response(row, db)
 
 
 @router.get("/workspaces/{workspace_id}", response_model=WorkspaceResponse)
@@ -95,7 +100,7 @@ def get_workspace(workspace_id: int):
     """, [workspace_id]).fetchone()
     if not row:
         raise HTTPException(status_code=404, detail="Workspace not found")
-    return _row_to_response(row)
+    return _row_to_response(row, db)
 
 
 @router.patch("/workspaces/{workspace_id}", response_model=WorkspaceResponse)
@@ -126,6 +131,8 @@ def update_workspace(workspace_id: int, body: UpdateWorkspace):
         if body.hero_username is not None:
             updates.append("hero_username = ?")
             params.append(body.hero_username)
+            # Legacy shim: the nickname becomes a manual hero account
+            add_manual_account(db, workspace_id, body.hero_site or "GG", body.hero_username)
 
         if body.hero_site is not None:
             updates.append("hero_site = ?")
@@ -153,7 +160,7 @@ def update_workspace(workspace_id: int, body: UpdateWorkspace):
                      w.description, w.color, w.created_at
         """, [workspace_id]).fetchone()
 
-        return _row_to_response(row)
+        return _row_to_response(row, db)
 
 
 @router.delete("/workspaces/{workspace_id}")
@@ -217,6 +224,9 @@ def delete_workspace(workspace_id: int):
         db.execute(
             "DELETE FROM checkpoints WHERE workspace_id = ?", [workspace_id]
         )
+
+        db.execute("DELETE FROM hero_accounts WHERE workspace_id = ?", [workspace_id])
+        invalidate_hero_cache(workspace_id)
 
         # Delete the workspace itself
         db.execute(

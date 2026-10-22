@@ -451,6 +451,8 @@ def finalize_import(db: duckdb.DuckDBPyConnection, workspace_id: int | None = No
         WHERE players.id = sub.player_id
     """)
     batch_update_player_types(db, workspace_id=workspace_id)
+    from app.heroes import detect_heroes
+    detect_heroes(db, workspace_id)
 
 
 def insert_parsed_hand(db: duckdb.DuckDBPyConnection, parsed: ParsedHand, workspace_id: int = 1) -> str:
@@ -463,6 +465,8 @@ def insert_parsed_hand(db: duckdb.DuckDBPyConnection, parsed: ParsedHand, worksp
     imported, errors, details = _flush_batch(db, [(parsed, player_stats, financials)], workspace_id=workspace_id)
     if errors:
         raise RuntimeError(details[0])
+    from app.heroes import detect_heroes
+    detect_heroes(db, workspace_id)  # also invalidates the hero cache
     return parsed.hand_id
 
 
@@ -1005,6 +1009,13 @@ async def clear_hands(workspace_id: int = 1):
         )
         db.execute("DELETE FROM hands WHERE workspace_id = ?", [workspace_id])
         db.execute("DELETE FROM player_classifications WHERE workspace_id = ?", [workspace_id])
+        # Manual hero accounts stay; auto-detected ones go with the hands
+        db.execute(
+            "DELETE FROM hero_accounts WHERE workspace_id = ? AND source = 'auto'",
+            [workspace_id],
+        )
+        from app.heroes import invalidate_hero_cache
+        invalidate_hero_cache(workspace_id)
         reset_import_cache()
     return {"status": "ok"}
 
@@ -1071,6 +1082,8 @@ async def import_database(file: UploadFile = File(...)):
             # Re-open (triggers init_schema + sequence sync)
             get_db()
             reset_import_cache()
+            from app.heroes import invalidate_hero_cache
+            invalidate_hero_cache()
 
         return {"status": "ok", "hands": hand_count}
     except ValueError as e:

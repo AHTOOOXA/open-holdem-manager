@@ -673,8 +673,8 @@ class WorkspaceResponse(BaseModel):
 
 class CreateWorkspace(BaseModel):
     name: str
-    hero_username: str = "Hero"
-    hero_site: str = "GG"
+    hero_username: str | None = None
+    hero_site: str | None = None
     description: str | None = None
     color: str | None = None
 
@@ -766,3 +766,40 @@ class UpdateIdentity(BaseModel):
 class AddAlias(BaseModel):
     workspace_id: int
     player_id: int
+
+
+# ── Hero Account Models ───────────────────────────────────────────
+
+class SiteResponse(BaseModel):
+    code: str
+    name: str
+
+
+class HeroAccount(BaseModel):
+    site: str
+    site_name: str
+    username: str
+    source: str  # 'manual' | 'auto'
+    hand_count: int = 0
+
+
+class ActiveHero(BaseModel):
+    site: str
+    site_name: str
+    username: str
+    hand_count: int = 0
+
+
+class HeroesResponse(BaseModel):
+    auto_detect: bool
+    accounts: list[HeroAccount]
+    active: ActiveHero | None = None
+
+
+class SetManualHeroes(BaseModel):
+    site: str
+    usernames: list[str]
+
+
+class PatchHeroes(BaseModel):
+    auto_detect: bool
