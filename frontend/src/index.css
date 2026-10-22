@@ -2,48 +2,127 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 
+/* Geist Sans for the whole UI (numbers use tabular figures, see body);
+   GeistMono only for raw hand histories and code-like text (font-mono). */
 @font-face {
-  font-family: 'GeistMono';
-  src: url('/node_modules/geist/dist/fonts/geist-mono/GeistMono-Regular.woff2') format('woff2');
-  font-weight: 400;
+  font-family: 'Geist';
+  src: url('/node_modules/geist/dist/fonts/geist-sans/Geist-Variable.woff2') format('woff2');
+  font-weight: 100 900;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
   font-family: 'GeistMono';
-  src: url('/node_modules/geist/dist/fonts/geist-mono/GeistMono-Medium.woff2') format('woff2');
-  font-weight: 500;
-  font-style: normal;
-  font-display: swap;
-}
-@font-face {
-  font-family: 'GeistMono';
-  src: url('/node_modules/geist/dist/fonts/geist-mono/GeistMono-SemiBold.woff2') format('woff2');
-  font-weight: 600;
-  font-style: normal;
-  font-display: swap;
-}
-@font-face {
-  font-family: 'GeistMono';
-  src: url('/node_modules/geist/dist/fonts/geist-mono/GeistMono-Bold.woff2') format('woff2');
-  font-weight: 700;
+  src: url('/node_modules/geist/dist/fonts/geist-mono/GeistMono-Variable.woff2') format('woff2');
+  font-weight: 100 900;
   font-style: normal;
   font-display: swap;
 }
 
 @custom-variant dark (&:is(.dark *));
 
-/* ── Our poker theme colors (used by existing pages) ── */
-@theme {
-  --color-surface: oklch(0.216 0.006 56.043);
-  --color-surface-hover: oklch(0.268 0.007 34.298);
-  --color-text: oklch(0.985 0.001 106.423);
-  --color-text-muted: oklch(0.709 0.01 56.259);
-  --color-primary-hover: oklch(0.88 0.15 92);
-  --color-green: #22c55e;
-  --color-red: #ef4444;
-  --color-yellow: #eab308;
-  --color-blue: #60a5fa;
+/* ── OHM design tokens ──────────────────────────────────────────
+   Roles, not raw colours: components use these utilities only
+   (bg-surface-sunken, text-money-pos, text-pos-btn, rounded-control,
+   h-row-dense, text-cell …). Values live in :root below.
+   Documented in src/DESIGN-TOKENS.md. */
+@theme inline {
+  /* Fonts */
+  --font-sans: 'Geist', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'GeistMono', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* Type scale (size / line height). xs, sm, lg, xl keep Tailwind's defaults. */
+  --text-2xs: 10px;
+  --text-2xs--line-height: 14px;
+  --text-label: 11px;
+  --text-label--line-height: 16px;
+  --text-cell: 13px;
+  --text-cell--line-height: 18px;
+
+  /* Radii */
+  --radius-cell: 2px;
+  --radius-control: 4px;
+  --radius-card: 8px;
+  --radius-pill: 9999px;
+
+  /* Row and control heights (h-row-dense, h-control …) */
+  --spacing-row-dense: 26px;
+  --spacing-row: 30px;
+  --spacing-row-tree: 32px;
+  --spacing-row-header: 28px;
+  --spacing-control: 28px;
+  --spacing-button: 30px;
+
+  /* Surfaces and text levels */
+  --color-surface-sunken: var(--surface-sunken);
+  --color-surface-raised: var(--surface-raised);
+  --color-subtle-foreground: var(--subtle-foreground);
+  --color-border-subtle: var(--border-subtle);
+
+  /* Interaction overlays (layer over any surface) */
+  --color-overlay-hover: var(--overlay-hover);
+  --color-overlay-selected: var(--overlay-selected);
+  --color-overlay-focus: var(--overlay-focus);
+  --color-selection: var(--selection);
+
+  /* Money and sample size */
+  --color-money-pos: var(--money-pos);
+  --color-money-neg: var(--money-neg);
+  --color-money-zero: var(--money-zero);
+  --color-sample: var(--sample);
+
+  /* Positions, streets, actions */
+  --color-pos-ep: var(--pos-ep);
+  --color-pos-mp: var(--pos-mp);
+  --color-pos-co: var(--pos-co);
+  --color-pos-btn: var(--pos-btn);
+  --color-pos-sb: var(--pos-sb);
+  --color-pos-bb: var(--pos-bb);
+  --color-street-flop: var(--street-flop);
+  --color-street-turn: var(--street-turn);
+  --color-street-river: var(--street-river);
+  --color-act-fold: var(--act-fold);
+  --color-act-check: var(--act-check);
+  --color-act-call: var(--act-call);
+  --color-act-bet: var(--act-bet);
+  --color-act-raise: var(--act-raise);
+  --color-act-allin: var(--act-allin);
+
+  /* Card suits (tile backgrounds; text on them is white) */
+  --color-suit-s: var(--suit-s);
+  --color-suit-h: var(--suit-h);
+  --color-suit-d: var(--suit-d);
+  --color-suit-c: var(--suit-c);
+
+  /* Chart series */
+  --color-chart-main: var(--chart-main);
+  --color-chart-ev: var(--chart-ev);
+  --color-chart-sd: var(--chart-sd);
+  --color-chart-nsd: var(--chart-nsd);
+  --color-chart-rake: var(--chart-rake);
+  --color-chart-axis: var(--chart-axis);
+  --color-chart-grid: var(--chart-grid);
+
+  /* Tags, player and workspace markers: one palette */
+  --color-tag-1: var(--tag-1);
+  --color-tag-2: var(--tag-2);
+  --color-tag-3: var(--tag-3);
+  --color-tag-4: var(--tag-4);
+  --color-tag-5: var(--tag-5);
+  --color-tag-6: var(--tag-6);
+  --color-tag-7: var(--tag-7);
+  --color-tag-8: var(--tag-8);
+  --color-tag-9: var(--tag-9);
+
+  /* Legacy names, kept as aliases until call sites move to the roles above */
+  --color-surface: var(--card);
+  --color-surface-hover: var(--muted);
+  --color-text: var(--foreground);
+  --color-text-muted: var(--muted-foreground);
+  --color-green: var(--money-pos);
+  --color-red: var(--money-neg);
+  --color-yellow: var(--act-bet);
+  --color-blue: var(--act-call);
 }
 
 /* ── shadcn/ui theme inline block ── */
@@ -88,10 +167,10 @@
   --color-sidebar-ring: var(--sidebar-ring);
 }
 
-/* ── CSS variables: dark-only app ── */
-/* ── Stone base + Amber theme (mira dense style) ── */
+/* ── CSS variables: dark-only app (html has class="dark") ── */
+/* ── Stone base + Amber accent ── */
 :root {
-  --radius: 0.625rem;
+  --radius: 0.5rem;
 
   /* Stone dark base + Amber primary overlay */
   --background: oklch(0.147 0.004 49.25);
@@ -102,7 +181,7 @@
   --popover-foreground: oklch(0.985 0.001 106.423);
   --primary: oklch(0.77 0.16 70);
   --primary-foreground: oklch(0.28 0.07 46);
-  --secondary: oklch(0.274 0.006 286.033);
+  --secondary: oklch(0.268 0.007 34.298);
   --secondary-foreground: oklch(0.985 0 0);
   --muted: oklch(0.268 0.007 34.298);
   --muted-foreground: oklch(0.709 0.01 56.259);
@@ -111,7 +190,7 @@
   --destructive: oklch(0.704 0.191 22.216);
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.553 0.013 58.071);
+  --ring: oklch(0.77 0.16 70);
 
   /* Chart: amber-scale + poker semantics */
   --chart-1: oklch(0.88 0.15 92);
@@ -127,7 +206,70 @@
   --sidebar-accent: oklch(0.268 0.007 34.298);
   --sidebar-accent-foreground: oklch(0.985 0.001 106.423);
   --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.553 0.013 58.071);
+  --sidebar-ring: oklch(0.77 0.16 70);
+
+  /* Surfaces and text levels (contrast on card: muted 6.8, subtle 4.8) */
+  --surface-sunken: oklch(0.185 0.005 56);
+  --surface-raised: oklch(0.245 0.006 50);
+  --subtle-foreground: oklch(0.62 0.01 56);
+  --border-subtle: oklch(1 0 0 / 6%);
+
+  --overlay-hover: oklch(1 0 0 / 6%);
+  --overlay-selected: oklch(1 0 0 / 12%);
+  --overlay-focus: oklch(1 0 0 / 18%);
+  --selection: oklch(0.77 0.16 70 / 20%);
+
+  --money-pos: oklch(0.76 0.17 150);
+  --money-neg: oklch(0.70 0.18 25);
+  --money-zero: var(--muted-foreground);
+  --sample: var(--subtle-foreground);
+
+  --pos-ep: oklch(0.74 0.13 25);
+  --pos-mp: oklch(0.78 0.13 60);
+  --pos-co: oklch(0.84 0.12 95);
+  --pos-btn: oklch(0.78 0.15 145);
+  --pos-sb: oklch(0.78 0.10 195);
+  --pos-bb: oklch(0.74 0.11 255);
+  --street-flop: oklch(0.76 0.12 165);
+  --street-turn: oklch(0.80 0.12 80);
+  --street-river: oklch(0.74 0.11 270);
+  --act-fold: var(--subtle-foreground);
+  --act-check: var(--muted-foreground);
+  --act-call: oklch(0.78 0.11 230);
+  --act-bet: oklch(0.84 0.14 90);
+  --act-raise: oklch(0.74 0.16 45);
+  --act-allin: oklch(0.68 0.20 25);
+
+  --suit-s: oklch(0.42 0.01 60);
+  --suit-h: oklch(0.52 0.19 25);
+  --suit-d: oklch(0.50 0.14 255);
+  --suit-c: oklch(0.50 0.13 150);
+
+  --chart-main: var(--primary);
+  --chart-ev: oklch(0.78 0.11 210);
+  --chart-sd: oklch(0.76 0.15 150);
+  --chart-nsd: oklch(0.70 0.17 25);
+  --chart-rake: oklch(0.72 0.13 300);
+  --chart-axis: var(--muted-foreground);
+  --chart-grid: var(--border-subtle);
+
+  --tag-1: oklch(0.62 0.02 60);
+  --tag-2: oklch(0.68 0.14 250);
+  --tag-3: oklch(0.72 0.17 150);
+  --tag-4: oklch(0.65 0.18 300);
+  --tag-5: oklch(0.72 0.17 50);
+  --tag-6: oklch(0.68 0.19 350);
+  --tag-7: oklch(0.65 0.20 25);
+  --tag-8: oklch(0.82 0.15 90);
+  --tag-9: oklch(0.75 0.12 210);
+
+  /* Layers and motion (use as z-(--z-modal), duration-(--motion-fast)) */
+  --z-sticky: 10;
+  --z-dropdown: 50;
+  --z-modal: 100;
+  --z-popover: 110;
+  --z-toast: 200;
+  --motion-fast: 150ms;
 }
 
 @layer base {
@@ -141,5 +283,15 @@
 
 body {
   margin: 0;
-  font-family: 'GeistMono', 'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
+  font-family: var(--font-sans, ui-sans-serif, system-ui, sans-serif);
+  /* Every number lines up in columns */
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
