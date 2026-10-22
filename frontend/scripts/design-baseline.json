@@ -121,8 +121,7 @@
     "text-arbitrary": 8
   },
   "src/pages/GraphPage.tsx": {
-    "text-arbitrary": 7,
-    "palette": 1
+    "text-arbitrary": 7
   },
   "src/pages/HandsPage.tsx": {
     "text-arbitrary": 1
