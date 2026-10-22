@@ -50,7 +50,7 @@ export default function SidebarFooterSettings() {
           <Button
             type="button"
             variant="ghost"
-            className="h-auto w-full justify-start px-2 py-1 text-left group-data-[collapsible=icon]:hidden hover:bg-sidebar-accent"
+            className="h-auto w-full justify-start px-2 py-1 text-left group-data-[collapsible=icon]:hidden hover:bg-sidebar-accent dark:hover:bg-sidebar-accent"
             title="Hero accounts"
             onClick={() => navigate('/settings/workspaces')}
           >

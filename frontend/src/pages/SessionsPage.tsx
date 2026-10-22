@@ -392,7 +392,7 @@ function SessionDetail({ index }: { index: number }) {
               <>
                 <div className={`text-xl font-bold ${moneyClass(stats.ev_usd)}`}>{usd(stats.ev_usd)}</div>
                 <div className={`text-xl font-bold ${moneyClass(stats.ev_bb_per_100)}`}>{fixed(stats.ev_bb_per_100, 2)}</div>
-                <div className={`text-sm ${moneyClass(stats.ev_bb)}`}>{bbUnits(stats.ev_bb)}</div>
+                <div className={`text-sm ${moneyClass(stats.ev_bb, 1)}`}>{bbUnits(stats.ev_bb)}</div>
                 <div className="text-sm text-text-muted">EV bb/100</div>
                 <div className="text-[10px] text-text-muted uppercase tracking-wide">Won EV</div>
                 <div className="text-[10px] text-text-muted uppercase tracking-wide">EV Rate</div>

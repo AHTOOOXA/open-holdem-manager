@@ -99,7 +99,7 @@ export default function GeneralHandList({ cellId, params, filter, title, onClose
         </span>
         <div className="ml-auto flex items-center gap-1">
           <Select value={sortValue} onValueChange={setSortValue}>
-            <SelectTrigger size="sm" className="h-7 w-[132px] border-border bg-transparent text-xs text-muted-foreground" aria-label="Sort hands">
+            <SelectTrigger size="sm" className="h-7 w-[132px] border-border bg-transparent dark:bg-transparent text-xs text-muted-foreground" aria-label="Sort hands">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>

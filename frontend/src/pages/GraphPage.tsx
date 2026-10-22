@@ -334,7 +334,7 @@ export default function GraphPage() {
       <Toggle
         key={key}
         size="sm"
-        className="h-7 text-xs data-[state=on]:text-white"
+        className="h-7 text-xs data-[state=on]:text-background"
         pressed={lines.has(key)}
         onPressedChange={() => toggle(key)}
         style={lines.has(key) ? { backgroundColor: color } : undefined}
@@ -695,7 +695,7 @@ export default function GraphPage() {
             <div className="px-4 py-3 grid grid-cols-2 gap-x-4">
               <div className={`text-xl font-bold ${moneyClass(wonUSD)}`}>{usd(wonUSD)}</div>
               <div className={`text-xl font-bold ${moneyClass(rateBB)}`}>{fixed(rateBB, 2)}</div>
-              <div className={`text-sm ${moneyClass(wonBB)}`}>{bbUnits(wonBB)}</div>
+              <div className={`text-sm ${moneyClass(wonBB, 1)}`}>{bbUnits(wonBB)}</div>
               <div className="text-sm text-text-muted">bb/100</div>
               <div className="text-[10px] text-text-muted uppercase tracking-wide">Won</div>
               <div className="text-[10px] text-text-muted uppercase tracking-wide">Rate</div>
@@ -706,7 +706,7 @@ export default function GraphPage() {
                 <>
                   <div className={`text-xl font-bold ${moneyClass(evUSD)}`}>{usd(evUSD)}</div>
                   <div className={`text-xl font-bold ${moneyClass(evRateBB)}`}>{fixed(evRateBB, 2)}</div>
-                  <div className={`text-sm ${moneyClass(evBB)}`}>{bbUnits(evBB)}</div>
+                  <div className={`text-sm ${moneyClass(evBB, 1)}`}>{bbUnits(evBB)}</div>
                   <div className="text-sm text-text-muted">EV bb/100</div>
                   <div className="text-[10px] text-text-muted uppercase tracking-wide">Won EV</div>
                   <div className="text-[10px] text-text-muted uppercase tracking-wide">EV Rate</div>

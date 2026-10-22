@@ -97,7 +97,7 @@ const tabsListVariants = cva(
         default:
           "rounded-lg bg-muted p-[3px] group-data-[orientation=horizontal]/tabs:h-9",
         line:
-          "w-full min-w-0 justify-start gap-1 rounded-none border-b border-border-subtle bg-transparent p-0 group-data-[orientation=horizontal]/tabs:h-8",
+          "w-full min-w-0 justify-start gap-1 rounded-none border-b border-border-subtle bg-transparent p-0 h-8",
       },
     },
     defaultVariants: {
@@ -171,30 +171,40 @@ function OverflowList({
   )
   const wrapRef = React.useRef<HTMLDivElement>(null)
   const measureRef = React.useRef<HTMLDivElement>(null)
+  const listRef = React.useRef<HTMLDivElement>(null)
   const [widths, setWidths] = React.useState<number[]>([])
   const [available, setAvailable] = React.useState<number | null>(null)
+  const [gap, setGap] = React.useState(TAB_GAP)
+  // Re-measure when the set of tabs changes, not only their count
+  const itemsKey = items.map((c) => c.props.value).join("\u0000")
 
   React.useLayoutEffect(() => {
     const wrap = wrapRef.current
     const measure = measureRef.current
     if (!wrap || !measure) return
     const update = () => {
-      const w = Array.from(measure.children).map((el) => (el as HTMLElement).offsetWidth + TAB_GAP)
+      // The caller may set gap-* / px-* on the list: use the real values
+      const list = listRef.current
+      const cs = list ? getComputedStyle(list) : null
+      const g = cs ? parseFloat(cs.columnGap) || 0 : TAB_GAP
+      const pad = cs ? (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0) : 0
+      const w = Array.from(measure.children).map((el) => (el as HTMLElement).offsetWidth + g)
+      setGap(g)
       setWidths((prev) => (sameNumbers(prev, w) ? prev : w))
-      setAvailable(wrap.clientWidth)
+      setAvailable(wrap.clientWidth - pad)
     }
     update()
     const ro = new ResizeObserver(update)
     ro.observe(wrap)
     Array.from(measure.children).forEach((el) => ro.observe(el))
     return () => ro.disconnect()
-  }, [items.length])
+  }, [itemsKey])
 
   const activeIndex = items.findIndex((c) => c.props.value === value)
   const { visible, hidden } =
     available === null || widths.length !== items.length
       ? { visible: items.map((_, i) => i), hidden: [] as number[] }
-      : computeVisibleTabs(widths, available, MORE_WIDTH + TAB_GAP, activeIndex)
+      : computeVisibleTabs(widths, available, MORE_WIDTH + gap, activeIndex)
 
   return (
     <div ref={wrapRef} className="relative w-full min-w-0">
@@ -204,12 +214,13 @@ function OverflowList({
         className="pointer-events-none invisible absolute top-0 left-0 flex h-0 overflow-hidden"
       >
         {items.map((c) => (
-          <span key={c.props.value} className={cn(triggerBase, triggerLineClass, "font-normal")}>
+          <span key={c.props.value} className={cn(triggerBase, triggerLineClass, "font-normal", c.props.className)}>
             <TabLabel {...c.props} />
           </span>
         ))}
       </div>
       <TabsPrimitive.List
+        ref={listRef}
         data-slot="tabs-list"
         data-variant="line"
         className={cn(tabsListVariants({ variant: "line" }), className)}
@@ -222,7 +233,7 @@ function OverflowList({
               <button
                 type="button"
                 aria-label="More tabs"
-                className="ml-auto inline-flex h-full w-9 shrink-0 items-center justify-center text-muted-foreground outline-none hover:text-foreground focus-visible:text-foreground"
+                className="ml-auto inline-flex h-full w-9 shrink-0 items-center justify-center rounded-control text-muted-foreground outline-none hover:text-foreground focus-visible:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
               >
                 <Ellipsis className="size-4" />
               </button>
