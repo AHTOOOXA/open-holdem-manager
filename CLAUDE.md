@@ -34,7 +34,7 @@ API docs: http://localhost:4243/docs (FastAPI auto-generated Swagger)
 
 - Vite proxies `/api` requests to `http://localhost:4243` (see `frontend/vite.config.ts`)
 - Path alias: `@/` maps to `./src/` (configured in `tsconfig.app.json`)
-- Dark theme defined via Tailwind `@theme` in `frontend/src/index.css` — custom CSS vars: `--color-background`, `--color-surface`, `--color-primary` (indigo #6366f1), `--color-green`, `--color-red`, etc.
+- Dark theme: one design token layer in `frontend/src/index.css` (stone + amber, Geist Sans with tabular numbers, GeistMono only for raw hand text). Use the role utilities from `frontend/src/DESIGN-TOKENS.md`; no raw colours, `text-[Npx]` or `.toFixed` in components (`npm run lint` enforces a ratchet). Numbers go through `frontend/src/lib/format/`.
 
 ## shadcn/ui
 
@@ -202,5 +202,5 @@ Static site in `frontend/landing/` deployed via GitHub Pages (`.github/workflows
 
 - **Separate Vite config**: `vite.config.landing.ts` with `root: landing/`, output to `dist-landing/`
 - **CSS**: `landing/index.css` must have `@source "../src"` — without this, Tailwind v4 doesn't scan `src/` and most utility classes are missing
-- **Fonts**: GeistMono woff2 copied to `landing/public/fonts/` (node_modules paths don't resolve in static deploy)
+- **Fonts**: Geist and GeistMono variable woff2 copied to `landing/public/fonts/` (node_modules paths don't resolve in static deploy)
 - **Deploy**: Auto-deploys on push to `main` when `frontend/landing/**`, `frontend/src/**`, or `vite.config.landing.ts` change
