@@ -1,4 +1,5 @@
 import type { PlayerSnapshot } from './useReplayerState';
+import { SUIT_BG, SUIT_BG_FALLBACK, SUIT_SYMBOL } from '@/lib/suits';
 import { fixed } from '@/lib/format';
 
 export default function PlayerSeat({
@@ -66,7 +67,7 @@ export default function PlayerSeat({
         >
           {displayName}
         </div>
-        <div className="text-[12px] font-mono text-text-muted leading-tight">
+        <div className="text-[12px] text-text-muted leading-tight">
           {stackDisplay}
         </div>
       </div>
@@ -76,30 +77,15 @@ export default function PlayerSeat({
 
 /* ── Card variants sized for seat view ─────────────────────────────── */
 
-const SUIT_BG: Record<string, string> = {
-  s: 'oklch(0.268 0.007 34.298)',
-  h: '#dc2626',
-  d: '#2563eb',
-  c: '#16a34a',
-};
-
-const SUIT_SYMBOL: Record<string, string> = {
-  s: '\u2660',
-  h: '\u2665',
-  d: '\u2666',
-  c: '\u2663',
-};
-
 function SeatCard({ card }: { card: string }) {
   if (!card || card.length < 2) return null;
   const rank = card.slice(0, -1).toUpperCase();
   const suit = card.slice(-1).toLowerCase();
-  const bg = SUIT_BG[suit] || 'oklch(0.268 0.007 34.298)';
+  const bg = SUIT_BG[suit] ?? SUIT_BG_FALLBACK;
   const symbol = SUIT_SYMBOL[suit] || '';
   return (
     <span
-      className="inline-flex flex-col items-center justify-center w-[36px] h-[44px] rounded-[4px] text-white leading-none shrink-0 shadow-md"
-      style={{ backgroundColor: bg }}
+      className={`inline-flex flex-col items-center justify-center w-[36px] h-[44px] rounded-[4px] text-white ${bg} leading-none shrink-0 shadow-md`}
     >
       <span className="text-[18px] font-bold leading-none">{rank}</span>
       <span className="text-[12px] leading-none opacity-80">{symbol}</span>
