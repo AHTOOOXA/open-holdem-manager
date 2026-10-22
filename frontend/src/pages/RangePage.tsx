@@ -16,6 +16,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { fixed } from '@/lib/format';
+import { heat, moneyHeat } from '@/lib/chart-theme';
 
 const RANKS = ['A', 'K', 'Q', 'J', 'T', '9', '8', '7', '6', '5', '4', '3', '2'];
 
@@ -54,20 +55,15 @@ function getCellColor(value: number | null, colorBy: ColorBy, maxAbs: number): s
   if (colorBy === 'hands') {
     const intensity = maxAbs > 0 ? Math.min(value / maxAbs, 1) : 0;
     const alpha = Math.round(intensity * 45 + 8);
-    return `rgba(99, 102, 241, ${alpha / 100})`;
+    return heat(alpha);
   }
   if (colorBy === 'frequency') {
     const intensity = Math.min(Math.abs(value) / 100, 1);
     const alpha = Math.round(intensity * 50 + 8);
-    return `rgba(99, 102, 241, ${alpha / 100})`;
+    return heat(alpha);
   }
-  // Green/red: high floor so even small win/loss is clearly tinted
-  if (value === 0) return 'rgba(255,255,255,0.03)';
-  const clamp = maxAbs > 0 ? Math.min(Math.abs(value) / maxAbs, 1) : 0;
-  // alpha range: 0.20 (floor) to 0.65 (max) — always clearly visible
-  const alpha = (clamp * 0.45 + 0.20).toFixed(2);
-  if (value > 0) return `rgba(22, 163, 74, ${alpha})`;  // bright green
-  return `rgba(220, 38, 38, ${alpha})`;                  // bright red
+  // Green/red: high floor (alpha 20-65%) so even small win/loss is clearly tinted
+  return moneyHeat(value, maxAbs);
 }
 
 function formatCellValue(value: number | null, colorBy: ColorBy): string {
@@ -215,7 +211,7 @@ export default function RangePage() {
               {/* Header row */}
               <div />
               {RANKS.map(r => (
-                <div key={r} className="text-center text-sm text-text-muted font-mono pb-1">
+                <div key={r} className="text-center text-sm text-text-muted pb-1">
                   {r}
                 </div>
               ))}
@@ -223,7 +219,7 @@ export default function RangePage() {
               {RANKS.map((_, row) => (
                 <>
                   {/* Row label */}
-                  <div key={`label-${row}`} className="flex items-center justify-center text-sm text-text-muted font-mono pr-1">
+                  <div key={`label-${row}`} className="flex items-center justify-center text-sm text-text-muted pr-1">
                     {RANKS[row]}
                   </div>
                   {RANKS.map((_, col) => {
@@ -239,7 +235,7 @@ export default function RangePage() {
                     return (
                       <div
                         key={`${row}-${col}`}
-                        className={`relative flex flex-col items-center justify-center cursor-pointer transition-all
+                        className={`relative flex flex-col items-center justify-center cursor-pointer transition-all border border-border
                           ${isPair ? 'rounded-sm' : ''}
                           ${isActive ? 'ring-1 ring-primary z-10' : ''}
                           ${lowSample ? 'opacity-50' : ''}
@@ -247,19 +243,18 @@ export default function RangePage() {
                         style={{
                           backgroundColor: bg,
                           aspectRatio: '5/4',
-                          border: '1px solid oklch(1 0 0 / 10%)',
                         }}
                         onMouseEnter={() => setHovered(key)}
                         onMouseLeave={() => setHovered(null)}
                         onClick={() => setSelected(selected === key ? null : key)}
                       >
-                        <span className={`text-[15px] font-mono font-medium leading-none ${
+                        <span className={`text-[15px] font-medium leading-none ${
                           isSuited ? 'text-primary' : isPair ? 'text-yellow' : 'text-text-muted'
                         }`}>
                           {comboLabel(row, col)}
                         </span>
                         {combo && combo.hands > 0 && (
-                          <span className={`text-[14px] font-mono font-semibold leading-none mt-1 ${
+                          <span className={`text-[14px] font-semibold leading-none mt-1 ${
                             value !== null && (colorBy === 'bb100' || colorBy === 'ev_bb100' || colorBy === 'won_bb')
                               ? value > 0 ? 'text-green' : value < 0 ? 'text-red' : 'text-text-muted'
                               : 'text-text'
@@ -268,7 +263,7 @@ export default function RangePage() {
                           </span>
                         )}
                         {lowSample && combo && combo.hands > 0 && (
-                          <span className="absolute bottom-0.5 right-1 text-[10px] text-text-muted font-mono">
+                          <span className="absolute bottom-0.5 right-1 text-[10px] text-text-muted">
                             {combo.hands}
                           </span>
                         )}
@@ -280,9 +275,9 @@ export default function RangePage() {
             </div>
             {/* Legend */}
             <div className="flex items-center gap-5 mt-3 text-xs text-text-muted">
-              <span><span className="text-primary font-mono">AKs</span> = suited</span>
-              <span><span className="text-yellow font-mono">AA</span> = pair</span>
-              <span><span className="text-text-muted font-mono">AKo</span> = offsuit</span>
+              <span><span className="text-primary">AKs</span> = suited</span>
+              <span><span className="text-yellow">AA</span> = pair</span>
+              <span><span className="text-text-muted">AKo</span> = offsuit</span>
               <span className="opacity-50">faded = &lt;{MIN_SAMPLE} hands</span>
             </div>
           </div>
@@ -293,7 +288,7 @@ export default function RangePage() {
             {detail ? (
               <Card className="gap-0 py-0 p-3 mb-1.5">
                 <div className="flex items-center justify-between mb-2">
-                  <span className="text-2xl font-bold font-mono">{activeCombo}</span>
+                  <span className="text-2xl font-bold">{activeCombo}</span>
                   <span className="text-sm text-text-muted">
                     {detail.hands} hands
                     {detail.hands < MIN_SAMPLE && (
@@ -332,9 +327,9 @@ export default function RangePage() {
                       onMouseLeave={() => setHovered(null)}
                       onClick={() => setSelected(selected === c.combo ? null : c.combo)}
                     >
-                      <span className="font-mono font-medium">{c.combo}</span>
+                      <span className="font-medium">{c.combo}</span>
                       <span className="flex items-center gap-3">
-                        <span className="text-red font-mono">{fixed(c.won_bb, 0)} BB</span>
+                        <span className="text-red">{fixed(c.won_bb, 0)} BB</span>
                         <span className="text-text-muted text-sm">{c.hands}h</span>
                       </span>
                     </div>
@@ -356,9 +351,9 @@ export default function RangePage() {
                       onMouseLeave={() => setHovered(null)}
                       onClick={() => setSelected(selected === c.combo ? null : c.combo)}
                     >
-                      <span className="font-mono font-medium">{c.combo}</span>
+                      <span className="font-medium">{c.combo}</span>
                       <span className="flex items-center gap-3">
-                        <span className="text-green font-mono">+{fixed(c.won_bb, 0)} BB</span>
+                        <span className="text-green">+{fixed(c.won_bb, 0)} BB</span>
                         <span className="text-text-muted text-sm">{c.hands}h</span>
                       </span>
                     </div>
@@ -377,7 +372,7 @@ function DetailRow({ label, value, color, sub }: { label: string; value: string;
   return (
     <div className="flex justify-between items-baseline">
       <span className="text-text-muted">{label}</span>
-      <span className={`font-mono font-medium ${color ?? 'text-text'}`}>
+      <span className={`font-medium ${color ?? 'text-text'}`}>
         {value}
         {sub && <span className="text-xs text-text-muted ml-1">({sub})</span>}
       </span>

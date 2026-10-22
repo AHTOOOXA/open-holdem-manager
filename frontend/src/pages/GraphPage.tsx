@@ -46,6 +46,8 @@ import {
 } from '@/components/ui/table';
 import { Skeleton } from '@/components/ui/skeleton';
 import { fixed, usd, moneyClass, bbUnits, formatClockTime, formatDateTime } from '@/lib/format';
+import { chartColors, axisTick } from '@/lib/chart-theme';
+import { ChartTooltipBox } from '@/components/ChartTooltipBox';
 
 function formatXTick(value: number) {
   if (value >= 1000) return `${fixed(value / 1000, value % 1000 === 0 ? 0 : 1)}k`;
@@ -69,15 +71,7 @@ function niceXTicks(max: number): number[] {
 
 type LineToggle = 'ev' | 'showdown' | 'rake' | 'ci' | 'sessions';
 
-const LINE_COLORS = {
-  main: '#fbbf24',
-  ev: '#06b6d4',
-  showdown: '#22c55e',
-  nonshowdown: '#ef4444',
-  rake: '#a78bfa',
-  ci: '#fbbf24',
-  session: 'oklch(0.553 0.013 58.071)',
-} as const;
+const LINE_COLORS = chartColors;
 
 function sessionDurationHours(s: SessionMarker): number {
   if (!s.start_time || !s.end_time) return 0;
@@ -103,15 +97,8 @@ function CustomTooltip({ active, payload, label, unit, tooltipNames, activeSessi
   const prefix = unit === 'usd' ? '$' : '';
   const suffix = unit === 'bb' ? ' BB' : '';
   return (
-    <div style={{
-      backgroundColor: 'oklch(0.216 0.006 56.043)',
-      border: '1px solid oklch(1 0 0 / 10%)',
-      borderRadius: '8px',
-      color: 'oklch(0.985 0.001 106.423)',
-      padding: '8px 12px',
-      fontSize: '13px',
-    }}>
-      <div style={{ marginBottom: 4, color: 'oklch(0.709 0.01 56.259)' }}>
+    <ChartTooltipBox>
+      <div style={{ marginBottom: 4, color: chartColors.tooltipMuted }}>
         {point?.played_at ? formatDateTime(point.played_at) : ''}
       </div>
       <div style={{ marginBottom: 6, fontWeight: 600 }}>
@@ -139,13 +126,13 @@ function CustomTooltip({ active, payload, label, unit, tooltipNames, activeSessi
         const hrs = sessionDurationHours(activeSession);
         const hph = hrs > 0 ? Math.round(hands / hrs) : 0;
         return (
-          <div style={{ marginTop: 6, paddingTop: 6, borderTop: '1px solid oklch(1 0 0 / 10%)', color: 'oklch(0.709 0.01 56.259)', fontSize: 11 }}>
+          <div style={{ marginTop: 6, paddingTop: 6, borderTop: `1px solid ${chartColors.tooltipBorder}`, color: chartColors.tooltipMuted, fontSize: 11 }}>
             Session: {formatClockTime(activeSession.start_time)} – {formatClockTime(activeSession.end_time)}
             <span style={{ marginLeft: 8 }}>({hands} hands{hph > 0 ? ` · ${hph} hands/hr` : ''})</span>
           </div>
         );
       })()}
-    </div>
+    </ChartTooltipBox>
   );
 }
 
@@ -526,7 +513,7 @@ export default function GraphPage() {
             )}
             {lines.has('sessions') && sessions.length > 1 && (
               <span className="flex items-center gap-1.5">
-                <span className="inline-block w-4 h-0.5 rounded" style={{ background: LINE_COLORS.session, borderTop: '1px dashed oklch(0.553 0.013 58.071)' }} />
+                <span className="inline-block w-4 h-0.5 rounded" style={{ background: LINE_COLORS.session, borderTop: `1px dashed ${chartColors.axis}` }} />
                 Sessions
               </span>
             )}
@@ -539,21 +526,21 @@ export default function GraphPage() {
                   <stop offset="100%" stopColor={LINE_COLORS.main} stopOpacity={0} />
                 </linearGradient>
               </defs>
-              <CartesianGrid vertical={false} stroke="oklch(0.268 0.007 34.298)" strokeDasharray="none" />
+              <CartesianGrid vertical={false} stroke={chartColors.grid} strokeDasharray="none" />
               <XAxis
                 dataKey="hand_number"
                 type="number"
                 domain={[0, 'dataMax']}
                 ticks={niceXTicks(data.length)}
-                stroke="oklch(0.553 0.013 58.071)"
-                tick={{ fontSize: 11, fill: 'oklch(0.553 0.013 58.071)' }}
+                stroke={chartColors.axis}
+                tick={axisTick(11)}
                 tickFormatter={formatXTick}
                 axisLine={false}
                 tickLine={false}
               />
               <YAxis
-                stroke="oklch(0.553 0.013 58.071)"
-                tick={{ fontSize: 11, fill: 'oklch(0.553 0.013 58.071)' }}
+                stroke={chartColors.axis}
+                tick={axisTick(11)}
                 axisLine={false}
                 tickLine={false}
                 width={50}
@@ -562,12 +549,12 @@ export default function GraphPage() {
               <Tooltip
                 content={<CustomTooltip unit={unit} tooltipNames={tooltipNames} activeSession={activeSession} />}
               />
-              <ReferenceLine y={0} stroke="oklch(0.553 0.013 58.071 / 50%)" strokeDasharray="4 4" />
+              <ReferenceLine y={0} stroke={chartColors.zeroLine} strokeDasharray="4 4" />
               {lines.has('sessions') && activeSession && (
                 <ReferenceArea
                   x1={activeSession.start_hand}
                   x2={activeSession.end_hand}
-                  fill="oklch(0.77 0.16 70)"
+                  fill={chartColors.main}
                   fillOpacity={0.06}
                   strokeOpacity={0}
                 />
@@ -582,7 +569,7 @@ export default function GraphPage() {
                   label={{
                     value: formatClockTime(s.start_time),
                     position: 'top',
-                    fill: 'oklch(0.553 0.013 58.071)',
+                    fill: chartColors.axis,
                     fontSize: 9,
                   }}
                 />
@@ -698,7 +685,7 @@ export default function GraphPage() {
       ) : (
         <Card className="gap-0 py-0 overflow-hidden">
           {/* Context strip */}
-          <div className="px-4 py-2 text-xs font-mono text-text-muted">
+          <div className="px-4 py-2 text-xs text-text-muted">
             {n.toLocaleString()} hands · {handsPerHour > 0 ? `${handsPerHour}/hr · ` : ''}{totalHrs > 0 ? `${fixed(totalHrs, 0)}h played · ` : ''}{sessions.length} sessions
           </div>
 
@@ -706,10 +693,10 @@ export default function GraphPage() {
           <div className="grid grid-cols-2 border-t border-border">
             {/* Actual */}
             <div className="px-4 py-3 grid grid-cols-2 gap-x-4">
-              <div className={`text-xl font-bold font-mono ${moneyClass(wonUSD)}`}>{usd(wonUSD)}</div>
-              <div className={`text-xl font-bold font-mono ${moneyClass(rateBB)}`}>{fixed(rateBB, 2)}</div>
-              <div className={`text-sm font-mono ${moneyClass(wonBB)}`}>{bbUnits(wonBB)}</div>
-              <div className="text-sm font-mono text-text-muted">bb/100</div>
+              <div className={`text-xl font-bold ${moneyClass(wonUSD)}`}>{usd(wonUSD)}</div>
+              <div className={`text-xl font-bold ${moneyClass(rateBB)}`}>{fixed(rateBB, 2)}</div>
+              <div className={`text-sm ${moneyClass(wonBB)}`}>{bbUnits(wonBB)}</div>
+              <div className="text-sm text-text-muted">bb/100</div>
               <div className="text-[10px] text-text-muted uppercase tracking-wide">Won</div>
               <div className="text-[10px] text-text-muted uppercase tracking-wide">Rate</div>
             </div>
@@ -717,19 +704,19 @@ export default function GraphPage() {
             <div className="px-4 py-3 border-l border-border grid grid-cols-2 gap-x-4">
               {hasEVData ? (
                 <>
-                  <div className={`text-xl font-bold font-mono ${moneyClass(evUSD)}`}>{usd(evUSD)}</div>
-                  <div className={`text-xl font-bold font-mono ${moneyClass(evRateBB)}`}>{fixed(evRateBB, 2)}</div>
-                  <div className={`text-sm font-mono ${moneyClass(evBB)}`}>{bbUnits(evBB)}</div>
-                  <div className="text-sm font-mono text-text-muted">EV bb/100</div>
+                  <div className={`text-xl font-bold ${moneyClass(evUSD)}`}>{usd(evUSD)}</div>
+                  <div className={`text-xl font-bold ${moneyClass(evRateBB)}`}>{fixed(evRateBB, 2)}</div>
+                  <div className={`text-sm ${moneyClass(evBB)}`}>{bbUnits(evBB)}</div>
+                  <div className="text-sm text-text-muted">EV bb/100</div>
                   <div className="text-[10px] text-text-muted uppercase tracking-wide">Won EV</div>
                   <div className="text-[10px] text-text-muted uppercase tracking-wide">EV Rate</div>
                 </>
               ) : (
                 <>
-                  <div className="text-xl font-bold font-mono text-text-muted">—</div>
-                  <div className="text-xl font-bold font-mono text-text-muted">—</div>
-                  <div className="text-sm font-mono text-text-muted">&nbsp;</div>
-                  <div className="text-sm font-mono text-text-muted">&nbsp;</div>
+                  <div className="text-xl font-bold text-text-muted">—</div>
+                  <div className="text-xl font-bold text-text-muted">—</div>
+                  <div className="text-sm text-text-muted">&nbsp;</div>
+                  <div className="text-sm text-text-muted">&nbsp;</div>
                   <div className="text-[10px] text-text-muted uppercase tracking-wide">Won EV</div>
                   <div className="text-[10px] text-text-muted uppercase tracking-wide">EV Rate</div>
                 </>
@@ -741,37 +728,37 @@ export default function GraphPage() {
           <div className="grid grid-cols-3 sm:grid-cols-5 gap-x-6 px-4 py-2.5 border-t border-border">
             {/* $/hr */}
             <div>
-              <div className={`text-sm font-bold font-mono ${totalHrs > 0 ? moneyClass(usdPerHour) : 'text-text-muted'}`}>
+              <div className={`text-sm font-bold ${totalHrs > 0 ? moneyClass(usdPerHour) : 'text-text-muted'}`}>
                 {totalHrs > 0 ? `${usd(usdPerHour)}/hr` : '—'}
               </div>
-              <div className="text-xs text-text-muted">$/hr {totalHrs > 0 ? <span className={`font-mono ${moneyClass(bbPerHour, 1)}`}>{fixed(bbPerHour, 1)} BB</span> : ''}</div>
+              <div className="text-xs text-text-muted">$/hr {totalHrs > 0 ? <span className={`${moneyClass(bbPerHour, 1)}`}>{fixed(bbPerHour, 1)} BB</span> : ''}</div>
             </div>
             {/* SD Won */}
             <div>
-              <div className={`text-sm font-bold font-mono ${moneyClass(sdUSD)}`}>{usd(sdUSD)}</div>
-              <div className="text-xs text-text-muted">Showdown <span className={`font-mono ${moneyClass(sdRateBB, 1)}`}>{fixed(sdRateBB, 1)}/100</span></div>
+              <div className={`text-sm font-bold ${moneyClass(sdUSD)}`}>{usd(sdUSD)}</div>
+              <div className="text-xs text-text-muted">Showdown <span className={`${moneyClass(sdRateBB, 1)}`}>{fixed(sdRateBB, 1)}/100</span></div>
             </div>
             {/* NSD Won */}
             <div>
-              <div className={`text-sm font-bold font-mono ${moneyClass(nsdUSD)}`}>{usd(nsdUSD)}</div>
-              <div className="text-xs text-text-muted">Non-SD <span className={`font-mono ${moneyClass(nsdRateBB, 1)}`}>{fixed(nsdRateBB, 1)}/100</span></div>
+              <div className={`text-sm font-bold ${moneyClass(nsdUSD)}`}>{usd(nsdUSD)}</div>
+              <div className="text-xs text-text-muted">Non-SD <span className={`${moneyClass(nsdRateBB, 1)}`}>{fixed(nsdRateBB, 1)}/100</span></div>
             </div>
             {/* Rake */}
             <div>
-              <div className="text-sm font-bold font-mono text-text-muted">{usd(rakeUSD)}</div>
-              <div className="text-xs text-text-muted">Rake <span className="font-mono">{fixed(rakePerBB, 1)}/100{jackpotBB > 0 ? ` · BBJ ${usd(jackpotUSD)}` : ''}</span></div>
+              <div className="text-sm font-bold text-text-muted">{usd(rakeUSD)}</div>
+              <div className="text-xs text-text-muted">Rake {fixed(rakePerBB, 1)}/100{jackpotBB > 0 ? ` · BBJ ${usd(jackpotUSD)}` : ''}</div>
             </div>
             {/* 95% CI */}
             <div>
               {variance ? (
                 <>
-                  <div className={`text-sm font-bold font-mono ${variance.ci_lower_bb100 > 0 ? 'text-green' : variance.ci_upper_bb100 < 0 ? 'text-red' : 'text-text'}`}>
+                  <div className={`text-sm font-bold ${variance.ci_lower_bb100 > 0 ? 'text-green' : variance.ci_upper_bb100 < 0 ? 'text-red' : 'text-text'}`}>
                     {fixed(variance.ci_lower_bb100, 2)} to {fixed(variance.ci_upper_bb100, 2)}
                   </div>
-                  <div className="text-xs text-text-muted">95% CI bb/100 <span className="font-mono">σ {fixed(variance.sd_bb100, 1)}</span></div>
+                  <div className="text-xs text-text-muted">95% CI bb/100 σ {fixed(variance.sd_bb100, 1)}</div>
                 </>
               ) : (
-                <div className="text-sm font-mono text-text-muted">—</div>
+                <div className="text-sm text-text-muted">—</div>
               )}
             </div>
           </div>
@@ -876,7 +863,7 @@ function BreakdownTable<T>({
                 {columns.map(col => (
                   <TableCell
                     key={col.key}
-                    className={`px-3 py-1.5 font-mono ${col.align === 'right' ? 'text-right' : 'text-left'}`}
+                    className={`px-3 py-1.5 ${col.align === 'right' ? 'text-right' : 'text-left'}`}
                   >
                     {col.render(row)}
                   </TableCell>
