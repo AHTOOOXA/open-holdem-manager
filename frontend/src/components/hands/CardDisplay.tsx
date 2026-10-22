@@ -1,3 +1,5 @@
+import { SUIT_BG, SUIT_BG_FALLBACK } from '@/lib/suits';
+
 // ── Inline card rendering (for detail drawer) ──────────────────────
 
 const SUIT_MAP: Record<string, { symbol: string; color: string }> = {
@@ -14,17 +16,17 @@ function SingleCard({ card }: { card: string }) {
   const s = SUIT_MAP[suit];
   if (!s) return <span className="text-text-muted">{card}</span>;
   return (
-    <span className="font-mono">
+    <>
       {rank}
       <span className={s.color}>{s.symbol}</span>
-    </span>
+    </>
   );
 }
 
 export function CardPair({ card1, card2 }: { card1: string | null; card2: string | null }) {
-  if (!card1 || !card2) return <span className="text-text-muted font-mono">--</span>;
+  if (!card1 || !card2) return <span className="text-text-muted">--</span>;
   return (
-    <span className="font-mono whitespace-nowrap">
+    <span className="whitespace-nowrap">
       <SingleCard card={card1} />
       {' '}
       <SingleCard card={card2} />
@@ -33,9 +35,9 @@ export function CardPair({ card1, card2 }: { card1: string | null; card2: string
 }
 
 export function BoardDisplay({ cards }: { cards: string[] }) {
-  if (!cards || cards.length === 0) return <span className="text-text-muted font-mono">--</span>;
+  if (!cards || cards.length === 0) return <span className="text-text-muted">--</span>;
   return (
-    <span className="font-mono whitespace-nowrap">
+    <span className="whitespace-nowrap">
       {cards.map((c, i) => (
         <span key={i}>
           {i > 0 && ' '}
@@ -48,22 +50,14 @@ export function BoardDisplay({ cards }: { cards: string[] }) {
 
 // ── H2N-style card boxes (colored background by suit) ───────────────
 
-const SUIT_BG: Record<string, string> = {
-  s: 'oklch(0.268 0.007 34.298)',  // spades - dark stone
-  h: '#dc2626',  // hearts - red
-  d: '#2563eb',  // diamonds - blue
-  c: '#16a34a',  // clubs - green
-};
-
 export function CardBox({ card }: { card: string }) {
   if (!card || card.length < 2) return null;
   const rank = card.slice(0, -1).toUpperCase();
   const suit = card.slice(-1).toLowerCase();
-  const bg = SUIT_BG[suit] || 'oklch(0.268 0.007 34.298)';
+  const bg = SUIT_BG[suit] ?? SUIT_BG_FALLBACK;
   return (
     <span
-      className="inline-flex items-center justify-center w-[30px] h-[34px] rounded-[3px] text-[17px] font-bold text-white leading-none shrink-0"
-      style={{ backgroundColor: bg }}
+      className={`inline-flex items-center justify-center w-[30px] h-[34px] rounded-[3px] text-[17px] font-bold text-white leading-none shrink-0 ${bg}`}
     >
       {rank}
     </span>

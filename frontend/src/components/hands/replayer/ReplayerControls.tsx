@@ -121,7 +121,7 @@ export default function ReplayerControls({
           <SkipForward className="w-4 h-4" />
         </Button>
 
-        <span className="text-[12px] text-text-muted font-mono ml-1">
+        <span className="text-[12px] text-text-muted ml-1">
           {streetLabel} {currentStep}/{totalSteps}
         </span>
 

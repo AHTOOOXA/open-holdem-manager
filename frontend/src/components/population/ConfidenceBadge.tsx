@@ -11,7 +11,7 @@ export default function ConfidenceBadge({ sample }: { sample: number }) {
   }
 
   return (
-    <span className={`inline-flex items-center px-1 py-0 rounded text-[10px] font-mono ${color}`}>
+    <span className={`inline-flex items-center px-1 py-0 rounded text-[10px] ${color}`}>
       {sample >= 1000 ? '1k+' : sample}
     </span>
   );

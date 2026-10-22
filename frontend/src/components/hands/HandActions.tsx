@@ -35,8 +35,8 @@ function StreetSection({
       {actions.length > 0 ? (
         <div className="space-y-0.5">
           {actions.map((a, i) => (
-            <div key={i} className="text-[13px] font-mono leading-relaxed flex items-center gap-1.5">
-              <span className="text-[11px] font-mono font-bold text-text bg-surface-hover rounded px-1.5 py-px shrink-0 min-w-[28px] text-center">
+            <div key={i} className="text-[13px] leading-relaxed flex items-center gap-1.5">
+              <span className="text-[11px] font-bold text-text bg-surface-hover rounded px-1.5 py-px shrink-0 min-w-[28px] text-center">
                 {a.position}
               </span>
               <span className={`truncate max-w-[100px] ${a.is_hero ? 'text-primary font-semibold' : 'text-text-muted'}`}>

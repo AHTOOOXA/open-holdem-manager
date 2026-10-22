@@ -1,4 +1,5 @@
 import { useRef, useState, useEffect } from 'react';
+import { SUIT_BG, SUIT_BG_FALLBACK, SUIT_SYMBOL } from '@/lib/suits';
 import type { Snapshot } from './useReplayerState';
 import { getSeatPositions, getBetPosition } from './seatLayout';
 import PlayerSeat from './PlayerSeat';
@@ -25,30 +26,15 @@ function getActionColor(action: string | null): string {
 
 /* ── Board card (larger, with suit symbol) ─────────────────────────── */
 
-const SUIT_BG: Record<string, string> = {
-  s: 'oklch(0.268 0.007 34.298)',
-  h: '#dc2626',
-  d: '#2563eb',
-  c: '#16a34a',
-};
-
-const SUIT_SYMBOL: Record<string, string> = {
-  s: '\u2660',
-  h: '\u2665',
-  d: '\u2666',
-  c: '\u2663',
-};
-
 function BoardCard({ card }: { card: string }) {
   if (!card || card.length < 2) return null;
   const rank = card.slice(0, -1).toUpperCase();
   const suit = card.slice(-1).toLowerCase();
-  const bg = SUIT_BG[suit] || 'oklch(0.268 0.007 34.298)';
+  const bg = SUIT_BG[suit] ?? SUIT_BG_FALLBACK;
   const symbol = SUIT_SYMBOL[suit] || '';
   return (
     <span
-      className="inline-flex flex-col items-center justify-center w-[42px] h-[52px] rounded-[5px] text-white leading-none shrink-0 shadow-lg"
-      style={{ backgroundColor: bg }}
+      className={`inline-flex flex-col items-center justify-center w-[42px] h-[52px] rounded-[5px] text-white ${bg} leading-none shrink-0 shadow-lg`}
     >
       <span className="text-[22px] font-bold leading-none">{rank}</span>
       <span className="text-[14px] leading-none opacity-80">{symbol}</span>
@@ -142,7 +128,7 @@ export default function PokerTable({
               );
             })()}
             {potDisplay && (
-              <div className="text-[15px] font-mono font-bold text-text bg-black/50 rounded-full px-4 py-0.5 backdrop-blur-sm">
+              <div className="text-[15px] font-bold text-text bg-black/50 rounded-full px-4 py-0.5 backdrop-blur-sm">
                 {potDisplay}
               </div>
             )}
@@ -209,7 +195,7 @@ export default function PokerTable({
                   )}
                   {/* Bet chip */}
                   {betDisplay && (
-                    <span className="text-[13px] font-mono font-bold text-yellow-400 bg-black/50 rounded-full px-2.5 py-px border border-yellow-400/30 leading-tight mt-px">
+                    <span className="text-[13px] font-bold text-yellow-400 bg-black/50 rounded-full px-2.5 py-px border border-yellow-400/30 leading-tight mt-px">
                       {betDisplay}
                     </span>
                   )}

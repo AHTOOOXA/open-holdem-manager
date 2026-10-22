@@ -57,7 +57,7 @@ export default function StatDetailPanel({
         <div className="flex items-baseline gap-2">
           <h3 className="text-sm font-semibold text-text">{displayName}{posLabel}</h3>
           {pct !== null && (
-            <span className="text-xs text-text-muted font-mono">
+            <span className="text-xs text-text-muted">
               {pct}% ({statData!.action_count}/{statData!.opportunity_count})
             </span>
           )}

@@ -230,7 +230,7 @@ export default function HandDrawer({
                             className={`text-[13px] ${p.is_hero ? 'bg-primary/5' : ''}`}
                           >
                             <TableCell className="py-1.5 px-2">
-                              <span className="text-[12px] font-mono font-bold text-text bg-surface-hover rounded px-2 py-0.5">
+                              <span className="text-[12px] font-bold text-text bg-surface-hover rounded px-2 py-0.5">
                                 {p.position}
                               </span>
                             </TableCell>
@@ -242,7 +242,7 @@ export default function HandDrawer({
                                 )}
                               </span>
                             </TableCell>
-                            <TableCell className="py-1.5 px-2 text-right font-mono">
+                            <TableCell className="py-1.5 px-2 text-right">
                               {fixed(p.stack_bb, 1)}
                             </TableCell>
                             <TableCell className="py-1.5 px-2">
@@ -258,7 +258,7 @@ export default function HandDrawer({
                   <HandActionsDisplay actions={displayHand!.actions} board={displayHand!.board} extraBoards={displayHand!.extra_boards} />
 
                   {/* Result */}
-                  <div className={`mt-1 mb-4 text-[14px] font-bold font-mono ${heroWonBb >= 0 ? 'text-green' : 'text-red'}`}>
+                  <div className={`mt-1 mb-4 text-[14px] font-bold ${heroWonBb >= 0 ? 'text-green' : 'text-red'}`}>
                     Hero {heroWonBb >= 0 ? 'wins' : 'loses'} {fixed(Math.abs(heroWonBb), 1)} BB
                     {hand.is_cashout && <span className="text-amber-400 ml-1">(EV Cashout)</span>}
                   </div>

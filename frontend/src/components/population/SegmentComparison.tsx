@@ -57,18 +57,18 @@ export default function SegmentComparison({ segments }: { segments: SegmentStats
               <TableCell className="py-1.5 px-2">
                 <PlayerTypeBadge type={s.player_type} />
               </TableCell>
-              <TableCell className="py-1.5 px-2 text-right font-mono text-text-muted">
+              <TableCell className="py-1.5 px-2 text-right text-text-muted">
                 {s.count}
               </TableCell>
-              <TableCell className="py-1.5 px-2 text-right font-mono text-text-muted">
+              <TableCell className="py-1.5 px-2 text-right text-text-muted">
                 {Math.round(s.avg_hands)}
               </TableCell>
-              <TableCell className="py-1.5 px-2 text-right font-mono">{fmt(s.vpip)}</TableCell>
-              <TableCell className="py-1.5 px-2 text-right font-mono">{fmt(s.pfr)}</TableCell>
-              <TableCell className="py-1.5 px-2 text-right font-mono">{fmt(s.three_bet)}</TableCell>
-              <TableCell className="py-1.5 px-2 text-right font-mono">{fmt(s.af, 2)}</TableCell>
-              <TableCell className="py-1.5 px-2 text-right font-mono">{fmt(s.wtsd)}</TableCell>
-              <TableCell className="py-1.5 px-2 text-right font-mono">{fmt(s.wwsf)}</TableCell>
+              <TableCell className="py-1.5 px-2 text-right">{fmt(s.vpip)}</TableCell>
+              <TableCell className="py-1.5 px-2 text-right">{fmt(s.pfr)}</TableCell>
+              <TableCell className="py-1.5 px-2 text-right">{fmt(s.three_bet)}</TableCell>
+              <TableCell className="py-1.5 px-2 text-right">{fmt(s.af, 2)}</TableCell>
+              <TableCell className="py-1.5 px-2 text-right">{fmt(s.wtsd)}</TableCell>
+              <TableCell className="py-1.5 px-2 text-right">{fmt(s.wwsf)}</TableCell>
             </TableRow>
           ))}
         </TableBody>

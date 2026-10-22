@@ -207,7 +207,7 @@ export default function HandExplorer({
           </button>
           <button
             onClick={() => setBbPrecision(p => p === 0 ? 1 : 0)}
-            className={`text-[11px] font-mono px-1.5 h-[18px] rounded border flex items-center justify-center ${
+            className={`text-[11px] px-1.5 h-[18px] rounded border flex items-center justify-center ${
               bbPrecision === 1 ? 'border-primary text-primary' : 'border-border text-text-muted hover:text-text'
             }`}
             title={`BB precision: ${bbPrecision === 0 ? 'rounded' : '1 decimal'}. Click to toggle.`}
@@ -224,7 +224,7 @@ export default function HandExplorer({
 
       {/* Legend tooltip */}
       {showLegend && (
-        <div className="mb-2 px-3 py-2 bg-surface rounded border border-border text-[14px] font-mono flex items-center gap-5">
+        <div className="mb-2 px-3 py-2 bg-surface rounded border border-border text-[14px] flex items-center gap-5">
           <span><span className="text-yellow font-bold">R</span> Raise</span>
           <span><span className="text-blue font-bold">B</span> Bet</span>
           <span><span className="font-bold text-text">C</span> Call</span>
@@ -326,7 +326,7 @@ export default function HandExplorer({
                         <CardBoxRow cards={h.flop_cards} />
                       </TableCell>
                       {/* Flop pot */}
-                      <TableCell className="py-1.5 px-1 text-center font-mono text-[14px] text-text-muted">
+                      <TableCell className="py-1.5 px-1 text-center text-[14px] text-text-muted">
                         {h.flop_cards.length > 0 ? formatBb(h.flop_pot, bbPrecision) : ''}
                       </TableCell>
                       {/* Flop actions */}
@@ -340,7 +340,7 @@ export default function HandExplorer({
                         {h.turn_card && <CardBox card={h.turn_card} />}
                       </TableCell>
                       {/* Turn pot */}
-                      <TableCell className="py-1.5 px-1 text-center font-mono text-[14px] text-text-muted">
+                      <TableCell className="py-1.5 px-1 text-center text-[14px] text-text-muted">
                         {h.turn_card ? formatBb(h.turn_pot, bbPrecision) : ''}
                       </TableCell>
                       {/* Turn actions */}
@@ -354,7 +354,7 @@ export default function HandExplorer({
                         {h.river_card && <CardBox card={h.river_card} />}
                       </TableCell>
                       {/* River pot */}
-                      <TableCell className="py-1.5 px-1 text-center font-mono text-[14px] text-text-muted">
+                      <TableCell className="py-1.5 px-1 text-center text-[14px] text-text-muted">
                         {h.river_card ? formatBb(h.river_pot, bbPrecision) : ''}
                       </TableCell>
                       {/* River actions */}
@@ -364,11 +364,11 @@ export default function HandExplorer({
                         </div>
                       </TableCell>
                       {/* Stakes */}
-                      <TableCell className="py-1.5 pl-4 pr-2 font-mono text-[15px] text-text-muted">
+                      <TableCell className="py-1.5 pl-4 pr-2 text-[15px] text-text-muted">
                         {formatStakes(h.stakes)}
                       </TableCell>
                       {/* Won (USD) */}
-                      <TableCell className={`py-1.5 px-2 text-right font-mono text-[15px] font-semibold ${
+                      <TableCell className={`py-1.5 px-2 text-right text-[15px] font-semibold ${
                         wonUsd > 0.005 ? 'text-green' : wonUsd < -0.005 ? 'text-red' : 'text-text-muted'
                       }`}>
                         {Math.abs(wonUsd) < 0.005
@@ -376,7 +376,7 @@ export default function HandExplorer({
                           : `${wonUsd < 0 ? '-' : ''}${fixed(Math.abs(wonUsd), 2)}$`}
                       </TableCell>
                       {/* EV Diff */}
-                      <TableCell className={`py-1.5 px-2 text-right font-mono text-[15px] ${
+                      <TableCell className={`py-1.5 px-2 text-right text-[15px] ${
                         Math.abs(evDiffUsd) < 0.005 ? 'text-text-muted/40' :
                         evDiffUsd > 0 ? 'text-green' : 'text-red'
                       }`}>

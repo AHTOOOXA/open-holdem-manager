@@ -45,6 +45,8 @@ import {
 } from '@/components/ui/table';
 import { queryClient } from '@/lib/query-client';
 import { fixed, usd, moneyClass, bbUnits, formatClockTime, formatSessionDate } from '@/lib/format';
+import { chartColors, axisTick } from '@/lib/chart-theme';
+import { ChartTooltipBox } from '@/components/ChartTooltipBox';
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -272,21 +274,21 @@ function SessionDetail({ index }: { index: number }) {
           </div>
           <div className="flex justify-center gap-4 mt-1.5 mb-1 text-xs text-text-muted">
             <span className="flex items-center gap-1.5">
-              <span className="inline-block w-4 h-0.5 rounded" style={{ background: '#fbbf24' }} />
+              <span className="inline-block w-4 h-0.5 rounded" style={{ background: chartColors.main }} />
               Actual
             </span>
             {hasEVData && (
               <span className="flex items-center gap-1.5">
-                <span className="inline-block w-4 h-0.5 rounded" style={{ background: '#06b6d4', opacity: 0.8 }} />
+                <span className="inline-block w-4 h-0.5 rounded" style={{ background: chartColors.ev, opacity: 0.8 }} />
                 All-in EV
               </span>
             )}
             <span className="flex items-center gap-1.5">
-              <span className="inline-block w-4 h-0.5 rounded" style={{ background: '#22c55e' }} />
+              <span className="inline-block w-4 h-0.5 rounded" style={{ background: chartColors.showdown }} />
               Showdown
             </span>
             <span className="flex items-center gap-1.5">
-              <span className="inline-block w-4 h-0.5 rounded" style={{ background: '#ef4444' }} />
+              <span className="inline-block w-4 h-0.5 rounded" style={{ background: chartColors.nonshowdown }} />
               Non-Showdown
             </span>
           </div>
@@ -294,23 +296,23 @@ function SessionDetail({ index }: { index: number }) {
             <ComposedChart data={graph} margin={{ top: 4, right: 16, bottom: 4, left: 8 }}>
               <defs>
                 <linearGradient id="sessionGradient" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#fbbf24" stopOpacity={0.25} />
-                  <stop offset="100%" stopColor="#fbbf24" stopOpacity={0} />
+                  <stop offset="0%" stopColor={chartColors.main} stopOpacity={0.25} />
+                  <stop offset="100%" stopColor={chartColors.main} stopOpacity={0} />
                 </linearGradient>
               </defs>
-              <CartesianGrid vertical={false} stroke="oklch(0.268 0.007 34.298)" />
+              <CartesianGrid vertical={false} stroke={chartColors.grid} />
               <XAxis
                 dataKey="hand_number"
                 type="number"
                 domain={[0, 'dataMax']}
-                stroke="oklch(0.553 0.013 58.071)"
-                tick={{ fontSize: 11, fill: 'oklch(0.553 0.013 58.071)' }}
+                stroke={chartColors.axis}
+                tick={axisTick(11)}
                 axisLine={false}
                 tickLine={false}
               />
               <YAxis
-                stroke="oklch(0.553 0.013 58.071)"
-                tick={{ fontSize: 11, fill: 'oklch(0.553 0.013 58.071)' }}
+                stroke={chartColors.axis}
+                tick={axisTick(11)}
                 axisLine={false}
                 tickLine={false}
                 width={50}
@@ -319,13 +321,13 @@ function SessionDetail({ index }: { index: number }) {
               <Tooltip
                 content={<SessionTooltip unit={unit} />}
               />
-              <ReferenceLine y={0} stroke="oklch(0.553 0.013 58.071 / 50%)" strokeDasharray="4 4" />
+              <ReferenceLine y={0} stroke={chartColors.zeroLine} strokeDasharray="4 4" />
               <Area
                 type="monotone"
                 dataKey={mainKey}
                 name={mainKey}
                 fill="url(#sessionGradient)"
-                stroke="#fbbf24"
+                stroke={chartColors.main}
                 strokeWidth={2}
                 dot={false}
                 connectNulls
@@ -337,7 +339,7 @@ function SessionDetail({ index }: { index: number }) {
                   type="monotone"
                   dataKey={evKey}
                   name={evKey}
-                  stroke="#06b6d4"
+                  stroke={chartColors.ev}
                   strokeWidth={1.5}
                   dot={false}
                   connectNulls
@@ -350,7 +352,7 @@ function SessionDetail({ index }: { index: number }) {
                 type="monotone"
                 dataKey={sdKey}
                 name={sdKey}
-                stroke="#22c55e"
+                stroke={chartColors.showdown}
                 strokeWidth={1.5}
                 dot={false}
                 connectNulls
@@ -360,7 +362,7 @@ function SessionDetail({ index }: { index: number }) {
                 type="monotone"
                 dataKey={nsdKey}
                 name={nsdKey}
-                stroke="#ef4444"
+                stroke={chartColors.nonshowdown}
                 strokeWidth={1.5}
                 dot={false}
                 connectNulls
@@ -373,34 +375,34 @@ function SessionDetail({ index }: { index: number }) {
 
       {/* Section 2: Results summary */}
       <Card className="gap-0 py-0 overflow-hidden">
-        <div className="px-4 py-2 text-xs font-mono text-text-muted">
+        <div className="px-4 py-2 text-xs text-text-muted">
           {n} hands · {stats.hands_per_hour > 0 ? `${stats.hands_per_hour}/hr · ` : ''}{formatDuration(stats.duration_minutes)}
         </div>
         <div className="grid grid-cols-2 border-t border-border">
           <div className="px-4 py-3 grid grid-cols-2 gap-x-4">
-            <div className={`text-xl font-bold font-mono ${moneyClass(stats.won_usd)}`}>{usd(stats.won_usd)}</div>
-            <div className={`text-xl font-bold font-mono ${moneyClass(stats.bb_per_100)}`}>{fixed(stats.bb_per_100, 2)}</div>
-            <div className={`text-sm font-mono ${moneyClass(stats.won_bb, 1)}`}>{bbUnits(stats.won_bb)}</div>
-            <div className="text-sm font-mono text-text-muted">bb/100</div>
+            <div className={`text-xl font-bold ${moneyClass(stats.won_usd)}`}>{usd(stats.won_usd)}</div>
+            <div className={`text-xl font-bold ${moneyClass(stats.bb_per_100)}`}>{fixed(stats.bb_per_100, 2)}</div>
+            <div className={`text-sm ${moneyClass(stats.won_bb, 1)}`}>{bbUnits(stats.won_bb)}</div>
+            <div className="text-sm text-text-muted">bb/100</div>
             <div className="text-[10px] text-text-muted uppercase tracking-wide">Won</div>
             <div className="text-[10px] text-text-muted uppercase tracking-wide">Rate</div>
           </div>
           <div className="px-4 py-3 border-l border-border grid grid-cols-2 gap-x-4">
             {hasEVData ? (
               <>
-                <div className={`text-xl font-bold font-mono ${moneyClass(stats.ev_usd)}`}>{usd(stats.ev_usd)}</div>
-                <div className={`text-xl font-bold font-mono ${moneyClass(stats.ev_bb_per_100)}`}>{fixed(stats.ev_bb_per_100, 2)}</div>
-                <div className={`text-sm font-mono ${moneyClass(stats.ev_bb)}`}>{bbUnits(stats.ev_bb)}</div>
-                <div className="text-sm font-mono text-text-muted">EV bb/100</div>
+                <div className={`text-xl font-bold ${moneyClass(stats.ev_usd)}`}>{usd(stats.ev_usd)}</div>
+                <div className={`text-xl font-bold ${moneyClass(stats.ev_bb_per_100)}`}>{fixed(stats.ev_bb_per_100, 2)}</div>
+                <div className={`text-sm ${moneyClass(stats.ev_bb)}`}>{bbUnits(stats.ev_bb)}</div>
+                <div className="text-sm text-text-muted">EV bb/100</div>
                 <div className="text-[10px] text-text-muted uppercase tracking-wide">Won EV</div>
                 <div className="text-[10px] text-text-muted uppercase tracking-wide">EV Rate</div>
               </>
             ) : (
               <>
-                <div className="text-xl font-bold font-mono text-text-muted">&mdash;</div>
-                <div className="text-xl font-bold font-mono text-text-muted">&mdash;</div>
-                <div className="text-sm font-mono text-text-muted">&nbsp;</div>
-                <div className="text-sm font-mono text-text-muted">&nbsp;</div>
+                <div className="text-xl font-bold text-text-muted">&mdash;</div>
+                <div className="text-xl font-bold text-text-muted">&mdash;</div>
+                <div className="text-sm text-text-muted">&nbsp;</div>
+                <div className="text-sm text-text-muted">&nbsp;</div>
                 <div className="text-[10px] text-text-muted uppercase tracking-wide">Won EV</div>
                 <div className="text-[10px] text-text-muted uppercase tracking-wide">EV Rate</div>
               </>
@@ -409,27 +411,27 @@ function SessionDetail({ index }: { index: number }) {
         </div>
         <div className="grid grid-cols-5 gap-x-6 px-4 py-2.5 border-t border-border">
           <div>
-            <div className={`text-sm font-bold font-mono ${durationHrs > 0 ? moneyClass(stats.usd_per_hour) : 'text-text-muted'}`}>
+            <div className={`text-sm font-bold ${durationHrs > 0 ? moneyClass(stats.usd_per_hour) : 'text-text-muted'}`}>
               {durationHrs > 0 ? `${usd(stats.usd_per_hour)}/hr` : '\u2014'}
             </div>
             <div className="text-xs text-text-muted">
-              $/hr {durationHrs > 0 && <span className={`font-mono ${moneyClass(stats.bb_per_hour, 1)}`}>{fixed(stats.bb_per_hour, 1)} BB</span>}
+              $/hr {durationHrs > 0 && <span className={`${moneyClass(stats.bb_per_hour, 1)}`}>{fixed(stats.bb_per_hour, 1)} BB</span>}
             </div>
           </div>
           <div>
-            <div className={`text-sm font-bold font-mono ${moneyClass(sdUSD)}`}>{usd(sdUSD)}</div>
-            <div className="text-xs text-text-muted">Showdown <span className={`font-mono ${moneyClass(sdRateBB, 1)}`}>{fixed(sdRateBB, 1)}/100</span></div>
+            <div className={`text-sm font-bold ${moneyClass(sdUSD)}`}>{usd(sdUSD)}</div>
+            <div className="text-xs text-text-muted">Showdown <span className={`${moneyClass(sdRateBB, 1)}`}>{fixed(sdRateBB, 1)}/100</span></div>
           </div>
           <div>
-            <div className={`text-sm font-bold font-mono ${moneyClass(nsdUSD)}`}>{usd(nsdUSD)}</div>
-            <div className="text-xs text-text-muted">Non-SD <span className={`font-mono ${moneyClass(nsdRateBB, 1)}`}>{fixed(nsdRateBB, 1)}/100</span></div>
+            <div className={`text-sm font-bold ${moneyClass(nsdUSD)}`}>{usd(nsdUSD)}</div>
+            <div className="text-xs text-text-muted">Non-SD <span className={`${moneyClass(nsdRateBB, 1)}`}>{fixed(nsdRateBB, 1)}/100</span></div>
           </div>
           <div>
-            <div className="text-sm font-bold font-mono text-text-muted">{usd(stats.rake_usd)}</div>
-            <div className="text-xs text-text-muted">Rake <span className="font-mono">{bbUnits(stats.rake_bb)}</span></div>
+            <div className="text-sm font-bold text-text-muted">{usd(stats.rake_usd)}</div>
+            <div className="text-xs text-text-muted">Rake {bbUnits(stats.rake_bb)}</div>
           </div>
           <div>
-            <div className="text-sm font-bold font-mono text-text">{stats.hands_per_hour > 0 ? Math.round(stats.hands_per_hour) : '\u2014'}</div>
+            <div className="text-sm font-bold text-text">{stats.hands_per_hour > 0 ? Math.round(stats.hands_per_hour) : '\u2014'}</div>
             <div className="text-xs text-text-muted">Hands/hr</div>
           </div>
         </div>
@@ -524,7 +526,7 @@ function SessionDetail({ index }: { index: number }) {
                         <TableCell className="py-1.5 pl-4 pr-2">
                           <CardBoxRow cards={h.flop_cards} />
                         </TableCell>
-                        <TableCell className="py-1.5 px-1 text-center font-mono text-[14px] text-text-muted">
+                        <TableCell className="py-1.5 px-1 text-center text-[14px] text-text-muted">
                           {h.flop_cards.length > 0 ? formatBb(h.flop_pot, 1) : ''}
                         </TableCell>
                         <TableCell className="py-1.5 px-2">
@@ -533,7 +535,7 @@ function SessionDetail({ index }: { index: number }) {
                         <TableCell className="py-1.5 pl-4 pr-2">
                           {h.turn_card && <CardBox card={h.turn_card} />}
                         </TableCell>
-                        <TableCell className="py-1.5 px-1 text-center font-mono text-[14px] text-text-muted">
+                        <TableCell className="py-1.5 px-1 text-center text-[14px] text-text-muted">
                           {h.turn_card ? formatBb(h.turn_pot, 1) : ''}
                         </TableCell>
                         <TableCell className="py-1.5 px-2">
@@ -542,16 +544,16 @@ function SessionDetail({ index }: { index: number }) {
                         <TableCell className="py-1.5 pl-4 pr-2">
                           {h.river_card && <CardBox card={h.river_card} />}
                         </TableCell>
-                        <TableCell className="py-1.5 px-1 text-center font-mono text-[14px] text-text-muted">
+                        <TableCell className="py-1.5 px-1 text-center text-[14px] text-text-muted">
                           {h.river_card ? formatBb(h.river_pot, 1) : ''}
                         </TableCell>
                         <TableCell className="py-1.5 px-2">
                           <Actions items={h.river_actions} />
                         </TableCell>
-                        <TableCell className="py-1.5 pl-4 pr-2 font-mono text-[15px] text-text-muted">
+                        <TableCell className="py-1.5 pl-4 pr-2 text-[15px] text-text-muted">
                           {formatStakes(h.stakes)}
                         </TableCell>
-                        <TableCell className={`py-1.5 px-2 text-right font-mono text-[15px] font-semibold ${
+                        <TableCell className={`py-1.5 px-2 text-right text-[15px] font-semibold ${
                           wonUsd > 0.005 ? 'text-green' : wonUsd < -0.005 ? 'text-red' : 'text-text-muted'
                         }`}>
                           {Math.abs(wonUsd) < 0.005
@@ -608,14 +610,14 @@ function SessionRow({
       className="cursor-pointer hover:bg-surface-hover transition-colors"
       onClick={onClick}
     >
-      <TableCell className="px-3 py-1.5 font-mono text-text">
+      <TableCell className="px-3 py-1.5 text-text">
         {formatSessionDate(s.start_time)}
         <span className="text-text-muted ml-1.5 text-xs">{formatClockTime(s.start_time)}</span>
       </TableCell>
-      <TableCell className="px-3 py-1.5 font-mono text-text-muted text-right">
+      <TableCell className="px-3 py-1.5 text-text-muted text-right">
         {formatDuration(s.duration_minutes)}
       </TableCell>
-      <TableCell className="px-3 py-1.5 font-mono text-text text-right">{s.hands}</TableCell>
+      <TableCell className="px-3 py-1.5 text-text text-right">{s.hands}</TableCell>
       <TableCell className="px-3 py-1.5">
         <div className="flex flex-wrap gap-1">
           {s.stakes.map(st => (
@@ -623,9 +625,9 @@ function SessionRow({
           ))}
         </div>
       </TableCell>
-      <TableCell className={`px-3 py-1.5 font-mono text-right ${moneyClass(s.won_usd)}`}>{usd(s.won_usd)}</TableCell>
-      <TableCell className={`px-3 py-1.5 font-mono text-right ${moneyClass(s.bb_per_100)}`}>{fixed(s.bb_per_100, 2)}</TableCell>
-      <TableCell className={`px-3 py-1.5 font-mono text-right ${moneyClass(s.ev_bb_per_100)}`}>{fixed(s.ev_bb_per_100, 2)}</TableCell>
+      <TableCell className={`px-3 py-1.5 text-right ${moneyClass(s.won_usd)}`}>{usd(s.won_usd)}</TableCell>
+      <TableCell className={`px-3 py-1.5 text-right ${moneyClass(s.bb_per_100)}`}>{fixed(s.bb_per_100, 2)}</TableCell>
+      <TableCell className={`px-3 py-1.5 text-right ${moneyClass(s.ev_bb_per_100)}`}>{fixed(s.ev_bb_per_100, 2)}</TableCell>
     </TableRow>
   );
 }
@@ -651,14 +653,14 @@ function LatestSessionRow({
         className="cursor-pointer hover:bg-surface-hover transition-colors border-b-0"
         onClick={onClick}
       >
-        <TableCell className="px-3 py-1.5 font-mono text-text">
+        <TableCell className="px-3 py-1.5 text-text">
           {formatSessionDate(s.start_time)}
           <span className="text-text-muted ml-1.5 text-xs">{formatClockTime(s.start_time)}</span>
         </TableCell>
-        <TableCell className="px-3 py-1.5 font-mono text-text-muted text-right">
+        <TableCell className="px-3 py-1.5 text-text-muted text-right">
           {formatDuration(s.duration_minutes)}
         </TableCell>
-        <TableCell className="px-3 py-1.5 font-mono text-text text-right">{s.hands}</TableCell>
+        <TableCell className="px-3 py-1.5 text-text text-right">{s.hands}</TableCell>
         <TableCell className="px-3 py-1.5">
           <div className="flex flex-wrap gap-1">
             {s.stakes.map(st => (
@@ -666,9 +668,9 @@ function LatestSessionRow({
             ))}
           </div>
         </TableCell>
-        <TableCell className={`px-3 py-1.5 font-mono text-right ${moneyClass(s.won_usd)}`}>{usd(s.won_usd)}</TableCell>
-        <TableCell className={`px-3 py-1.5 font-mono text-right ${moneyClass(s.bb_per_100)}`}>{fixed(s.bb_per_100, 2)}</TableCell>
-        <TableCell className={`px-3 py-1.5 font-mono text-right ${moneyClass(s.ev_bb_per_100)}`}>{fixed(s.ev_bb_per_100, 2)}</TableCell>
+        <TableCell className={`px-3 py-1.5 text-right ${moneyClass(s.won_usd)}`}>{usd(s.won_usd)}</TableCell>
+        <TableCell className={`px-3 py-1.5 text-right ${moneyClass(s.bb_per_100)}`}>{fixed(s.bb_per_100, 2)}</TableCell>
+        <TableCell className={`px-3 py-1.5 text-right ${moneyClass(s.ev_bb_per_100)}`}>{fixed(s.ev_bb_per_100, 2)}</TableCell>
       </TableRow>
 
       {/* Expanded detail row */}
@@ -682,38 +684,38 @@ function LatestSessionRow({
                   <ComposedChart data={graph} margin={{ top: 4, right: 8, bottom: 4, left: 0 }}>
                     <defs>
                       <linearGradient id="latestGradient" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor="#fbbf24" stopOpacity={0.25} />
-                        <stop offset="100%" stopColor="#fbbf24" stopOpacity={0} />
+                        <stop offset="0%" stopColor={chartColors.main} stopOpacity={0.25} />
+                        <stop offset="100%" stopColor={chartColors.main} stopOpacity={0} />
                       </linearGradient>
                     </defs>
-                    <CartesianGrid vertical={false} stroke="oklch(0.268 0.007 34.298)" />
+                    <CartesianGrid vertical={false} stroke={chartColors.grid} />
                     <XAxis dataKey="hand_number" type="number" domain={[0, 'dataMax']} hide />
                     <YAxis
-                      stroke="oklch(0.553 0.013 58.071)"
-                      tick={{ fontSize: 10, fill: 'oklch(0.553 0.013 58.071)' }}
+                      stroke={chartColors.axis}
+                      tick={axisTick(10)}
                       axisLine={false} tickLine={false} width={40}
                     />
-                    <ReferenceLine y={0} stroke="oklch(0.553 0.013 58.071 / 50%)" strokeDasharray="4 4" />
+                    <ReferenceLine y={0} stroke={chartColors.zeroLine} strokeDasharray="4 4" />
                     <Area
                       type="monotone" dataKey="cumulative_bb" name="cumulative_bb"
-                      fill="url(#latestGradient)" stroke="#fbbf24" strokeWidth={2}
+                      fill="url(#latestGradient)" stroke={chartColors.main} strokeWidth={2}
                       dot={false} connectNulls isAnimationActive={false} baseValue={0}
                     />
                     {hasEVData && (
                       <Line
                         type="monotone" dataKey="cumulative_ev_bb" name="cumulative_ev_bb"
-                        stroke="#06b6d4" strokeWidth={1.5} dot={false} connectNulls
+                        stroke={chartColors.ev} strokeWidth={1.5} dot={false} connectNulls
                         strokeDasharray="6 3" opacity={0.8} isAnimationActive={false}
                       />
                     )}
                     <Line
                       type="monotone" dataKey="cumulative_showdown_bb" name="cumulative_showdown_bb"
-                      stroke="#22c55e" strokeWidth={1.5} dot={false} connectNulls
+                      stroke={chartColors.showdown} strokeWidth={1.5} dot={false} connectNulls
                       isAnimationActive={false}
                     />
                     <Line
                       type="monotone" dataKey="cumulative_nonshowdown_bb" name="cumulative_nonshowdown_bb"
-                      stroke="#ef4444" strokeWidth={1.5} dot={false} connectNulls
+                      stroke={chartColors.nonshowdown} strokeWidth={1.5} dot={false} connectNulls
                       isAnimationActive={false}
                     />
                   </ComposedChart>
@@ -728,20 +730,20 @@ function LatestSessionRow({
             {/* Key stats */}
             <div className="border-l border-border/50 px-4 py-2 flex flex-col justify-center gap-1">
               <div className="grid grid-cols-2 gap-x-3">
-                <div className={`text-lg font-bold font-mono ${moneyClass(s.won_usd)}`}>{usd(s.won_usd)}</div>
-                <div className={`text-lg font-bold font-mono ${moneyClass(s.bb_per_100)}`}>{fixed(s.bb_per_100, 2)}</div>
-                <div className={`text-xs font-mono ${moneyClass(s.won_bb, 1)}`}>{bbUnits(s.won_bb)}</div>
-                <div className="text-xs font-mono text-text-muted">bb/100</div>
+                <div className={`text-lg font-bold ${moneyClass(s.won_usd)}`}>{usd(s.won_usd)}</div>
+                <div className={`text-lg font-bold ${moneyClass(s.bb_per_100)}`}>{fixed(s.bb_per_100, 2)}</div>
+                <div className={`text-xs ${moneyClass(s.won_bb, 1)}`}>{bbUnits(s.won_bb)}</div>
+                <div className="text-xs text-text-muted">bb/100</div>
               </div>
               {hasEVData && (
                 <div className="grid grid-cols-2 gap-x-3 pt-1 border-t border-border/50">
-                  <div className={`text-sm font-bold font-mono ${moneyClass(s.ev_usd)}`}>{usd(s.ev_usd)}</div>
-                  <div className={`text-sm font-bold font-mono ${moneyClass(s.ev_bb_per_100)}`}>{fixed(s.ev_bb_per_100, 2)}</div>
+                  <div className={`text-sm font-bold ${moneyClass(s.ev_usd)}`}>{usd(s.ev_usd)}</div>
+                  <div className={`text-sm font-bold ${moneyClass(s.ev_bb_per_100)}`}>{fixed(s.ev_bb_per_100, 2)}</div>
                   <div className="text-[10px] text-text-muted">EV Won</div>
                   <div className="text-[10px] text-text-muted">EV bb/100</div>
                 </div>
               )}
-              <div className="flex items-center gap-3 pt-1 border-t border-border/50 text-xs text-text-muted font-mono">
+              <div className="flex items-center gap-3 pt-1 border-t border-border/50 text-xs text-text-muted">
                 <span className={durationHrs > 0 ? moneyClass(stats?.usd_per_hour ?? 0) : ''}>
                   {durationHrs > 0 && stats ? `${usd(stats.usd_per_hour)}/hr` : '\u2014'}
                 </span>
@@ -774,7 +776,7 @@ function LatestSessionRow({
 function MiniStatBox({ label, value }: { label: string; value: number | null }) {
   return (
     <div className="bg-background px-2 py-1.5 text-center">
-      <div className="text-sm font-bold font-mono text-text">
+      <div className="text-sm font-bold text-text">
         {value !== null ? `${fixed(value, 1)}` : '\u2014'}
       </div>
       <div className="text-[9px] text-text-muted uppercase tracking-wide">{label}</div>
@@ -787,7 +789,7 @@ function MiniStatBox({ label, value }: { label: string; value: number | null }) 
 function PlayStatBox({ label, value }: { label: string; value: number | null }) {
   return (
     <div className="bg-background px-3 py-2.5 text-center">
-      <div className="text-lg font-bold font-mono text-text">
+      <div className="text-lg font-bold text-text">
         {value !== null ? `${fixed(value, 1)}%` : '\u2014'}
       </div>
       <div className="text-[10px] text-text-muted uppercase tracking-wide">{label}</div>
@@ -819,10 +821,10 @@ function BigHandsCard({
           >
             <CardBoxPair card1={h.card1} card2={h.card2} />
             <Badge variant="secondary" className="text-[11px] px-1.5 py-0">{h.position}</Badge>
-            <span className={`font-mono font-semibold ${moneyClass(h.won_bb, 1)}`}>
+            <span className={`font-semibold ${moneyClass(h.won_bb, 1)}`}>
               {h.won_bb > 0 ? '+' : ''}{fixed(h.won_bb, 1)} BB
             </span>
-            <span className={`font-mono text-sm ${moneyClass(h.won_usd)}`}>
+            <span className={`text-sm ${moneyClass(h.won_usd)}`}>
               {usd(h.won_usd)}
             </span>
             <span className="text-xs text-text-muted ml-auto">{formatStakes(h.stakes)}</span>
@@ -856,16 +858,9 @@ function SessionTooltip({ active, payload, label, unit }: SessionTooltipProps) {
     cumulative_nonshowdown_usd: 'Non-Showdown',
   };
   return (
-    <div style={{
-      backgroundColor: 'oklch(0.216 0.006 56.043)',
-      border: '1px solid oklch(1 0 0 / 10%)',
-      borderRadius: '8px',
-      color: 'oklch(0.985 0.001 106.423)',
-      padding: '8px 12px',
-      fontSize: '13px',
-    }}>
+    <ChartTooltipBox>
       {point?.played_at && (
-        <div style={{ marginBottom: 4, color: 'oklch(0.709 0.01 56.259)' }}>
+        <div style={{ marginBottom: 4, color: chartColors.tooltipMuted }}>
           {formatClockTime(point.played_at)}
         </div>
       )}
@@ -876,6 +871,6 @@ function SessionTooltip({ active, payload, label, unit }: SessionTooltipProps) {
           <span>{names[entry.name] ?? entry.name}: {prefix}{fixed(entry.value, 2)}{suffix}</span>
         </div>
       ))}
-    </div>
+    </ChartTooltipBox>
   );
 }

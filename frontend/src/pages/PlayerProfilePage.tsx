@@ -43,10 +43,10 @@ function StatsTab({ stats }: { stats: HeroStats }) {
           <CardContent className="px-3 py-1.5 flex items-center justify-between">
             <div className="flex items-center gap-3">
               <span className="text-sm text-text-muted">{stats.hands.toLocaleString()} hands</span>
-              <span className={`text-sm font-bold font-mono ${wrColor}`}>
+              <span className={`text-sm font-bold ${wrColor}`}>
                 {wr !== null ? `${wr >= 0 ? '+' : ''}${fixed(wr, 2)} bb/100` : '\u2014'}
               </span>
-              <span className={`text-sm font-bold font-mono ${wrEvColor}`}>
+              <span className={`text-sm font-bold ${wrEvColor}`}>
                 EV {wrEv !== null ? `${wrEv >= 0 ? '+' : ''}${fixed(wrEv, 2)}` : '\u2014'}
               </span>
             </div>
@@ -58,8 +58,8 @@ function StatsTab({ stats }: { stats: HeroStats }) {
                 onValueChange={(v) => { if (v) setDecimals(Number(v) as 0 | 1); }}
                 className="h-8"
               >
-                <ToggleGroupItem value="0" className="h-7 px-2 text-xs font-mono">0</ToggleGroupItem>
-                <ToggleGroupItem value="1" className="h-7 px-2 text-xs font-mono">0.0</ToggleGroupItem>
+                <ToggleGroupItem value="0" className="h-7 px-2 text-xs">0</ToggleGroupItem>
+                <ToggleGroupItem value="1" className="h-7 px-2 text-xs">0.0</ToggleGroupItem>
               </ToggleGroup>
             </div>
           </CardContent>
@@ -82,10 +82,10 @@ function H2HTab({ playerId }: { playerId: number }) {
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-6 text-[14px]">
-        <span className="text-text-muted">Hands together: <span className="font-mono text-text">{data.total_hands.toLocaleString()}</span></span>
+        <span className="text-text-muted">Hands together: <span className="text-text">{data.total_hands.toLocaleString()}</span></span>
         <span className="text-text-muted">
           Hero result:{' '}
-          <span className={`font-mono font-semibold ${data.total_won_bb >= 0 ? 'text-green' : 'text-red'}`}>
+          <span className={`font-semibold ${data.total_won_bb >= 0 ? 'text-green' : 'text-red'}`}>
             {data.total_won_bb >= 0 ? '+' : ''}{fixed(data.total_won_bb, 1)} BB ({fixed(data.overall_bb_per_100, 1)} bb/100)
           </span>
         </span>
@@ -102,12 +102,12 @@ function H2HTab({ playerId }: { playerId: number }) {
         <TableBody>
           {data.rows.map((r) => (
             <TableRow key={r.hero_position} className="text-[13px]">
-              <TableCell className="py-1 px-2 font-mono">{r.hero_position}</TableCell>
-              <TableCell className="py-1 px-2 text-right font-mono text-text-muted">{r.hands}</TableCell>
-              <TableCell className={`py-1 px-2 text-right font-mono ${r.hero_won_bb >= 0 ? 'text-green' : 'text-red'}`}>
+              <TableCell className="py-1 px-2">{r.hero_position}</TableCell>
+              <TableCell className="py-1 px-2 text-right text-text-muted">{r.hands}</TableCell>
+              <TableCell className={`py-1 px-2 text-right ${r.hero_won_bb >= 0 ? 'text-green' : 'text-red'}`}>
                 {r.hero_won_bb >= 0 ? '+' : ''}{fixed(r.hero_won_bb, 1)}
               </TableCell>
-              <TableCell className={`py-1 px-2 text-right font-mono ${r.bb_per_100 >= 0 ? 'text-green' : 'text-red'}`}>
+              <TableCell className={`py-1 px-2 text-right ${r.bb_per_100 >= 0 ? 'text-green' : 'text-red'}`}>
                 {fixed(r.bb_per_100, 1)}
               </TableCell>
             </TableRow>

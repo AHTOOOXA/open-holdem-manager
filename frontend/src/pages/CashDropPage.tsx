@@ -9,6 +9,7 @@ import FilterBar from '@/components/FilterBar';
 import EmptyState from '@/components/EmptyState';
 import { Card, CardContent } from '@/components/ui/card';
 import { fixed } from '@/lib/format';
+import { heat } from '@/lib/chart-theme';
 
 // ── Heatmap helpers ──────────────────────────────────────────────────
 
@@ -26,7 +27,7 @@ function getCellColor(hands: number, maxHands: number): string {
   if (hands === 0) return 'transparent';
   const intensity = maxHands > 0 ? Math.min(hands / maxHands, 1) : 0;
   const alpha = Math.round(intensity * 45 + 8);
-  return `rgba(99, 102, 241, ${alpha / 100})`;
+  return heat(alpha);
 }
 
 // ── Field Heatmap ────────────────────────────────────────────────────
@@ -71,16 +72,15 @@ function FieldHeatmap({ category }: { category: CashDropRangeCategory }) {
             return (
               <div
                 key={`${row}-${col}`}
-                className={`flex flex-col items-center justify-center ${isHovered ? 'ring-1 ring-primary z-10' : ''}`}
+                className={`flex flex-col items-center justify-center border border-border ${isHovered ? 'ring-1 ring-primary z-10' : ''}`}
                 style={{
                   backgroundColor: bg,
                   aspectRatio: '1',
-                  border: '1px solid oklch(1 0 0 / 10%)',
                 }}
                 onMouseEnter={() => setHovered(key)}
                 onMouseLeave={() => setHovered(null)}
               >
-                <span className={`text-[7px] font-mono leading-none ${
+                <span className={`text-[7px] leading-none ${
                   hands > 0
                     ? isSuited ? 'text-primary' : isPair ? 'text-yellow' : 'text-text'
                     : 'text-text-muted/40'
@@ -88,7 +88,7 @@ function FieldHeatmap({ category }: { category: CashDropRangeCategory }) {
                   {key}
                 </span>
                 {hands > 0 && (
-                  <span className="text-[7px] font-mono text-text-muted leading-none mt-px">
+                  <span className="text-[7px] text-text-muted leading-none mt-px">
                     {hands}
                   </span>
                 )}
@@ -98,7 +98,7 @@ function FieldHeatmap({ category }: { category: CashDropRangeCategory }) {
         )}
       </div>
       {hoveredCombo && (
-        <div className="mt-2 text-xs text-text-muted font-mono">
+        <div className="mt-2 text-xs text-text-muted">
           {hovered}: {hoveredCombo.hands} hands
         </div>
       )}
@@ -239,9 +239,9 @@ export default function CashDropPage() {
               <div className="flex gap-4 flex-wrap">
                 {data!.by_type.map(t => (
                   <div key={t.drop_bb} className="flex items-baseline gap-2">
-                    <span className="font-mono font-medium">{fixed(t.drop_bb, 0)} BB</span>
+                    <span className="font-medium">{fixed(t.drop_bb, 0)} BB</span>
                     <span className="text-text-muted text-sm">{t.count}x</span>
-                    <span className="text-green font-mono text-sm">${fixed(t.total_usd, 2)}</span>
+                    <span className="text-green text-sm">${fixed(t.total_usd, 2)}</span>
                   </div>
                 ))}
               </div>
@@ -260,8 +260,8 @@ export default function CashDropPage() {
                 ))}
               </div>
               <div className="flex items-center gap-4 mt-2 text-[10px] text-text-muted">
-                <span><span className="text-primary font-mono">AKs</span> suited</span>
-                <span><span className="text-yellow font-mono">AA</span> pair</span>
+                <span><span className="text-primary">AKs</span> suited</span>
+                <span><span className="text-yellow">AA</span> pair</span>
                 <span>Brighter = more hands</span>
               </div>
             </div>
@@ -280,7 +280,7 @@ function StatRow({ label, value, suffix, color }: { label: string; value: number
   return (
     <div className="flex justify-between items-baseline">
       <span className="text-text-muted">{label}</span>
-      <span className={`font-mono font-medium ${cls}`}>{text}</span>
+      <span className={`font-medium ${cls}`}>{text}</span>
     </div>
   );
 }
@@ -290,7 +290,7 @@ function SummaryCard({ label, value, sub, color }: { label: string; value: strin
     <Card className="gap-0 py-0">
       <CardContent className="px-3 py-2">
         <div className="text-[10px] text-text-muted uppercase tracking-wide mb-0.5">{label}</div>
-        <div className={`text-sm font-bold font-mono ${color ?? 'text-text'}`}>{value}</div>
+        <div className={`text-sm font-bold ${color ?? 'text-text'}`}>{value}</div>
         {sub && <div className="text-[11px] text-text-muted mt-0.5">{sub}</div>}
       </CardContent>
     </Card>

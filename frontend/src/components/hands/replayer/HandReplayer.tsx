@@ -36,7 +36,7 @@ export default function HandReplayer({ hand }: { hand: HandDetail }) {
         isCashout={hand.is_cashout}
       />
       {/* Result summary */}
-      <div className={`text-[14px] font-bold font-mono ${heroWonBb >= 0 ? 'text-green' : 'text-red'}`}>
+      <div className={`text-[14px] font-bold ${heroWonBb >= 0 ? 'text-green' : 'text-red'}`}>
         Hero {heroWonBb >= 0 ? 'wins' : 'loses'} {fixed(Math.abs(heroWonBb), 1)} BB
         {hand.is_cashout && <span className="text-amber-400 ml-1">(EV Cashout)</span>}
       </div>
