@@ -1,0 +1,8 @@
+{
+  "_doc": "Path prefixes exempt from given rules. Keep short; every entry needs a reason.",
+  "allow": [
+    { "prefix": "src/lib/format/", "rules": ["toFixed"], "reason": "the format module wraps toFixed" },
+    { "prefix": "src/lib/chart-theme", "rules": ["inline-color", "color-fn"], "reason": "chart theme resolves tokens to chart colours" },
+    { "prefix": "src/components/ui/", "rules": ["text-arbitrary"], "reason": "shadcn primitives" }
+  ]
+}
