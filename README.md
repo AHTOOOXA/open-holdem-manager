@@ -54,7 +54,7 @@ The local backend listens on `127.0.0.1` only.
 
 OHM is meant for reviewing hands after your session. It has no HUD, and it does not read the GGPoker client's memory or screen or interact with the client in any way. It only reads the hand history files you download yourself.
 
-Close the GGPoker client before opening OHM. In October 2026 GGPoker announced that third-party poker software, including trackers such as Hand2Note, must not run alongside its client ([announcement](https://legal.ggpoker.com/blog/new-security-measures-at-ggpoker/), [Security & Ecology Policy](https://ggpoker.com/network/security-ecology-policy/)). GGPoker's rules change, and their wording on post-session use of hand histories is not spelled out. You are responsible for checking the current rules, and OHM makes no promise of compliance.
+Close the GGPoker client before opening OHM. In October 2026 GGPoker announced that third-party poker software, including trackers such as Hand2Note, must not run alongside its client ([announcement](https://legal.ggpoker.com/blog/new-security-measures-at-ggpoker/), [Security & Ecology Policy](https://ggpoker.com/network/security-ecology-policy/)). Reviewing your hands after the session, with the client closed, is how OHM is meant to be used. GGPoker's rules can change, so check the current ones; OHM makes no promise of compliance.
 
 ## Security
 
