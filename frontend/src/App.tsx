@@ -33,6 +33,7 @@ import WorkspaceSettingsPage from './pages/WorkspaceSettingsPage';
 import ComparePage from './pages/ComparePage';
 import IdentityDetailPage from './pages/IdentityDetailPage';
 import GeneralPage from './pages/GeneralPage';
+import DesignPage from './pages/DesignPage';
 const PAGE_LABELS: Record<string, string> = {
   '/stats': 'Stats',
   '/general': 'General',
@@ -125,6 +126,7 @@ export default function App() {
                 <Route path="/stats" element={<StatsPage />} />
                 <Route path="/stats/:statKey" element={<StatsPage />} />
                 <Route path="/general" element={<GeneralPage />} />
+                <Route path="/design" element={<DesignPage />} />
                 <Route path="/graph" element={<GraphPage />} />
                 <Route path="/range" element={<RangePage />} />
                 <Route path="/hands" element={<HandsPage />} />
