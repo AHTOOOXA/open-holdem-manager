@@ -40,7 +40,7 @@ test('heroLabel and heroSummary handle null', () => {
   assert.match(heroSummary(null), /^No hero yet/);
   assert.equal(
     heroSummary({ site: 'GG', site_name: 'GGPoker', username: 'u', hand_count: 1200 }),
-    'Stats show u · GGPoker (1,200 hands), the account with the most hands.',
+    'Stats show u · GGPoker (1,200 hands). Your nicknames come first, then the detected account with the most hands.',
   );
 });
 

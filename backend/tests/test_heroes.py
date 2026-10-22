@@ -246,3 +246,34 @@ def test_resolve_does_not_cache_a_result_that_raced_an_invalidation(monkeypatch)
 def test_manual_put_rejects_oversized_nicknames(client):
     r = client.put("/api/workspaces/1/heroes/manual", json={"site": "PS", "usernames": ["x" * 65]})
     assert r.status_code == 422
+
+
+def test_manual_account_beats_a_detected_one_with_more_hands(db, client):
+    _gg(db)  # GG 'Hero' detected, many hands
+    _insert_all(db, pokerstars, (FIXTURES / "pokerstars" / "multi_hand.txt").read_text())
+    assert get_hero_username(db, 1) == "Hero"
+    r = client.put("/api/workspaces/1/heroes/manual", json={"site": "PS", "usernames": ["Player1"]})
+    assert r.json()["active"]["username"] == "Player1"
+
+
+def test_detected_accounts_ignored_while_auto_detect_is_off(db, client):
+    _gg(db)  # GG 'Hero' is the busiest player
+    _insert_all(db, pokerstars, (FIXTURES / "pokerstars" / "multi_hand.txt").read_text())
+    ps = db.execute("SELECT id FROM sites WHERE code = 'PS'").fetchone()[0]
+    # pretend detection picked only a PS player
+    db.execute("DELETE FROM hero_accounts")
+    db.execute("INSERT INTO hero_accounts (workspace_id, site_id, username, source) "
+               "VALUES (1, ?, 'Player1', 'auto')", [ps])
+    invalidate_hero_cache()
+    assert get_hero_username(db, 1) == "Player1"
+    client.patch("/api/workspaces/1/heroes", json={"auto_detect": False})
+    assert get_hero_username(db, 1) == "Hero"  # fallback: busiest player
+
+
+def test_rescan_drops_stale_detected_accounts(db):
+    _insert_all(db, pokerstars, (FIXTURES / "pokerstars" / "multi_hand.txt").read_text())
+    site = db.execute("SELECT id FROM sites WHERE code = 'PS'").fetchone()[0]
+    db.execute("INSERT INTO hero_accounts (workspace_id, site_id, username, source) "
+               "VALUES (1, ?, 'ghost', 'auto')", [site])
+    detect_heroes(db, 1)
+    assert ("ghost", "auto") not in _accounts(db)

@@ -43,7 +43,8 @@ interface Row {
 interface NicknamesFormProps {
   sites: Site[];
   initialSite: string;
-  initialNames: string[];
+  /** Saved manual nicknames per site code; a site's list is replaced on save, so the form starts from it */
+  namesBySite: Record<string, string[]>;
   saving: boolean;
   error: string | null;
   onCancel: () => void;
@@ -53,11 +54,21 @@ interface NicknamesFormProps {
 let nextRowId = 0;
 const makeRow = (value: string): Row => ({ id: nextRowId++, value });
 
-function NicknamesForm({ sites, initialSite, initialNames, saving, error, onCancel, onSave }: NicknamesFormProps) {
+function NicknamesForm({ sites, initialSite, namesBySite, saving, error, onCancel, onSave }: NicknamesFormProps) {
   const [site, setSite] = useState(initialSite);
-  const [rows, setRows] = useState<Row[]>(() =>
-    (initialNames.length ? initialNames : ['']).map(makeRow),
-  );
+  const [rows, setRows] = useState<Row[]>(() => {
+    const saved = namesBySite[initialSite] ?? [];
+    return (saved.length ? saved : ['']).map(makeRow);
+  });
+
+  // Switching site keeps what was typed and adds that site's saved nicknames
+  const changeSite = (next: string) => {
+    setSite(next);
+    setRows((rs) => {
+      const merged = normalizeNicknames([...(namesBySite[next] ?? []), ...rs.map((r) => r.value)]);
+      return (merged.length ? merged : ['']).map(makeRow);
+    });
+  };
   const firstRef = useRef<HTMLInputElement>(null);
 
   // The dialog's own auto-focus lands on the site select first; move it to the nickname
@@ -74,7 +85,7 @@ function NicknamesForm({ sites, initialSite, initialNames, saving, error, onCanc
   return (
     <>
       <div className="flex flex-col gap-4">
-        <Select value={site} onValueChange={setSite}>
+        <Select value={site} onValueChange={changeSite}>
           <SelectTrigger aria-label="Site" className="w-full">
             <SelectValue placeholder="Site" />
           </SelectTrigger>
@@ -97,7 +108,7 @@ function NicknamesForm({ sites, initialSite, initialNames, saving, error, onCanc
                     setRows((rs) => rs.map((r) => (r.id === row.id ? { ...r, value: e.target.value } : r)))
                   }
                   onKeyDown={(e) => {
-                    if (e.key === 'Enter' && site) onSave(site, names);
+                    if (e.key === 'Enter' && site && !saving) onSave(site, names);
                   }}
                 />
                 <Button
@@ -156,7 +167,15 @@ export default function HeroAccountsSection({ workspaceId, workspaceName }: { wo
   const heroes = heroesQuery.data;
   const accounts: HeroAccount[] = heroes?.accounts ?? [];
   const manualGroups = groupBySite(accounts, 'manual');
-  const autoGroups = groupBySite(accounts, 'auto');
+  // A nickname that is both typed and detected shows once, as typed
+  const manualKeys = new Set(accounts.filter((a) => a.source === 'manual').map((a) => `${a.site}\u0000${a.username}`));
+  const autoGroups = groupBySite(
+    accounts.filter((a) => !manualKeys.has(`${a.site}\u0000${a.username}`)),
+    'auto',
+  );
+  const namesBySite: Record<string, string[]> = Object.fromEntries(
+    manualGroups.map((g) => [g.site, g.accounts.map((a) => a.username)]),
+  );
 
   // The active hero drives every stat screen, so refresh everything after a change.
   const refresh = () => queryClient.invalidateQueries();
@@ -174,8 +193,9 @@ export default function HeroAccountsSection({ workspaceId, workspaceName }: { wo
     const editSite = dialog?.editSite ?? null;
     setSaving(true);
     await run(async () => {
-      if (editSite && editSite !== site) await setManualHeroes(workspaceId, editSite, []);
+      // Write the new site first so a failure can't lose the old list
       await setManualHeroes(workspaceId, site, names);
+      if (editSite && editSite !== site) await setManualHeroes(workspaceId, editSite, []);
       await refresh();
       setDialog(null);
     });
@@ -193,9 +213,6 @@ export default function HeroAccountsSection({ workspaceId, workspaceName }: { wo
   });
 
   const editing = dialog?.editSite ?? null;
-  const editingNames = editing
-    ? accounts.filter((a) => a.source === 'manual' && a.site === editing).map((a) => a.username)
-    : [];
 
   return (
     <div className="flex flex-col gap-3">
@@ -296,7 +313,7 @@ export default function HeroAccountsSection({ workspaceId, workspaceName }: { wo
             <NicknamesForm
               sites={sites}
               initialSite={editing ?? firstSiteWithoutManual(sites, accounts)}
-              initialNames={editingNames}
+              namesBySite={namesBySite}
               saving={saving}
               error={error}
               onCancel={() => setDialog(null)}

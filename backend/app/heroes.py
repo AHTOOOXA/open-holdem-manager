@@ -3,7 +3,9 @@
 A workspace has a list of hero accounts (`hero_accounts`): manual ones typed
 by the user and auto-detected ones. The "active" hero used by every stats
 endpoint is the account with the most hands in the workspace (Hand2Note's
-"most relevant player").
+"most relevant player"). Unlike Hand2Note, manual accounts with hands win over
+detected ones, so typing a nickname is how the user overrides detection, and
+detected accounts are ignored while auto-detection is off.
 """
 
 from __future__ import annotations
@@ -48,13 +50,19 @@ def detect_heroes(db, workspace_id: int | None = None) -> int:
     so hands with a showdown have 2+ known players and are skipped. GG, PS and
     the other sites show dealt cards only for the hero, so every hand where the
     hero did not show down qualifies. Works for every site and for hands
-    imported from a Hand2Note database. At most 127 auto accounts per
-    workspace are kept (those with the most qualifying hands). One grouped
-    query; rescans the whole workspace.
+    imported from a Hand2Note database. Each scan replaces the workspace's
+    auto accounts, so a rebuild drops stale ones and at most 127 are kept
+    (those with the most qualifying hands). Rescans the whole workspace.
     """
     ws_filter = "AND hp.workspace_id = ?" if workspace_id is not None else ""
     params = [workspace_id] if workspace_id is not None else []
     before = db.execute("SELECT COUNT(*) FROM hero_accounts").fetchone()[0]
+    db.execute(f"""
+        DELETE FROM hero_accounts
+        WHERE source = 'auto'
+          AND workspace_id IN (SELECT id FROM workspaces WHERE hero_auto_detect)
+          {"AND workspace_id = ?" if workspace_id is not None else ""}
+    """, params)
     db.execute(f"""
         INSERT OR IGNORE INTO hero_accounts (workspace_id, site_id, username, source)
         SELECT workspace_id, site_id, username, 'auto' FROM (
@@ -98,14 +106,17 @@ def _resolve(db, workspace_id: int) -> HeroRef | None:
         FROM (
             SELECT site_id, username,
                    MIN(CASE WHEN source = 'manual' THEN 0 ELSE 1 END) AS pri
-            FROM hero_accounts WHERE workspace_id = ?
+            FROM hero_accounts h
+            WHERE workspace_id = ?
+              AND (source = 'manual'
+                   OR (SELECT hero_auto_detect FROM workspaces WHERE id = h.workspace_id))
             GROUP BY site_id, username
         ) a
         JOIN players p ON p.site_id = a.site_id AND p.username = a.username
         JOIN sites s ON s.id = p.site_id
         JOIN hand_players hp ON hp.player_id = p.id AND hp.workspace_id = ?
         GROUP BY p.id, p.username, s.code, s.name, a.pri
-        ORDER BY n DESC, a.pri, p.username
+        ORDER BY a.pri, n DESC, p.username
         LIMIT 1
     """, [workspace_id, workspace_id]).fetchone()
     if not row:

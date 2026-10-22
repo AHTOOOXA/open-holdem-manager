@@ -14,7 +14,7 @@ Local poker hand history tracker for GGPoker Rush & Cash. Parses hand histories,
 
 [All releases](https://github.com/AHTOOOXA/open-holdem-manager/releases)
 
-> **Linux note:** make the AppImage executable before running it: `chmod +x Open-Holdem-Manager.AppImage`. It needs FUSE 2 (`libfuse2`; on Ubuntu 22.04+ `sudo apt install libfuse2`).
+> **Linux note:** make the AppImage executable before running it: `chmod +x Open-Holdem-Manager.AppImage`. It needs FUSE 2 (`libfuse2`; on Ubuntu 22.04+ `sudo apt install libfuse2`). On Ubuntu 24.04+, if it closes right after launch with a sandbox error, start it with `./Open-Holdem-Manager.AppImage --no-sandbox`.
 
 > **macOS note:** The app is not code-signed yet. macOS will show "app is damaged and can't be opened." To fix, run in Terminal after installing:
 > ```

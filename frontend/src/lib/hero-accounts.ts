@@ -52,5 +52,5 @@ export function heroLabel(active: Pick<ActiveHero, 'username' | 'site_name'> | n
 
 export function heroSummary(active: ActiveHero | null): string {
   if (!active) return 'No hero yet. Import hands and OHM detects it.';
-  return `Stats show ${active.username} · ${active.site_name} (${handsLabel(active.hand_count)}), the account with the most hands.`;
+  return `Stats show ${active.username} · ${active.site_name} (${handsLabel(active.hand_count)}). Your nicknames come first, then the detected account with the most hands.`;
 }
