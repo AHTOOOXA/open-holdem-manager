@@ -26,6 +26,18 @@ const routes: [RegExp, RouteHandler][] = [
   // Settings
   [/^\/api\/settings$/, () => json({ hero_username: 'Hero', hero_site: 'GG' })],
 
+  // Workspaces (the app pages read the active workspace and its checkpoints)
+  [/^\/api\/workspaces$/, () => json([{
+    id: 1, name: 'My Game', hero_username: 'Hero', hero_site: 'GG', description: null, color: null,
+    hand_count: 800, date_range: { min: '2025-07-01', max: '2025-07-31' }, created_at: '2025-07-01T00:00:00',
+  }])],
+  [/^\/api\/workspaces\/\d+\/checkpoints$/, () => json([])],
+  [/^\/api\/workspaces\/\d+\/heroes$/, () => json({
+    auto_detect: true,
+    accounts: [{ site: 'GG', site_name: 'GGPoker', username: 'Hero', source: 'auto', hand_count: 800 }],
+    active: { site: 'GG', site_name: 'GGPoker', username: 'Hero', hand_count: 800 },
+  })],
+
   // Graph
   [/^\/api\/reports\/graph/, () => json(mockGraphResponse)],
 

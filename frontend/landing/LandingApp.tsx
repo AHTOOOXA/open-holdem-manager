@@ -1,5 +1,6 @@
 import { QueryClientProvider, QueryClient } from '@tanstack/react-query';
 import { ImportProvider } from '@/contexts/ImportContext';
+import { WorkspaceProvider } from '@/contexts/WorkspaceContext';
 import HeroSection from './components/HeroSection';
 import ShowcaseGraph from './components/ShowcaseGraph';
 import ShowcaseStats from './components/ShowcaseStats';
@@ -21,6 +22,7 @@ const queryClient = new QueryClient({
 export default function LandingApp() {
   return (
     <QueryClientProvider client={queryClient}>
+      <WorkspaceProvider>
       <ImportProvider>
         <div className="min-h-screen bg-background text-text">
           <HeroSection />
@@ -79,6 +81,7 @@ export default function LandingApp() {
           <Footer />
         </div>
       </ImportProvider>
+      </WorkspaceProvider>
     </QueryClientProvider>
   );
 }
