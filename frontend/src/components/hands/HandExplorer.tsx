@@ -317,7 +317,7 @@ export default function HandExplorer({
                       </TableCell>
                       {/* Preflop actions — trim leading folds */}
                       <TableCell className="py-1.5 px-2">
-                        <div className="max-w-[160px] truncate" title={actionTitle(h.preflop_actions, bbPrecision, true)}>
+                        <div className="max-w-[160px] truncate pb-1" title={actionTitle(h.preflop_actions, bbPrecision, true)}>
                           <Actions items={h.preflop_actions} trimFolds precision={bbPrecision} />
                         </div>
                       </TableCell>
@@ -331,7 +331,7 @@ export default function HandExplorer({
                       </TableCell>
                       {/* Flop actions */}
                       <TableCell className="py-1.5 px-2">
-                        <div className="max-w-[130px] truncate" title={actionTitle(h.flop_actions, bbPrecision)}>
+                        <div className="max-w-[130px] truncate pb-1" title={actionTitle(h.flop_actions, bbPrecision)}>
                           <Actions items={h.flop_actions} precision={bbPrecision} />
                         </div>
                       </TableCell>
@@ -345,7 +345,7 @@ export default function HandExplorer({
                       </TableCell>
                       {/* Turn actions */}
                       <TableCell className="py-1.5 px-2">
-                        <div className="max-w-[130px] truncate" title={actionTitle(h.turn_actions, bbPrecision)}>
+                        <div className="max-w-[130px] truncate pb-1" title={actionTitle(h.turn_actions, bbPrecision)}>
                           <Actions items={h.turn_actions} precision={bbPrecision} />
                         </div>
                       </TableCell>
@@ -359,7 +359,7 @@ export default function HandExplorer({
                       </TableCell>
                       {/* River actions */}
                       <TableCell className="py-1.5 px-2">
-                        <div className="max-w-[130px] truncate" title={actionTitle(h.river_actions, bbPrecision)}>
+                        <div className="max-w-[130px] truncate pb-1" title={actionTitle(h.river_actions, bbPrecision)}>
                           <Actions items={h.river_actions} precision={bbPrecision} />
                         </div>
                       </TableCell>
