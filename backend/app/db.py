@@ -144,29 +144,17 @@ def db_lock() -> threading.RLock:
 
 
 def get_hero_player_id(db, workspace_id: int = 1) -> int | None:
-    """Shared hero player ID lookup from workspace table, used by all endpoints."""
-    row = db.execute(
-        "SELECT hero_username, hero_site FROM workspaces WHERE id = ?",
-        [workspace_id],
-    ).fetchone()
-    if not row:
-        return None
-    hero_username, hero_site = row
-    player = db.execute(
-        "SELECT id FROM players WHERE username = ? "
-        "AND site_id = (SELECT id FROM sites WHERE code = ?)",
-        [hero_username, hero_site],
-    ).fetchone()
-    return player[0] if player else None
+    """Active hero player ID of a workspace (see app/heroes.py), used by all endpoints."""
+    from app.heroes import resolve_hero
+    ref = resolve_hero(db, workspace_id)
+    return ref.player_id if ref else None
 
 
 def get_hero_username(db, workspace_id: int = 1) -> str:
-    """Get hero username from workspace table."""
-    row = db.execute(
-        "SELECT hero_username FROM workspaces WHERE id = ?",
-        [workspace_id],
-    ).fetchone()
-    return row[0] if row else "Hero"
+    """Active hero username of a workspace; 'Hero' when there is none."""
+    from app.heroes import resolve_hero
+    ref = resolve_hero(db, workspace_id)
+    return ref.username if ref else "Hero"
 
 
 def close_db():
@@ -565,6 +553,9 @@ def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
 
     # One tag per (workspace, hand, tag), one note per (workspace, hand)
     _ensure_tag_note_keys(conn)
+
+    # Hero accounts (manual + auto-detected); backfills existing databases
+    _ensure_hero_accounts(conn)
 
     # Check stat version — trigger rebuild if outdated
     _check_stat_version(conn)
@@ -1138,6 +1129,23 @@ def _ensure_tag_note_keys(conn: duckdb.DuckDBPyConnection) -> None:
             )
             conn.execute("DROP TABLE _notes_dedup")
         conn.execute("CREATE UNIQUE INDEX uq_hand_notes ON hand_notes(workspace_id, hand_id)")
+
+
+def _ensure_hero_accounts(conn: duckdb.DuckDBPyConnection) -> None:
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS hero_accounts (
+            workspace_id INTEGER NOT NULL,
+            site_id INTEGER NOT NULL,
+            username VARCHAR NOT NULL,
+            source VARCHAR NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (workspace_id, site_id, username, source)
+        )
+    """)
+    _add_column_if_missing(conn, "workspaces", "hero_auto_detect", "BOOLEAN DEFAULT TRUE")
+    conn.execute("UPDATE workspaces SET hero_auto_detect = TRUE WHERE hero_auto_detect IS NULL")
+    from app.heroes import migrate_hero_accounts
+    migrate_hero_accounts(conn)
 
 
 def get_rebuild_status() -> dict:
