@@ -34,7 +34,15 @@ export function groupBySite(accounts: HeroAccount[], source: 'manual' | 'auto'):
     g.accounts.push(a);
     groups.set(a.site, g);
   }
+  // Detected accounts: most hands first, so the likely hero leads each card
+  if (source === 'auto') {
+    for (const g of groups.values()) g.accounts.sort((x, y) => y.hand_count - x.hand_count);
+  }
   return [...groups.values()];
+}
+
+export function handsLabel(n: number): string {
+  return `${n.toLocaleString()} ${n === 1 ? 'hand' : 'hands'}`;
 }
 
 /** Sidebar/list label: "username · Site", or a placeholder when there is no hero. */
@@ -44,5 +52,5 @@ export function heroLabel(active: Pick<ActiveHero, 'username' | 'site_name'> | n
 
 export function heroSummary(active: ActiveHero | null): string {
   if (!active) return 'No hero yet. Import hands and OHM detects it.';
-  return `Stats show ${active.username} · ${active.site_name} (${active.hand_count.toLocaleString()} hands), the account with the most hands.`;
+  return `Stats show ${active.username} · ${active.site_name} (${handsLabel(active.hand_count)}), the account with the most hands.`;
 }

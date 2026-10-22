@@ -241,3 +241,8 @@ def test_resolve_does_not_cache_a_result_that_raced_an_invalidation(monkeypatch)
     monkeypatch.setattr(heroes, "_resolve", racing_resolve)
     assert heroes.resolve_hero(None, 99) is stale
     assert 99 not in heroes._cache
+
+
+def test_manual_put_rejects_oversized_nicknames(client):
+    r = client.put("/api/workspaces/1/heroes/manual", json={"site": "PS", "usernames": ["x" * 65]})
+    assert r.status_code == 422

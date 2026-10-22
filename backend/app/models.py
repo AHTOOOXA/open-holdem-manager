@@ -1,7 +1,7 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, StringConstraints
 from decimal import Decimal
 from datetime import datetime
-from typing import Optional
+from typing import Annotated, Optional
 
 
 class ImportResult(BaseModel):
@@ -798,7 +798,8 @@ class HeroesResponse(BaseModel):
 
 class SetManualHeroes(BaseModel):
     site: str
-    usernames: list[str]
+    # Poker room nicknames are short; the caps only stop junk input
+    usernames: list[Annotated[str, StringConstraints(max_length=64)]] = Field(max_length=127)
 
 
 class PatchHeroes(BaseModel):

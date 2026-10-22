@@ -4,7 +4,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeNicknames, firstSiteWithoutManual, groupBySite, heroLabel, heroSummary } from '../src/lib/hero-accounts.ts';
+import { normalizeNicknames, firstSiteWithoutManual, groupBySite, handsLabel, heroLabel, heroSummary } from '../src/lib/hero-accounts.ts';
 import type { HeroAccount } from '../src/lib/api.ts';
 
 const sites = [
@@ -42,4 +42,13 @@ test('heroLabel and heroSummary handle null', () => {
     heroSummary({ site: 'GG', site_name: 'GGPoker', username: 'u', hand_count: 1200 }),
     'Stats show u · GGPoker (1,200 hands), the account with the most hands.',
   );
+});
+
+test('detected accounts sort by hand count; hand labels pluralise', () => {
+  const acc = (username: string, hand_count: number): HeroAccount =>
+    ({ site: 'PS', site_name: 'PokerStars', username, source: 'auto', hand_count });
+  const [g] = groupBySite([acc('a', 1), acc('b', 10), acc('c', 4)], 'auto');
+  assert.deepEqual(g.accounts.map((a) => a.username), ['b', 'c', 'a']);
+  assert.equal(handsLabel(1), '1 hand');
+  assert.equal(handsLabel(1200), `${(1200).toLocaleString()} hands`);
 });

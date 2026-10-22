@@ -89,6 +89,8 @@ export default function WorkspaceSettingsPage() {
   const [editName, setEditName] = useState('');
   const [editHero, setEditHero] = useState('');
   const [editHeroSite, setEditHeroSite] = useState('');
+  // A nickname needs its site, otherwise the backend has nothing to attach it to
+  const heroMissingSite = isCreating && editHero.trim() !== '' && !editHeroSite;
   const sitesQuery = useQuery({ queryKey: ['sites'], queryFn: getSites, staleTime: Infinity });
   const sites = sitesQuery.data ?? [];
   const [editDesc, setEditDesc] = useState('');
@@ -394,7 +396,7 @@ export default function WorkspaceSettingsPage() {
                 value={editName}
                 onChange={(e) => setEditName(e.target.value)}
                 autoFocus
-                onKeyDown={(e) => { if (e.key === 'Enter' && editName.trim()) handleSave(); }}
+                onKeyDown={(e) => { if (e.key === 'Enter' && editName.trim() && !heroMissingSite) handleSave(); }}
               />
             </div>
             {isCreating ? (
@@ -417,8 +419,12 @@ export default function WorkspaceSettingsPage() {
                     value={editHero}
                     onChange={(e) => setEditHero(e.target.value)}
                     placeholder="Nickname"
+                    aria-label="Nickname"
                   />
                 </div>
+                {heroMissingSite && (
+                  <p className="text-xs text-text-muted">Pick the site this nickname plays on.</p>
+                )}
               </div>
             ) : (
               editWs && <HeroAccountsSection workspaceId={editWs.id} workspaceName={editWs.name} />
@@ -449,7 +455,7 @@ export default function WorkspaceSettingsPage() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={closeWsDialog} disabled={saving}>Cancel</Button>
-            <Button onClick={handleSave} disabled={!editName.trim() || saving}>
+            <Button onClick={handleSave} disabled={!editName.trim() || heroMissingSite || saving}>
               {saving ? (isCreating ? 'Creating...' : 'Saving...') : (isCreating ? 'Create' : 'Save')}
             </Button>
           </DialogFooter>

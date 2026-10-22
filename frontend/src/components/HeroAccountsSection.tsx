@@ -12,6 +12,7 @@ import {
 import {
   firstSiteWithoutManual,
   groupBySite,
+  handsLabel,
   heroSummary,
   normalizeNicknames,
 } from '@/lib/hero-accounts';
@@ -59,9 +60,13 @@ function NicknamesForm({ sites, initialSite, initialNames, saving, error, onCanc
   );
   const firstRef = useRef<HTMLInputElement>(null);
 
+  // The dialog's own auto-focus lands on the site select first; move it to the nickname
   useEffect(() => {
-    firstRef.current?.focus();
-    firstRef.current?.select();
+    const id = requestAnimationFrame(() => {
+      firstRef.current?.focus();
+      firstRef.current?.select();
+    });
+    return () => cancelAnimationFrame(id);
   }, []);
 
   const names = normalizeNicknames(rows.map((r) => r.value));
@@ -271,7 +276,7 @@ export default function HeroAccountsSection({ workspaceId, workspaceName }: { wo
                     {g.accounts.map((a) => (
                       <div key={a.username} className="flex justify-between gap-2 text-sm">
                         <span className="truncate">{a.username}</span>
-                        <span className="shrink-0 text-text-muted">{a.hand_count.toLocaleString()} hands</span>
+                        <span className="shrink-0 text-text-muted">{handsLabel(a.hand_count)}</span>
                       </div>
                     ))}
                   </CardContent>
