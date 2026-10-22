@@ -25,10 +25,15 @@ class HeroRef:
 
 _cache: dict[int, HeroRef | None] = {}
 _cache_lock = threading.Lock()
+# Bumped on every invalidation, so a resolve that raced an import doesn't
+# store a result computed before the import finished.
+_cache_gen = 0
 
 
 def invalidate_hero_cache(workspace_id: int | None = None) -> None:
+    global _cache_gen
     with _cache_lock:
+        _cache_gen += 1
         if workspace_id is None:
             _cache.clear()
         else:
@@ -79,9 +84,11 @@ def resolve_hero(db, workspace_id: int) -> HeroRef | None:
     with _cache_lock:
         if workspace_id in _cache:
             return _cache[workspace_id]
+        gen = _cache_gen
     ref = _resolve(db, workspace_id)
     with _cache_lock:
-        _cache[workspace_id] = ref
+        if gen == _cache_gen:
+            _cache[workspace_id] = ref
     return ref
 
 

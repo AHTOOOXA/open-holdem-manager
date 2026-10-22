@@ -226,3 +226,18 @@ def test_detect_heroes_all_workspaces(db):
     _insert_all(db, pokerstars, (FIXTURES / "pokerstars" / "multi_hand.txt").read_text())
     db.execute("DELETE FROM hero_accounts")
     assert detect_heroes(db, None) == 1
+
+
+def test_resolve_does_not_cache_a_result_that_raced_an_invalidation(monkeypatch):
+    from app import heroes
+
+    heroes.invalidate_hero_cache()
+    stale = heroes.HeroRef(1, "old", "GG", "GGPoker", 1)
+
+    def racing_resolve(db, workspace_id):
+        heroes.invalidate_hero_cache(workspace_id)  # an import finishes mid-resolve
+        return stale
+
+    monkeypatch.setattr(heroes, "_resolve", racing_resolve)
+    assert heroes.resolve_hero(None, 99) is stale
+    assert 99 not in heroes._cache
