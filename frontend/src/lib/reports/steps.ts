@@ -22,7 +22,8 @@ export const POSITIONS: Pos[] = ['EP', 'MP', 'CO', 'BTN', 'SB', 'BB'];
 const OWN_ORDER = ['row', 'pos', 'stakes', 'mode', 'tsize', 'stack', 'date'] as const;
 type OwnKind = (typeof OWN_ORDER)[number];
 
-export function tsizeName(n: number): string {
+export function tsizeName(n: number | null): string {
+  if (n == null) return 'unknown table size';
   return n === 2 ? 'Heads-up' : `${n}-max`;
 }
 
