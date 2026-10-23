@@ -1,110 +1,29 @@
-import { BrowserRouter, Routes, Route, Navigate, useLocation, Link } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { queryClient } from '@/lib/query-client';
-import { SidebarProvider, SidebarInset, SidebarTrigger } from '@/components/ui/sidebar';
-import { Separator } from '@/components/ui/separator';
-import {
-  Breadcrumb,
-  BreadcrumbList,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb';
+import { DEFAULT_ROUTE, LEGACY_PATHS } from '@/lib/routes';
 import { ImportProvider } from '@/contexts/ImportContext';
 import { WorkspaceProvider } from '@/contexts/WorkspaceContext';
 import ImportOverlay from '@/components/ImportOverlay';
 import DragDropOverlay from '@/components/DragDropOverlay';
-import AppSidebar from '@/components/AppSidebar';
-import RebuildBanner from '@/components/RebuildBanner';
-import DbRecoveryBanner from '@/components/DbRecoveryBanner';
-import UpdateBanner from '@/components/UpdateBanner';
-import { getStatDisplayName } from '@/lib/stat-registry';
-import StatsPage from './pages/StatsPage';
-import GraphPage from './pages/GraphPage';
-import HandsPage from './pages/HandsPage';
-import RangePage from './pages/RangePage';
-import CashDropPage from './pages/CashDropPage';
+import WelcomeGate from '@/components/WelcomeGate';
+import AppShell from '@/components/shell/AppShell';
+import { HomeRedirect, LegacyRedirect } from '@/components/shell/Redirects';
+import { Toaster } from '@/components/ui/sonner';
+import ReportsPage from './pages/ReportsPage';
+import GeneralPage from './pages/GeneralPage';
 import SessionsPage from './pages/SessionsPage';
+import MarkedHandsPage from './pages/MarkedHandsPage';
+import DatabasesPage from './pages/DatabasesPage';
+import ConfigurationPage from './pages/ConfigurationPage';
+import StatsPage from './pages/StatsPage';
+import ComparePage from './pages/ComparePage';
+import CashDropPage from './pages/CashDropPage';
+import PopulationPage from './pages/PopulationPage';
 import PlayersPage from './pages/PlayersPage';
 import PlayerProfilePage from './pages/PlayerProfilePage';
-import PopulationPage from './pages/PopulationPage';
-import WorkspaceSettingsPage from './pages/WorkspaceSettingsPage';
-import ComparePage from './pages/ComparePage';
 import IdentityDetailPage from './pages/IdentityDetailPage';
-import GeneralPage from './pages/GeneralPage';
 import DesignPage from './pages/DesignPage';
-const PAGE_LABELS: Record<string, string> = {
-  '/stats': 'Stats',
-  '/general': 'General',
-  '/range': 'Range',
-  '/graph': 'Results',
-  '/sessions': 'Sessions',
-  '/hands': 'Hands',
-  '/cash-drop': 'Cash Drop',
-  '/players': 'Players',
-  '/population': 'Population',
-  '/compare': 'Compare',
-  '/settings': 'Settings',
-};
-
-function AppBreadcrumb() {
-  const { pathname } = useLocation();
-
-  // Build breadcrumb segments from pathname
-  const segments: { label: string; href?: string }[] = [];
-
-  // Find the top-level page
-  const topPath = '/' + pathname.split('/').filter(Boolean)[0];
-  const topLabel = PAGE_LABELS[topPath];
-
-  if (!topLabel) return null;
-
-  // Check if we have a sub-page (e.g., /sessions/123 or /stats/vpip)
-  const parts = pathname.split('/').filter(Boolean);
-  if (parts.length > 1 && topPath === '/sessions') {
-    segments.push({ label: topLabel, href: topPath });
-    segments.push({ label: `Session #${parts[1]}` });
-  } else if (parts.length > 1 && topPath === '/stats') {
-    segments.push({ label: topLabel, href: topPath });
-    segments.push({ label: getStatDisplayName(parts[1]) });
-  } else if (parts.length > 1 && topPath === '/players') {
-    segments.push({ label: topLabel, href: topPath });
-    if (parts[1] === 'identity' && parts[2]) {
-      segments.push({ label: `Identity #${parts[2]}` });
-    } else {
-      segments.push({ label: `Player #${parts[1]}` });
-    }
-  } else if (parts.length > 1 && topPath === '/settings') {
-    segments.push({ label: topLabel });
-    const subLabels: Record<string, string> = { workspaces: 'Workspaces' };
-    segments.push({ label: subLabels[parts[1]] ?? parts[1] });
-  } else {
-    segments.push({ label: topLabel });
-  }
-
-  return (
-    <Breadcrumb>
-      <BreadcrumbList>
-        {segments.map((seg, i) => {
-          const isLast = i === segments.length - 1;
-          return (
-            <BreadcrumbItem key={i} className={i === 0 ? '' : ''}>
-              {i > 0 && <BreadcrumbSeparator />}
-              {isLast ? (
-                <BreadcrumbPage>{seg.label}</BreadcrumbPage>
-              ) : (
-                <BreadcrumbLink asChild>
-                  <Link to={seg.href!}>{seg.label}</Link>
-                </BreadcrumbLink>
-              )}
-            </BreadcrumbItem>
-          );
-        })}
-      </BreadcrumbList>
-    </Breadcrumb>
-  );
-}
 
 export default function App() {
   return (
@@ -112,43 +31,44 @@ export default function App() {
     <WorkspaceProvider>
     <BrowserRouter>
       <ImportProvider>
-        <SidebarProvider>
-          <AppSidebar />
-          <SidebarInset>
-            <header className="flex h-10 shrink-0 items-center gap-2 border-b border-border px-4">
-              <SidebarTrigger className="-ml-1" />
-              <Separator orientation="vertical" className="mr-2 data-[orientation=vertical]:h-4" />
-              <AppBreadcrumb />
-            </header>
-            <main className="flex-1 p-4">
-              <Routes>
-                <Route path="/" element={<Navigate to="/graph" replace />} />
-                <Route path="/stats" element={<StatsPage />} />
-                <Route path="/stats/:statKey" element={<StatsPage />} />
-                <Route path="/general" element={<GeneralPage />} />
-                <Route path="/design" element={<DesignPage />} />
-                <Route path="/graph" element={<GraphPage />} />
-                <Route path="/range" element={<RangePage />} />
-                <Route path="/hands" element={<HandsPage />} />
-                <Route path="/sessions" element={<SessionsPage />} />
-                <Route path="/sessions/:sessionIndex" element={<SessionsPage />} />
-                <Route path="/cash-drop" element={<CashDropPage />} />
-                <Route path="/players" element={<PlayersPage />} />
-                <Route path="/players/identity/:identityId" element={<IdentityDetailPage />} />
-                <Route path="/players/:playerId" element={<PlayerProfilePage />} />
-                <Route path="/population" element={<PopulationPage />} />
-                <Route path="/compare" element={<ComparePage />} />
-                <Route path="/settings/workspaces" element={<WorkspaceSettingsPage />} />
-                <Route path="*" element={<Navigate to="/graph" replace />} />
-              </Routes>
-            </main>
-            <DbRecoveryBanner />
-            <RebuildBanner />
-            <UpdateBanner />
-          </SidebarInset>
-        </SidebarProvider>
+        <AppShell>
+          <Routes>
+            <Route path="/" element={<HomeRedirect />} />
+
+            {/* Main screens */}
+            <Route path="/reports" element={<WelcomeGate><ReportsPage /></WelcomeGate>} />
+            <Route path="/statistics" element={<WelcomeGate><GeneralPage /></WelcomeGate>} />
+            <Route path="/sessions" element={<WelcomeGate><SessionsPage /></WelcomeGate>} />
+            <Route path="/sessions/:sessionIndex" element={<WelcomeGate><SessionsPage /></WelcomeGate>} />
+            <Route path="/marked" element={<MarkedHandsPage />} />
+
+            {/* OHM Extras */}
+            <Route path="/extras/stats" element={<StatsPage />} />
+            <Route path="/extras/stats/:statKey" element={<StatsPage />} />
+            <Route path="/extras/compare" element={<ComparePage />} />
+            <Route path="/extras/cash-drop" element={<CashDropPage />} />
+            <Route path="/extras/population" element={<PopulationPage />} />
+            <Route path="/extras/players" element={<PlayersPage />} />
+            <Route path="/extras/players/identity/:identityId" element={<IdentityDetailPage />} />
+            <Route path="/extras/players/:playerId" element={<PlayerProfilePage />} />
+
+            {/* System */}
+            <Route path="/databases" element={<DatabasesPage />} />
+            <Route path="/configuration" element={<ConfigurationPage />} />
+            <Route path="/configuration/:section" element={<ConfigurationPage />} />
+            <Route path="/design" element={<DesignPage />} />
+
+            {/* Old URLs keep working: /graph -> /reports?tab=graph, /stats/x -> /extras/stats/x ... */}
+            {LEGACY_PATHS.map((from) => (
+              <Route key={from} path={from} element={<LegacyRedirect from={from} />} />
+            ))}
+
+            <Route path="*" element={<Navigate to={DEFAULT_ROUTE} replace />} />
+          </Routes>
+        </AppShell>
         <ImportOverlay />
         <DragDropOverlay />
+        <Toaster position="bottom-right" offset={{ bottom: 40, right: 16 }} />
       </ImportProvider>
     </BrowserRouter>
     </WorkspaceProvider>

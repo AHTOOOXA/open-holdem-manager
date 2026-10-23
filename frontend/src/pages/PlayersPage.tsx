@@ -303,7 +303,7 @@ export default function PlayersPage() {
               <IdentityCard
                 key={id.id}
                 identity={id}
-                onClick={() => navigate(`/players/identity/${id.id}`)}
+                onClick={() => navigate(`/extras/players/identity/${id.id}`)}
               />
             ))}
           </div>
@@ -408,7 +408,7 @@ export default function PlayersPage() {
                     >
                       <TableCell
                         className="py-1.5 px-2 font-medium cursor-pointer"
-                        onClick={() => navigate(`/players/${p.id}`)}
+                        onClick={() => navigate(`/extras/players/${p.id}`)}
                       >
                         {p.username}
                       </TableCell>

@@ -148,7 +148,7 @@ export default function IdentityDetailPage() {
     mutationFn: () => deleteIdentity(id),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: queryKeys.identities.list });
-      navigate('/players');
+      navigate('/extras/players');
     },
   });
 
@@ -185,7 +185,7 @@ export default function IdentityDetailPage() {
     <div className="max-w-3xl space-y-6">
       {/* Header */}
       <div className="flex items-center gap-3">
-        <button onClick={() => navigate('/players')} className="text-text-muted hover:text-text">
+        <button onClick={() => navigate('/extras/players')} className="text-text-muted hover:text-text">
           <ArrowLeft className="w-4 h-4" />
         </button>
         <div className="flex items-center gap-2 flex-1">

@@ -4,9 +4,9 @@ import StatsPage from '@/pages/StatsPage';
 export default function ShowcaseStats() {
   return (
     <div className="rounded-xl border border-border overflow-hidden bg-background">
-      <MemoryRouter initialEntries={['/stats']}>
+      <MemoryRouter initialEntries={['/extras/stats']}>
         <Routes>
-          <Route path="/stats/:statKey" element={
+          <Route path="/extras/stats/:statKey" element={
             <div className="px-2 py-3">
               <StatsPage />
             </div>

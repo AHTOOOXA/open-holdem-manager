@@ -21,7 +21,7 @@ export default function DbRecoveryBanner() {
   if (!recovery || dismissed) return null;
 
   return (
-    <div className="sticky bottom-0 flex items-start gap-3 border-t border-border bg-surface px-4 py-2 text-xs">
+    <div className="flex items-start gap-3 border-b border-border bg-surface px-4 py-2 text-xs">
       <AlertTriangle className="mt-0.5 size-4 shrink-0 text-red" />
       <div className="min-w-0 flex-1 text-muted-foreground">
         <span className="font-medium text-foreground">The database was recovered after an unclean shutdown.</span>{' '}
