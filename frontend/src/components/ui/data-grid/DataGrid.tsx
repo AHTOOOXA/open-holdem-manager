@@ -292,15 +292,26 @@ export function DataGrid<T extends RowData>({
     [prepared],
   );
 
-  const [columnVisibility, setColumnVisibility] = useState<Record<string, boolean>>(() =>
+  const [columnVisibility, setColumnVisibilityState] = useState<Record<string, boolean>>(() =>
     visibilityFromHidden(readPrefs(persistKey, prefSpec, defaultHiddenColumns).hidden),
   );
-  const [columnSizing, setColumnSizing] = useState<Record<string, number>>(
+  const [columnSizing, setColumnSizingState] = useState<Record<string, number>>(
     () => readPrefs(persistKey, prefSpec, defaultHiddenColumns).widths,
   );
 
-  // Persist debounced: a drag resizes every frame, storage is written once it settles (and on unmount)
+  // Persist debounced: a drag resizes every frame, storage is written once it settles (and on unmount).
+  // Only user changes are written: saving the initial (default) layout would freeze it, because
+  // stored prefs win over defaults that a later version changes. Reset removes the stored prefs.
   const pendingSave = useRef<{ key: string; value: string } | null>(null);
+  const userChanged = useRef(false);
+  const setColumnVisibility = useCallback((u: React.SetStateAction<Record<string, boolean>>) => {
+    userChanged.current = true;
+    setColumnVisibilityState(u);
+  }, []);
+  const setColumnSizing = useCallback((u: React.SetStateAction<Record<string, number>>) => {
+    userChanged.current = true;
+    setColumnSizingState(u);
+  }, []);
   const flushSave = useCallback(() => {
     const p = pendingSave.current;
     pendingSave.current = null;
@@ -312,7 +323,7 @@ export function DataGrid<T extends RowData>({
     }
   }, []);
   useEffect(() => {
-    if (!persistKey) return;
+    if (!persistKey || !userChanged.current) return;
     pendingSave.current = {
       key: persistKey,
       value: serializeGridPrefs({ hidden: hiddenFromVisibility(columnVisibility), widths: columnSizing }),
@@ -621,8 +632,18 @@ export function DataGrid<T extends RowData>({
   const stickyLeft = leadW;
 
   const resetColumns = () => {
-    setColumnVisibility(visibilityFromHidden(defaultHiddenFor(prefSpec, defaultHiddenColumns)));
-    setColumnSizing({});
+    if (persistKey) {
+      pendingSave.current = null;
+      try {
+        localStorage.removeItem(PREFS_PREFIX + persistKey);
+      } catch {
+        // localStorage unavailable
+      }
+    }
+    // Back to defaults, and not stored, so later default changes apply again
+    userChanged.current = false;
+    setColumnVisibilityState(visibilityFromHidden(defaultHiddenFor(prefSpec, defaultHiddenColumns)));
+    setColumnSizingState({});
   };
 
   const pickerItems = table.getAllLeafColumns().map((c) => ({
