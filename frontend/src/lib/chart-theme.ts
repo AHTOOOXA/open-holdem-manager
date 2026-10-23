@@ -48,3 +48,12 @@ export function moneyHeat(value: number, max: number): string {
   const base = value > 0 ? 'var(--money-pos)' : 'var(--money-neg)';
   return `color-mix(in oklch, ${base} ${alphaPct}%, transparent)`;
 }
+
+/** Fill alpha (percent of the primary colour) per range level 0-3. */
+export const RANGE_LEVEL_ALPHA = [0, 18, 36, 60] as const;
+
+/** Preflop range grid fill for a level 0-3: the primary colour at 0 / 18 / 36 / 60 percent. */
+export function rangeLevelShade(level: number): string {
+  const i = Math.max(0, Math.min(RANGE_LEVEL_ALPHA.length - 1, Math.round(level)));
+  return heat(RANGE_LEVEL_ALPHA[i]);
+}
