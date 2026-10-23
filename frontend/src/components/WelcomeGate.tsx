@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { useImport } from '@/contexts/ImportContext';
 import { useWorkspace } from '@/contexts/WorkspaceContext';
-import { progressLine, progressPct, stageLabel, welcomeState } from '@/lib/import-ui';
+import { progressLine, BUSY_TITLE, progressPct, stageLabel, welcomeState } from '@/lib/import-ui';
 
 /**
  * Wraps Reports, Statistics and Sessions: shows the welcome view instead of the page while the
@@ -13,6 +13,9 @@ import { progressLine, progressPct, stageLabel, welcomeState } from '@/lib/impor
 export default function WelcomeGate({ children }: { children: ReactNode }) {
   const { activeWorkspace, activeWorkspaceId } = useWorkspace();
   const { phase, progress, importKind, importWorkspaceId, importWasEmpty, setShowImportOverlay, startSampleImport } = useImport();
+
+  const busy = phase !== 'idle';
+  const busyTitle = busy ? BUSY_TITLE : undefined;
 
   const state = welcomeState({
     handCount: activeWorkspace ? activeWorkspace.hand_count : null,
@@ -41,13 +44,13 @@ export default function WelcomeGate({ children }: { children: ReactNode }) {
             Import your hand histories to see your stats. Everything stays on this computer.
           </p>
           <div className="flex flex-wrap items-center justify-center gap-2">
-            <Button onClick={() => setShowImportOverlay(true)}>
+            <Button disabled={busy} title={busyTitle} onClick={() => setShowImportOverlay(true)}>
               <FolderUp /> Import hand histories
             </Button>
-            <Button variant="outline" onClick={() => setShowImportOverlay(true)}>
+            <Button variant="outline" disabled={busy} title={busyTitle} onClick={() => setShowImportOverlay(true)}>
               <Database /> Import from Hand2Note
             </Button>
-            <Button variant="ghost" onClick={() => void startSampleImport()}>
+            <Button variant="ghost" disabled={busy} title={busyTitle} onClick={() => void startSampleImport()}>
               <FlaskConical /> Use sample data
             </Button>
           </div>

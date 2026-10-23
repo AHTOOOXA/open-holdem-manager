@@ -34,6 +34,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useImport } from '@/contexts/ImportContext';
 import { useWorkspace } from '@/contexts/WorkspaceContext';
+import { BUSY_TITLE } from '@/lib/import-ui';
 import { REPO_URL, openExternal } from '@/lib/electron';
 
 type Pending =
@@ -104,7 +105,6 @@ export default function AppMenuBar() {
   const navigate = useNavigate();
   const {
     phase,
-    handCount,
     setShowImportOverlay,
     startSampleImport,
     startRebuild,
@@ -112,7 +112,7 @@ export default function AppMenuBar() {
     importDatabase,
     clearDb,
   } = useImport();
-  const { activeWorkspace } = useWorkspace();
+  const { activeWorkspace, totalHands } = useWorkspace();
   const fileRef = useRef<HTMLInputElement>(null);
   const [pending, setPending] = useState<Pending>(null);
   const [typed, setTyped] = useState('');
@@ -167,16 +167,16 @@ export default function AppMenuBar() {
         <MenubarMenu>
           <MenubarTrigger className={triggerClass}>File</MenubarTrigger>
           <MenubarContent>
-            <MenubarItem onSelect={() => setShowImportOverlay(true)}>
+            <MenubarItem disabled={phase !== 'idle'} title={phase !== 'idle' ? BUSY_TITLE : undefined} onSelect={() => setShowImportOverlay(true)}>
               <FolderUp />
               Import Hand Histories…
             </MenubarItem>
-            <MenubarItem onSelect={() => setShowImportOverlay(true)}>
+            <MenubarItem disabled={phase !== 'idle'} title={phase !== 'idle' ? BUSY_TITLE : undefined} onSelect={() => setShowImportOverlay(true)}>
               <FolderInput />
               Import from Hand2Note…
             </MenubarItem>
             <MenubarSeparator />
-            <MenubarItem disabled={phase !== 'idle'} onSelect={runSample}>
+            <MenubarItem disabled={phase !== 'idle'} title={phase !== 'idle' ? BUSY_TITLE : undefined} onSelect={runSample}>
               <Sparkles />
               Use Sample Data
             </MenubarItem>
@@ -187,14 +187,14 @@ export default function AppMenuBar() {
           <MenubarTrigger className={triggerClass}>Database</MenubarTrigger>
           <MenubarContent>
             <MenubarItem
-              disabled={phase !== 'idle' || handCount === 0}
+              disabled={phase !== 'idle' || totalHands === 0}
               onSelect={() => setPending({ kind: 'rebuild' })}
             >
               <RefreshCw />
               Rebuild Statistics…
             </MenubarItem>
             <MenubarSeparator />
-            <MenubarItem disabled={busy || handCount === 0} onSelect={runBackup}>
+            <MenubarItem disabled={busy || totalHands === 0} onSelect={runBackup}>
               <DatabaseBackup />
               Back Up Database…
             </MenubarItem>
@@ -256,7 +256,7 @@ export default function AppMenuBar() {
         open={pending?.kind === 'rebuild'}
         onOpenChange={(o) => !o && close()}
         title="Rebuild statistics?"
-        description={`Recomputes every stat for all ${handCount.toLocaleString()} stored hands with the current parser. The app stays usable while it runs; progress shows in the status bar.`}
+        description={`Recomputes every stat for all ${totalHands.toLocaleString()} stored hands with the current parser. The app stays usable while it runs; progress shows in the status bar.`}
         confirmLabel="Rebuild"
         onConfirm={() => {
           close();

@@ -7,10 +7,11 @@ import { useWorkspace, type Workspace } from '@/contexts/WorkspaceContext';
 import { createWorkspace, getWorkspaces } from '@/lib/api';
 import {
   importCompletedMessage, importFailedMessage, importStartedMessage, rebuildCompletedMessage,
-  type ImportKind,
+  type ImportKind, isZipBytes, totalHands,
 } from '@/lib/import-ui';
 
 const SAMPLE_WORKSPACE_NAME = 'Sample data';
+const BUSY_TOAST = 'An import is already running';
 
 type Phase = 'idle' | 'uploading' | 'rebuilding' | 'done' | 'error';
 
@@ -74,7 +75,10 @@ function ImportProvider({ children }: { children: ReactNode }) {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [showImportOverlay, setShowImportOverlay] = useState(false);
   const [autoRebuildProgress, setAutoRebuildProgress] = useState<RebuildProgress | null>(null);
-  const rebuildPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const rebuildPollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const stoppedRef = useRef(false);
+  const rebuildTotalRef = useRef(0);
+  const importInFlightRef = useRef(false);
   const [importKind, setImportKind] = useState<ImportKind>('files');
   const [target, setTarget] = useState<{ id: number; wasEmpty: boolean } | null>(null);
 
@@ -91,28 +95,39 @@ function ImportProvider({ children }: { children: ReactNode }) {
 
   const startRebuildPolling = useCallback((initialProgress?: RebuildProgress) => {
     setPhase('rebuilding');
-    if (initialProgress) setAutoRebuildProgress(initialProgress);
+    if (initialProgress) {
+      setAutoRebuildProgress(initialProgress);
+      rebuildTotalRef.current = initialProgress.total;
+    }
 
-    if (rebuildPollRef.current) clearInterval(rebuildPollRef.current);
-    rebuildPollRef.current = setInterval(async () => {
+    if (rebuildPollRef.current) clearTimeout(rebuildPollRef.current);
+    stoppedRef.current = false;
+    // setTimeout chain: the next tick is only scheduled after the previous one finished,
+    // so two ticks can never both observe "done".
+    const tick = async () => {
+      let again = true;
       try {
         const h = await getHealth();
+        if (stoppedRef.current) return;
         setHandCount(h.hands);
         if (h.rebuilding) {
+          if (h.rebuild_progress) rebuildTotalRef.current = h.rebuild_progress.total;
           setAutoRebuildProgress(h.rebuild_progress ?? null);
         } else {
-          if (rebuildPollRef.current) clearInterval(rebuildPollRef.current);
+          again = false;
           rebuildPollRef.current = null;
           setPhase('idle');
           setAutoRebuildProgress(null);
           queryClient.invalidateQueries();
-          const m = rebuildCompletedMessage(h.hands);
+          const m = rebuildCompletedMessage(rebuildTotalRef.current || totalHands(workspacesRef.current) || h.hands);
           toast.success(m.title, { description: m.description });
         }
       } catch {
         // ignore transient errors
       }
-    }, 1000);
+      if (again && !stoppedRef.current) rebuildPollRef.current = setTimeout(tick, 1000);
+    };
+    rebuildPollRef.current = setTimeout(tick, 1000);
   }, []);
 
   useEffect(() => {
@@ -125,7 +140,9 @@ function ImportProvider({ children }: { children: ReactNode }) {
     }).catch(() => {});
 
     return () => {
-      if (rebuildPollRef.current) clearInterval(rebuildPollRef.current);
+      stoppedRef.current = true;
+      if (rebuildPollRef.current) clearTimeout(rebuildPollRef.current);
+      rebuildPollRef.current = null;
     };
   }, [startRebuildPolling]);
 
@@ -163,13 +180,13 @@ function ImportProvider({ children }: { children: ReactNode }) {
     if (ws.handCount > 0 && started) toast(importStartedMessage(kind, 0).title, { description: started });
   }, []);
 
+  /** Runs an upload. The caller already owns importInFlightRef. */
   const runFileImport = useCallback(async (files: File[], ws: { id: number; handCount: number }, kind: ImportKind) => {
-    if (phase !== 'idle') return;
-
     const validFiles = files.filter(
       (f) => f.name.endsWith('.txt') || f.name.endsWith('.zip')
     );
     if (validFiles.length === 0) {
+      setPhase('idle');
       toast.error('Import failed', { description: 'Please upload .txt or .zip hand history files' });
       return;
     }
@@ -185,20 +202,52 @@ function ImportProvider({ children }: { children: ReactNode }) {
     } catch (e) {
       await finishImport(null, e);
     }
-  }, [phase, beginImport, finishImport]);
+  }, [beginImport, finishImport]);
+
+  /** Claims the single import slot synchronously; false (with a toast) if one is running. */
+  const claimImport = useCallback((): boolean => {
+    if (importInFlightRef.current) {
+      toast(BUSY_TOAST);
+      return false;
+    }
+    importInFlightRef.current = true;
+    return true;
+  }, []);
 
   const startImport = useCallback(async (files: File[]) => {
-    const ws = activeRef.current;
-    await runFileImport(files, ws, 'files');
-  }, [runFileImport]);
+    if (!claimImport()) return;
+    setPhase('uploading');
+    try {
+      await runFileImport(files, activeRef.current, 'files');
+    } finally {
+      importInFlightRef.current = false;
+    }
+  }, [claimImport, runFileImport]);
 
   const startSampleImport = useCallback(async () => {
-    if (phase !== 'idle') return;
+    if (!claimImport()) return;
+    setPhase('uploading');
+    setProgress(null);
+    let started = false;
     try {
+      // Fetch and validate first: nothing is created or switched if the bundle is missing.
+      const url = new URL('sample/ohm-sample-hands.zip', new URL(import.meta.env.BASE_URL, window.location.origin));
+      let blob: Blob | null = null;
       let ws = workspacesRef.current.find((w) => w.name === SAMPLE_WORKSPACE_NAME);
       if (!ws) {
         // The list may be stale (e.g. created in another session)
         ws = (await getWorkspaces()).find((w) => w.name === SAMPLE_WORKSPACE_NAME);
+      }
+      if (!ws || ws.hand_count === 0) {
+        const resp = await fetch(url);
+        const ct = resp.headers.get('content-type') ?? '';
+        const head = resp.ok && !ct.includes('text/html') ? await resp.blob() : null;
+        if (!head || !isZipBytes(new Uint8Array(await head.slice(0, 2).arrayBuffer()))) {
+          toast.error('Sample data not found', { description: 'The bundled sample hands could not be loaded.' });
+          setPhase('idle');
+          return;
+        }
+        blob = head;
       }
       if (!ws) {
         ws = await createWorkspace({ name: SAMPLE_WORKSPACE_NAME, description: 'Bundled sample: 2,000 GGPoker hands' });
@@ -206,22 +255,24 @@ function ImportProvider({ children }: { children: ReactNode }) {
       // Writes the id to localStorage synchronously: the upload below picks it up as workspace_id.
       setActiveRef.current(ws.id);
       await refetchWorkspacesRef.current();
-      if (ws.hand_count > 0) {
+      if (!blob) {
+        setPhase('idle');
         toast('Switched to sample data');
         return;
       }
-      const url = new URL(`${import.meta.env.BASE_URL}sample/ohm-sample-hands.zip`, document.baseURI);
-      const resp = await fetch(url);
-      if (!resp.ok) throw new Error(`Could not load the sample hands (${resp.status})`);
-      const file = new File([await resp.blob()], 'ohm-sample-hands.zip', { type: 'application/zip' });
+      started = true;
+      const file = new File([blob], 'ohm-sample-hands.zip', { type: 'application/zip' });
       await runFileImport([file], { id: ws.id, handCount: 0 }, 'sample');
     } catch (e) {
+      if (!started) setPhase('idle');
       toast.error('Sample data failed', { description: e instanceof Error ? e.message : 'Unknown error' });
+    } finally {
+      importInFlightRef.current = false;
     }
-  }, [phase, runFileImport]);
+  }, [claimImport, runFileImport]);
 
   const startH2NImport = useCallback(async (path: string, name: string) => {
-    if (phase !== 'idle') return;
+    if (!claimImport()) return;
     const ws = activeRef.current;
     setFileInfo(null);
     setSourceLabel(`Hand2Note database "${name}"`);
@@ -231,11 +282,16 @@ function ImportProvider({ children }: { children: ReactNode }) {
       await finishImport(res, null);
     } catch (e) {
       await finishImport(null, e);
+    } finally {
+      importInFlightRef.current = false;
     }
-  }, [phase, beginImport, finishImport]);
+  }, [claimImport, beginImport, finishImport]);
 
   const startRebuild = useCallback(async () => {
-    if (phase !== 'idle') return;
+    if (importInFlightRef.current || rebuildPollRef.current) {
+      toast(BUSY_TOAST);
+      return;
+    }
 
     try {
       const res = await rebuildHands();
@@ -246,7 +302,7 @@ function ImportProvider({ children }: { children: ReactNode }) {
     } catch (e) {
       toast.error('Rebuild failed', { description: e instanceof Error ? e.message : 'Unknown error' });
     }
-  }, [phase, startRebuildPolling]);
+  }, [startRebuildPolling]);
 
   const clearDb = useCallback(async () => {
     await clearDatabase();

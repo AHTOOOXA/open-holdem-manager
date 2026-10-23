@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
+import { toast } from 'sonner';
 import { deleteWorkspace } from '@/lib/api';
 import type { Workspace } from '@/contexts/WorkspaceContext';
 import { Button } from '@/components/ui/button';
@@ -22,16 +23,25 @@ interface Props {
 export default function DeleteWorkspaceDialog({ workspace, onClose, onDeleted }: Props) {
   const [confirm, setConfirm] = useState('');
   const [deleting, setDeleting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const busyRef = useRef(false);
   const matches = confirm === workspace.name;
 
   const run = async () => {
-    if (!matches) return;
+    if (!matches || busyRef.current) return;
+    busyRef.current = true;
     setDeleting(true);
+    setError(null);
     try {
       await deleteWorkspace(workspace.id);
       await onDeleted();
       onClose();
+    } catch (e) {
+      const msg = e instanceof Error && e.message ? e.message : 'Could not delete the workspace';
+      setError(msg);
+      toast.error('Delete failed', { description: msg });
     } finally {
+      busyRef.current = false;
       setDeleting(false);
     }
   };
@@ -56,6 +66,7 @@ export default function DeleteWorkspaceDialog({ workspace, onClose, onDeleted }:
             autoFocus
             onKeyDown={(e) => { if (e.key === 'Enter') void run(); }}
           />
+          {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose} disabled={deleting}>Cancel</Button>

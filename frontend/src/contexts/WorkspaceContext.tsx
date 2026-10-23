@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useCallback, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { getWorkspaces, getCheckpoints } from '@/lib/api';
+import { totalHands as sumHands } from '@/lib/import-ui';
 
 export interface Workspace {
   id: number;
@@ -28,6 +29,8 @@ interface WorkspaceContextValue {
   activeWorkspaceId: number;
   activeWorkspace: Workspace | null;
   checkpoints: Checkpoint[];
+  /** Hands across every workspace (whole-database actions) */
+  totalHands: number;
   setActiveWorkspaceId: (id: number) => void;
   refetchWorkspaces: () => Promise<void>;
   refetchCheckpoints: () => Promise<void>;
@@ -102,6 +105,7 @@ function WorkspaceProvider({ children }: { children: ReactNode }) {
         activeWorkspaceId,
         activeWorkspace,
         checkpoints,
+        totalHands: sumHands(workspaces),
         setActiveWorkspaceId,
         refetchWorkspaces,
         refetchCheckpoints,
