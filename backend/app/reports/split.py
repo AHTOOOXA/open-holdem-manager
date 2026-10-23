@@ -272,7 +272,7 @@ def plain_split(res: Resolution, typ: str) -> tuple[list[dict], dict | None]:
                 parts.append("Fast Fold")
             mode = "fast" if fast else "regular"
             rows.append(_row(f"{stakes}|{mode}|{tsize}", ", ".join(parts),
-                             {"k": "game", "stakes": stakes, "mode": mode, "tsize": tsize or 0},
+                             {"k": "game", "stakes": stakes, "mode": mode, "tsize": tsize},
                              plain_values(acc)))
     elif typ == "positions":
         groups = _group_plain(res, lambda h: h.pos)
@@ -429,6 +429,10 @@ def action_split(db, res: Resolution, typ: str) -> tuple[list[dict], list[dict],
             for a in accs:
                 t.merge(a)
             summary = action_values(t, total, with_ap)
+            # Opportunities of sibling rows belong to one decision: summing them is meaningless
+            summary["opps"] = None
+            summary["stat_value"] = None
+            summary["stat_value_opps"] = None
         return columns, rows, summary
     # bet sizing
     buckets, baccs = sizing_table(db, res)

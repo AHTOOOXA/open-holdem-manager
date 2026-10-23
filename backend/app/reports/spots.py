@@ -535,6 +535,8 @@ def next_spot(ctx: SpotCtx, street: int, key: str) -> SpotCtx:
                  "fold": ("Fold, Preflop", None), "check": ("Check, Preflop", None),
                  "fold_vs_raise": ("Fold to Open Raise", 2),
                  "call_vs_raise": ("Call Open Raise", 2), "raise_vs_raise": ("3-Bet", 3)}
+        if key not in names:  # not a hand-start action: generic name
+            return generic
         name, lvl = names[key]
         return replace(base, name=name, level=lvl, limp=key == "call",
                        villain_aggr=key == "call_vs_raise", named=key != "fold"

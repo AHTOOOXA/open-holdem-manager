@@ -30,7 +30,8 @@ def get_graph(
     player_id: int | None = Query(None, description="Defaults to the workspace hero"),
     chain: str | None = Query(None, description="Reports filter chain: URL-encoded JSON Step[] "
                               "(frontend/src/lib/reports/types.ts); combined with the other "
-                              "filters with AND"),
+                              "filters with AND. Any chain, even [], keeps only H2N-valid "
+                              "hands (as the Reports counts do)"),
 ):
     from app.api.reports_lite import chain_hand_ids
 

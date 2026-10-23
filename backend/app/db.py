@@ -1204,6 +1204,8 @@ def _check_stat_version(conn: duckdb.DuckDBPyConnection) -> None:
         except Exception:
             logger.exception("Background rebuild failed")
         finally:
+            from app import data_generation
+            data_generation.bump()
             _rebuild_status["active"] = False
 
     t = threading.Thread(target=_bg_rebuild, daemon=True, name="stat-rebuild")

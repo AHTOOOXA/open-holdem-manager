@@ -35,10 +35,13 @@ def list_hands(
     workspace_id: int = Query(1),
     chain: Optional[str] = Query(None, description="Reports filter chain: URL-encoded JSON Step[] "
                                  "(frontend/src/lib/reports/types.ts), resolved for player_id "
-                                 "or the hero; combined with the other filters with AND"),
+                                 "or the hero; combined with the other filters with AND. Any "
+                                 "chain, even [], keeps only H2N-valid hands (as the Reports "
+                                 "counts do)"),
 ):
     db = get_read_cursor()
-    hero_id = get_hero_player_id(db, workspace_id)
+    # The listed rows are the subject's: player_id when given, else the hero.
+    hero_id = player_id if player_id is not None else get_hero_player_id(db, workspace_id)
     if hero_id is None:
         return HandListResponse(hands=[], total=0, page=1, per_page=per_page, total_pages=0)
 
@@ -47,7 +50,11 @@ def list_hands(
     if chain_ids is not None and not chain_ids:
         return HandListResponse(hands=[], total=0, page=1, per_page=per_page, total_pages=1)
 
-    hero_username = get_hero_username(db, workspace_id)
+    if player_id is not None:
+        urow = db.execute("SELECT username FROM players WHERE id = ?", [player_id]).fetchone()
+        hero_username = urow[0] if urow else None
+    else:
+        hero_username = get_hero_username(db, workspace_id)
     params: list = [hero_id]
     where_clauses: list[str] = ["h.workspace_id = ?"]
     params.append(workspace_id)

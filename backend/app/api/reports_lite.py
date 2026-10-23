@@ -77,16 +77,19 @@ def get_quick_filters() -> list[dict]:
 
 def chain_hand_ids(db, workspace_id: int, player_id: int | None, chain: str | None
                    ) -> list[str] | None:
-    """Case hand ids of a URL-encoded JSON chain (None: no chain given); 422 if invalid."""
+    """Case hand ids of a URL-encoded JSON chain (None: no `chain` param given); 422 if invalid.
+
+    Any given chain, even an empty `[]`, resolves to the hands the Reports spot count uses:
+    `COALESCE(hp.h2n_valid, TRUE)` is applied, so page 0 (`chain=[]`) shows the same counts
+    as the deeper pages. Without a `chain` param the endpoint's own filters apply unchanged.
+    """
     if chain is None or not chain.strip():
         return None
     try:
         steps = parse_chain(chain)
+        return resolve(db, workspace_id, player_id, steps).case_ids
     except ValueError as e:
         raise HTTPException(status_code=422, detail=f"Invalid chain: {e}")
-    if not steps:
-        return None
-    return resolve(db, workspace_id, player_id, steps).case_ids
 
 
 __all__ = ["router", "chain_hand_ids"]
