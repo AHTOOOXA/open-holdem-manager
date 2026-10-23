@@ -1,7 +1,6 @@
 import { useCallback, useState, type ReactNode } from 'react';
 import { useLocation } from 'react-router-dom';
-import { SidebarInset, SidebarProvider, SidebarTrigger } from '@/components/ui/sidebar';
-import { Separator } from '@/components/ui/separator';
+import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar';
 import AppSidebar from '@/components/AppSidebar';
 import DbRecoveryBanner from '@/components/DbRecoveryBanner';
 import { RAIL_LABELS, railPathFor } from '@/lib/routes';
@@ -44,8 +43,6 @@ export default function AppShell({ children }: { children: ReactNode }) {
       <AppSidebar />
       <SidebarInset>
         <header className="flex h-(--shell-header-h) shrink-0 items-center gap-1 border-b border-border px-2">
-          <SidebarTrigger className="text-muted-foreground hover:bg-overlay-hover hover:text-foreground" />
-          <Separator orientation="vertical" className="mx-1 data-[orientation=vertical]:h-4" />
           <AppMenuBar />
           {rail && (
             <span className="ml-auto truncate pl-3 text-xs text-subtle-foreground">

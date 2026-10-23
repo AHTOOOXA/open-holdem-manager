@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { Progress } from '@/components/ui/progress';
 import WorkspaceSwitcher from '@/components/WorkspaceSwitcher';
+import { useLocation } from 'react-router-dom';
 import { useImport } from '@/contexts/ImportContext';
+import { useWorkspace } from '@/contexts/WorkspaceContext';
 import { getElectronAPI } from '@/lib/electron';
 import type { ImportProgress } from '@/lib/api';
 import UpdateNotice from './UpdateNotice';
@@ -18,7 +20,7 @@ function ActivityBar({ value, label }: { value: number; label: string }) {
   return <Progress value={value} aria-label={label} className="h-1 w-24 shrink-0 sm:w-32" />;
 }
 
-function ImportActivity({ progress, onOpen }: { progress: ImportProgress | null; onOpen: () => void }) {
+function ImportActivity({ progress }: { progress: ImportProgress | null }) {
   const total = progress?.total ?? progress?.total_hands;
   const processed = progress?.processed ?? 0;
   const parts: string[] = [];
@@ -29,17 +31,12 @@ function ImportActivity({ progress, onOpen }: { progress: ImportProgress | null;
   const text = parts.length > 0 ? parts.join(', ') : 'preparing…';
 
   return (
-    <button
-      type="button"
-      onClick={onOpen}
-      title="Show import progress"
-      className="flex min-w-0 items-center gap-2 rounded-control px-1 outline-none hover:bg-overlay-hover hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-    >
+    <div className="flex min-w-0 items-center gap-2 px-1">
       <span className="truncate">
         <span className="text-foreground">Importing:</span> {text}
       </span>
       <ActivityBar value={percentOf(processed, total)} label="Import progress" />
-    </button>
+    </div>
   );
 }
 
@@ -86,17 +83,23 @@ function useAppVersion(): string {
  * available update; first match wins). Right: workspace selector and app version.
  */
 export default function StatusBar() {
-  const { phase, progress, autoRebuildProgress, setShowImportOverlay } = useImport();
+  const { phase, progress, autoRebuildProgress, importWasEmpty, importWorkspaceId } = useImport();
+  const { activeWorkspaceId } = useWorkspace();
+  const { pathname } = useLocation();
   const update = useUpdateState();
   const version = useAppVersion();
 
-  const importing = phase === 'uploading';
+  // While importing into an empty workspace, Reports/Statistics/Sessions show the progress in the
+  // welcome view; don't repeat it here
+  const welcomeShowsProgress =
+    importWasEmpty && importWorkspaceId === activeWorkspaceId && /^\/(reports|statistics|sessions)(\/|$)/.test(pathname);
+  const importing = phase === 'uploading' && !welcomeShowsProgress;
   const rebuilding = phase === 'rebuilding' || autoRebuildProgress != null;
   const busy = importing || rebuilding;
 
   let activity = null;
   if (importing) {
-    activity = <ImportActivity progress={progress} onOpen={() => setShowImportOverlay(true)} />;
+    activity = <ImportActivity progress={progress} />;
   } else if (rebuilding) {
     activity = <RebuildActivity progress={autoRebuildProgress} />;
   } else if (update.version && !update.dismissed) {

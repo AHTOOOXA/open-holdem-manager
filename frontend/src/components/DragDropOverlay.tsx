@@ -2,11 +2,13 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { FolderUp } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useImport } from '@/contexts/ImportContext';
+import { useWorkspace } from '@/contexts/WorkspaceContext';
 import { collectFilesFromEntry } from '@/lib/file-utils';
 import H2NImportSection from '@/components/H2NImportSection';
 
 export default function DragDropOverlay() {
   const { startImport, startH2NImport, phase, showImportOverlay, setShowImportOverlay } = useImport();
+  const { activeWorkspace, workspaces } = useWorkspace();
   const [dragging, setDragging] = useState(false);
   const counterRef = useRef(0);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -120,6 +122,16 @@ export default function DragDropOverlay() {
         </p>
         <p className="text-sm text-text-muted">
           {dragging ? '.txt or .zip hand histories' : 'Drop files here or browse'}
+        </p>
+        <p className="text-sm">
+          <span className="text-muted-foreground">Into workspace </span>
+          <span className="font-medium text-foreground">{activeWorkspace?.name ?? '…'}</span>
+          {!dragging && workspaces.length > 1 && (
+            <span className="text-muted-foreground"> · switch it in the status bar</span>
+          )}
+        </p>
+        <p className="text-center text-xs text-muted-foreground">
+          GGPoker players: close the GG client before running OHM. It is for review after your session.
         </p>
         {!dragging && (
           <>
