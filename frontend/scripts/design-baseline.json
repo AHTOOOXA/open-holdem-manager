@@ -86,9 +86,6 @@
   "src/components/population/SegmentComparison.tsx": {
     "text-arbitrary": 2
   },
-  "src/components/SidebarFooterSettings.tsx": {
-    "text-arbitrary": 2
-  },
   "src/components/stats/CompareTable.tsx": {
     "text-arbitrary": 8
   },

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { ArrowDownToLine, ExternalLink, RotateCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { getLastUpdateState } from '@/components/shell/useUpdateState';
 
 interface ElectronAPI {
   platform?: string;
@@ -18,8 +19,8 @@ export function appVersion(): string {
 
 export default function UpdatesSection() {
   const api = (window as unknown as { electronAPI?: ElectronAPI }).electronAPI;
-  const [version, setVersion] = useState<string | null>(null);
-  const [ready, setReady] = useState(false);
+  const [version, setVersion] = useState<string | null>(() => getLastUpdateState()?.version ?? null);
+  const [ready, setReady] = useState(() => getLastUpdateState()?.ready ?? false);
   const canAutoUpdate = api?.platform === 'win32';
 
   useEffect(() => {

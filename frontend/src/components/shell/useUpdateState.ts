@@ -18,8 +18,16 @@ export interface UpdateState {
   startDownload: () => void;
 }
 
+let lastUpdateState: { version: string; ready: boolean } | null = null;
+
+/** The latest update state, for screens that mount after the event fired. */
+export function getLastUpdateState(): { version: string; ready: boolean } | null {
+  return lastUpdateState;
+}
+
 /** Tells other screens (Configuration → Updates) about the update state. */
 function dispatchUpdateState(state: { version: string; ready: boolean }) {
+  lastUpdateState = state;
   window.dispatchEvent(new CustomEvent('ohm-update-state', { detail: state }));
 }
 
