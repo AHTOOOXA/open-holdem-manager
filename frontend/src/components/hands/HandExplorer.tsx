@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { getHands, getTags } from '@/lib/api';
 import type { HandListParams, HandSummary, TagCount } from '@/lib/api';
@@ -86,7 +86,7 @@ function handColumns(precision: 0 | 1) {
     col.display({
       id: 'preflop_actions',
       header: 'Actions',
-      size: 170,
+      size: 150,
       meta: { title: 'Preflop actions' },
       cell: ({ row }) => <StreetActions items={row.original.preflop_actions} precision={precision} trimFolds />,
     }),
@@ -101,7 +101,7 @@ function handColumns(precision: 0 | 1) {
     col.display({
       id: 'flop_actions',
       header: 'Actions',
-      size: 140,
+      size: 120,
       meta: { title: 'Flop actions' },
       cell: ({ row }) => <StreetActions items={row.original.flop_actions} precision={precision} />,
     }),
@@ -116,7 +116,7 @@ function handColumns(precision: 0 | 1) {
     col.display({
       id: 'turn_actions',
       header: 'Actions',
-      size: 140,
+      size: 120,
       meta: { title: 'Turn actions' },
       cell: ({ row }) => <StreetActions items={row.original.turn_actions} precision={precision} />,
     }),
@@ -131,7 +131,7 @@ function handColumns(precision: 0 | 1) {
     col.display({
       id: 'river_actions',
       header: 'Actions',
-      size: 140,
+      size: 120,
       meta: { title: 'River actions' },
       cell: ({ row }) => <StreetActions items={row.original.river_actions} precision={precision} />,
     }),
@@ -158,13 +158,13 @@ function handColumns(precision: 0 | 1) {
     }),
     col.accessor('played_at', {
       header: 'Date',
-      size: 84,
+      size: 80,
       meta: { align: 'right', sortDescFirst: true, className: 'text-sm text-muted-foreground' },
       cell: (i) => formatRelativeDate(i.getValue()),
     }),
     col.accessor('tags', {
       header: 'Tags',
-      size: 140,
+      size: 130,
       enableSorting: false,
       cell: (i) => {
         const tags = i.getValue();
@@ -180,6 +180,9 @@ function handColumns(precision: 0 | 1) {
     }),
   ]);
 }
+
+/** Columns the narrow landing showcase hides by default (low-value ones, so the rest fits ~1100px). */
+export const COMPACT_HIDDEN_COLUMNS: readonly string[] = ['flop_pot', 'turn_pot', 'river_pot', 'ev_diff', 'stakes', 'river_actions'];
 
 const DEFAULT_GRID_MAX_HEIGHT = 'max(18rem, calc(100dvh - 17rem))';
 
@@ -198,6 +201,8 @@ export interface HandExplorerProps {
   emptyMessage?: string;
   /** Height cap of the hands grid's scroll area (its header stays put while it scrolls) */
   gridMaxHeight?: number | string;
+  /** Column ids hidden until the user stores their own column choice (stored prefs win) */
+  defaultHiddenColumns?: readonly string[];
 }
 
 export default function HandExplorer({
@@ -208,6 +213,7 @@ export default function HandExplorer({
   className,
   emptyMessage,
   gridMaxHeight = DEFAULT_GRID_MAX_HEIGHT,
+  defaultHiddenColumns,
 }: HandExplorerProps) {
   const [page, setPage] = useState(1);
   const [perPage, setPerPage] = useState(defaultPerPage);
@@ -296,26 +302,36 @@ export default function HandExplorer({
   });
 
   const sorting = useMemo<GridSorting>(() => [{ id: sort, desc: order === 'desc' }], [sort, order]);
-  const handleSortingChange = (next: GridSorting) => {
+  const handleSortingChange = useCallback((next: GridSorting) => {
     const head = next[0];
     if (!head) return;
     setSort(head.id);
     setOrder(head.desc ? 'desc' : 'asc');
     setPage(1);
-  };
+  }, []);
 
   const handleFilterChange = (f: FilterState) => { setFilters(f); setPage(1); };
 
   const columns = useMemo(() => handColumns(bbPrecision), [bbPrecision]);
   const selectedRowIds = useMemo(() => (selectedId ? [selectedId] : []), [selectedId]);
   const gridRef = useRef<DataGridHandle>(null);
-  const openDrawer = (id: string) => { setSelectedId(id); setDrawerOpen(true); };
-  const closeDrawer = () => {
-    setDrawerOpen(false);
-    // The drawer has no trigger to hand focus back to: put it on the hand's row once the sheet is gone
-    const id = selectedId;
-    if (id) setTimeout(() => gridRef.current?.focusRow(id), 0);
-  };
+  const openDrawer = useCallback((id: string) => { setSelectedId(id); setDrawerOpen(true); }, []);
+  const closeDrawer = useCallback(() => setDrawerOpen(false), []);
+  // Radix would restore focus to the row that opened the drawer; the user may have paged through other hands since,
+  // so take over and focus (revealing it if off-screen) the last viewed hand's row instead
+  const lastViewedId = useRef<string | null>(null);
+  useEffect(() => { if (selectedId) lastViewedId.current = selectedId; }, [selectedId]);
+  const handleCloseAutoFocus = useCallback((e: Event) => {
+    e.preventDefault();
+    const id = lastViewedId.current;
+    if (id) gridRef.current?.focusRow(id);
+  }, []);
+  const handleSelectionChange = useCallback((ids: string[]) => setSelectedId(ids[0] ?? null), []);
+  const handleRowClick = useCallback((h: HandSummary) => openDrawer(h.id), [openDrawer]);
+
+  // A sticky header lets you re-sort / re-filter while scrolled down: start the new result at the top
+  const queryKeyJson = JSON.stringify(handsQueryParams);
+  useEffect(() => { gridRef.current?.scrollToTop(); }, [queryKeyJson]);
 
   const hands = data?.hands ?? NO_HANDS;
   const selectedIndex = selectedId ? hands.findIndex((h) => h.id === selectedId) : -1;
@@ -424,9 +440,10 @@ export default function HandExplorer({
             onSortingChange={handleSortingChange}
             manualSorting
             selectedRowIds={selectedRowIds}
-            onSelectionChange={(ids) => setSelectedId(ids[0] ?? null)}
-            onRowClick={(h) => openDrawer(h.id)}
-            onRowActivate={(h) => openDrawer(h.id)}
+            onSelectionChange={handleSelectionChange}
+            onRowClick={handleRowClick}
+            onRowActivate={handleRowClick}
+            defaultHiddenColumns={defaultHiddenColumns}
             loading={loading || isPlaceholderData}
             persistKey="hands"
             stickyFirstColumn
@@ -451,6 +468,7 @@ export default function HandExplorer({
         <HandDrawer
           handId={selectedId}
           onClose={closeDrawer}
+          onCloseAutoFocus={handleCloseAutoFocus}
           onPrev={handlePrev}
           onNext={handleNext}
           onTagsChanged={() => { queryClient.invalidateQueries({ queryKey: ['hands'] }); }}

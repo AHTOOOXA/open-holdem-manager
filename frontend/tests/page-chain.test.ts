@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  closeFrom, createChain, levelOf, openNext, setWidth, truncateAfter, DEFAULT_PAGE_WIDTH,
+  closeFrom, createChain, leftNeighbourId, levelOf, openNext, setWidth, truncateAfter, DEFAULT_PAGE_WIDTH,
 } from '../src/lib/page-chain.ts';
 
 const np = (title: string, inherited = title, state = 0) => ({ title, inherited, state });
@@ -62,4 +62,14 @@ test('setWidth clamps and is immutable', () => {
 test('levels cycle through three; lower is the next level', () => {
   assert.deepEqual([0, 1, 2, 3, 4].map((i) => levelOf(i).upper), [0, 1, 2, 0, 1]);
   assert.deepEqual([0, 1, 2, 3].map((i) => levelOf(i).lower), [1, 2, 0, 1]);
+});
+
+test('leftNeighbourId: the page on the left of the closing one, by id', () => {
+  let c = base();
+  c = openNext(c, 0, np('B'));
+  c = openNext(c, 1, np('C'));
+  assert.equal(leftNeighbourId(c.pages, 2), c.pages[1].id);
+  assert.equal(leftNeighbourId(c.pages, 1), c.pages[0].id);
+  assert.equal(leftNeighbourId(c.pages, 0), null);
+  assert.equal(leftNeighbourId(c.pages, 3), null);
 });

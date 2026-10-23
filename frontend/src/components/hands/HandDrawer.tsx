@@ -52,12 +52,15 @@ export default function HandDrawer({
   onPrev,
   onNext,
   onTagsChanged,
+  onCloseAutoFocus,
 }: {
   handId: string;
   onClose: () => void;
   onPrev: () => void;
   onNext: () => void;
   onTagsChanged: () => void;
+  /** Radix focus-restore hook: preventDefault() it to place focus yourself. */
+  onCloseAutoFocus?: (event: Event) => void;
 }) {
   const [hand, setHand] = useState<HandDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -132,7 +135,7 @@ export default function HandDrawer({
 
   return (
     <Sheet open={true} onOpenChange={(open) => { if (!open) onClose(); }}>
-      <SheetContent side="right" showCloseButton={false} className="w-full !max-w-none p-0 flex flex-col sm:w-[880px]">
+      <SheetContent side="right" showCloseButton={false} onCloseAutoFocus={onCloseAutoFocus} className="w-full !max-w-none p-0 flex flex-col sm:w-[880px]">
         {/* Header */}
         <SheetHeader className="px-4 py-2.5 border-b border-border shrink-0">
           <div className="flex items-center justify-between">

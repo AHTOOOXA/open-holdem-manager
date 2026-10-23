@@ -28,7 +28,7 @@ import { Chip } from '@/components/ui/chip';
 import { cn } from '@/lib/utils';
 import {
   KEY_STEP, KEY_STEP_LARGE, LAST_PAGE_BASE_WIDTH, MIN_PAGE_WIDTH,
-  levelOf, type Page,
+  leftNeighbourId, levelOf, type Page,
 } from '@/lib/page-chain';
 
 export const LEVEL_CLASSES = ['bg-card', 'bg-surface-raised', 'bg-surface-sunken'] as const;
@@ -139,8 +139,9 @@ export function PageChain<I, S>({
   pages, renderPage, renderHeader0, onClose, onSelectionCleared, onResize,
   trailing, trailingTitle = 'Details', trailingWidth = 500, onCloseTrailing, className,
 }: PageChainProps<I, S>) {
-  const [live, setLive] = useState<{ index: number; px: number } | null>(null);
+  const [live, setLive] = useState<{ id: number; px: number } | null>(null);
   const headers = useRef(new Map<number, HTMLDivElement>());
+  const sections = useRef(new Map<number, HTMLElement>());
   const seen = useRef<Map<number, number> | null>(null);
 
   // Focus the header of a page the first time it is opened or each time it is reused.
@@ -155,10 +156,18 @@ export function PageChain<I, S>({
     }
   }, [pages]);
 
+  // Focus a page by id: its header (pages 1+) or else its section
+  const focusPage = useCallback((id: number | null) => {
+    if (id === null) return;
+    (headers.current.get(id) ?? sections.current.get(id))?.focus();
+  }, []);
+
   const close = useCallback((i: number) => {
+    // The X is about to unmount: hand focus to the page on the left first
+    focusPage(leftNeighbourId(pages, i));
     onClose(i);
     onSelectionCleared?.(i - 1);
-  }, [onClose, onSelectionCleared]);
+  }, [pages, focusPage, onClose, onSelectionCleared]);
 
   const last = pages.length - 1;
   return (
@@ -166,12 +175,14 @@ export function PageChain<I, S>({
       {pages.map((page, i) => {
         const level = levelClasses(i);
         const isLast = i === last;
-        const w = live && live.index === i ? live.px : page.width;
+        const w = live && live.id === page.id ? live.px : page.width;
         return (
           <section
             key={page.id}
             aria-label={page.title}
-            className={cn(boxClass, level.upper, isLast ? 'grow' : 'shrink-0')}
+            ref={(el) => { if (el) sections.current.set(page.id, el); else sections.current.delete(page.id); }}
+            tabIndex={-1}
+            className={cn(boxClass, 'outline-none', level.upper, isLast ? 'grow' : 'shrink-0')}
             style={{
               zIndex: 100 - i,
               width: isLast ? undefined : w,
@@ -190,7 +201,7 @@ export function PageChain<I, S>({
               <ResizeHandle
                 label={`Resize ${page.title}`}
                 width={w}
-                onLive={(px) => setLive(px === null ? null : { index: i, px })}
+                onLive={(px) => setLive(px === null ? null : { id: page.id, px })}
                 onCommit={(px) => onResize(i, px)}
               />
             )}
@@ -209,7 +220,7 @@ export function PageChain<I, S>({
               <button
                 type="button"
                 aria-label="Close panel"
-                onClick={onCloseTrailing}
+                onClick={() => { focusPage(pages[last]?.id ?? null); onCloseTrailing(); }}
                 className="inline-flex size-6 items-center justify-center rounded-control text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
               >
                 <X className="size-4" aria-hidden />

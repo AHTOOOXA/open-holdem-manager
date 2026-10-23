@@ -8,6 +8,11 @@ import {
   ariaSortValue,
   clampWidth,
   computeSelection,
+  defaultHiddenFor,
+  pickTabStop,
+  pruneSelection,
+  resetEndReachedMarker,
+  visibleIndexes,
   endReachedIndex,
   hiddenFromVisibility,
   nextRowIndex,
@@ -232,4 +237,57 @@ test('shouldVirtualize: explicit flag or auto above 200 rows', () => {
   assert.equal(shouldVirtualize('auto', 200), false);
   assert.equal(shouldVirtualize('auto', 201), true);
   assert.equal(shouldVirtualize(undefined, 201), true);
+});
+
+test('computeSelection: shift range without an anchor uses the active row', () => {
+  const order = ['a', 'b', 'c', 'd'];
+  const res = computeSelection({ mode: 'multi', current: [], anchor: null, activeId: 'b', target: 'c', order, range: true });
+  assert.deepEqual(res.ids, ['b', 'c']);
+  assert.equal(res.anchor, 'b');
+  const res2 = computeSelection({ mode: 'multi', current: [], anchor: 'a', activeId: 'b', target: 'c', order, range: true });
+  assert.deepEqual(res2.ids, ['a', 'b', 'c']);
+  assert.deepEqual(computeSelection({ mode: 'multi', current: [], anchor: null, target: 'c', order, range: true }).ids, ['c']);
+});
+
+test('pruneSelection: null when nothing is stale, else the kept ids in order', () => {
+  assert.equal(pruneSelection([], ['a']), null);
+  assert.equal(pruneSelection(['a', 'b'], ['b', 'a', 'c']), null);
+  assert.deepEqual(pruneSelection(['a', 'x', 'b'], ['a', 'b']), ['a', 'b']);
+  assert.deepEqual(pruneSelection(['x'], []), []);
+});
+
+test('resetEndReachedMarker: kept while the same list grows, reset on replace or shrink', () => {
+  const m = { count: 50, firstId: 'a' };
+  assert.equal(resetEndReachedMarker(null, 50, 'a'), null);
+  assert.equal(resetEndReachedMarker(m, 50, 'a'), m);
+  assert.equal(resetEndReachedMarker(m, 100, 'a'), m);
+  assert.equal(resetEndReachedMarker(m, 50, 'z'), null); // same length, replaced data
+  assert.equal(resetEndReachedMarker(m, 30, 'a'), null); // shrank
+  assert.equal(resetEndReachedMarker(m, 0, null), null);
+});
+
+test('visibleIndexes / pickTabStop: the tab stop is a visible rendered row, not overscan', () => {
+  const items = Array.from({ length: 20 }, (_, i) => ({ index: i + 5, start: 28 + (i + 5) * 36, end: 28 + (i + 6) * 36 }));
+  const vis = visibleIndexes(items, 360, 200, 28, 0);
+  assert.ok(vis.length > 0 && vis[0] === 10);
+  const rendered = items.map((v) => v.index);
+  assert.equal(pickTabStop(vis[1], rendered, vis), vis[1]);
+  assert.equal(pickTabStop(5, rendered, vis), vis[0]); // preferred is overscan
+  assert.equal(pickTabStop(0, rendered, vis), vis[0]); // preferred not rendered
+  assert.equal(pickTabStop(2, [], []), -1);
+  assert.equal(pickTabStop(7, [5, 6, 7], []), 7);
+  assert.equal(pickTabStop(1, [5, 6, 7], []), 5);
+});
+
+test('parseGridPrefs: default hidden columns apply only when nothing valid is stored', () => {
+  const spec: ColumnPrefSpec[] = [
+    { id: 'a', hideable: false, minSize: 40, maxSize: 400 },
+    { id: 'b', hideable: true, minSize: 40, maxSize: 400 },
+    { id: 'c', hideable: true, minSize: 40, maxSize: 400 },
+  ];
+  assert.deepEqual(parseGridPrefs(null, spec, ['b', 'a', 'zz']).hidden, ['b']);
+  assert.deepEqual(parseGridPrefs('not json', spec, ['c']).hidden, ['c']);
+  assert.deepEqual(parseGridPrefs(serializeGridPrefs({ hidden: [], widths: {} }), spec, ['b']).hidden, []);
+  assert.deepEqual(defaultHiddenFor(spec, ['b', 'c']), ['b', 'c']);
+  assert.deepEqual(defaultHiddenFor([spec[1]], ['b']), []);
 });

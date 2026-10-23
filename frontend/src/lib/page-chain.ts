@@ -110,6 +110,12 @@ export function setPageState<I, S>(chain: PageChain<I, S>, index: number, state:
 }
 
 /** Background level of page i's upper area (its lower block uses the next level). */
+/** Id of the page that should take focus when page `index` closes: its left neighbour (null for page 0). */
+export function leftNeighbourId<I, S>(pages: readonly Page<I, S>[], index: number): number | null {
+  if (index < 1 || index >= pages.length) return null;
+  return pages[index - 1]?.id ?? null;
+}
+
 export function levelOf(index: number): { upper: number; lower: number } {
   const upper = ((index % LEVEL_COUNT) + LEVEL_COUNT) % LEVEL_COUNT;
   return { upper, lower: (upper + 1) % LEVEL_COUNT };

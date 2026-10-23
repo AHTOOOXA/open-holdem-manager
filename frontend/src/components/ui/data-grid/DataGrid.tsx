@@ -25,7 +25,9 @@
  * - selection          'none' | 'single' (default) | 'multi' (checkbox column, Shift range, Cmd/Ctrl toggle).
  *   selectedRowIds / onSelectionChange   controlled selection (uncontrolled without selectedRowIds).
  * - onRowClick(row, e)  click on a body row. onRowActivate(row): Enter or double-click.
- * - persistKey         localStorage key suffix for column visibility and widths ("ohm.grid.<key>").
+ * - persistKey         localStorage key suffix for column visibility and widths ("ohm.grid.<key>"),
+ *                      written 200ms after the last change (a resize drag writes once, not per frame).
+ *   defaultHiddenColumns  ids hidden until the user stores prefs (stored prefs win; "Reset" returns to them).
  * - columnPicker       gear menu in the header's last cell (default true). resizable (default true).
  * - virtualize         true | false | 'auto' (default: on above 200 rows). estimateRowHeight (px).
  * - onEndReached       infinite loading: called once per row count when one of the last
@@ -35,22 +37,32 @@
  * - stickyFirstColumn  first column stays put while scrolling sideways.
  * - ariaLabel          accessible name of the grid. className / maxHeight size the scroll box
  *                      (the box has contain-inline-size: give it a width, it never sizes to the table).
- * - handleRef          DataGridHandle.focusRow(id), e.g. to return focus to the row after a drawer closes.
+ * - handleRef          DataGridHandle.focusRow(id) (e.g. to return focus to a row after a drawer closes) and
+ *                      scrollToTop() (call after sorting / filtering / paging; a sticky header lets you sort mid-list).
+ * - Width: columns sum to the table's min-width; the trailing filler column is 0 wide and only absorbs spare space.
  *
  * Column meta (DataGridColumnMeta): align, numeric (right-aligned, desc-first), title (tooltip +
  * picker label), tone: 'money' (+ moneyDigits), hideable, sortDescFirst, minWidth, className,
  * headerClassName. Width: TanStack `size` / `minSize` / `maxSize`; `enableSorting: false` to opt out.
  *
- * Keyboard (one tab stop in the body, roving tabindex on rows; header buttons are tab stops):
+ * Focus model: roving tabindex on rows; the tab stop is the active/selected row when it is rendered and
+ * visible, else the first visible row (never an off-screen overscan row). The scroll box is focusable
+ * (tabIndex -1, not a tab stop): when the focused row scrolls out of a virtualised list and unmounts,
+ * focus moves to the box instead of <body>, and arrow keys there continue from the active row.
+ *
+ * Keyboard (one tab stop in the body; header buttons are tab stops):
  * ArrowUp/ArrowDown move the active row, Home/End first/last, PageUp/PageDown by a page,
  * Enter activates, Space selects (toggles in multi; Shift+Space selects a range),
- * Cmd/Ctrl+A selects all (multi). Resize handles: ArrowLeft/ArrowRight (Shift: bigger steps),
+ * Shift+Arrow extends a range from the anchor (the active row if there is none), Cmd/Ctrl+A selects all
+ * (multi); multi selection is pruned to ids still in `data` when the data changes. Resize handles: ArrowLeft/ArrowRight (Shift: bigger steps),
  * Home = minimum width, Enter/double-click = default width.
  */
 import {
   useCallback,
+  memo,
   useEffect,
   useImperativeHandle,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -58,7 +70,7 @@ import {
   type ReactNode,
   type Ref,
 } from 'react';
-import { useTable, type Cell, type Column, type Header, type Row, type RowData } from '@tanstack/react-table';
+import { FlexRender, useTable, type Cell, type Column, type Header, type Row, type RowData } from '@tanstack/react-table';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { ArrowDown, ArrowUp } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -71,12 +83,16 @@ import {
   ariaSortValue,
   clampWidth,
   computeSelection,
+  defaultHiddenFor,
   endReachedIndex,
   hiddenFromVisibility,
   nextRowIndex,
   nextSorting,
   parseGridPrefs,
+  pickTabStop,
   pinSummaryLast,
+  pruneSelection,
+  resetEndReachedMarker,
   resizeByKey,
   revealScrollTop,
   rowsPerPage,
@@ -87,7 +103,9 @@ import {
   sortDirection,
   splitSummary,
   visibilityFromHidden,
+  visibleIndexes,
   type ColumnPrefSpec,
+  type EndReachedMarker,
   type GridSorting,
   type SelectionMode,
 } from './logic';
@@ -95,6 +113,8 @@ import {
 /** Imperative handle (`handleRef`): move the active row to `id`, scroll it into view and focus it. */
 export interface DataGridHandle {
   focusRow: (id: string) => void;
+  /** Scroll the grid body back to the top (after sorting / filtering / paging). */
+  scrollToTop: () => void;
 }
 
 export interface DataGridProps<T extends RowData> {
@@ -116,6 +136,8 @@ export interface DataGridProps<T extends RowData> {
   onRowClick?: (row: T, event: React.MouseEvent<HTMLTableRowElement>) => void;
   onRowActivate?: (row: T) => void;
   persistKey?: string;
+  /** Column ids hidden until the user stores their own choice (stored prefs always win). */
+  defaultHiddenColumns?: readonly string[];
   columnPicker?: boolean;
   resizable?: boolean;
   virtualize?: boolean | 'auto';
@@ -135,11 +157,12 @@ export interface DataGridProps<T extends RowData> {
 const SUMMARY_ROW_ID = '__ohm_summary__';
 const HEADER_H = 28; // h-row-header
 const SELECT_COL_W = 36;
-const FILLER_MIN_W = 40;
 const SKELETON_ROWS = 6;
 const PREFS_PREFIX = 'ohm.grid.';
 const EMPTY_IDS: readonly string[] = [];
 const NO_SORTING: GridSorting = [];
+const NO_COLUMNS: readonly string[] = [];
+const PREFS_SAVE_DELAY = 200;
 
 const DEFAULT_COLUMN = { size: 120, minSize: 40, maxSize: 1000, sortUndefined: 'last' as const };
 
@@ -177,13 +200,22 @@ function alignOf(meta: DataGridColumnMeta): 'left' | 'right' | 'center' {
 const ALIGN_TEXT = { left: 'text-left', right: 'text-right', center: 'text-center' } as const;
 const ALIGN_FLEX = { left: 'justify-start', right: 'justify-end', center: 'justify-center' } as const;
 
-function readPrefs(key: string | undefined, spec: ColumnPrefSpec[]) {
-  if (!key) return parseGridPrefs(null, spec);
+function readPrefs(key: string | undefined, spec: ColumnPrefSpec[], defaultHidden: readonly string[]) {
+  if (!key) return parseGridPrefs(null, spec, defaultHidden);
   try {
-    return parseGridPrefs(localStorage.getItem(PREFS_PREFIX + key), spec);
+    return parseGridPrefs(localStorage.getItem(PREFS_PREFIX + key), spec, defaultHidden);
   } catch {
-    return parseGridPrefs(null, spec);
+    return parseGridPrefs(null, spec, defaultHidden);
   }
+}
+
+/** Stable identity for a callback that always calls the latest closure. */
+function useStableCallback<A extends unknown[], R>(fn: (...args: A) => R): (...args: A) => R {
+  const ref = useRef(fn);
+  useLayoutEffect(() => {
+    ref.current = fn;
+  });
+  return useCallback((...args: A) => ref.current(...args), []);
 }
 
 function sameIds(a: readonly string[], b: readonly string[]): boolean {
@@ -212,6 +244,7 @@ export function DataGrid<T extends RowData>({
   onRowClick,
   onRowActivate,
   persistKey,
+  defaultHiddenColumns = NO_COLUMNS,
   columnPicker = true,
   resizable = true,
   virtualize = 'auto',
@@ -260,21 +293,34 @@ export function DataGrid<T extends RowData>({
   );
 
   const [columnVisibility, setColumnVisibility] = useState<Record<string, boolean>>(() =>
-    visibilityFromHidden(readPrefs(persistKey, prefSpec).hidden),
+    visibilityFromHidden(readPrefs(persistKey, prefSpec, defaultHiddenColumns).hidden),
   );
-  const [columnSizing, setColumnSizing] = useState<Record<string, number>>(() => readPrefs(persistKey, prefSpec).widths);
+  const [columnSizing, setColumnSizing] = useState<Record<string, number>>(
+    () => readPrefs(persistKey, prefSpec, defaultHiddenColumns).widths,
+  );
 
-  useEffect(() => {
-    if (!persistKey) return;
+  // Persist debounced: a drag resizes every frame, storage is written once it settles (and on unmount)
+  const pendingSave = useRef<{ key: string; value: string } | null>(null);
+  const flushSave = useCallback(() => {
+    const p = pendingSave.current;
+    pendingSave.current = null;
+    if (!p) return;
     try {
-      localStorage.setItem(
-        PREFS_PREFIX + persistKey,
-        serializeGridPrefs({ hidden: hiddenFromVisibility(columnVisibility), widths: columnSizing }),
-      );
+      localStorage.setItem(PREFS_PREFIX + p.key, p.value);
     } catch {
       // localStorage unavailable
     }
-  }, [persistKey, columnVisibility, columnSizing]);
+  }, []);
+  useEffect(() => {
+    if (!persistKey) return;
+    pendingSave.current = {
+      key: persistKey,
+      value: serializeGridPrefs({ hidden: hiddenFromVisibility(columnVisibility), widths: columnSizing }),
+    };
+    const t = setTimeout(flushSave, PREFS_SAVE_DELAY);
+    return () => clearTimeout(t);
+  }, [persistKey, columnVisibility, columnSizing, flushSave]);
+  useEffect(() => flushSave, [flushSave]);
 
   // ── Sorting (controlled or not)
   const [sortingInner, setSortingInner] = useState<GridSorting>(defaultSorting ?? NO_SORTING);
@@ -336,13 +382,35 @@ export function DataGrid<T extends RowData>({
   };
   const select = (target: string, opts: { range?: boolean; toggle?: boolean } = {}) => {
     if (!selectable) return;
-    const res = computeSelection({ mode: selection, current: selected, anchor, target, order: bodyIds, ...opts });
+    const res = computeSelection({
+      mode: selection,
+      current: selected,
+      anchor,
+      activeId: activeIdRef.current,
+      target,
+      order: bodyIds,
+      ...opts,
+    });
     setAnchor(res.anchor);
     if (!sameIds(res.ids, selected)) commitSelection(res.ids);
   };
 
+  // Multi-select: drop ids that are no longer in the data (page change, filter, refetch)
+  const pruneStale = useStableCallback(() => {
+    if (selection !== 'multi' || loading) return;
+    const kept = pruneSelection(selected, bodyIds);
+    if (kept) commitSelection(kept);
+  });
+  useEffect(() => {
+    pruneStale();
+  }, [tableData, loading, pruneStale]);
+
   // ── Active row (keyboard focus); follows an outside change to a single selected row
   const [activeId, setActiveId] = useState<string | null>(null);
+  const activeIdRef = useRef<string | null>(null);
+  useLayoutEffect(() => {
+    activeIdRef.current = activeId;
+  });
   const [seenSelection, setSeenSelection] = useState<readonly string[]>(selected);
   const [revealId, setRevealId] = useState<{ id: string } | null>(null);
   if (!sameIds(seenSelection, selected)) {
@@ -377,8 +445,11 @@ export function DataGrid<T extends RowData>({
   const padBottom =
     virtual && virtualItems.length > 0 ? virtualizer.getTotalSize() - virtualItems[virtualItems.length - 1].end : 0;
   const renderedIndexes: number[] = virtual ? virtualItems.map((v) => v.index) : body.map((_, i) => i);
-  const tabStopRendered = renderedIndexes.includes(tabStopIndex);
-  const fallbackTabStop = tabStopRendered ? tabStopIndex : (renderedIndexes[0] ?? -1);
+  // The tab stop is a rendered, visible row (not an overscan one): the active row if it is, else the first visible
+  const visibleRows = virtual
+    ? visibleIndexes(virtualItems, virtualizer.scrollOffset ?? 0, scrollRef.current?.clientHeight ?? 0, HEADER_H, summaryH)
+    : renderedIndexes;
+  const fallbackTabStop = pickTabStop(tabStopIndex, renderedIndexes, visibleRows);
 
   // ── Focus / reveal requests (set in handlers, applied after render)
   const focusReq = useRef<{ id: string; focus: boolean; scrolled?: boolean } | null>(null);
@@ -424,6 +495,18 @@ export function DataGrid<T extends RowData>({
     focusReq.current = null;
   });
 
+  // Virtualised focus: a focused row that scrolls out unmounts and focus would drop to <body>.
+  // The scroll box is focusable (tabIndex -1) and takes focus back; arrow keys on it continue
+  // from the active row, which re-focuses itself once it is rendered again.
+  const lastFocusedRow = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    const el = lastFocusedRow.current;
+    if (!el || el.isConnected) return;
+    lastFocusedRow.current = null;
+    const ae = document.activeElement;
+    if (!ae || ae === document.body) scrollRef.current?.focus({ preventScroll: true });
+  });
+
   // Bumped to re-render (and so run the focus effect) when the active row id does not change
   const [, setFocusTick] = useState(0);
   useImperativeHandle(
@@ -433,6 +516,10 @@ export function DataGrid<T extends RowData>({
         setActiveId(id);
         focusReq.current = { id, focus: true };
         setFocusTick((t) => t + 1);
+      },
+      scrollToTop: () => {
+        const root = scrollRef.current;
+        if (root) root.scrollTop = 0;
       },
     }),
     [],
@@ -447,38 +534,42 @@ export function DataGrid<T extends RowData>({
   };
 
   // ── Infinite loading
-  const firedFor = useRef<number | null>(null);
+  const firedFor = useRef<EndReachedMarker | null>(null);
+  const firstBodyId = bodyIds[0] ?? null;
   const lastVirtualIndex = virtualItems.length > 0 ? virtualItems[virtualItems.length - 1].index : -1;
   const endIndex = endReachedIndex(body.length, endReachedThreshold);
   useEffect(() => {
+    // Replaced data (new first row) or a shorter list starts over, even at the same length
+    firedFor.current = resetEndReachedMarker(firedFor.current, body.length, firstBodyId);
     if (!onEndReached || !virtual) return;
     if (
       shouldFireEndReached({
         lastRenderedIndex: lastVirtualIndex,
         count: body.length,
         threshold: endReachedThreshold,
-        firedForCount: firedFor.current,
+        firedForCount: firedFor.current?.count ?? null,
         loading,
       })
     ) {
-      firedFor.current = body.length;
+      firedFor.current = { count: body.length, firstId: firstBodyId };
       onEndReached();
     }
-  }, [onEndReached, virtual, lastVirtualIndex, body.length, endReachedThreshold, loading]);
+  }, [onEndReached, virtual, lastVirtualIndex, body.length, firstBodyId, endReachedThreshold, loading]);
   useEffect(() => {
     if (!onEndReached || virtual || loading || body.length === 0) return;
     const el = scrollRef.current?.querySelector(`tr[data-row-index="${endIndex}"]`);
     if (!el || typeof IntersectionObserver === 'undefined') return;
     const count = body.length;
+    firedFor.current = resetEndReachedMarker(firedFor.current, count, firstBodyId);
     const io = new IntersectionObserver((entries) => {
       if (!entries.some((e) => e.isIntersecting)) return;
-      if (firedFor.current === count) return;
-      firedFor.current = count;
+      if (firedFor.current?.count === count) return;
+      firedFor.current = { count, firstId: firstBodyId };
       onEndReached();
     });
     io.observe(el);
     return () => io.disconnect();
-  }, [onEndReached, virtual, loading, body.length, endIndex]);
+  }, [onEndReached, virtual, loading, body.length, endIndex, firstBodyId]);
 
   // ── Header shadow while scrolled
   const [scrolled, setScrolled] = useState(false);
@@ -487,29 +578,29 @@ export function DataGrid<T extends RowData>({
     if (s !== scrolled) setScrolled(s);
   };
 
-  // ── Keyboard
-  const onBodyKeyDown = (e: React.KeyboardEvent<HTMLTableSectionElement>) => {
+  // ── Keyboard (on the scroll box: rows bubble up to it; the box itself continues from the active row)
+  const onGridKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     const target = e.target as HTMLElement;
-    const attr = target.dataset.rowIndex;
-    if (attr === undefined || target.tagName !== 'TR') return; // keys inside cell controls stay theirs
-    const index = Number(attr);
-    const row = body[index];
-    if (!row) return;
     const root = scrollRef.current;
+    let index: number;
+    if (target === e.currentTarget) index = activeIndex;
+    else if (target.tagName === 'TR' && target.dataset.rowIndex !== undefined) index = Number(target.dataset.rowIndex);
+    else return; // keys inside cell controls and the header stay theirs
+    const row = body[index];
     const page = rowsPerPage(root?.clientHeight ?? 0, HEADER_H + summaryH, target.offsetHeight || rowH);
     const next = nextRowIndex(e.key, index, body.length, page);
     if (next !== null && !e.altKey && !e.metaKey && !e.ctrlKey) {
       e.preventDefault();
-      if (e.shiftKey && selection === 'multi' && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+      if (e.shiftKey && selection === 'multi' && (e.key === 'ArrowDown' || e.key === 'ArrowUp') && row) {
         select(bodyIds[next], { range: true });
       }
       moveActive(next);
       return;
     }
-    if (e.key === 'Enter') {
+    if (e.key === 'Enter' && row) {
       e.preventDefault();
       onRowActivate?.(row.original);
-    } else if (e.key === ' ') {
+    } else if (e.key === ' ' && row) {
       e.preventDefault();
       select(row.id, { toggle: selection === 'multi', range: e.shiftKey });
     } else if ((e.key === 'a' || e.key === 'A') && (e.metaKey || e.ctrlKey) && selection === 'multi') {
@@ -521,15 +612,16 @@ export function DataGrid<T extends RowData>({
   // ── Layout
   const multi = selection === 'multi';
   const leadW = multi ? SELECT_COL_W : 0;
-  const totalW = leadW + table.getTotalSize() + FILLER_MIN_W;
+  const totalW = leadW + table.getTotalSize(); // the filler column only absorbs spare width
   const colCount = visibleColumns.length + (multi ? 1 : 0) + 1;
   const padY = compact ? 'py-1' : 'py-2';
   const textSize = compact ? 'text-cell' : 'text-sm';
   const firstColId = visibleColumns[0]?.id;
+  const columnsKey = visibleColumns.map((c) => c.id).join('|');
   const stickyLeft = leadW;
 
   const resetColumns = () => {
-    setColumnVisibility({});
+    setColumnVisibility(visibilityFromHidden(defaultHiddenFor(prefSpec, defaultHiddenColumns)));
     setColumnSizing({});
   };
 
@@ -606,105 +698,22 @@ export function DataGrid<T extends RowData>({
     );
   };
 
-  const cellClass = (
-    column: GridColumn<T>,
-    cell: Cell<DataGridFeatures, T, unknown> | null,
-    isFirst: boolean,
-    sticky: boolean,
-  ) => {
-    const meta = metaOf(column);
-    const value = cell?.getValue();
-    return cn(
-      padY,
-      'overflow-hidden px-2 text-ellipsis whitespace-nowrap',
-      isFirst && 'pl-6',
-      ALIGN_TEXT[alignOf(meta)],
-      meta.tone === 'money' && typeof value === 'number' && moneyClass(value, meta.moneyDigits ?? 2),
-      sticky && 'sticky z-(--z-sticky) border-r border-border-subtle bg-card',
-      meta.className,
-    );
-  };
-
-  const renderRow = (row: Row<DataGridFeatures, T>, index: number) => {
-    const isSelected = selectable && selectedSet.has(row.id);
-    const cells = row.getVisibleCells();
-    const stateBg = isSelected ? 'bg-selection' : '';
-    const stickyState = isSelected
-      ? 'bg-linear-to-r from-selection to-selection'
-      : interactive
-        ? 'group-hover/row:bg-linear-to-r group-hover/row:from-overlay-hover group-hover/row:to-overlay-hover'
-        : '';
-    const line = rowLines && 'border-b border-border-subtle';
-    return (
-      <tr
-        key={row.id}
-        data-row-index={index}
-        data-row-id={row.id}
-        data-selected={isSelected || undefined}
-        ref={virtual ? virtualizer.measureElement : undefined}
-        tabIndex={index === fallbackTabStop ? 0 : -1}
-        aria-rowindex={index + 2}
-        aria-selected={selectable ? isSelected : undefined}
-        onFocus={(e) => {
-          if (e.target === e.currentTarget && activeId !== row.id) setActiveId(row.id);
-        }}
-        onMouseDown={(e) => {
-          if (e.shiftKey && multi) e.preventDefault(); // no text selection on range clicks
-        }}
-        onClick={(e) => {
-          setActiveId(row.id);
-          select(row.id, { range: e.shiftKey, toggle: e.metaKey || e.ctrlKey });
-          onRowClick?.(row.original, e);
-        }}
-        onDoubleClick={() => onRowActivate?.(row.original)}
-        className={cn(
-          'group/row outline-none',
-          interactive && 'cursor-pointer',
-          interactive && !isSelected && 'hover:bg-overlay-hover',
-        )}
-      >
-        {multi && (
-          <td
-            className={cn(
-              padY,
-              'pr-0 pl-3',
-              stickyFirstColumn ? cn('sticky left-0 z-(--z-sticky) bg-card', stickyState) : stateBg,
-              line,
-              CELL_TRANSITION,
-              RING_FIRST,
-            )}
-          >
-            <Checkbox
-              checked={isSelected}
-              tabIndex={-1}
-              aria-label="Select row"
-              onClick={(e) => e.stopPropagation()}
-              onCheckedChange={() => select(row.id, { toggle: true })}
-            />
-          </td>
-        )}
-        {cells.map((cell, ci) => {
-          const sticky = stickyFirstColumn && cell.column.id === firstColId;
-          return (
-            <td
-              key={cell.id}
-              style={sticky ? { left: stickyLeft } : undefined}
-              className={cn(
-                cellClass(cell.column, cell, ci === 0 && !multi, sticky),
-                sticky ? stickyState : stateBg,
-                line,
-                CELL_TRANSITION,
-                ci === 0 && !multi ? RING_FIRST : RING_MID,
-              )}
-            >
-              <table.FlexRender cell={cell} />
-            </td>
-          );
-        })}
-        <td aria-hidden className={cn(stateBg, line, CELL_TRANSITION, RING_LAST)} />
-      </tr>
-    );
-  };
+  // Stable handlers for the memoised rows (they always call the latest closure)
+  const onRowFocus = useStableCallback((id: string, el: HTMLElement) => {
+    lastFocusedRow.current = el;
+    setActiveId((cur) => (cur === id ? cur : id));
+  });
+  const onRowBlur = useStableCallback((el: HTMLElement) => {
+    if (el.isConnected && lastFocusedRow.current === el) lastFocusedRow.current = null;
+  });
+  const onRowClickInner = useStableCallback((row: Row<DataGridFeatures, T>, e: React.MouseEvent<HTMLTableRowElement>) => {
+    setActiveId(row.id);
+    select(row.id, { range: e.shiftKey, toggle: e.metaKey || e.ctrlKey });
+    onRowClick?.(row.original, e);
+  });
+  const onRowActivateInner = useStableCallback((row: Row<DataGridFeatures, T>) => onRowActivate?.(row.original));
+  const onRowToggle = useStableCallback((id: string) => select(id, { toggle: true }));
+  const measure = virtual ? virtualizer.measureElement : undefined;
 
   const selectAll = multi ? selectAllState(selected, bodyIds) : false;
   const showSkeleton = loading && body.length === 0 && !error;
@@ -714,9 +723,11 @@ export function DataGrid<T extends RowData>({
     // contain-inline-size: a wide table scrolls inside the box instead of widening every ancestor
     <div
       ref={scrollRef}
+      tabIndex={-1}
+      onKeyDown={onGridKeyDown}
       onScroll={onScroll}
       style={maxHeight !== undefined ? { maxHeight } : undefined}
-      className={cn('relative contain-inline-size overflow-auto rounded-card border border-border bg-card', className)}
+      className={cn('relative contain-inline-size overflow-auto rounded-card border border-border bg-card outline-none', className)}
     >
       {/* One fade under the sticky header while the body is scrolled (zero layout height) */}
       <div
@@ -769,18 +780,21 @@ export function DataGrid<T extends RowData>({
               </th>
             )}
             {headers.map(renderHeader)}
-            <th className={cn(headerCellBase, 'z-[calc(var(--z-sticky)+1)] pr-1 text-right')}>
+            {/* Zero-width when the columns fill the box: the gear sticks to the right edge either way */}
+            <th className={cn(headerCellBase, 'right-0 z-[calc(var(--z-sticky)+2)] overflow-visible')}>
               {columnPicker && (
-                <ColumnPicker
-                  items={pickerItems}
-                  onToggle={(id, v) => setColumnVisibility((s) => ({ ...s, [id]: v }))}
-                  onReset={resetColumns}
-                />
+                <div className="absolute inset-y-0 right-0 flex items-center bg-card pr-1 pl-1">
+                  <ColumnPicker
+                    items={pickerItems}
+                    onToggle={(id, v) => setColumnVisibility((s) => ({ ...s, [id]: v }))}
+                    onReset={resetColumns}
+                  />
+                </div>
               )}
             </th>
           </tr>
         </thead>
-        <tbody onKeyDown={onBodyKeyDown}>
+        <tbody>
           {error ? (
             <tr>
               <td colSpan={colCount} className="px-6 py-8 text-center text-sm text-money-neg">
@@ -812,7 +826,30 @@ export function DataGrid<T extends RowData>({
                   <td colSpan={colCount} className="p-0" />
                 </tr>
               )}
-              {renderedIndexes.map((i) => renderRow(body[i], i))}
+              {renderedIndexes.map((i) => (
+                <GridRow
+                  key={body[i].id}
+                  row={body[i]}
+                  index={i}
+                  isSelected={selectable && selectedSet.has(body[i].id)}
+                  isTabStop={i === fallbackTabStop}
+                  columnsKey={columnsKey}
+                  measure={measure}
+                  selectable={selectable}
+                  interactive={interactive}
+                  multi={multi}
+                  rowLines={rowLines}
+                  padY={padY}
+                  stickyFirstColumn={stickyFirstColumn}
+                  stickyLeft={stickyLeft}
+                  firstColId={firstColId}
+                  onFocusRow={onRowFocus}
+                  onBlurRow={onRowBlur}
+                  onClickRow={onRowClickInner}
+                  onActivateRow={onRowActivateInner}
+                  onToggleRow={onRowToggle}
+                />
+              ))}
               {padBottom > 0 && (
                 <tr aria-hidden style={{ height: padBottom }}>
                   <td colSpan={colCount} className="p-0" />
@@ -842,13 +879,13 @@ export function DataGrid<T extends RowData>({
                     key={cell.id}
                     style={style}
                     className={cn(
-                      cellClass(cell.column, cell, ci === 0 && !multi, sticky),
+                      cellClass(cell.column, cell, ci === 0 && !multi, sticky, padY),
                       summaryCellBase,
                       stickySummary && summaryStickyClass,
                       sticky && stickySummary && 'z-[calc(var(--z-sticky)+2)]',
                     )}
                   >
-                    <table.FlexRender cell={cell} />
+                    <FlexRender cell={cell} />
                   </td>
                 );
               })}
@@ -866,6 +903,152 @@ const headerCellBase =
 const summaryCellBase = 'border-t border-border bg-card';
 const summaryStickyClass = 'sticky bottom-0 z-[calc(var(--z-sticky)+1)]';
 const CELL_TRANSITION = 'transition-[background-color] duration-(--motion-fast)';
+
+function cellClass<T extends RowData>(
+  column: GridColumn<T>,
+  cell: Cell<DataGridFeatures, T, unknown> | null,
+  isFirst: boolean,
+  sticky: boolean,
+  padY: string,
+) {
+  const meta = metaOf(column);
+  const value = cell?.getValue();
+  return cn(
+    padY,
+    'overflow-hidden px-2 text-ellipsis whitespace-nowrap',
+    isFirst && 'pl-6',
+    ALIGN_TEXT[alignOf(meta)],
+    meta.tone === 'money' && typeof value === 'number' && moneyClass(value, meta.moneyDigits ?? 2),
+    sticky && 'sticky z-(--z-sticky) border-r border-border-subtle bg-card',
+    meta.className,
+  );
+}
+
+interface GridRowProps<T extends RowData> {
+  row: Row<DataGridFeatures, T>;
+  index: number;
+  isSelected: boolean;
+  isTabStop: boolean;
+  /** Visible column ids: the row re-renders when columns are shown / hidden. */
+  columnsKey: string;
+  measure: ((node: Element | null) => void) | undefined;
+  selectable: boolean;
+  interactive: boolean;
+  multi: boolean;
+  rowLines: boolean;
+  padY: string;
+  stickyFirstColumn: boolean;
+  stickyLeft: number;
+  firstColId: string | undefined;
+  onFocusRow: (id: string, el: HTMLElement) => void;
+  onBlurRow: (el: HTMLElement) => void;
+  onClickRow: (row: Row<DataGridFeatures, T>, e: React.MouseEvent<HTMLTableRowElement>) => void;
+  onActivateRow: (row: Row<DataGridFeatures, T>) => void;
+  onToggleRow: (id: string) => void;
+}
+
+/**
+ * One body row. Memoised: hovering, moving the active row or selecting only re-renders the
+ * rows whose own props changed (all handlers are stable, the row object is stable per data).
+ */
+function GridRowInner<T extends RowData>({
+  row,
+  index,
+  isSelected,
+  isTabStop,
+  measure,
+  selectable,
+  interactive,
+  multi,
+  rowLines,
+  padY,
+  stickyFirstColumn,
+  stickyLeft,
+  firstColId,
+  onFocusRow,
+  onBlurRow,
+  onClickRow,
+  onActivateRow,
+  onToggleRow,
+}: GridRowProps<T>) {
+  const cells = row.getVisibleCells();
+  const stateBg = isSelected ? 'bg-selection' : '';
+  const stickyState = isSelected
+    ? 'bg-linear-to-r from-selection to-selection'
+    : interactive
+      ? 'group-hover/row:bg-linear-to-r group-hover/row:from-overlay-hover group-hover/row:to-overlay-hover'
+      : '';
+  const line = rowLines && 'border-b border-border-subtle';
+  return (
+    <tr
+      data-row-index={index}
+      data-row-id={row.id}
+      data-selected={isSelected || undefined}
+      ref={measure}
+      tabIndex={isTabStop ? 0 : -1}
+      aria-rowindex={index + 2}
+      aria-selected={selectable ? isSelected : undefined}
+      onFocus={(e) => {
+        if (e.target === e.currentTarget) onFocusRow(row.id, e.currentTarget);
+      }}
+      onBlur={(e) => {
+        if (e.target === e.currentTarget) onBlurRow(e.currentTarget);
+      }}
+      onMouseDown={(e) => {
+        if (e.shiftKey && multi) e.preventDefault(); // no text selection on range clicks
+      }}
+      onClick={(e) => onClickRow(row, e)}
+      onDoubleClick={() => onActivateRow(row)}
+      className={cn(
+        'group/row outline-none',
+        interactive && 'cursor-pointer',
+        interactive && !isSelected && 'hover:bg-overlay-hover',
+      )}
+    >
+      {multi && (
+        <td
+          className={cn(
+            padY,
+            'pr-0 pl-3',
+            stickyFirstColumn ? cn('sticky left-0 z-(--z-sticky) bg-card', stickyState) : stateBg,
+            line,
+            CELL_TRANSITION,
+            RING_FIRST,
+          )}
+        >
+          <Checkbox
+            checked={isSelected}
+            tabIndex={-1}
+            aria-label="Select row"
+            onClick={(e) => e.stopPropagation()}
+            onCheckedChange={() => onToggleRow(row.id)}
+          />
+        </td>
+      )}
+      {cells.map((cell, ci) => {
+        const sticky = stickyFirstColumn && cell.column.id === firstColId;
+        return (
+          <td
+            key={cell.id}
+            style={sticky ? { left: stickyLeft } : undefined}
+            className={cn(
+              cellClass(cell.column, cell, ci === 0 && !multi, sticky, padY),
+              sticky ? stickyState : stateBg,
+              line,
+              CELL_TRANSITION,
+              ci === 0 && !multi ? RING_FIRST : RING_MID,
+            )}
+          >
+            <FlexRender cell={cell} />
+          </td>
+        );
+      })}
+      <td aria-hidden className={cn(stateBg, line, CELL_TRANSITION, RING_LAST)} />
+    </tr>
+  );
+}
+
+const GridRow = memo(GridRowInner) as typeof GridRowInner;
 
 function ResizeHandle<T extends RowData>({
   header,

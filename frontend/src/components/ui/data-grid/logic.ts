@@ -114,6 +114,8 @@ export interface SelectionChange {
   anchor: string | null;
   /** Row being clicked / toggled. */
   target: string;
+  /** Active (keyboard) row: the range anchor when no anchor exists yet. */
+  activeId?: string | null;
   /** Row ids in display order (for ranges). */
   order: readonly string[];
   /** Shift held: select the range anchor..target. */
@@ -126,15 +128,16 @@ export interface SelectionChange {
 export function computeSelection(c: SelectionChange): { ids: string[]; anchor: string | null } {
   if (c.mode === 'none') return { ids: [], anchor: null };
   if (c.mode === 'single') return { ids: [c.target], anchor: c.target };
-  if (c.range && c.anchor != null) {
-    const a = c.order.indexOf(c.anchor);
+  const anchor = c.anchor ?? c.activeId ?? null;
+  if (c.range && anchor != null) {
+    const a = c.order.indexOf(anchor);
     const b = c.order.indexOf(c.target);
     if (a >= 0 && b >= 0) {
       const [lo, hi] = a <= b ? [a, b] : [b, a];
       const range = c.order.slice(lo, hi + 1);
       // Range replaces the selection unless toggling (Ctrl+Shift adds the range)
       const base = c.toggle ? c.current.filter((id) => !range.includes(id)) : [];
-      return { ids: [...base, ...range], anchor: c.anchor };
+      return { ids: [...base, ...range], anchor };
     }
   }
   if (c.toggle) {
@@ -145,6 +148,17 @@ export function computeSelection(c: SelectionChange): { ids: string[]; anchor: s
     };
   }
   return { ids: [c.target], anchor: c.target };
+}
+
+/**
+ * Selection restricted to ids still present in `order` (same order as `selected`), or null when
+ * nothing needs pruning.
+ */
+export function pruneSelection(selected: readonly string[], order: readonly string[]): string[] | null {
+  if (selected.length === 0) return null;
+  const present = new Set(order);
+  const kept = selected.filter((id) => present.has(id));
+  return kept.length === selected.length ? null : kept;
 }
 
 /** Header "select all" checkbox state. */
@@ -185,17 +199,34 @@ export function clampWidth(width: number, min: number, max: number): number {
  * Parse stored prefs, keeping only what still applies: known columns, hideable ones in
  * `hidden`, finite widths clamped to the column's limits. Anything malformed yields empty prefs.
  */
-export function parseGridPrefs(raw: string | null | undefined, spec: readonly ColumnPrefSpec[]): GridPrefs {
-  if (!raw) return { hidden: [], widths: {} };
+/** Default-hidden ids that exist and may be hidden; never all columns. */
+export function defaultHiddenFor(spec: readonly ColumnPrefSpec[], defaultHidden: readonly string[]): string[] {
+  const byId = new Map(spec.map((s) => [s.id, s]));
+  const out: string[] = [];
+  for (const id of defaultHidden) {
+    const s = byId.get(id);
+    if (s && s.hideable && !out.includes(id)) out.push(id);
+  }
+  return spec.length > 0 && out.length >= spec.length ? [] : out;
+}
+
+export function parseGridPrefs(
+  raw: string | null | undefined,
+  spec: readonly ColumnPrefSpec[],
+  /** Hidden columns used when nothing valid is stored (stored prefs always win, even if empty). */
+  defaultHidden: readonly string[] = [],
+): GridPrefs {
+  const fallback = (): GridPrefs => ({ hidden: defaultHiddenFor(spec, defaultHidden), widths: {} });
+  if (!raw) return fallback();
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch {
-    return { hidden: [], widths: {} };
+    return fallback();
   }
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return { hidden: [], widths: {} };
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return fallback();
   const obj = parsed as Record<string, unknown>;
-  if (obj.v !== GRID_PREFS_VERSION) return { hidden: [], widths: {} };
+  if (obj.v !== GRID_PREFS_VERSION) return fallback();
   const byId = new Map(spec.map((s) => [s.id, s]));
   const hidden: string[] = [];
   if (Array.isArray(obj.hidden)) {
@@ -294,6 +325,56 @@ export function shouldFireEndReached(p: {
   if (p.count <= 0 || p.loading) return false;
   if (p.firedForCount === p.count) return false;
   return p.lastRenderedIndex >= endReachedIndex(p.count, p.threshold ?? 10);
+}
+
+export interface EndReachedMarker {
+  count: number;
+  firstId: string | null;
+}
+
+/**
+ * Keep the "already fired" marker only while the data is the same list growing: it is dropped
+ * when the first row id changed (data replaced) or the row count shrank.
+ */
+export function resetEndReachedMarker(
+  marker: EndReachedMarker | null,
+  count: number,
+  firstId: string | null,
+): EndReachedMarker | null {
+  if (!marker) return null;
+  if (marker.firstId !== firstId || count < marker.count) return null;
+  return marker;
+}
+
+export interface VirtualItemLike {
+  index: number;
+  start: number;
+  end: number;
+}
+
+/** Indexes of rendered items overlapping the visible band (below the sticky header, above the footer). */
+export function visibleIndexes(
+  items: readonly VirtualItemLike[],
+  scrollTop: number,
+  viewHeight: number,
+  headerHeight = 0,
+  footerHeight = 0,
+): number[] {
+  const top = scrollTop + headerHeight;
+  const bottom = scrollTop + viewHeight - footerHeight;
+  return items.filter((v) => v.end > top && v.start < bottom).map((v) => v.index);
+}
+
+/**
+ * The row that carries tabindex 0: the preferred one (active / selected / first) when it is
+ * rendered and visible, else the first visible rendered row, else the first rendered row.
+ * -1 when nothing is rendered.
+ */
+export function pickTabStop(preferred: number, rendered: readonly number[], visible: readonly number[]): number {
+  if (visible.includes(preferred)) return preferred;
+  if (visible.length > 0) return visible[0];
+  if (rendered.includes(preferred)) return preferred;
+  return rendered[0] ?? -1;
 }
 
 /** Virtualise when asked, or automatically past `autoThreshold` rows. */

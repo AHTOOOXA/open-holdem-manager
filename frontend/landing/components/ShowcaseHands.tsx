@@ -1,5 +1,5 @@
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
-import HandExplorer from '@/components/hands/HandExplorer';
+import HandExplorer, { COMPACT_HIDDEN_COLUMNS } from '@/components/hands/HandExplorer';
 
 export default function ShowcaseHands() {
   return (
@@ -8,7 +8,7 @@ export default function ShowcaseHands() {
         <Routes>
           <Route path="*" element={
             <div className="px-2 py-3 min-w-[1100px]">
-              <HandExplorer defaultPerPage={10} />
+              <HandExplorer defaultPerPage={10} defaultHiddenColumns={COMPACT_HIDDEN_COLUMNS} />
             </div>
           } />
         </Routes>
