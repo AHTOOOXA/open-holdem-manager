@@ -329,6 +329,10 @@
 }
 
 @layer base {
+  /* Native scrollbars, date inputs and form controls follow the dark theme */
+  :root {
+    color-scheme: dark;
+  }
   * {
     @apply border-border outline-ring/50;
   }
