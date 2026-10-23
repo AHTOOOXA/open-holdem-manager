@@ -1,11 +1,11 @@
-import { useState, useEffect, useRef } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useState, useEffect, useRef, useMemo } from 'react';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { getHands, getTags } from '@/lib/api';
-import type { HandListParams, TagCount } from '@/lib/api';
+import type { HandListParams, HandSummary, TagCount } from '@/lib/api';
 import { useFilterOptions } from '@/hooks/useFilterOptions';
 import { queryKeys } from '@/lib/query-keys';
 import { queryClient } from '@/lib/query-client';
-import { formatStakes, formatRelativeDate } from '@/lib/utils';
+import { cn, formatStakes, formatRelativeDate } from '@/lib/utils';
 import { formatLocalDate } from '@/lib/date';
 import EmptyState from '@/components/EmptyState';
 import HandFilters from '@/components/hands/HandFilters';
@@ -17,14 +17,7 @@ import Actions, { actionTitle, formatBb } from '@/components/hands/Actions';
 import TagPill from '@/components/hands/TagPill';
 import Pagination from '@/components/hands/Pagination';
 import HandDrawer from '@/components/hands/HandDrawer';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
+import { DataGrid, createDataGridColumns, type DataGridHandle, type GridSorting } from '@/components/ui/data-grid';
 import { fixed } from '@/lib/format';
 import { ANY_TAG } from '@/components/hands/HandFilters';
 
@@ -48,6 +41,148 @@ function getDateRange(preset: string, dateFrom: string, dateTo: string): { from?
   }
 }
 
+/** Signed dollars with the trailing "$" the hands list has always used; an em dash for zero. */
+function dollars(v: number): string {
+  return Math.abs(v) < 0.005 ? '\u2014' : `${v < 0 ? '-' : ''}${fixed(Math.abs(v), 2)}$`;
+}
+
+const handId = (h: HandSummary) => h.id;
+const NO_HANDS: HandSummary[] = [];
+const col = createDataGridColumns<HandSummary>();
+
+function StreetActions({ items, precision, trimFolds }: { items: HandSummary['preflop_actions']; precision: 0 | 1; trimFolds?: boolean }) {
+  return (
+    <div className="truncate pb-1" title={actionTitle(items, precision, trimFolds)}>
+      <Actions items={items} trimFolds={trimFolds} precision={precision} />
+    </div>
+  );
+}
+
+/** Hand list columns. Sortable ones (stakes, won_usd, played_at) use the API's sort keys as ids; display columns never sort. */
+function handColumns(precision: 0 | 1) {
+  const potCell = (has: (h: HandSummary) => boolean, pot: (h: HandSummary) => number) =>
+    function PotCell({ row }: { row: { original: HandSummary } }) {
+      return has(row.original) ? formatBb(pot(row.original), precision) : '';
+    };
+  const potMeta = (street: string) => ({ align: 'center' as const, title: `${street} pot (bb)`, className: 'px-1 text-sm text-muted-foreground' });
+  return col.columns([
+    col.display({
+      id: 'preflop',
+      header: 'Preflop',
+      size: 100,
+      meta: { title: 'Hole cards' },
+      cell: ({ row: { original: h } }) => (
+        <div className="flex flex-col gap-0.5">
+          <CardBoxPair card1={h.card1} card2={h.card2} />
+          {(h.rit_boards > 1 || h.is_cashout) && (
+            <div className="flex items-center gap-0.5">
+              {h.rit_boards > 1 && <RitBadge boards={h.rit_boards} />}
+              {h.is_cashout && <CashoutBadge />}
+            </div>
+          )}
+        </div>
+      ),
+    }),
+    col.display({
+      id: 'preflop_actions',
+      header: 'Actions',
+      size: 170,
+      meta: { title: 'Preflop actions' },
+      cell: ({ row }) => <StreetActions items={row.original.preflop_actions} precision={precision} trimFolds />,
+    }),
+    col.display({
+      id: 'flop',
+      header: 'Flop',
+      size: 128,
+      meta: { title: 'Flop cards', className: 'pl-4' },
+      cell: ({ row }) => <CardBoxRow cards={row.original.flop_cards} />,
+    }),
+    col.display({ id: 'flop_pot', header: 'Pot', size: 52, meta: potMeta('Flop'), cell: potCell((h) => h.flop_cards.length > 0, (h) => h.flop_pot) }),
+    col.display({
+      id: 'flop_actions',
+      header: 'Actions',
+      size: 140,
+      meta: { title: 'Flop actions' },
+      cell: ({ row }) => <StreetActions items={row.original.flop_actions} precision={precision} />,
+    }),
+    col.display({
+      id: 'turn',
+      header: 'Turn',
+      size: 60,
+      meta: { title: 'Turn card', className: 'pl-4' },
+      cell: ({ row }) => (row.original.turn_card ? <CardBox card={row.original.turn_card} /> : null),
+    }),
+    col.display({ id: 'turn_pot', header: 'Pot', size: 52, meta: potMeta('Turn'), cell: potCell((h) => !!h.turn_card, (h) => h.turn_pot) }),
+    col.display({
+      id: 'turn_actions',
+      header: 'Actions',
+      size: 140,
+      meta: { title: 'Turn actions' },
+      cell: ({ row }) => <StreetActions items={row.original.turn_actions} precision={precision} />,
+    }),
+    col.display({
+      id: 'river',
+      header: 'River',
+      size: 60,
+      meta: { title: 'River card', className: 'pl-4' },
+      cell: ({ row }) => (row.original.river_card ? <CardBox card={row.original.river_card} /> : null),
+    }),
+    col.display({ id: 'river_pot', header: 'Pot', size: 52, meta: potMeta('River'), cell: potCell((h) => !!h.river_card, (h) => h.river_pot) }),
+    col.display({
+      id: 'river_actions',
+      header: 'Actions',
+      size: 140,
+      meta: { title: 'River actions' },
+      cell: ({ row }) => <StreetActions items={row.original.river_actions} precision={precision} />,
+    }),
+    col.accessor('stakes', {
+      header: 'Stakes',
+      size: 80,
+      meta: { sortDescFirst: true, className: 'pl-4 text-sm text-muted-foreground' },
+      cell: (i) => formatStakes(i.getValue()),
+    }),
+    col.accessor((h) => h.won_bb * h.bb_amount, {
+      id: 'won_usd',
+      header: 'Won',
+      size: 84,
+      meta: { numeric: true, tone: 'money', className: 'text-sm font-semibold' },
+      cell: (i) => dollars(i.getValue()),
+    }),
+    col.accessor((h) => (h.all_in_ev_bb - h.won_bb) * h.bb_amount, {
+      id: 'ev_diff',
+      header: 'EV Diff.',
+      size: 84,
+      enableSorting: false,
+      meta: { numeric: true, tone: 'money', title: 'All-in EV minus won ($)', className: 'text-sm' },
+      cell: (i) => dollars(i.getValue()),
+    }),
+    col.accessor('played_at', {
+      header: 'Date',
+      size: 84,
+      meta: { align: 'right', sortDescFirst: true, className: 'text-sm text-muted-foreground' },
+      cell: (i) => formatRelativeDate(i.getValue()),
+    }),
+    col.accessor('tags', {
+      header: 'Tags',
+      size: 140,
+      enableSorting: false,
+      cell: (i) => {
+        const tags = i.getValue();
+        return (
+          <div className="flex items-center gap-0.5">
+            {tags.slice(0, 2).map((t) => (
+              <TagPill key={t} tag={t} />
+            ))}
+            {tags.length > 2 && <span className="text-2xs text-muted-foreground">+{tags.length - 2}</span>}
+          </div>
+        );
+      },
+    }),
+  ]);
+}
+
+const DEFAULT_GRID_MAX_HEIGHT = 'max(18rem, calc(100dvh - 17rem))';
+
 export interface HandExplorerProps {
   /** Params always applied to API call, not user-editable */
   fixedParams?: Partial<HandListParams>;
@@ -61,6 +196,8 @@ export interface HandExplorerProps {
   className?: string;
   /** Message for the empty state when the list is empty and the user has set no filters */
   emptyMessage?: string;
+  /** Height cap of the hands grid's scroll area (its header stays put while it scrolls) */
+  gridMaxHeight?: number | string;
 }
 
 export default function HandExplorer({
@@ -70,6 +207,7 @@ export default function HandExplorer({
   header,
   className,
   emptyMessage,
+  gridMaxHeight = DEFAULT_GRID_MAX_HEIGHT,
 }: HandExplorerProps) {
   const [page, setPage] = useState(1);
   const [perPage, setPerPage] = useState(defaultPerPage);
@@ -89,6 +227,7 @@ export default function HandExplorer({
     quickFilters: initialFilters?.quickFilters ?? [],
   });
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const [showLegend, setShowLegend] = useState(false);
   const [bbPrecision, setBbPrecision] = useState<0 | 1>(1);
 
@@ -143,9 +282,11 @@ export default function HandExplorer({
   // (fixedParams takes precedence since it's applied via spread after userParams)
 
   // Hands list query
-  const { data, isPending: loading, isError, error } = useQuery({
+  // Previous page stays on screen (with a progress line) while the next sort/page/filter loads
+  const { data, isPending: loading, isPlaceholderData, isError, error } = useQuery({
     queryKey: queryKeys.hands.list(handsQueryParams),
     queryFn: () => getHands(handsQueryParams),
+    placeholderData: keepPreviousData,
   });
 
   // Tags query
@@ -154,24 +295,29 @@ export default function HandExplorer({
     queryFn: getTags,
   });
 
-  const handleSort = (col: string) => {
-    if (sort === col) {
-      setOrder(order === 'desc' ? 'asc' : 'desc');
-    } else {
-      setSort(col);
-      setOrder('desc');
-    }
+  const sorting = useMemo<GridSorting>(() => [{ id: sort, desc: order === 'desc' }], [sort, order]);
+  const handleSortingChange = (next: GridSorting) => {
+    const head = next[0];
+    if (!head) return;
+    setSort(head.id);
+    setOrder(head.desc ? 'desc' : 'asc');
     setPage(1);
   };
 
   const handleFilterChange = (f: FilterState) => { setFilters(f); setPage(1); };
 
-  const sortArrow = (col: string) => {
-    if (sort !== col) return '';
-    return order === 'desc' ? ' \u2193' : ' \u2191';
+  const columns = useMemo(() => handColumns(bbPrecision), [bbPrecision]);
+  const selectedRowIds = useMemo(() => (selectedId ? [selectedId] : []), [selectedId]);
+  const gridRef = useRef<DataGridHandle>(null);
+  const openDrawer = (id: string) => { setSelectedId(id); setDrawerOpen(true); };
+  const closeDrawer = () => {
+    setDrawerOpen(false);
+    // The drawer has no trigger to hand focus back to: put it on the hand's row once the sheet is gone
+    const id = selectedId;
+    if (id) setTimeout(() => gridRef.current?.focusRow(id), 0);
   };
 
-  const hands = data?.hands ?? [];
+  const hands = data?.hands ?? NO_HANDS;
   const selectedIndex = selectedId ? hands.findIndex((h) => h.id === selectedId) : -1;
 
   const handlePrev = () => {
@@ -199,7 +345,7 @@ export default function HandExplorer({
   }
 
   return (
-    <div className={className}>
+    <div className={cn('flex w-full flex-col', className)}>
       {/* Header */}
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-3">
@@ -254,12 +400,10 @@ export default function HandExplorer({
 
       {/* Table */}
       {isError ? (
-        <p className="text-red text-sm py-8 text-center">
+        <p className="text-money-neg text-sm py-8 text-center">
           Failed to load hands{error instanceof Error ? `: ${error.message}` : ''}
         </p>
-      ) : loading && !data ? (
-        <p className="text-text-muted text-sm py-8 text-center">Loading hands...</p>
-      ) : !data || data.total === 0 ? (
+      ) : data && data.total === 0 ? (
         <EmptyState
           variant={hasFilters ? 'no-match' : 'no-data'}
           message={!hasUserFilters ? emptyMessage : undefined}
@@ -267,167 +411,46 @@ export default function HandExplorer({
         />
       ) : (
         <>
-          <div className="overflow-x-auto">
-            <Table>
-              <TableHeader>
-                <TableRow className="text-[13px] uppercase tracking-wide">
-                  <TableHead className="py-2 px-2 h-auto sticky left-0 z-20 bg-background">Preflop</TableHead>
-                  <TableHead className="py-2 px-2 h-auto">Actions</TableHead>
-                  <TableHead className="py-2 pl-4 pr-2 h-auto">Flop</TableHead>
-                  <TableHead className="py-2 px-1 h-auto text-center">Pot</TableHead>
-                  <TableHead className="py-2 px-2 h-auto">Actions</TableHead>
-                  <TableHead className="py-2 pl-4 pr-2 h-auto">Turn</TableHead>
-                  <TableHead className="py-2 px-1 h-auto text-center">Pot</TableHead>
-                  <TableHead className="py-2 px-2 h-auto">Actions</TableHead>
-                  <TableHead className="py-2 pl-4 pr-2 h-auto">River</TableHead>
-                  <TableHead className="py-2 px-1 h-auto text-center">Pot</TableHead>
-                  <TableHead className="py-2 px-2 h-auto">Actions</TableHead>
-                  <TableHead className="py-2 pl-4 pr-2 h-auto cursor-pointer hover:text-text select-none" onClick={() => handleSort('stakes')}>
-                    Stakes{sortArrow('stakes')}
-                  </TableHead>
-                  <TableHead className="py-2 px-2 h-auto text-right cursor-pointer hover:text-text select-none" onClick={() => handleSort('won_usd')}>
-                    Won{sortArrow('won_usd')}
-                  </TableHead>
-                  <TableHead className="py-2 px-2 h-auto text-right">EV Diff.</TableHead>
-                  <TableHead className="py-2 px-2 h-auto text-right cursor-pointer hover:text-text select-none" onClick={() => handleSort('played_at')}>
-                    Date{sortArrow('played_at')}
-                  </TableHead>
-                  <TableHead className="py-2 px-2 h-auto">Tags</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {hands.map((h) => {
-                  const wonUsd = h.won_bb * h.bb_amount;
-                  const evDiffBb = h.all_in_ev_bb - h.won_bb;
-                  const evDiffUsd = evDiffBb * h.bb_amount;
-                  return (
-                    <TableRow
-                      key={h.id}
-                      onClick={() => setSelectedId(h.id)}
-                      className={`cursor-pointer transition-colors text-[15px] ${
-                        selectedId === h.id ? 'bg-primary/10' : 'hover:bg-surface-hover'
-                      }`}
-                    >
-                      {/* Preflop cards — sticky so context is never lost */}
-                      <TableCell className={`py-1.5 px-2 sticky left-0 z-10 ${
-                        selectedId === h.id ? 'bg-primary/10' : 'bg-background'
-                      }`}>
-                        <div className="flex flex-col gap-0.5">
-                          <CardBoxPair card1={h.card1} card2={h.card2} />
-                          {(h.rit_boards > 1 || h.is_cashout) && (
-                            <div className="flex items-center gap-0.5">
-                              {h.rit_boards > 1 && <RitBadge boards={h.rit_boards} />}
-                              {h.is_cashout && <CashoutBadge />}
-                            </div>
-                          )}
-                        </div>
-                      </TableCell>
-                      {/* Preflop actions — trim leading folds */}
-                      <TableCell className="py-1.5 px-2">
-                        <div className="max-w-[160px] truncate pb-1" title={actionTitle(h.preflop_actions, bbPrecision, true)}>
-                          <Actions items={h.preflop_actions} trimFolds precision={bbPrecision} />
-                        </div>
-                      </TableCell>
-                      {/* Flop cards */}
-                      <TableCell className="py-1.5 pl-4 pr-2">
-                        <CardBoxRow cards={h.flop_cards} />
-                      </TableCell>
-                      {/* Flop pot */}
-                      <TableCell className="py-1.5 px-1 text-center text-[14px] text-text-muted">
-                        {h.flop_cards.length > 0 ? formatBb(h.flop_pot, bbPrecision) : ''}
-                      </TableCell>
-                      {/* Flop actions */}
-                      <TableCell className="py-1.5 px-2">
-                        <div className="max-w-[130px] truncate pb-1" title={actionTitle(h.flop_actions, bbPrecision)}>
-                          <Actions items={h.flop_actions} precision={bbPrecision} />
-                        </div>
-                      </TableCell>
-                      {/* Turn card */}
-                      <TableCell className="py-1.5 pl-4 pr-2">
-                        {h.turn_card && <CardBox card={h.turn_card} />}
-                      </TableCell>
-                      {/* Turn pot */}
-                      <TableCell className="py-1.5 px-1 text-center text-[14px] text-text-muted">
-                        {h.turn_card ? formatBb(h.turn_pot, bbPrecision) : ''}
-                      </TableCell>
-                      {/* Turn actions */}
-                      <TableCell className="py-1.5 px-2">
-                        <div className="max-w-[130px] truncate pb-1" title={actionTitle(h.turn_actions, bbPrecision)}>
-                          <Actions items={h.turn_actions} precision={bbPrecision} />
-                        </div>
-                      </TableCell>
-                      {/* River card */}
-                      <TableCell className="py-1.5 pl-4 pr-2">
-                        {h.river_card && <CardBox card={h.river_card} />}
-                      </TableCell>
-                      {/* River pot */}
-                      <TableCell className="py-1.5 px-1 text-center text-[14px] text-text-muted">
-                        {h.river_card ? formatBb(h.river_pot, bbPrecision) : ''}
-                      </TableCell>
-                      {/* River actions */}
-                      <TableCell className="py-1.5 px-2">
-                        <div className="max-w-[130px] truncate pb-1" title={actionTitle(h.river_actions, bbPrecision)}>
-                          <Actions items={h.river_actions} precision={bbPrecision} />
-                        </div>
-                      </TableCell>
-                      {/* Stakes */}
-                      <TableCell className="py-1.5 pl-4 pr-2 text-[15px] text-text-muted">
-                        {formatStakes(h.stakes)}
-                      </TableCell>
-                      {/* Won (USD) */}
-                      <TableCell className={`py-1.5 px-2 text-right text-[15px] font-semibold ${
-                        wonUsd > 0.005 ? 'text-green' : wonUsd < -0.005 ? 'text-red' : 'text-text-muted'
-                      }`}>
-                        {Math.abs(wonUsd) < 0.005
-                          ? '\u2014'
-                          : `${wonUsd < 0 ? '-' : ''}${fixed(Math.abs(wonUsd), 2)}$`}
-                      </TableCell>
-                      {/* EV Diff */}
-                      <TableCell className={`py-1.5 px-2 text-right text-[15px] ${
-                        Math.abs(evDiffUsd) < 0.005 ? 'text-text-muted/40' :
-                        evDiffUsd > 0 ? 'text-green' : 'text-red'
-                      }`}>
-                        {Math.abs(evDiffUsd) < 0.005
-                          ? '\u2014'
-                          : `${evDiffUsd < 0 ? '-' : ''}${fixed(Math.abs(evDiffUsd), 2)}$`}
-                      </TableCell>
-                      {/* Date */}
-                      <TableCell className="py-1.5 px-2 text-right text-[14px] text-text-muted whitespace-nowrap">
-                        {formatRelativeDate(h.played_at)}
-                      </TableCell>
-                      {/* Tags */}
-                      <TableCell className="py-1.5 px-2">
-                        <div className="flex items-center gap-0.5">
-                          {h.tags.slice(0, 2).map((t) => (
-                            <TagPill key={t} tag={t} />
-                          ))}
-                          {h.tags.length > 2 && (
-                            <span className="text-[11px] text-text-muted">+{h.tags.length - 2}</span>
-                          )}
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
-          </div>
-
-          <Pagination
-            page={data.page}
-            totalPages={data.total_pages}
-            perPage={perPage}
-            onPageChange={setPage}
-            onPerPageChange={(pp) => { setPerPage(pp); setPage(1); }}
+          <DataGrid
+            handleRef={gridRef}
+            ariaLabel="Hands"
+            columns={columns}
+            data={hands}
+            getRowId={handId}
+            density="compact"
+            rowLines
+            estimateRowHeight={43}
+            sorting={sorting}
+            onSortingChange={handleSortingChange}
+            manualSorting
+            selectedRowIds={selectedRowIds}
+            onSelectionChange={(ids) => setSelectedId(ids[0] ?? null)}
+            onRowClick={(h) => openDrawer(h.id)}
+            onRowActivate={(h) => openDrawer(h.id)}
+            loading={loading || isPlaceholderData}
+            persistKey="hands"
+            stickyFirstColumn
+            maxHeight={gridMaxHeight}
+            className="min-h-0 flex-1"
           />
+
+          {data && (
+            <Pagination
+              page={data.page}
+              totalPages={data.total_pages}
+              perPage={perPage}
+              onPageChange={setPage}
+              onPerPageChange={(pp) => { setPerPage(pp); setPage(1); }}
+            />
+          )}
         </>
       )}
 
       {/* Drawer */}
-      {selectedId && (
+      {selectedId && drawerOpen && (
         <HandDrawer
           handId={selectedId}
-          onClose={() => setSelectedId(null)}
+          onClose={closeDrawer}
           onPrev={handlePrev}
           onNext={handleNext}
           onTagsChanged={() => { queryClient.invalidateQueries({ queryKey: ['hands'] }); }}
