@@ -118,6 +118,7 @@ export default function LowerReports({ state, query, handsInit, onSelectTab, onA
           <HandExplorer
             key={handsInit?.rev ?? 0}
             chain={query.chain}
+            hideFilters
             initialFilters={handsInit?.initialFilters}
             fixedParams={query.player_id ? { ...handsInit?.fixedParams, player_id: query.player_id } : handsInit?.fixedParams}
             gridMaxHeight={HANDS_GRID_MAX_HEIGHT}

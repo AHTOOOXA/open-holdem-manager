@@ -207,6 +207,8 @@ export interface HandExplorerProps {
   defaultHiddenColumns?: readonly string[];
   /** Reports filter chain, applied on top of the user filters; a new chain returns to page 1 */
   chain?: Step[];
+  /** Hide the built-in filter bar (the page provides its own filters). */
+  hideFilters?: boolean;
 }
 
 export default function HandExplorer({
@@ -219,6 +221,7 @@ export default function HandExplorer({
   gridMaxHeight = DEFAULT_GRID_MAX_HEIGHT,
   defaultHiddenColumns,
   chain,
+  hideFilters = false,
 }: HandExplorerProps) {
   const [page, setPage] = useState(1);
   const [perPage, setPerPage] = useState(defaultPerPage);
@@ -417,8 +420,8 @@ export default function HandExplorer({
         </div>
       )}
 
-      {/* Filters */}
-      <div className="mb-3">
+      {/* Filters (hidden where the page owns filtering, e.g. a Reports page's chips) */}
+      {!hideFilters && <div className="mb-3">
         <HandFilters
           filters={filters}
           onChange={handleFilterChange}
@@ -426,7 +429,7 @@ export default function HandExplorer({
           allTags={allTags}
           lockedStatFlags={lockedStatFlags.length > 0 ? lockedStatFlags : undefined}
         />
-      </div>
+      </div>}
 
       {/* Table */}
       {isError ? (

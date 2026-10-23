@@ -1064,6 +1064,7 @@ export interface PlayerSummary {
   af: number | null;
   last_seen: string | null;
   stakes: string[];
+  site?: string | null;
 }
 
 export interface PlayerListResponse {

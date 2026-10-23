@@ -23,6 +23,7 @@ class PlayerSummary(BaseModel):
     af: float | None = None
     last_seen: str | None = None
     stakes: list[str] = []
+    site: str | None = None  # site name, e.g. "GGPoker"
 
 
 class PlayerListResponse(BaseModel):
@@ -147,6 +148,11 @@ def list_players(
     for pid, stk in stakes_rows:
         stakes_map.setdefault(pid, []).append(stk)
 
+    site_map = dict(db.execute(
+        f"SELECT p.id, s.name FROM players p JOIN sites s ON s.id = p.site_id WHERE p.id IN ({ph})",
+        player_ids,
+    ).fetchall())
+
     players = []
     for r in rows:
         players.append(PlayerSummary(
@@ -160,6 +166,7 @@ def list_players(
             af=round(float(r[7]), 2) if r[7] is not None else None,
             last_seen=r[8].isoformat() if r[8] else None,
             stakes=sorted(stakes_map.get(r[0], [])),
+            site=site_map.get(r[0]),
         ))
 
     return PlayerListResponse(

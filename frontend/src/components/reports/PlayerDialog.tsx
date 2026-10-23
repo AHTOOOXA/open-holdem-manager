@@ -81,7 +81,7 @@ function SinglePicker({ onPick, onCancel }: { onPick: (p: PickedPlayer) => void;
     const fallbackSite = heroes.data?.active?.site_name ?? activeWorkspace?.hero_site ?? '';
     const out = (players.data?.players ?? []).map((p) => {
       const acc = accounts.find((a) => a.username === p.username);
-      return { ...p, site: acc?.site_name ?? fallbackSite, hero: !!acc };
+      return { ...p, site: p.site ?? acc?.site_name ?? fallbackSite, hero: !!acc };
     });
     return [...out.filter((r) => r.hero), ...out.filter((r) => !r.hero)];
   }, [players.data, heroes.data, activeWorkspace]);
