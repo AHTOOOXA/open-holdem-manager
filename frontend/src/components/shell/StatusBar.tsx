@@ -95,7 +95,8 @@ export default function StatusBar() {
     importWasEmpty && importWorkspaceId === activeWorkspaceId && /^\/(reports|statistics|sessions)(\/|$)/.test(pathname);
   const importing = phase === 'uploading' && !welcomeShowsProgress;
   const rebuilding = phase === 'rebuilding' || autoRebuildProgress != null;
-  const busy = importing || rebuilding;
+  // The workspace selector hides during any import, even one only the welcome view shows
+  const busy = phase === 'uploading' || rebuilding;
 
   let activity = null;
   if (importing) {
