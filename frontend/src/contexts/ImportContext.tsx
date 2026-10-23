@@ -26,6 +26,8 @@ interface ImportState {
 interface ImportActions {
   startImport: (files: File[]) => void;
   startH2NImport: (path: string, name: string) => void;
+  /** Switch to (or create) the sample workspace and import the bundled sample hands. */
+  startSampleImport: () => Promise<void>;
   startRebuild: () => void;
   clearDb: () => Promise<void>;
   dismiss: () => void;
@@ -136,6 +138,9 @@ function ImportProvider({ children }: { children: ReactNode }) {
     }
   }, [phase, refreshHandCount]);
 
+  // Stub: implemented by the welcome-view track
+  const startSampleImport = useCallback(async () => {}, []);
+
   const startH2NImport = useCallback(async (path: string, name: string) => {
     if (phase !== 'idle') return;
     setFileInfo(null);
@@ -203,7 +208,7 @@ function ImportProvider({ children }: { children: ReactNode }) {
       value={{
         phase, fileInfo, sourceLabel, progress, result, error, handCount, settings,
         autoRebuildProgress,
-        startImport, startH2NImport, startRebuild, clearDb, dismiss, refreshHandCount,
+        startImport, startH2NImport, startSampleImport, startRebuild, clearDb, dismiss, refreshHandCount,
         exportDatabase, importDatabase, showImportOverlay, setShowImportOverlay,
       }}
     >
