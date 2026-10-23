@@ -41,7 +41,8 @@ export default function AppShell({ children }: { children: ReactNode }) {
     <SidebarProvider open={open} onOpenChange={setOpen}>
       <LastRouteTracker />
       <AppSidebar />
-      <SidebarInset>
+      {/* min-w-0: wide content (page chains) scrolls inside the column instead of widening the window */}
+      <SidebarInset className="min-w-0">
         <header className="flex h-(--shell-header-h) shrink-0 items-center gap-1 border-b border-border px-2">
           <AppMenuBar />
           {rail && (

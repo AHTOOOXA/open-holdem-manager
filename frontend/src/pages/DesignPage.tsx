@@ -2,6 +2,7 @@ import { useState, type ReactNode } from 'react';
 import { StatValue } from '@/components/ui/stat-value';
 import { Chip, chipToneClasses, type ChipTone } from '@/components/ui/chip';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { Link } from 'react-router-dom';
 
 /** Every class name is a literal so Tailwind sees it. */
 const SURFACES: [string, string][] = [
@@ -244,6 +245,12 @@ export default function DesignPage() {
             </TabsList>
           </Tabs>
         </div>
+      </Section>
+
+      <Section title="Full-width demos">
+        <p className="text-sm text-muted-foreground">
+          <Link className="text-primary underline-offset-4 hover:underline" to="/design/page-chain">Page chain</Link>
+        </p>
       </Section>
     </div>
   );
