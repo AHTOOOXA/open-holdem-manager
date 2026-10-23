@@ -16,19 +16,20 @@ export type Pos = 'EP' | 'MP' | 'CO' | 'BTN' | 'SB' | 'BB';
 export type Step = { label?: string } & (
   // ── plain steps (any order, narrow the hand set) ──
   | { k: 'pos'; v: Pos[] } // hero's 6-max position group (h2n_pos)
-  | { k: 'stakes'; v: string[] } // hands.stakes, e.g. "NL10"
+  | { k: 'stakes'; v: string[] } // hands.stakes values as stored, e.g. "$0.05/$0.10"
   | { k: 'mode'; v: 'fast' | 'regular' } // fast-fold (Rush & Cash / Zoom) vs regular tables
   | { k: 'tsize'; v: number[] } // table size (max seats), e.g. [6]
   | { k: 'date'; from?: string; to?: string } // ISO dates (inclusive), local day boundaries
   | { k: 'hour'; v: number[] } // local start hour 0-23
   | { k: 'stack'; lo: number; hi: number | null } // hero starting stack in bb, [lo, hi)
-  | { k: 'game'; stakes: string; mode: string; tsize: number } // a Results row
+  | { k: 'game'; stakes: string; mode: string; tsize: number } // a Results row (mode: 'fast' | 'regular')
   | { k: 'cells'; v: string[] } // preflop hand classes, e.g. "AKs", "QQ", "T9o"
-  | { k: 'hv'; street: Street; cats: string[] } // hand-value categories (backend keys)
+  | { k: 'hv'; street: Street; cats: string[] } // hand-value category keys ('other' too); flop/turn/river only
   // ── spot steps (order matters; each moves the hit point) ──
   | { k: 'row'; key: string } // a named quick filter (General row key, e.g. "P01" = Raise 1st In)
   | { k: 'next'; street: Street; a: NextAction } // a Next Actions row after the current hit point
-  | { k: 'faced'; street: Street; a: FacedAction } // a Faced Next row after the current hit point
+  | { k: 'faced'; street: Street; a: FacedAction } // a Faced Next row after the current hit point (backend
+  //   generates all but villain_open_4bet / villain_limp_call / villain_limp_raise / villain_open_call; those are 422)
   | { k: 'betsize'; bucket: string } // a Bet Sizing bucket of the current hit action
 );
 
@@ -65,7 +66,11 @@ export interface SplitColumn {
   abbrev?: string; // short header text
   format: ValueFormat;
   winnings?: boolean; // coloured money-style (> 0 pos, <= 0 neg)
-  /** Sample-size column id for this column's small-sample dimming (e.g. "opps"). */
+  /**
+   * Key in `SplitRow.values` (and `summary`) holding this column's sample size, for small-sample
+   * dimming. Either another column id ("hands") or an extra sample-only key the backend adds to
+   * `values` ("vpip_opps", "stat_value_opps", "sd_hands", ...); sample keys are not columns.
+   */
   sample?: string;
 }
 
@@ -83,6 +88,7 @@ export interface SplitResponse {
   entry_header: string; // first column header, e.g. "Position", "Next Actions"
   columns: SplitColumn[];
   rows: SplitRow[]; // default order (section 4/5 of the spec); empty = "No results yet"
+  // (Faced Next at hand start, Bet Sizing without a hit action, rows without a case are dropped)
   summary: Record<string, number | null> | null; // only when rows.length > 1
   total_hands: number; // hands of the whole dashboard before page filters (Hits per 1000 base)
 }
@@ -138,7 +144,7 @@ export interface HandStrengthRow {
   key: string; // category key (same keys as hvColor / backend hand_value.py)
   label: string;
   hands: number;
-  pct: number; // share of known-cards hands on that street
+  pct: number; // share of known-cards hands on that street, 0-100 (percent, not a fraction)
   won_bb: number;
   weak: boolean;
 }
@@ -161,3 +167,6 @@ export interface QuickFilter {
 // GET /api/hands?…&chain=<url-encoded JSON Step[]>       (hand list for the Hands lower tab)
 // GET /api/reports/graph?…&chain=<url-encoded JSON>     (Graph upper tab)
 // The chain is the full chain; other filter params still work and are combined with AND.
+// Both take `player_id` (default: the active hero); the chain is resolved for that player.
+// The graph then plots that player's results; the hand list keeps its usual hero columns,
+// restricted to the chain's hands. An invalid chain is a 422.
