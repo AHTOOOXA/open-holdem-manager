@@ -170,8 +170,9 @@ export function PageChain<I, S>({
   }, [pages, focusPage, onClose, onSelectionCleared]);
 
   const last = pages.length - 1;
+  // `isolate`: the pages' z-index (100 - i) stays inside the chain, so portalled dialogs and menus stay on top
   return (
-    <div className={cn('flex items-stretch gap-4 overflow-x-auto', className)}>
+    <div className={cn('isolate flex items-stretch gap-4 overflow-x-auto', className)}>
       {pages.map((page, i) => {
         const level = levelClasses(i);
         const isLast = i === last;
