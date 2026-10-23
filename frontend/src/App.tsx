@@ -25,6 +25,7 @@ import PlayerProfilePage from './pages/PlayerProfilePage';
 import IdentityDetailPage from './pages/IdentityDetailPage';
 import DesignPage from './pages/DesignPage';
 import PageChainDemo from './pages/design/PageChainDemo';
+import DataGridDemo from './pages/design/DataGridDemo';
 
 export default function App() {
   return (
@@ -59,6 +60,7 @@ export default function App() {
             <Route path="/configuration/:section" element={<ConfigurationPage />} />
             <Route path="/design" element={<DesignPage />} />
             <Route path="/design/page-chain" element={<div className="p-4"><PageChainDemo /></div>} />
+            <Route path="/design/data-grid" element={<div className="p-4"><DataGridDemo /></div>} />
 
             {/* Old URLs keep working: /graph -> /reports?tab=graph, /stats/x -> /extras/stats/x ... */}
             {LEGACY_PATHS.map((from) => (

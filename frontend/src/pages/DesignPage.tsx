@@ -249,6 +249,8 @@ export default function DesignPage() {
 
       <Section title="Full-width demos">
         <p className="text-sm text-muted-foreground">
+          <Link className="text-primary underline-offset-4 hover:underline" to="/design/data-grid">Data grid</Link>
+          {' · '}
           <Link className="text-primary underline-offset-4 hover:underline" to="/design/page-chain">Page chain</Link>
         </p>
       </Section>
