@@ -147,10 +147,5 @@
   },
   "src/pages/SessionsPage.tsx": {
     "text-arbitrary": 29
-  },
-  "src/pages/WorkspaceSettingsPage.tsx": {
-    "hex": 10,
-    "text-arbitrary": 1,
-    "palette": 1
   }
 }
