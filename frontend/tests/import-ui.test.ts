@@ -3,6 +3,8 @@ import { test } from 'node:test';
 
 import {
   importCompletedMessage,
+  isZipBytes,
+  totalHands,
   importFailedMessage,
   importStartedMessage,
   progressLine,
@@ -50,4 +52,15 @@ test('toast messages', () => {
   assert.equal(importStartedMessage('files', 3).description, '3 files');
   assert.equal(importStartedMessage('files', 1).description, '1 file');
   assert.equal(rebuildCompletedMessage(2000).description, '2,000 hands recalculated');
+});
+
+test('totalHands sums every workspace', () => {
+  assert.equal(totalHands([]), 0);
+  assert.equal(totalHands([{ hand_count: 0 }, { hand_count: 2000 }, { hand_count: 5 }]), 2005);
+});
+
+test('isZipBytes checks the PK magic', () => {
+  assert.equal(isZipBytes(new Uint8Array([0x50, 0x4b, 3, 4])), true);
+  assert.equal(isZipBytes(new TextEncoder().encode('<!doctype html>')), false);
+  assert.equal(isZipBytes(new Uint8Array([0x50])), false);
 });

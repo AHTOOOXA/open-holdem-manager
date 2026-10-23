@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { useImport } from '@/contexts/ImportContext';
 import { useWorkspace } from '@/contexts/WorkspaceContext';
 import { collectFilesFromEntry } from '@/lib/file-utils';
+import { BUSY_TITLE } from '@/lib/import-ui';
 import H2NImportSection from '@/components/H2NImportSection';
 
 export default function DragDropOverlay() {
@@ -13,6 +14,7 @@ export default function DragDropOverlay() {
   const counterRef = useRef(0);
   const fileRef = useRef<HTMLInputElement>(null);
 
+  const busy = phase !== 'idle';
   const visible = dragging || showImportOverlay;
 
   const handleFiles = useCallback(
@@ -126,7 +128,7 @@ export default function DragDropOverlay() {
         <p className="text-sm">
           <span className="text-muted-foreground">Into workspace </span>
           <span className="font-medium text-foreground">{activeWorkspace?.name ?? '…'}</span>
-          {!dragging && workspaces.length > 1 && (
+          {!dragging && workspaces.length > 1 && !busy && (
             <span className="text-muted-foreground"> · switch it in the status bar</span>
           )}
         </p>
@@ -135,9 +137,12 @@ export default function DragDropOverlay() {
         </p>
         {!dragging && (
           <>
+            {busy && <p className="text-xs text-muted-foreground">{BUSY_TITLE}</p>}
             <Button
               variant="outline"
               size="sm"
+              disabled={busy}
+              title={busy ? BUSY_TITLE : undefined}
               onClick={() => fileRef.current?.click()}
             >
               Browse Files
@@ -154,12 +159,14 @@ export default function DragDropOverlay() {
                 e.target.value = '';
               }}
             />
+            <fieldset disabled={busy} title={busy ? BUSY_TITLE : undefined} className={busy ? 'pointer-events-none opacity-50' : undefined}>
             <H2NImportSection
               onImport={(path, name) => {
                 setShowImportOverlay(false);
                 startH2NImport(path, name);
               }}
             />
+            </fieldset>
           </>
         )}
       </div>

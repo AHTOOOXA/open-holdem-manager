@@ -2,6 +2,8 @@ import { useRef, useState } from 'react';
 import { Download, RefreshCw, Trash2, Upload } from 'lucide-react';
 import { useImport } from '@/contexts/ImportContext';
 import { useWorkspace } from '@/contexts/WorkspaceContext';
+import { toast } from 'sonner';
+import { BUSY_TITLE } from '@/lib/import-ui';
 import { Button } from '@/components/ui/button';
 import ConfirmDialog from './ConfirmDialog';
 
@@ -14,19 +16,43 @@ type Pending =
 /** Where the data lives and the whole-database actions (backup, restore, rebuild, clear). */
 export default function DatabaseFilePanel() {
   const { phase, startRebuild, clearDb, exportDatabase, importDatabase } = useImport();
-  const { activeWorkspace } = useWorkspace();
+  const { activeWorkspace, totalHands } = useWorkspace();
   const fileRef = useRef<HTMLInputElement>(null);
   const [pending, setPending] = useState<Pending>(null);
   const busy = phase !== 'idle';
-  const hasHands = (activeWorkspace?.hand_count ?? 0) > 0;
+  const hasAnyHands = totalHands > 0;
+  const activeHasHands = (activeWorkspace?.hand_count ?? 0) > 0;
+  const busyTitle = busy ? BUSY_TITLE : undefined;
 
-  const confirmPending = () => {
+  const errText = (e: unknown, fallback: string) => (e instanceof Error && e.message ? e.message : fallback);
+
+  const confirmPending = async () => {
     const p = pending;
     setPending(null);
     if (!p) return;
-    if (p.kind === 'restore') void importDatabase(p.file);
-    else if (p.kind === 'rebuild') startRebuild();
-    else void clearDb();
+    try {
+      if (p.kind === 'restore') {
+        await importDatabase(p.file);
+        toast.success('Database restored');
+      } else if (p.kind === 'rebuild') {
+        startRebuild();
+      } else {
+        await clearDb();
+        toast.success('Hands cleared');
+      }
+    } catch (e) {
+      toast.error(p.kind === 'restore' ? 'Restore failed' : 'Clearing hands failed', {
+        description: errText(e, 'Unknown error'),
+      });
+    }
+  };
+
+  const runBackup = async () => {
+    try {
+      await exportDatabase();
+    } catch (e) {
+      toast.error('Backup failed', { description: errText(e, 'Unknown error') });
+    }
   };
 
   const copy = {
@@ -39,7 +65,7 @@ export default function DatabaseFilePanel() {
     },
     rebuild: {
       title: 'Rebuild statistics',
-      description: 'Rebuild all stats from stored hands? This re-parses everything with the latest parser.',
+      description: `Rebuild all stats for ${totalHands.toLocaleString()} stored hands? This re-parses everything with the latest parser.`,
       confirmLabel: 'Rebuild',
     },
     clear: {
@@ -56,15 +82,15 @@ export default function DatabaseFilePanel() {
         <p className="text-xs text-muted-foreground">Stored on this computer. Nothing is uploaded.</p>
       </div>
       <div className="flex flex-wrap gap-2 p-4">
-        <Button variant="outline" size="sm" disabled={!hasHands || busy} onClick={() => void exportDatabase()}>
+        <Button variant="outline" size="sm" disabled={!hasAnyHands || busy} title={busyTitle} onClick={() => void runBackup()}>
           <Download className="size-3.5" />
           Back up database
         </Button>
-        <Button variant="outline" size="sm" disabled={busy} onClick={() => fileRef.current?.click()}>
+        <Button variant="outline" size="sm" disabled={busy} title={busyTitle} onClick={() => fileRef.current?.click()}>
           <Upload className="size-3.5" />
           Restore from backup…
         </Button>
-        <Button variant="outline" size="sm" disabled={!hasHands || busy} onClick={() => setPending({ kind: 'rebuild' })}>
+        <Button variant="outline" size="sm" disabled={!hasAnyHands || busy} title={busyTitle} onClick={() => setPending({ kind: 'rebuild' })}>
           <RefreshCw className="size-3.5" />
           Rebuild statistics…
         </Button>
@@ -72,7 +98,8 @@ export default function DatabaseFilePanel() {
           variant="outline"
           size="sm"
           className="text-destructive hover:text-destructive"
-          disabled={busy}
+          disabled={busy || !activeHasHands}
+          title={busyTitle}
           onClick={() => setPending({ kind: 'clear' })}
         >
           <Trash2 className="size-3.5" />
@@ -97,7 +124,8 @@ export default function DatabaseFilePanel() {
         description={pending ? copy[pending.kind].description : ''}
         confirmLabel={pending ? copy[pending.kind].confirmLabel : ''}
         destructive={pending?.kind !== 'rebuild'}
-        onConfirm={confirmPending}
+        requireText={pending?.kind === 'clear' ? (activeWorkspace?.name ?? '') : undefined}
+        onConfirm={() => void confirmPending()}
         onCancel={() => setPending(null)}
       />
     </section>

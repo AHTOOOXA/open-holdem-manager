@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { toast } from 'sonner';
 import { createWorkspace, updateWorkspace, getSites } from '@/lib/api';
 import type { Workspace } from '@/contexts/WorkspaceContext';
 import HeroAccountsSection from '@/components/HeroAccountsSection';
@@ -34,14 +35,18 @@ export default function WorkspaceFormDialog({ workspace, onClose, onSaved }: Pro
   const [desc, setDesc] = useState(workspace?.description ?? '');
   const [color, setColor] = useState<string | null>(workspace?.color ?? null);
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const busyRef = useRef(false);
   const sitesQuery = useQuery({ queryKey: ['sites'], queryFn: getSites, staleTime: Infinity });
   const sites = sitesQuery.data ?? [];
   // A nickname needs its site, otherwise the backend has nothing to attach it to
   const heroMissingSite = isCreating && hero.trim() !== '' && !heroSite;
 
   const save = async () => {
-    if (!name.trim() || heroMissingSite) return;
+    if (!name.trim() || heroMissingSite || busyRef.current) return;
+    busyRef.current = true;
     setSaving(true);
+    setError(null);
     try {
       if (workspace) {
         await updateWorkspace(workspace.id, {
@@ -59,7 +64,12 @@ export default function WorkspaceFormDialog({ workspace, onClose, onSaved }: Pro
       }
       await onSaved();
       onClose();
+    } catch (e) {
+      const msg = e instanceof Error && e.message ? e.message : 'Could not save the workspace';
+      setError(msg);
+      toast.error(isCreating ? 'Create failed' : 'Save failed', { description: msg });
     } finally {
+      busyRef.current = false;
       setSaving(false);
     }
   };
@@ -131,6 +141,7 @@ export default function WorkspaceFormDialog({ workspace, onClose, onSaved }: Pro
               ))}
             </div>
           </div>
+          {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose} disabled={saving}>Cancel</Button>

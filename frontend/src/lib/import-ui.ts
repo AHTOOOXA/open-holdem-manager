@@ -83,3 +83,15 @@ export function importFailedMessage(error: string | null | undefined): ToastMess
 export function rebuildCompletedMessage(hands: number): ToastMessage {
   return { kind: 'success', title: 'Statistics rebuilt', description: `${int(hands)} ${plural(hands, 'hand', 'hands')} recalculated` };
 }
+
+/** Whole-database hand count: sum over every workspace. */
+export function totalHands(workspaces: ReadonlyArray<{ hand_count: number }>): number {
+  return workspaces.reduce((sum, w) => sum + (w.hand_count || 0), 0);
+}
+
+/** True when the bytes start with the zip magic "PK". */
+export function isZipBytes(bytes: Uint8Array): boolean {
+  return bytes.length >= 2 && bytes[0] === 0x50 && bytes[1] === 0x4b;
+}
+
+export const BUSY_TITLE = 'An import or rebuild is running';
