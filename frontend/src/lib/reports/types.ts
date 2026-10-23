@@ -22,7 +22,7 @@ export type Step = { label?: string } & (
   | { k: 'date'; from?: string; to?: string } // ISO dates (inclusive), local day boundaries
   | { k: 'hour'; v: number[] } // local start hour 0-23
   | { k: 'stack'; lo: number; hi: number | null } // hero starting stack in bb, [lo, hi)
-  | { k: 'game'; stakes: string; mode: string; tsize: number } // a Results row (mode: 'fast' | 'regular')
+  | { k: 'game'; stakes: string; mode: string; tsize: number | null } // a Results row (mode: 'fast' | 'regular')
   | { k: 'cells'; v: string[] } // preflop hand classes, e.g. "AKs", "QQ", "T9o"
   | { k: 'hv'; street: Street; cats: string[] } // hand-value category keys ('other' too); flop/turn/river only
   // ── spot steps (order matters; each moves the hit point) ──

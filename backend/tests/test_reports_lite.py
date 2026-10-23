@@ -191,8 +191,12 @@ def test_action_summary_rules(client):
     rows = s["rows"]
     summ = s["summary"]
     assert summ["hands"] == sum(r["values"]["hands"] for r in rows)
-    assert summ["opps"] == sum(r["values"]["opps"] for r in rows)
-    assert summ["stat_value"] == pytest.approx(summ["hands"] / summ["opps"] * 100)
+    # opportunities of sibling rows are one decision: not summed
+    assert summ["opps"] is None and summ["stat_value"] is None
+    assert summ["won_bb"] == pytest.approx(sum(r["values"]["won_bb"] for r in rows))
+    f = _split(client, P01 + [{"k": "next", "street": "preflop", "a": "raise"}], "faced_next")
+    if f["summary"]:
+        assert f["summary"]["opps"] is None and f["summary"]["stat_value"] is None
     assert summ["hits1000"] == pytest.approx(sum(r["values"]["hits1000"] for r in rows))
     assert summ["ap_bbs"] == pytest.approx(sum(r["values"]["ap_bbs"] for r in rows))
     assert summ["ap_bbh"] == pytest.approx(summ["ap_bbs"] / summ["hands"])
@@ -399,3 +403,180 @@ def test_next_actions_timing(client):
     _split(client, P01, "faced_next")
     _post(client, "spot", P01)
     assert time.perf_counter() - t0 < 5.0
+
+
+# ── review fixes ─────────────────────────────────────────────────────────
+
+
+def _fresh_db(raws):
+    reset_import_cache()
+    invalidate_hero_cache()
+    conn = duckdb.connect(":memory:")
+    init_schema(conn)
+    conn.execute("INSERT INTO hero_accounts (workspace_id, site_id, username, source) "
+                 "VALUES (1, 1, 'Hero', 'manual')")
+    _import(conn, raws)
+    return conn
+
+
+def _import(conn, raws):
+    pending = []
+    with patch("app.api.import_hands._calc_equity", None):
+        for raw in raws:
+            parsed = parse_hand_history(raw)
+            pending.append((parsed, compute_stat_flags(parsed), _compute_financials(parsed)))
+        _flush_batch(conn, pending)
+    from app.api.import_hands import finalize_import
+    finalize_import(conn, workspace_id=1)
+    invalidate_hero_cache()
+
+
+def test_cache_is_fresh_after_clear_and_reimport(monkeypatch):
+    if not BENCH.exists():
+        pytest.skip("bench sample missing")
+    hands = [h.strip() for h in split_hands(BENCH.read_text()) if h.strip()]
+    a, b = hands[:300], hands[300:600]
+    conn = _fresh_db(a)
+    monkeypatch.setattr(app_db, "_conn", conn)
+    c = TestClient(app)
+    chain_mod.clear_cache()
+    first = _post(c, "spot", [])["hands"]
+    first_p01 = _post(c, "spot", P01)
+    assert first > 0
+    # simulate a stale entry surviving: wipe via the endpoint, which must not rely on clear_cache
+    assert c.post("/api/import/clear").status_code == 200
+    assert _post(c, "spot", [])["hands"] == 0
+    reset_import_cache()
+    _import(conn, b)
+    again = _post(c, "spot", [])["hands"]
+    expected = conn.execute("SELECT COUNT(*) FROM hand_players hp JOIN players p ON p.id = "
+                            "hp.player_id WHERE p.username = 'Hero' "
+                            "AND COALESCE(hp.h2n_valid, TRUE)").fetchone()[0]
+    assert again == expected
+    second_p01 = _post(c, "spot", P01)
+    assert second_p01 != first_p01 or again != first
+    conn.close()
+    invalidate_hero_cache()
+
+
+def test_data_generation_bump_changes_cache_key(client, bench_db):
+    from app import data_generation
+    k1 = chain_mod.data_version(bench_db, 1)
+    data_generation.bump()
+    assert chain_mod.data_version(bench_db, 1) != k1
+
+
+def test_hands_tab_lists_the_requested_player(client, bench_db):
+    vid, vname = bench_db.execute(
+        "SELECT hp.player_id, p.username FROM hand_players hp JOIN players p ON p.id = hp.player_id "
+        "WHERE p.username <> 'Hero' GROUP BY 1, 2 ORDER BY COUNT(*) DESC LIMIT 1").fetchone()
+    r = client.get("/api/hands", params={"chain": "[]", "player_id": vid, "per_page": 20})
+    assert r.status_code == 200
+    j = r.json()
+    n = bench_db.execute("SELECT COUNT(*) FROM hand_players WHERE player_id = ? "
+                         "AND COALESCE(h2n_valid, TRUE)", [vid]).fetchone()[0]
+    assert j["total"] == n > 0
+    for h in j["hands"]:
+        row = bench_db.execute("SELECT position, card1, card2, won_bb FROM hand_players "
+                               "WHERE hand_id = ? AND player_id = ?", [h["id"], vid]).fetchone()
+        assert (h["position"], h["card1"], h["card2"]) == row[:3]
+        assert h["won_bb"] == pytest.approx(float(row[3]))
+    # without player_id the hero's rows come back
+    hero = client.get("/api/hands", params={"chain": "[]"}).json()
+    assert hero["total"] != j["total"] or hero["hands"][0]["id"] != j["hands"][0]["id"]
+
+
+def test_crafted_chains_do_not_500(client):
+    for chain in ([{"k": "hv", "street": "flop", "cats": ["nope"]}],
+                  [{"k": "betsize", "bucket": "nope"}]):
+        j = json.dumps(chain)
+        for url in ("/api/hands", "/api/reports/graph"):
+            assert client.get(url, params={"chain": j}).status_code == 422, (url, chain)
+    # spot-step shapes that cannot start a hand fall back to generic names
+    for a in ("bet", "limp_fold", "fold_vs_bet", "check_vs_call", "limp_call"):
+        step = [{"k": "next", "street": "flop", "a": a}]
+        for t in ("next_actions", "faced_next", "bet_sizing"):
+            r = client.post("/api/reports/split", json={"workspace_id": 1, "chain": step,
+                                                        "type": t})
+            assert r.status_code in (200, 422), (a, t, r.text)
+        assert client.post("/api/reports/spot", json={"workspace_id": 1,
+                                                      "chain": step}).status_code in (200, 422)
+
+
+def test_chain_fuzz_no_500(client):
+    import random
+    from app.reports.chain import NextAction, FacedAction
+    from typing import get_args
+    rng = random.Random(7)
+    streets = ["preflop", "flop", "turn", "river"]
+    nexts, faceds = list(get_args(NextAction)), list(get_args(FacedAction))
+    rows = ["P01", "C01", "P02"]
+
+    def step():
+        k = rng.choice(["pos", "stakes", "mode", "tsize", "hour", "stack", "game", "cells",
+                        "hv", "row", "next", "faced", "betsize"])
+        if k == "pos":
+            return {"k": k, "v": [rng.choice(["EP", "MP", "CO", "BTN", "SB", "BB"])]}
+        if k == "stakes":
+            return {"k": k, "v": ["$0.05/$0.10"]}
+        if k == "mode":
+            return {"k": k, "v": rng.choice(["fast", "regular"])}
+        if k == "tsize":
+            return {"k": k, "v": [rng.choice([2, 6, 9])]}
+        if k == "hour":
+            return {"k": k, "v": [rng.randrange(24)]}
+        if k == "stack":
+            return {"k": k, "lo": rng.choice([0, 20, 50]), "hi": rng.choice([None, 100])}
+        if k == "game":
+            return {"k": k, "stakes": "$0.05/$0.10", "mode": rng.choice(["fast", "regular"]),
+                    "tsize": rng.choice([None, 6])}
+        if k == "cells":
+            return {"k": k, "v": ["AA", "AKs", "72o"]}
+        if k == "hv":
+            return {"k": k, "street": rng.choice(streets[1:]), "cats": ["other"]}
+        if k == "row":
+            return {"k": k, "key": rng.choice(rows)}
+        if k == "next":
+            return {"k": k, "street": rng.choice(streets), "a": rng.choice(nexts)}
+        if k == "faced":
+            return {"k": k, "street": rng.choice(streets), "a": rng.choice(faceds)}
+        return {"k": k, "bucket": "nope"}
+
+    types = ["results", "positions", "next_actions", "faced_next", "bet_sizing", "stack_sizes",
+             "hour_of_day", "table_size"]
+    for _ in range(60):
+        chain = [step() for _ in range(rng.randint(1, 3))]
+        r = client.post("/api/reports/split", json={"workspace_id": 1, "chain": chain,
+                                                    "type": rng.choice(types)})
+        assert r.status_code in (200, 422), (chain, r.text)
+        r = client.get("/api/hands", params={"chain": json.dumps(chain), "per_page": 5})
+        assert r.status_code in (200, 422), (chain, r.text)
+        r = client.get("/api/reports/graph", params={"chain": json.dumps(chain)})
+        assert r.status_code in (200, 422), (chain, r.text)
+
+
+def test_game_row_with_unknown_table_size(client, bench_db):
+    step = {"k": "game", "stakes": "$0.05/$0.10", "mode": "regular", "tsize": None}
+    n = bench_db.execute(
+        "SELECT COUNT(*) FROM hand_players hp JOIN hands h ON h.id = hp.hand_id AND "
+        "h.workspace_id = hp.workspace_id JOIN players p ON p.id = hp.player_id WHERE "
+        "p.username = 'Hero' AND COALESCE(hp.h2n_valid, TRUE) AND h.stakes = '$0.05/$0.10' "
+        "AND h.game_mode <> 'Fast Fold' AND h.table_size IS NULL").fetchone()[0]
+    assert _post(client, "spot", [step])["hands"] == n
+
+
+def test_inflight_entry_released_on_error(client, bench_db, monkeypatch):
+    def boom(*a, **k):
+        raise RuntimeError("boom")
+    monkeypatch.setattr(chain_mod, "_compute", boom)
+    with pytest.raises(RuntimeError):
+        chain_mod.resolve(bench_db, 1, None, chain_mod.parse_chain(json.dumps(P01)))
+    assert not chain_mod._inflight
+
+
+def test_empty_chain_param_applies_h2n_valid(client, bench_db, hero_id):
+    n = bench_db.execute("SELECT COUNT(*) FROM hand_players WHERE player_id = ? AND "
+                         "COALESCE(h2n_valid, TRUE)", [hero_id]).fetchone()[0]
+    assert client.get("/api/hands", params={"chain": "[]", "per_page": 1}).json()["total"] == n
+    g = client.get("/api/reports/graph", params={"chain": "[]"}).json()
+    assert len(g["points"]) == n

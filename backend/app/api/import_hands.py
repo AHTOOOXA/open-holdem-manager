@@ -439,6 +439,12 @@ def finalize_import(db: duckdb.DuckDBPyConnection, workspace_id: int | None = No
     When workspace_id is provided, only recomputes player classifications for
     that workspace. When None (full rebuild), recomputes for all workspaces.
     """
+    from app import data_generation
+    data_generation.bump()  # invalidates cached report resolutions
+    # The bulk (Arrow) insert and the composite-key migration leave imported_at NULL.
+    db.execute("UPDATE hands SET imported_at = CURRENT_TIMESTAMP WHERE imported_at IS NULL"
+               + (" AND workspace_id = ?" if workspace_id is not None else ""),
+               [workspace_id] if workspace_id is not None else [])
     db.execute("""
         UPDATE players SET
             first_seen = sub.min_t,
@@ -862,6 +868,8 @@ async def rebuild_hands():
         except Exception:
             logging.getLogger(__name__).exception("Rebuild failed")
         finally:
+            from app import data_generation
+            data_generation.bump()
             _rebuild_status["active"] = False
 
     t = threading.Thread(target=_bg_rebuild, daemon=True, name="user-rebuild")
@@ -1017,6 +1025,8 @@ async def clear_hands(workspace_id: int = 1):
         from app.heroes import invalidate_hero_cache
         invalidate_hero_cache(workspace_id)
         reset_import_cache()
+        from app import data_generation
+        data_generation.bump()
     return {"status": "ok"}
 
 
@@ -1084,6 +1094,8 @@ async def import_database(file: UploadFile = File(...)):
             reset_import_cache()
             from app.heroes import invalidate_hero_cache
             invalidate_hero_cache()
+            from app import data_generation
+            data_generation.bump()
 
         return {"status": "ok", "hands": hand_count}
     except ValueError as e:

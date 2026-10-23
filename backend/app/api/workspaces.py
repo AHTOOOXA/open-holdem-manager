@@ -232,5 +232,7 @@ def delete_workspace(workspace_id: int):
         db.execute(
             "DELETE FROM workspaces WHERE id = ?", [workspace_id]
         )
+        from app import data_generation
+        data_generation.bump()
 
         return {"status": "ok"}

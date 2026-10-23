@@ -32,7 +32,7 @@ from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Annotated, Any, Literal, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator, model_validator
 
 from app.api.general_popup import _BUCKET_BY_ID, _fetch_raw, _size_hits
 from app.date_filters import DATE_TO_SQL
@@ -137,7 +137,7 @@ class GameStep(_Step):
     k: Literal["game"]
     stakes: str
     mode: ModeName
-    tsize: int
+    tsize: Optional[int] = None  # None = unknown table size (SQL IS NULL)
 
 
 class CellsStep(_Step):
@@ -164,6 +164,12 @@ class HvStep(_Step):
         if v == "preflop":
             raise ValueError("hand values exist on the flop, turn and river only")
         return v
+
+    @model_validator(mode="after")
+    def _known_cats(self):
+        for c in self.cats:
+            hv_index(self.street, c)
+        return self
 
 
 class RowStep(_Step):
@@ -332,8 +338,11 @@ def plain_sql(chain: list[_Step]) -> tuple[str, list]:
             sql.append("h.stakes = ?")
             params.append(st.stakes)
             sql.append(_mode_sql(st.mode))
-            sql.append("h.table_size = ?")
-            params.append(st.tsize)
+            if st.tsize is None:
+                sql.append("h.table_size IS NULL")
+            else:
+                sql.append("h.table_size = ?")
+                params.append(st.tsize)
         elif k == "cells":
             sql.append(f"{card_class_sql()} IN ({_marks(len(st.v))})")
             params += list(st.v)
@@ -660,13 +669,21 @@ def clear_cache() -> None:
     _CACHE.clear()
 
 
+def bump_generation() -> None:
+    """Call after any write that changes hands / hand_players (invalidates resolutions)."""
+    from app import data_generation
+    data_generation.bump()
+    _CACHE.clear()
+
+
 def data_version(db, workspace_id: int) -> tuple:
     n, last = db.execute(
         "SELECT COUNT(*), MAX(imported_at) FROM hands WHERE workspace_id = ?", [workspace_id]
     ).fetchone()
     top = db.execute("SELECT MAX(id) FROM hand_players WHERE workspace_id = ?",
                      [workspace_id]).fetchone()[0]
-    return (int(n), str(last), top)
+    from app import data_generation
+    return (int(n), str(last), top, data_generation.current())
 
 
 def resolve(db, workspace_id: int, player_id: int | None, chain: list[_Step]) -> Resolution:
@@ -681,13 +698,15 @@ def resolve(db, workspace_id: int, player_id: int | None, chain: list[_Step]) ->
     # One computation per key at a time: parallel requests of one page wait for it.
     with _inflight_lock:
         lock = _inflight.setdefault(key, threading.Lock())
-    with lock:
-        hit = _CACHE.get(key)
-        if hit is None:
-            hit = _compute(db, workspace_id, target, chain)
-            _CACHE.put(key, hit)
-    with _inflight_lock:
-        _inflight.pop(key, None)
+    try:
+        with lock:
+            hit = _CACHE.get(key)
+            if hit is None:
+                hit = _compute(db, workspace_id, target, chain)
+                _CACHE.put(key, hit)
+    finally:
+        with _inflight_lock:
+            _inflight.pop(key, None)
     return hit
 
 
