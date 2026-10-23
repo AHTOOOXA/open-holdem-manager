@@ -14,7 +14,7 @@ export default function GraphTab({ query }: { query: ReportQuery }) {
   const chain = query.chain;
   const { data, isPending, isError, error } = useQuery({
     queryKey: ['reports', 'graph', queryKeyOf(query)],
-    queryFn: () => getGraphData({ chain }),
+    queryFn: () => getGraphData({ chain, player_id: query.player_id }),
   });
 
   const summary = useMemo(() => {

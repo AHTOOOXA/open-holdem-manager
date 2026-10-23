@@ -119,7 +119,7 @@ export default function LowerReports({ state, query, handsInit, onSelectTab, onA
             key={handsInit?.rev ?? 0}
             chain={query.chain}
             initialFilters={handsInit?.initialFilters}
-            fixedParams={handsInit?.fixedParams}
+            fixedParams={query.player_id ? { ...handsInit?.fixedParams, player_id: query.player_id } : handsInit?.fixedParams}
             gridMaxHeight={HANDS_GRID_MAX_HEIGHT}
             emptyMessage="No results yet"
           />

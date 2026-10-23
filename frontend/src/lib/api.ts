@@ -337,6 +337,8 @@ export async function getGraphData(params?: {
   last_n?: number;
   /** Reports filter chain (full chain; combined with the other params). */
   chain?: Step[];
+  /** Player to graph (Reports dashboards on an opponent); omitted = the active hero. */
+  player_id?: number;
 }): Promise<GraphResponse> {
   const sp = new URLSearchParams();
   if (params?.stakes) sp.set('stakes', params.stakes);
@@ -345,6 +347,7 @@ export async function getGraphData(params?: {
   if (params?.date_to) sp.set('date_to', params.date_to);
   if (params?.last_n) sp.set('last_n', String(params.last_n));
   if (params?.chain?.length) sp.set('chain', chainParam(params.chain));
+  if (params?.player_id) sp.set('player_id', String(params.player_id));
   _addWorkspaceParam(sp);
   const res = await fetch(`${BASE}/reports/graph?${sp}`);
   if (!res.ok) throw new Error(`Graph failed: ${res.statusText}`);
