@@ -76,6 +76,16 @@ class TestTags:
         assert db.execute("SELECT COUNT(*) FROM hand_tags").fetchone()[0] == 1
         assert _hand_count(client, tags="bluff") == 1
 
+    def test_any_tag_pseudo_value(self, client, db):
+        total = _hand_count(client)
+        assert total > 1
+        assert _hand_count(client, tags="__any__") == 0
+        hand_id = db.execute("SELECT id FROM hands LIMIT 1").fetchone()[0]
+        client.post(f"/api/hands/{hand_id}/tags", json={"tag": "bluff"})
+        client.post(f"/api/hands/{hand_id}/tags", json={"tag": "hero call"})
+        assert _hand_count(client, tags="__any__") == 1
+        assert _hand_count(client, tags="untagged") == total - 1
+
 
 # ── #16: head-to-head rows in action order ───────────────────────────
 

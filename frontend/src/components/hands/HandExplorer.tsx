@@ -26,6 +26,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { fixed } from '@/lib/format';
+import { ANY_TAG } from '@/components/hands/HandFilters';
 
 function getDateRange(preset: string, dateFrom: string, dateTo: string): { from?: string; to?: string } {
   const today = new Date();
@@ -58,6 +59,8 @@ export interface HandExplorerProps {
   header?: React.ReactNode;
   /** CSS class for root container */
   className?: string;
+  /** Message for the empty state when the list is empty and the user has set no filters */
+  emptyMessage?: string;
 }
 
 export default function HandExplorer({
@@ -66,6 +69,7 @@ export default function HandExplorer({
   defaultPerPage = 50,
   header,
   className,
+  emptyMessage,
 }: HandExplorerProps) {
   const [page, setPage] = useState(1);
   const [perPage, setPerPage] = useState(defaultPerPage);
@@ -178,10 +182,10 @@ export default function HandExplorer({
   };
 
   const hasUserFilters = filters.position.length > 0 || filters.stakes.length > 0 ||
-    filters.result !== '' || filters.tags.length > 0 || filters.date !== '' || debouncedSearch !== '' ||
+    filters.result !== '' || filters.tags.some((t) => t !== ANY_TAG) || filters.date !== '' || debouncedSearch !== '' ||
     filters.statFlags.length > 0 || filters.quickFilters.length > 0;
   const hasFixedFilters = !!(fixedParams?.stat_key || fixedParams?.stat_flag?.length || fixedParams?.position || fixedParams?.stakes);
-  const hasFilters = hasUserFilters || hasFixedFilters;
+  const hasFilters = hasUserFilters || hasFixedFilters || !!emptyMessage;
 
   // Compute locked stat flags from fixedParams
   const lockedStatFlags: string[] = [];
@@ -256,7 +260,8 @@ export default function HandExplorer({
       ) : !data || data.total === 0 ? (
         <EmptyState
           variant={hasFilters ? 'no-match' : 'no-data'}
-          onClearFilters={hasUserFilters ? () => handleFilterChange({ position: [], stakes: [], result: '', tags: [], date: '', dateFrom: '', dateTo: '', search: '', statFlags: [], quickFilters: [] }) : undefined}
+          message={!hasUserFilters ? emptyMessage : undefined}
+          onClearFilters={hasUserFilters ? () => handleFilterChange({ position: [], stakes: [], result: '', tags: filters.tags.filter((t) => t === ANY_TAG), date: '', dateFrom: '', dateTo: '', search: '', statFlags: [], quickFilters: [] }) : undefined}
         />
       ) : (
         <>

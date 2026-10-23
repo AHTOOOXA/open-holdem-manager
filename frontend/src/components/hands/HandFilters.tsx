@@ -127,6 +127,9 @@ const DATE_PRESETS = [
   { value: 'custom', label: 'Custom Range' },
 ];
 
+/** Pseudo-tag understood by the backend: hands that carry at least one tag. */
+export const ANY_TAG = '__any__';
+
 export default function HandFilters({
   filters,
   onChange,
@@ -264,6 +267,16 @@ export default function HandFilters({
 
         {/* Tags */}
         <FilterDropdown label="Tags" active={filters.tags.length > 0}>
+          <CheckboxOption
+            label="Any tag"
+            checked={filters.tags.includes(ANY_TAG)}
+            onChange={(c) => {
+              const next = c
+                ? [...filters.tags, ANY_TAG]
+                : filters.tags.filter((x) => x !== ANY_TAG);
+              onChange({ ...filters, tags: next });
+            }}
+          />
           <CheckboxOption
             label="Untagged"
             checked={filters.tags.includes('untagged')}
