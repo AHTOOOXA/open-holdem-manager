@@ -70,11 +70,12 @@ function FilterChips({ own, onAdd, onEdit, onRemove }: {
   );
 }
 
-export default function ReportPageView({ page, dashboard, actions, handsInit }: {
+export default function ReportPageView({ page, dashboard, actions, handsInit, onClearHandsInit }: {
   page: ReportPage;
   dashboard: Dashboard;
   actions: PageActions;
   handsInit?: HandsInit;
+  onClearHandsInit?: () => void;
 }) {
   const s = page.state;
   const [dialog, setDialog] = useState<{ open: boolean; tab: FilterDialogTab }>({ open: false, tab: 'quick' });
@@ -120,6 +121,7 @@ export default function ReportPageView({ page, dashboard, actions, handsInit }: 
           state={s}
           query={lowerQuery}
           handsInit={handsInit}
+          onClearHandsInit={onClearHandsInit}
           onSelectTab={actions.setLowerTab}
           onAddTab={actions.addLowerTab}
           onRemoveTab={actions.removeLowerTab}

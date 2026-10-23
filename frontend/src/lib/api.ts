@@ -346,7 +346,7 @@ export async function getGraphData(params?: {
   if (params?.date_from) sp.set('date_from', params.date_from);
   if (params?.date_to) sp.set('date_to', params.date_to);
   if (params?.last_n) sp.set('last_n', String(params.last_n));
-  if (params?.chain?.length) sp.set('chain', chainParam(params.chain));
+  if (params?.chain) sp.set('chain', chainParam(params.chain));
   if (params?.player_id) sp.set('player_id', String(params.player_id));
   _addWorkspaceParam(sp);
   const res = await fetch(`${BASE}/reports/graph?${sp}`);
@@ -518,7 +518,7 @@ export async function getHands(params?: HandListParams): Promise<HandListRespons
   }
   if (params?.stat_key) sp.set('stat_key', params.stat_key);
   if (params?.player_id) sp.set('player_id', String(params.player_id));
-  if (params?.chain?.length) sp.set('chain', chainParam(params.chain));
+  if (params?.chain) sp.set('chain', chainParam(params.chain));
   _addWorkspaceParam(sp);
   const res = await fetch(`${BASE}/hands?${sp}`);
   if (!res.ok) throw new Error(`Hands failed: ${res.statusText}`);

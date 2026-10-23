@@ -1,4 +1,5 @@
 /** Typed client for the Reports endpoints (contract in ./types.ts). */
+import { stripUiFields } from './steps';
 import type {
   HandStrengthQuery,
   HandStrengthResponse,
@@ -17,7 +18,7 @@ async function post<T>(path: string, body: unknown, signal?: AbortSignal): Promi
   const res = await fetch(`${BASE}${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+    body: JSON.stringify(body, (k, v) => (k === 'chain' && Array.isArray(v) ? stripUiFields(v) : v)),
     signal,
   });
   if (!res.ok) {
@@ -57,13 +58,7 @@ export async function getQuickFilters(): Promise<QuickFilter[]> {
 
 /** Query-string value for GET endpoints that accept the chain (`/api/hands`, `/api/reports/graph`). */
 export function chainParam(chain: Step[]): string {
-  return JSON.stringify(
-    chain.map((step) => {
-      const rest: Partial<Step> = { ...step };
-      delete rest.label;
-      return rest;
-    }),
-  );
+  return JSON.stringify(stripUiFields(chain, false));
 }
 
 /** Stable react-query key part for a query (labels don't change results). */

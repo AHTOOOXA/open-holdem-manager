@@ -4,6 +4,7 @@
  */
 import { useRef, useState, type KeyboardEvent, type MouseEvent } from 'react';
 import { Plus } from 'lucide-react';
+import { Chip } from '@/components/ui/chip';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
@@ -23,15 +24,19 @@ const HANDS_GRID_MAX_HEIGHT = 'max(18rem, calc(100dvh - 22rem))';
 export interface HandsInit {
   initialFilters?: HandExplorerProps['initialFilters'];
   fixedParams?: HandExplorerProps['fixedParams'];
+  /** Readable form of the filters (leak-link flags, position, stat key). */
+  labels: string[];
   /** Remount key so new initial filters apply. */
   rev: number;
 }
 
-export default function LowerReports({ state, query, handsInit, onSelectTab, onAddTab, onRemoveTab, onOpenRow }: {
+export default function LowerReports({ state, query, handsInit, onClearHandsInit, onSelectTab, onAddTab, onRemoveTab, onOpenRow }: {
   state: ReportPageState;
   /** Full chain of the page. */
   query: ReportQuery;
   handsInit?: HandsInit;
+  /** Drop the legacy-link filters (the hand list returns to the plain chain). */
+  onClearHandsInit?: () => void;
   onSelectTab: (tab: LowerTab) => void;
   onAddTab: (type: SplitType) => void;
   onRemoveTab: (tab: LowerTab) => void;
@@ -59,6 +64,7 @@ export default function LowerReports({ state, query, handsInit, onSelectTab, onA
   };
 
   const tab = state.lowerTab;
+  const hasLegacyFilters = !!handsInit && handsInit.labels.length > 0;
   const selectedKey = (t: SplitType) => (state.selectedRow?.tab === t ? state.selectedRow.key : null);
 
   return (
@@ -115,15 +121,24 @@ export default function LowerReports({ state, query, handsInit, onSelectTab, onA
 
       <div className="min-w-0 px-3">
         {tab === 'hands' ? (
+          <>
+          {hasLegacyFilters && (
+            <div className="mb-2 flex items-center gap-2 text-xs text-muted-foreground">
+              <Chip tone="accent" onRemove={onClearHandsInit} removeLabel="Clear leak link filters">
+                Filtered from a leak link: {handsInit?.labels.join(', ')}
+              </Chip>
+            </div>
+          )}
           <HandExplorer
             key={handsInit?.rev ?? 0}
             chain={query.chain}
-            hideFilters
+            hideFilters={!hasLegacyFilters}
             initialFilters={handsInit?.initialFilters}
             fixedParams={query.player_id ? { ...handsInit?.fixedParams, player_id: query.player_id } : handsInit?.fixedParams}
             gridMaxHeight={HANDS_GRID_MAX_HEIGHT}
             emptyMessage="No results yet"
           />
+          </>
         ) : (
           <SplitReport
             key={tab}

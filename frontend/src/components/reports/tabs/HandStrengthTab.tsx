@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { getHandStrength, queryKeyOf } from '@/lib/reports/api';
 import type { ReportQuery, Street } from '@/lib/reports/types';
 import { hvColor } from '@/lib/hv-color';
+import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { barWidthPct, count, formatSignedBb, moneyClass, pct } from '@/lib/format';
@@ -51,6 +52,11 @@ export default function HandStrengthTab({ query, selected, onSelect }: HandStren
           ))}
         </ToggleGroup>
         {data && <span className="text-xs text-muted-foreground">{count(data.known)} hands</span>}
+        {selectedCats.length > 0 && (
+          <Button variant="ghost" size="sm" className="ml-auto" onClick={() => onSelect({ street, cats: [] })}>
+            Clear ({selectedCats.length})
+          </Button>
+        )}
       </div>
       {isPending ? (
         <div className="flex flex-col gap-1" aria-busy>
@@ -78,7 +84,8 @@ export default function HandStrengthTab({ query, selected, onSelect }: HandStren
           </div>
           {data.rows.map((r) => {
             const on = selectedCats.includes(r.key);
-            const empty = r.hands === 0;
+            // A selected row stays clickable even when it has no hands now, so it can be deselected
+            const empty = r.hands === 0 && !on;
             return (
               <button
                 key={r.key}

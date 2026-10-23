@@ -17,6 +17,7 @@ import type { HandsInit } from './LowerReports';
 import { getHeroes } from '@/lib/api';
 import { chainParam, getSpot } from '@/lib/reports/api';
 import { reportKeys } from '@/lib/reports/query-keys';
+import { activeLegacyFilters, legacyFilterLabels } from '@/lib/reports/legacy-filters';
 import { count } from '@/lib/format';
 import {
   addLowerTab, applyLegacyTab, chainStorageKey, closeAllPages, closePagesFrom, freshChain,
@@ -151,15 +152,19 @@ export default function ReportsDashboard({ workspaceId, legacy }: { workspaceId:
     },
   }), [update]);
 
+  // A leak link's hidden filters live until the user dismisses the notice (or a new link arrives)
+  const [dismissedRev, setDismissedRev] = useState(0);
   const handsInit = useMemo<HandsInit | undefined>(() => {
-    if (!legacy || legacy.link.tab !== 'hands') return undefined;
-    const { statFlags, position, statKey } = legacy.link;
+    const active = activeLegacyFilters(legacy?.link, legacy?.rev ?? 0, dismissedRev);
+    if (!legacy || !active) return undefined;
+    const { statFlags, position, statKey } = active;
     return {
       rev: legacy.rev,
+      labels: legacyFilterLabels(active),
       initialFilters: { statFlags, position },
       fixedParams: statKey ? { stat_key: statKey } : undefined,
     };
-  }, [legacy]);
+  }, [legacy, dismissedRev]);
 
   const username = player?.username ?? hero?.username;
   const site = player?.site ?? hero?.site_name;
@@ -226,6 +231,7 @@ export default function ReportsDashboard({ workspaceId, legacy }: { workspaceId:
             dashboard={dashboard}
             actions={pageActions(i, page)}
             handsInit={i === 0 ? handsInit : undefined}
+            onClearHandsInit={() => setDismissedRev(legacy?.rev ?? 0)}
           />
         )}
         // closePagesFrom also clears the left page's selection (PageChain's onSelectionCleared)

@@ -15,6 +15,7 @@ import {
   closeFrom, createChain, openNext, setPageState, truncateAfter,
   type Page, type PageChain,
 } from '@/lib/page-chain';
+import { resolvePresets } from './steps';
 import type { ReportQuery, SplitType, Step, Street } from './types';
 
 export type UpperTab = 'stats' | 'graph' | 'range' | 'strength';
@@ -64,13 +65,13 @@ export function isLowerTab(v: unknown): v is LowerTab {
 // ── Chains ──────────────────────────────────────────────────────────────────────────────────
 
 /** Chain of the upper tabs: inherited + own (range selections excluded). */
-export function composeUpper(inherited: readonly Step[], own: readonly Step[]): Step[] {
-  return [...inherited, ...own];
+export function composeUpper(inherited: readonly Step[], own: readonly Step[], now?: Date): Step[] {
+  return resolvePresets([...inherited, ...own], now);
 }
 
 /** Chain of the lower tabs and of the next page: inherited + own + range / hand-strength selections. */
-export function composeFull(inherited: readonly Step[], own: readonly Step[], lower: readonly Step[]): Step[] {
-  return [...inherited, ...own, ...lower];
+export function composeFull(inherited: readonly Step[], own: readonly Step[], lower: readonly Step[], now?: Date): Step[] {
+  return resolvePresets([...inherited, ...own, ...lower], now);
 }
 
 export function upperChain(page: Pick<ReportPage, 'inherited' | 'state'>): Step[] {
@@ -451,7 +452,7 @@ const validSteps = (v: unknown): Step[] => (Array.isArray(v) ? v.filter(isStep) 
  * Own/lower steps of unknown kinds are dropped; a page whose inherited chain is not fully valid
  * is dropped together with every page after it (its numbers would no longer match its title).
  */
-export function parseStoredChain(raw: string | null | undefined): { chain: ReportChain; player: StoredPlayer | null } | null {
+export function parseStoredChain(raw: string | null | undefined, now: Date = new Date()): { chain: ReportChain; player: StoredPlayer | null } | null {
   if (!raw) return null;
   let data: unknown;
   try {
@@ -467,15 +468,16 @@ export function parseStoredChain(raw: string | null | undefined): { chain: Repor
   for (const [i, raw] of (d.pages as unknown[]).entries()) {
     if (!raw || typeof raw !== 'object') break;
     const p = raw as Record<string, unknown>;
-    const inherited = i === 0 ? [] : stepsOrNull(p.inherited);
-    if (!inherited) break;
+    const storedInherited = i === 0 ? [] : stepsOrNull(p.inherited);
+    if (!storedInherited) break;
+    const inherited = resolvePresets(storedInherited, now);
     const lowerTabs = normalizeTabs(Array.isArray(p.lowerTabs) ? p.lowerTabs : DEFAULT_LOWER_TABS);
     const lowerTab = isLowerTab(p.lowerTab) && lowerTabs.includes(p.lowerTab) ? p.lowerTab : 'hands';
     pages.push({
       title: i === 0 ? PAGE0_TITLE : isStr(p.title) ? p.title : 'Page',
       inherited,
       state: {
-        own: validSteps(p.own),
+        own: resolvePresets(validSteps(p.own), now),
         lower: validSteps(p.lower).filter((s) => s.k === 'cells' || s.k === 'hv'),
         upperTab: isUpperTab(p.upperTab) ? p.upperTab : 'stats',
         lowerTabs,

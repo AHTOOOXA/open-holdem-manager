@@ -112,24 +112,76 @@ export interface DatePresetDef {
   to?: string;
 }
 
+/** Date of `base` shifted by whole days / months (day-of-month clamped to the target month). */
+function shiftMonths(base: Date, months: number): Date {
+  const first = new Date(base.getFullYear(), base.getMonth() + months, 1);
+  const last = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate();
+  return new Date(first.getFullYear(), first.getMonth(), Math.min(base.getDate(), last));
+}
+
 /** Session-tab presets relative to `now` (weeks start on Monday). "All Time" has no bounds. */
 export function sessionPresets(now: Date = new Date()): DatePresetDef[] {
-  const d = (y: number, m: number, day: number) => new Date(y, m, day);
-  const y = now.getFullYear();
-  const m = now.getMonth();
-  const day = now.getDate();
-  const mondayOffset = (now.getDay() + 6) % 7;
-  const thisMonday = d(y, m, day - mondayOffset);
   const f = formatLocalDate;
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const addDays = (base: Date, n: number) => {
+    const r = new Date(base);
+    r.setDate(r.getDate() + n);
+    return r;
+  };
+  const yesterday = addDays(today, -1);
+  const thisMonday = addDays(today, -((today.getDay() + 6) % 7));
+  const lastMonday = addDays(thisMonday, -7);
+  const lastSunday = addDays(thisMonday, -1);
+  const y = today.getFullYear();
+  const m = today.getMonth();
   return [
-    { id: 'today', label: 'Today', from: f(now), to: f(now) },
-    { id: 'yesterday', label: 'Yesterday', from: f(d(y, m, day - 1)), to: f(d(y, m, day - 1)) },
-    { id: 'week', label: 'This Week', from: f(thisMonday), to: f(now) },
-    { id: 'lastweek', label: 'Last Week', from: f(d(y, m, thisMonday.getDate() - 7)), to: f(d(y, m, thisMonday.getDate() - 1)) },
-    { id: 'month', label: 'This Month', from: f(d(y, m, 1)), to: f(now) },
-    { id: 'lastmonth', label: 'Last Month', from: f(d(y, m - 1, 1)), to: f(d(y, m, 0)) },
-    { id: 'last3', label: 'Last 3 Months', from: f(d(y, m - 3, day)), to: f(now) },
-    { id: 'year', label: 'This Year', from: f(d(y, 0, 1)), to: f(now) },
+    { id: 'today', label: 'Today', from: f(today), to: f(today) },
+    { id: 'yesterday', label: 'Yesterday', from: f(yesterday), to: f(yesterday) },
+    { id: 'week', label: 'This Week', from: f(thisMonday), to: f(today) },
+    { id: 'lastweek', label: 'Last Week', from: f(lastMonday), to: f(lastSunday) },
+    { id: 'month', label: 'This Month', from: f(new Date(y, m, 1)), to: f(today) },
+    { id: 'lastmonth', label: 'Last Month', from: f(new Date(y, m - 1, 1)), to: f(new Date(y, m, 0)) },
+    { id: 'last3', label: 'Last 3 Months', from: f(shiftMonths(today, -3)), to: f(today) },
+    { id: 'year', label: 'This Year', from: f(new Date(y, 0, 1)), to: f(today) },
     { id: 'all', label: 'All Time' },
   ];
+}
+
+// ── Relative date presets stored on date steps ──────────────────────────────────────────────
+
+/** A date step as the page state keeps it: the backend never sees `preset` (see `stripUiFields`). */
+export type PresetDateStep = Of<'date'> & { preset?: string };
+
+/** Preset id stored on a date step ('today', 'week', ...), if it is a relative preset. */
+export function presetOf(step: Step): string | undefined {
+  if (step.k !== 'date') return undefined;
+  const id = (step as PresetDateStep).preset;
+  return typeof id === 'string' ? id : undefined;
+}
+
+/** A date step that follows a preset: from/to are re-derived from `now` by `resolvePresets`. */
+export function presetDateStep(preset: DatePresetDef, now: Date = new Date()): Step {
+  const fresh = sessionPresets(now).find((x) => x.id === preset.id) ?? preset;
+  return { k: 'date', from: fresh.from, to: fresh.to, label: preset.label, preset: preset.id } as PresetDateStep as Step;
+}
+
+/** Re-derive from/to of every date step carrying a known preset id. Same array when nothing changes. */
+export function resolvePresets(steps: readonly Step[], now: Date = new Date()): Step[] {
+  if (!steps.some((s) => presetOf(s))) return steps as Step[];
+  const presets = sessionPresets(now);
+  return steps.map((s) => {
+    const id = presetOf(s);
+    const p = id ? presets.find((x) => x.id === id && x.from) : undefined;
+    return p ? ({ ...s, from: p.from, to: p.to } as Step) : s;
+  });
+}
+
+/** Drop the fields the backend does not take (`preset`); keeps `label` unless `keepLabel` is false. */
+export function stripUiFields(steps: readonly Step[], keepLabel = true): Step[] {
+  return steps.map((step) => {
+    const rest = { ...step } as Record<string, unknown>;
+    delete rest.preset;
+    if (!keepLabel) delete rest.label;
+    return rest as unknown as Step;
+  });
 }

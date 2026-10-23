@@ -7,6 +7,8 @@ import {
   POSITIONS,
   dateLabel,
   normaliseOwnSteps,
+  presetDateStep,
+  presetOf,
   sessionPresets,
   splitOwnSteps,
   stackLabel,
@@ -70,8 +72,8 @@ function toDraft(value: Step[]): Draft {
   if (p.date) {
     d.from = p.date.from ?? '';
     d.to = p.date.to ?? '';
-    const preset = sessionPresets().find((x) => x.label === p.date?.label);
-    d.presetId = preset ? preset.id : 'custom';
+    const stored = presetOf(p.date);
+    d.presetId = stored && sessionPresets().some((x) => x.id === stored) ? stored : 'custom';
   }
   return d;
 }
@@ -98,7 +100,10 @@ function toSteps(d: Draft, value: Step[]): Step[] {
   if (lo != null || hi != null) steps.push({ k: 'stack', lo: lo ?? 0, hi, label: stackLabel(lo ?? 0, hi) });
   if (d.from || d.to) {
     const preset = sessionPresets().find((x) => x.id === d.presetId);
-    steps.push({ k: 'date', from: d.from || undefined, to: d.to || undefined, label: preset?.from ? preset.label : dateLabel(d.from, d.to) });
+    // Presets other than a custom range stay relative (re-derived from the preset id)
+    steps.push(preset?.from
+      ? presetDateStep(preset)
+      : { k: 'date', from: d.from || undefined, to: d.to || undefined, label: dateLabel(d.from, d.to) });
   }
   return normaliseOwnSteps([...steps, ...splitOwnSteps(value).other]);
 }

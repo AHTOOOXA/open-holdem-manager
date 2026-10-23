@@ -288,7 +288,8 @@ export default function HandExplorer({
     date_to: dateRange.to,
     search: debouncedSearch || undefined,
     stat_flag: allStatFlags.length > 0 ? allStatFlags : undefined,
-    chain: chain?.length ? chain : undefined,
+    // An explicit empty chain is sent as well (backend applies the hand validity rule); no chain = unchanged
+    chain,
   };
 
   // Merge fixedParams — they override user params for the same key
@@ -320,7 +321,7 @@ export default function HandExplorer({
   }, []);
 
   // A new chain is a new result set: back to page 1 (adjusting state during render, keyed on the chain)
-  const chainKey = chain?.length ? chainParam(chain) : '';
+  const chainKey = chain ? chainParam(chain) : '';
   const [seenChainKey, setSeenChainKey] = useState(chainKey);
   if (seenChainKey !== chainKey) {
     setSeenChainKey(chainKey);
