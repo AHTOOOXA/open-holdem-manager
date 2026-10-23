@@ -322,6 +322,10 @@
   --z-popover: 110;
   --z-toast: 200;
   --motion-fast: 150ms;
+
+  /* App shell: caption row (menu) and status bar heights; full-height screens subtract both */
+  --shell-header-h: 2.25rem;
+  --shell-status-h: 1.75rem;
 }
 
 @layer base {

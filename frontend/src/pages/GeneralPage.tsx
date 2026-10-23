@@ -132,7 +132,7 @@ export default function GeneralPage() {
 
   return (
     // contain:inline-size keeps the wide pane row from stretching the app shell; the row scrolls instead.
-    <div className="-m-4 flex h-[calc(100svh-2.5rem)] min-h-0 flex-col bg-surface-sunken [contain:inline-size]">
+    <div className="-m-4 flex h-[calc(100svh-var(--shell-header-h)-var(--shell-status-h))] min-h-0 flex-col bg-surface-sunken [contain:inline-size]">
       <div className="p-2">
         <FilterBar
           stakes={stakes}

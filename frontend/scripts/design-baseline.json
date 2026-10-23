@@ -111,8 +111,7 @@
     "palette": 1
   },
   "src/components/WorkspaceSwitcher.tsx": {
-    "hex": 1,
-    "text-arbitrary": 1
+    "hex": 1
   },
   "src/pages/CashDropPage.tsx": {
     "text-arbitrary": 7

@@ -449,11 +449,11 @@ export function computeLeaks(stats: HeroStats, minSample = 200): Leak[] {
     const midpoint = (benchmark.low + benchmark.high) / 2;
     const impact = Math.abs(sv.value - midpoint) * benchmark.weight;
 
-    // Build URL for hand browser filter
-    const params = new URLSearchParams();
+    // Build URL for the hand list (Reports → Hands tab) with this filter
+    const params = new URLSearchParams({ tab: 'hands' });
     if (benchmark.statFlagFilter) params.append('stat_flag', benchmark.statFlagFilter);
     if (benchmark.oppFlagFilter) params.append('stat_flag', benchmark.oppFlagFilter);
-    const handFilterUrl = params.toString() ? `/hands?${params}` : '/hands';
+    const handFilterUrl = `/reports?${params}`;
 
     leaks.push({
       statKey: key,

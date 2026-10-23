@@ -37,7 +37,7 @@ function StatsDetailView({ statKey }: { statKey: string }) {
   }), [searchParams]);
 
   return (
-    <div className="h-[calc(100vh-6rem)]">
+    <div className="h-[calc(100svh-var(--shell-header-h)-var(--shell-status-h)-2rem)]">
       <StatDetailPanel
         statKey={statKey}
         position={position}
@@ -109,7 +109,7 @@ function StatsListView() {
     if (dateTo) params.set('date_to', dateTo);
     if (debouncedLastN) params.set('last_n', debouncedLastN);
     const qs = params.toString();
-    navigate(`/stats/${key}${qs ? `?${qs}` : ''}`);
+    navigate(`/extras/stats/${key}${qs ? `?${qs}` : ''}`);
   }, [navigate, stakes, gameMode, dateFrom, dateTo, debouncedLastN]);
 
   const handlePreset = (preset: DatePreset) => {

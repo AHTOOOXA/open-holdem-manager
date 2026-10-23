@@ -1,8 +1,24 @@
-import { BarChart3, LayoutGrid, Grid3X3, TrendingUp, List, DollarSign, FolderUp, Clock, Users, PieChart, ArrowLeftRight } from 'lucide-react';
+import {
+  ArrowLeftRight,
+  ChartColumn,
+  ChartNoAxesCombined,
+  Clock,
+  Database,
+  DollarSign,
+  LayoutGrid,
+  PanelLeftClose,
+  PanelLeftOpen,
+  PieChart,
+  Settings,
+  Star,
+  Users,
+  type LucideIcon,
+} from 'lucide-react';
 import { NavLink, useLocation } from 'react-router-dom';
 import {
   Sidebar,
   SidebarContent,
+  SidebarFooter,
   SidebarGroup,
   SidebarGroupContent,
   SidebarGroupLabel,
@@ -11,112 +27,121 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarSeparator,
+  useSidebar,
 } from '@/components/ui/sidebar';
-import SidebarFooterSettings from '@/components/SidebarFooterSettings';
-import WorkspaceSwitcher from '@/components/WorkspaceSwitcher';
-import { useImport } from '@/contexts/ImportContext';
+import { RAIL_LABELS, railPathFor, type RailPath } from '@/lib/routes';
 
-const navItems = [
-  { to: '/stats', label: 'Stats', icon: BarChart3 },
-  { to: '/general', label: 'General', icon: LayoutGrid },
-  { to: '/range', label: 'Range', icon: Grid3X3 },
-  { to: '/graph', label: 'Results', icon: TrendingUp },
-  { to: '/sessions', label: 'Sessions', icon: Clock },
-  { to: '/hands', label: 'Hands', icon: List },
-  { to: '/cash-drop', label: 'Cash Drop', icon: DollarSign },
+interface RailItem {
+  to: RailPath;
+  icon: LucideIcon;
+}
+
+const mainItems: RailItem[] = [
+  { to: '/reports', icon: ChartColumn },
+  { to: '/statistics', icon: LayoutGrid },
+  { to: '/sessions', icon: Clock },
+  { to: '/marked', icon: Star },
 ];
 
-const toolItems = [
-  { to: '/compare', label: 'Compare', icon: ArrowLeftRight },
+const extraItems: RailItem[] = [
+  { to: '/extras/stats', icon: ChartNoAxesCombined },
+  { to: '/extras/compare', icon: ArrowLeftRight },
+  { to: '/extras/cash-drop', icon: DollarSign },
+  { to: '/extras/population', icon: PieChart },
+  { to: '/extras/players', icon: Users },
 ];
 
-const opponentItems = [
-  { to: '/players', label: 'Players', icon: Users },
-  { to: '/population', label: 'Population', icon: PieChart },
+const systemItems: RailItem[] = [
+  { to: '/databases', icon: Database },
+  { to: '/configuration', icon: Settings },
 ];
+
+function RailLink({ item, active }: { item: RailItem; active: boolean }) {
+  const label = RAIL_LABELS[item.to];
+  return (
+    <SidebarMenuItem>
+      {/* Selected marker: 2px accent bar on the rail's left edge (the group pads by 8px) */}
+      {active && <span aria-hidden className="absolute inset-y-1 -left-2 w-0.5 rounded-r-cell bg-primary" />}
+      <SidebarMenuButton
+        asChild
+        isActive={active}
+        tooltip={label}
+        className="text-muted-foreground hover:bg-overlay-hover hover:text-foreground active:bg-overlay-selected active:text-foreground data-[active=true]:bg-transparent data-[active=true]:text-foreground data-[active=true]:hover:bg-overlay-hover"
+      >
+        <NavLink to={item.to} aria-current={active ? 'page' : undefined}>
+          <item.icon />
+          <span>{label}</span>
+        </NavLink>
+      </SidebarMenuButton>
+    </SidebarMenuItem>
+  );
+}
+
+function RailMenu({ items, current }: { items: RailItem[]; current: RailPath | null }) {
+  return (
+    <SidebarMenu>
+      {items.map((item) => (
+        <RailLink key={item.to} item={item} active={current === item.to} />
+      ))}
+    </SidebarMenu>
+  );
+}
+
+function CollapseButton() {
+  const { open, toggleSidebar } = useSidebar();
+  const Icon = open ? PanelLeftClose : PanelLeftOpen;
+  const label = open ? 'Collapse sidebar' : 'Expand sidebar';
+  return (
+    <button
+      type="button"
+      onClick={toggleSidebar}
+      aria-label={label}
+      title={`${label} (Ctrl/Cmd+B)`}
+      aria-expanded={open}
+      className="flex size-7 shrink-0 items-center justify-center rounded-control text-muted-foreground outline-none hover:bg-overlay-hover hover:text-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring"
+    >
+      <Icon className="size-4" />
+    </button>
+  );
+}
 
 export default function AppSidebar() {
-  const location = useLocation();
-  const { setShowImportOverlay } = useImport();
+  const { pathname } = useLocation();
+  const current = railPathFor(pathname);
 
   return (
     <Sidebar collapsible="icon">
-      <SidebarHeader className="py-3 pb-1 group-data-[collapsible=icon]:px-1.5">
-        <NavLink to="/graph" className="flex items-center gap-2 text-primary font-bold text-lg group-data-[collapsible=icon]:justify-center">
+      <SidebarHeader className="flex-row items-center justify-between gap-1 py-2 group-data-[collapsible=icon]:flex-col group-data-[collapsible=icon]:px-2">
+        <NavLink
+          to="/"
+          aria-label="Open Holdem Manager home"
+          className="flex h-7 items-center gap-2 rounded-control px-1 text-lg font-bold text-primary outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring"
+        >
           <span className="text-xl leading-none">♠</span>
           <span className="group-data-[collapsible=icon]:hidden">OHM</span>
         </NavLink>
-        <WorkspaceSwitcher />
+        <CollapseButton />
       </SidebarHeader>
+
       <SidebarContent>
         <SidebarGroup>
           <SidebarGroupContent>
-            <SidebarMenu>
-              <SidebarMenuItem>
-                <SidebarMenuButton tooltip="Import" onClick={() => setShowImportOverlay(true)}>
-                  <FolderUp />
-                  <span>Import</span>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarSeparator className="my-1" />
-              {navItems.map((item) => {
-                const isActive = location.pathname.startsWith(item.to);
-                return (
-                  <SidebarMenuItem key={item.to}>
-                    <SidebarMenuButton asChild isActive={isActive} tooltip={item.label}>
-                      <NavLink to={item.to}>
-                        <item.icon />
-                        <span>{item.label}</span>
-                      </NavLink>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                );
-              })}
-            </SidebarMenu>
+            <RailMenu items={mainItems} current={current} />
           </SidebarGroupContent>
         </SidebarGroup>
-        <SidebarGroup>
-          <SidebarGroupLabel>Tools</SidebarGroupLabel>
+
+        <SidebarGroup className="mt-auto">
+          <SidebarSeparator className="mx-0 mb-2 hidden group-data-[collapsible=icon]:block" />
+          <SidebarGroupLabel className="text-label text-subtle-foreground">OHM Extras</SidebarGroupLabel>
           <SidebarGroupContent>
-            <SidebarMenu>
-              {toolItems.map((item) => {
-                const isActive = location.pathname.startsWith(item.to);
-                return (
-                  <SidebarMenuItem key={item.to}>
-                    <SidebarMenuButton asChild isActive={isActive} tooltip={item.label}>
-                      <NavLink to={item.to}>
-                        <item.icon />
-                        <span>{item.label}</span>
-                      </NavLink>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                );
-              })}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-        <SidebarGroup>
-          <SidebarGroupLabel>Opponents</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {opponentItems.map((item) => {
-                const isActive = location.pathname.startsWith(item.to);
-                return (
-                  <SidebarMenuItem key={item.to}>
-                    <SidebarMenuButton asChild isActive={isActive} tooltip={item.label}>
-                      <NavLink to={item.to}>
-                        <item.icon />
-                        <span>{item.label}</span>
-                      </NavLink>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                );
-              })}
-            </SidebarMenu>
+            <RailMenu items={extraItems} current={current} />
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
-      <SidebarFooterSettings />
+
+      <SidebarFooter className="border-t border-sidebar-border">
+        <RailMenu items={systemItems} current={current} />
+      </SidebarFooter>
     </Sidebar>
   );
 }

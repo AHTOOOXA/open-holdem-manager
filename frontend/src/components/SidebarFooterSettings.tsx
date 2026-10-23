@@ -52,7 +52,7 @@ export default function SidebarFooterSettings() {
             variant="ghost"
             className="h-auto w-full justify-start px-2 py-1 text-left group-data-[collapsible=icon]:hidden hover:bg-sidebar-accent dark:hover:bg-sidebar-accent"
             title="Hero accounts"
-            onClick={() => navigate('/settings/workspaces')}
+            onClick={() => navigate('/databases')}
           >
               <div className="min-w-0">
                 <div className="text-xs font-medium truncate">{heroLabel(heroes?.active)}</div>
