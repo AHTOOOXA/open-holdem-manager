@@ -181,8 +181,10 @@ export default function HandExplorer({
     if (selectedIndex >= 0 && selectedIndex < hands.length - 1) setSelectedId(hands[selectedIndex + 1].id);
   };
 
+  // "Any tag" is the page's own filter on Marked Hands (pinned via initialFilters), a user filter elsewhere
+  const anyTagPinned = initialFilters?.tags?.includes(ANY_TAG) ?? false;
   const hasUserFilters = filters.position.length > 0 || filters.stakes.length > 0 ||
-    filters.result !== '' || filters.tags.some((t) => t !== ANY_TAG) || filters.date !== '' || debouncedSearch !== '' ||
+    filters.result !== '' || filters.tags.some((t) => !(anyTagPinned && t === ANY_TAG)) || filters.date !== '' || debouncedSearch !== '' ||
     filters.statFlags.length > 0 || filters.quickFilters.length > 0;
   const hasFixedFilters = !!(fixedParams?.stat_key || fixedParams?.stat_flag?.length || fixedParams?.position || fixedParams?.stakes);
   const hasFilters = hasUserFilters || hasFixedFilters || !!emptyMessage;
@@ -261,7 +263,7 @@ export default function HandExplorer({
         <EmptyState
           variant={hasFilters ? 'no-match' : 'no-data'}
           message={!hasUserFilters ? emptyMessage : undefined}
-          onClearFilters={hasUserFilters ? () => handleFilterChange({ position: [], stakes: [], result: '', tags: filters.tags.filter((t) => t === ANY_TAG), date: '', dateFrom: '', dateTo: '', search: '', statFlags: [], quickFilters: [] }) : undefined}
+          onClearFilters={hasUserFilters ? () => handleFilterChange({ position: [], stakes: [], result: '', tags: anyTagPinned ? [ANY_TAG] : [], date: '', dateFrom: '', dateTo: '', search: '', statFlags: [], quickFilters: [] }) : undefined}
         />
       ) : (
         <>

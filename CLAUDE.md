@@ -85,7 +85,7 @@ frontend/
     components/general/  # General grid, stat popup (Range/Boards/Bet Sizes/Hands tabs), hands list
     lib/h2n-*.ts         # General screen layout (h2n-layout.ts) and number/sample formatting (h2n-format.ts)
     lib/api-general.ts   # Typed client for /api/general
-  vite.config.ts         # React, Tailwind v4, API proxy, ELECTRON=1 base path
+  vite.config.ts         # React, Tailwind v4, API proxy, absolute base '/'
   vite.config.landing.ts # Landing page config (root: landing/, output: dist-landing/)
   landing/               # Static landing site — see Landing Page section
 
@@ -174,7 +174,7 @@ Player cache (`_player_cache`, `_next_*_id`) lives in `import_hands.py`. Call `r
 
 - `OHM_DATA_DIR` — overrides DuckDB location (Electron sets to `userData/data/`)
 - `OHM_STATIC_DIR` — enables static file serving (Electron sets to `resources/frontend/`)
-- `ELECTRON=1` — Vite uses relative `base: './'` for production builds
+- `ELECTRON=1` — set by the Electron build scripts; no longer changes the Vite base (always `/`, because the packaged app is served over HTTP from the backend root and relative paths break on nested routes)
 
 ### Building & Releasing
 

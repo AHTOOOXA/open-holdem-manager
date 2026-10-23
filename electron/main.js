@@ -150,6 +150,13 @@ function createWindow(url) {
 
   mainWindow.loadURL(url);
 
+  // Links with target="_blank" (About, release notes, GGPoker policy) open in the system
+  // browser, never in an in-app window that would inherit the preload bridge
+  mainWindow.webContents.setWindowOpenHandler(({ url: target }) => {
+    if (/^https:\/\//.test(target)) shell.openExternal(target);
+    return { action: 'deny' };
+  });
+
   if (isDev) {
     mainWindow.webContents.openDevTools();
   }

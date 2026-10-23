@@ -86,6 +86,18 @@ class TestTags:
         assert _hand_count(client, tags="__any__") == 1
         assert _hand_count(client, tags="untagged") == total - 1
 
+    def test_tag_options_are_a_union(self, client, db):
+        total = _hand_count(client)
+        ids = [r[0] for r in db.execute("SELECT id FROM hands ORDER BY id LIMIT 2").fetchall()]
+        client.post(f"/api/hands/{ids[0]}/tags", json={"tag": "bluff"})
+        client.post(f"/api/hands/{ids[1]}/tags", json={"tag": "cooler"})
+        # a named tag narrows "any tag"
+        assert _hand_count(client, tags="__any__,bluff") == 1
+        # untagged + a named tag: both sets
+        assert _hand_count(client, tags="untagged,bluff") == total - 1
+        # untagged + any tag: everything
+        assert _hand_count(client, tags="untagged,__any__") == total
+
 
 # ── #16: head-to-head rows in action order ───────────────────────────
 

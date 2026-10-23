@@ -7,7 +7,9 @@ import { readFileSync } from 'fs'
 const rootPkg = JSON.parse(readFileSync(path.resolve(__dirname, '../package.json'), 'utf-8'))
 
 export default defineConfig({
-  base: process.env.ELECTRON === '1' ? './' : '/',
+  // Absolute base everywhere: the packaged app is served over HTTP from the backend root, and
+  // relative asset paths break on nested routes (/extras/stats/vpip reloads to a blank page)
+  base: '/',
   define: {
     __APP_VERSION__: JSON.stringify(rootPkg.version),
   },

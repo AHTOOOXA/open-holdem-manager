@@ -71,20 +71,28 @@ def list_hands(
 
     if tags:
         tag_list = [t.strip() for t in tags.split(",") if t.strip()]
-        if "untagged" in [t.lower() for t in tag_list]:
-            where_clauses.append(
+        want_untagged = any(t.lower() == "untagged" for t in tag_list)
+        want_any = "__any__" in tag_list
+        named = [t for t in tag_list if t.lower() != "untagged" and t != "__any__"]
+        # The selected options are a union: untagged hands, plus hands with one of the
+        # named tags (or with any tag when no tag is named)
+        tag_or: list[str] = []
+        if want_untagged:
+            tag_or.append(
                 "NOT EXISTS (SELECT 1 FROM hand_tags ht2 WHERE ht2.hand_id = h.id AND ht2.workspace_id = h.workspace_id)"
             )
-        elif "__any__" in tag_list:
-            where_clauses.append(
-                "EXISTS (SELECT 1 FROM hand_tags ht2 WHERE ht2.hand_id = h.id AND ht2.workspace_id = h.workspace_id)"
-            )
-        elif tag_list:
-            ph = ",".join("?" for _ in tag_list)
-            where_clauses.append(
+        if named:
+            ph = ",".join("?" for _ in named)
+            tag_or.append(
                 f"EXISTS (SELECT 1 FROM hand_tags ht2 WHERE ht2.hand_id = h.id AND ht2.workspace_id = h.workspace_id AND ht2.tag IN ({ph}))"
             )
-            params.extend(tag_list)
+            params.extend(named)
+        elif want_any:
+            tag_or.append(
+                "EXISTS (SELECT 1 FROM hand_tags ht2 WHERE ht2.hand_id = h.id AND ht2.workspace_id = h.workspace_id)"
+            )
+        if tag_or:
+            where_clauses.append("(" + " OR ".join(tag_or) + ")")
 
     if date_from:
         where_clauses.append("h.played_at >= ?")
