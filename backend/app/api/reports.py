@@ -27,10 +27,18 @@ def get_graph(
     date_to: str | None = Query(None),
     last_n: int | None = Query(None, gt=0),
     workspace_id: int = Query(1),
+    player_id: int | None = Query(None, description="Defaults to the workspace hero"),
+    chain: str | None = Query(None, description="Reports filter chain: URL-encoded JSON Step[] "
+                              "(frontend/src/lib/reports/types.ts); combined with the other "
+                              "filters with AND"),
 ):
+    from app.api.reports_lite import chain_hand_ids
+
     db = get_read_cursor()
-    player_id = get_hero_player_id(db, workspace_id)
-    if not player_id:
+    chain_ids = chain_hand_ids(db, workspace_id, player_id, chain)
+    if player_id is None:
+        player_id = get_hero_player_id(db, workspace_id)
+    if not player_id or (chain_ids is not None and not chain_ids):
         return GraphResponse(points=[], sessions=[], variance=None)
 
     query = """
@@ -61,6 +69,9 @@ def get_graph(
     if date_to:
         query += " AND " + DATE_TO_SQL
         params.append(date_to)
+    if chain_ids is not None:
+        query += " AND h.id IN (SELECT UNNEST(?::VARCHAR[]))"
+        params.append(chain_ids)
 
     query += " ORDER BY h.played_at ASC, h.id ASC"
 

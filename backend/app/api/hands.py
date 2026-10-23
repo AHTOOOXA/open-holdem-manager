@@ -33,11 +33,19 @@ def list_hands(
     stat_key: Optional[str] = Query(None),
     player_id: Optional[int] = Query(None),
     workspace_id: int = Query(1),
+    chain: Optional[str] = Query(None, description="Reports filter chain: URL-encoded JSON Step[] "
+                                 "(frontend/src/lib/reports/types.ts), resolved for player_id "
+                                 "or the hero; combined with the other filters with AND"),
 ):
     db = get_read_cursor()
     hero_id = get_hero_player_id(db, workspace_id)
     if hero_id is None:
         return HandListResponse(hands=[], total=0, page=1, per_page=per_page, total_pages=0)
+
+    from app.api.reports_lite import chain_hand_ids
+    chain_ids = chain_hand_ids(db, workspace_id, player_id, chain)
+    if chain_ids is not None and not chain_ids:
+        return HandListResponse(hands=[], total=0, page=1, per_page=per_page, total_pages=1)
 
     hero_username = get_hero_username(db, workspace_id)
     params: list = [hero_id]
@@ -106,6 +114,10 @@ def list_hands(
             "EXISTS (SELECT 1 FROM hand_players hp2 WHERE hp2.hand_id = h.id AND hp2.workspace_id = h.workspace_id AND hp2.player_id = ?)"
         )
         params.append(player_id)
+
+    if chain_ids is not None:
+        where_clauses.append("h.id IN (SELECT UNNEST(?::VARCHAR[]))")
+        params.append(chain_ids)
 
     if search:
         where_clauses.append("h.id LIKE ?")

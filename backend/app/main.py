@@ -16,6 +16,7 @@ from app.db import (
 from app.api import import_hands, import_h2n, stats, reports, settings, hands, cash_drop, sessions, players, population, workspaces, checkpoints, compare, identities
 from app.api import general
 from app.api import general_popup
+from app.api import reports_lite
 from app.api import heroes as heroes_api
 
 MultiPartParser.max_part_size = 50 * 1024 * 1024  # 50MB
@@ -60,6 +61,7 @@ app.include_router(compare.router, prefix="/api", tags=["compare"])
 app.include_router(identities.router, prefix="/api", tags=["identities"])
 app.include_router(general.router, prefix="/api", tags=["general"])
 app.include_router(general_popup.router, prefix="/api", tags=["general"])
+app.include_router(reports_lite.router, prefix="/api", tags=["reports"])
 app.include_router(heroes_api.router, prefix="/api", tags=["heroes"])
 
 
