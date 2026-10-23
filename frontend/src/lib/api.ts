@@ -1,3 +1,5 @@
+import { chainParam } from '@/lib/reports/api';
+import type { Step } from '@/lib/reports/types';
 const BASE = '/api';
 
 // ── Workspace ID injection ──────────────────────────────────────────
@@ -333,6 +335,8 @@ export async function getGraphData(params?: {
   date_from?: string;
   date_to?: string;
   last_n?: number;
+  /** Reports filter chain (full chain; combined with the other params). */
+  chain?: Step[];
 }): Promise<GraphResponse> {
   const sp = new URLSearchParams();
   if (params?.stakes) sp.set('stakes', params.stakes);
@@ -340,6 +344,7 @@ export async function getGraphData(params?: {
   if (params?.date_from) sp.set('date_from', params.date_from);
   if (params?.date_to) sp.set('date_to', params.date_to);
   if (params?.last_n) sp.set('last_n', String(params.last_n));
+  if (params?.chain?.length) sp.set('chain', chainParam(params.chain));
   _addWorkspaceParam(sp);
   const res = await fetch(`${BASE}/reports/graph?${sp}`);
   if (!res.ok) throw new Error(`Graph failed: ${res.statusText}`);
@@ -488,6 +493,8 @@ export interface HandListParams {
   stat_flag?: string[];
   stat_key?: string;
   player_id?: number;
+  /** Reports filter chain (full chain; combined with the other params). */
+  chain?: Step[];
 }
 
 export async function getHands(params?: HandListParams): Promise<HandListResponse> {
@@ -508,6 +515,7 @@ export async function getHands(params?: HandListParams): Promise<HandListRespons
   }
   if (params?.stat_key) sp.set('stat_key', params.stat_key);
   if (params?.player_id) sp.set('player_id', String(params.player_id));
+  if (params?.chain?.length) sp.set('chain', chainParam(params.chain));
   _addWorkspaceParam(sp);
   const res = await fetch(`${BASE}/hands?${sp}`);
   if (!res.ok) throw new Error(`Hands failed: ${res.statusText}`);

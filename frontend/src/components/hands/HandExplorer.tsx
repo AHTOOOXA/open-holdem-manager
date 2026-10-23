@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { getHands, getTags } from '@/lib/api';
+import { chainParam } from '@/lib/reports/api';
+import type { Step } from '@/lib/reports/types';
 import type { HandListParams, HandSummary, TagCount } from '@/lib/api';
 import { useFilterOptions } from '@/hooks/useFilterOptions';
 import { queryKeys } from '@/lib/query-keys';
@@ -203,6 +205,8 @@ export interface HandExplorerProps {
   gridMaxHeight?: number | string;
   /** Column ids hidden until the user stores their own column choice (stored prefs win) */
   defaultHiddenColumns?: readonly string[];
+  /** Reports filter chain, applied on top of the user filters; a new chain returns to page 1 */
+  chain?: Step[];
 }
 
 export default function HandExplorer({
@@ -214,6 +218,7 @@ export default function HandExplorer({
   emptyMessage,
   gridMaxHeight = DEFAULT_GRID_MAX_HEIGHT,
   defaultHiddenColumns,
+  chain,
 }: HandExplorerProps) {
   const [page, setPage] = useState(1);
   const [perPage, setPerPage] = useState(defaultPerPage);
@@ -280,6 +285,7 @@ export default function HandExplorer({
     date_to: dateRange.to,
     search: debouncedSearch || undefined,
     stat_flag: allStatFlags.length > 0 ? allStatFlags : undefined,
+    chain: chain?.length ? chain : undefined,
   };
 
   // Merge fixedParams — they override user params for the same key
@@ -309,6 +315,14 @@ export default function HandExplorer({
     setOrder(head.desc ? 'desc' : 'asc');
     setPage(1);
   }, []);
+
+  // A new chain is a new result set: back to page 1 (adjusting state during render, keyed on the chain)
+  const chainKey = chain?.length ? chainParam(chain) : '';
+  const [seenChainKey, setSeenChainKey] = useState(chainKey);
+  if (seenChainKey !== chainKey) {
+    setSeenChainKey(chainKey);
+    setPage(1);
+  }
 
   const handleFilterChange = (f: FilterState) => { setFilters(f); setPage(1); };
 
