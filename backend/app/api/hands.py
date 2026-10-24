@@ -1,8 +1,10 @@
 from fastapi import APIRouter, Query, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Optional
 import math
 import re
+from types import SimpleNamespace
 
 from app.app_settings import get_app_settings
 from app.date_filters import bound_sql
@@ -18,43 +20,34 @@ from app.stat_registry import STAT_REGISTRY
 router = APIRouter()
 
 
-@router.get("/hands", response_model=HandListResponse)
-def list_hands(
-    page: int = Query(1, ge=1),
-    per_page: int = Query(50, ge=1, le=200),
-    sort: str = Query("played_at"),
-    order: str = Query("desc"),
-    position: Optional[str] = None,
-    stakes: Optional[str] = None,
-    result: Optional[str] = None,
-    marked: Optional[bool] = Query(None, description="true: only hands marked for the row's player; false: only unmarked"),
-    tag_ids: Optional[str] = Query(None, description="Comma list of tag ids; hands carrying any of them (implies marked)"),
-    date_from: Optional[str] = None,
-    date_to: Optional[str] = None,
-    search: Optional[str] = None,
-    stat_flag: list[str] | None = Query(None),
-    stat_key: Optional[str] = Query(None),
-    player_id: Optional[int] = Query(None),
-    workspace_id: int = Query(1),
-    chain: Optional[str] = Query(None, description="Reports filter chain: URL-encoded JSON Step[] "
-                                 "(frontend/src/lib/reports/types.ts), resolved for player_id "
-                                 "or the hero; combined with the other filters with AND. Any "
-                                 "chain, even [], keeps only H2N-valid hands (as the Reports "
-                                 "counts do)"),
-):
-    db = get_read_cursor()
+
+_SORTS = {
+    "played_at": "h.played_at",
+    "won_bb": "hp.won_bb",
+    "won_usd": "hp.won_bb * h.bb_amount",
+    "stakes": "h.bb_amount",
+    # Tags column: the first tag's catalogue position, untagged rows -1
+    "tags": "COALESCE((SELECT MIN(td.position) FROM marked_hand_tags mt "
+            "JOIN tag_defs td ON td.id = mt.tag_id WHERE mt.workspace_id = h.workspace_id "
+            "AND mt.hand_id = h.id AND mt.player_id = hp.player_id), -1)",
+}
+
+def _list_filters(db, *, position, stakes, result, marked, tag_ids, date_from, date_to, search,
+                  stat_flag, stat_key, player_id, workspace_id, chain):
+    """WHERE-building of the hand list (shared with the export). `.status` is "ok", or
+    "no_subject" / "empty_chain" when the list is empty."""
     # The listed rows are the subject's: player_id when given, else the hero.
     hero_id = player_id if player_id is not None else get_hero_player_id(db, workspace_id)
     # Marked view without a subject: every marked (hand, player) pair of the workspace, each row
     # from the marked player's point of view.
     all_marked = player_id is None and (bool(marked) or bool(marked_hands.parse_id_list(tag_ids)))
     if hero_id is None and not all_marked:
-        return HandListResponse(hands=[], total=0, page=1, per_page=per_page, total_pages=0)
+        return SimpleNamespace(status="no_subject")
 
     from app.api.reports_lite import chain_hand_ids
     chain_ids = chain_hand_ids(db, workspace_id, player_id, chain)
     if chain_ids is not None and not chain_ids:
-        return HandListResponse(hands=[], total=0, page=1, per_page=per_page, total_pages=1)
+        return SimpleNamespace(status="empty_chain")
 
     if player_id is not None:
         urow = db.execute("SELECT username FROM players WHERE id = ?", [player_id]).fetchone()
@@ -155,6 +148,46 @@ def list_hands(
                 where_clauses.append(extra_where)
 
     where_sql = (" AND " + " AND ".join(where_clauses)) if where_clauses else ""
+    return SimpleNamespace(status="ok", join_player=join_player, where_sql=where_sql,
+                           params=params, hero_id=hero_id, hero_username=hero_username,
+                           all_marked=all_marked)
+
+
+@router.get("/hands", response_model=HandListResponse)
+def list_hands(
+    page: int = Query(1, ge=1),
+    per_page: int = Query(50, ge=1, le=200),
+    sort: str = Query("played_at"),
+    order: str = Query("desc"),
+    position: Optional[str] = None,
+    stakes: Optional[str] = None,
+    result: Optional[str] = None,
+    marked: Optional[bool] = Query(None, description="true: only hands marked for the row's player; false: only unmarked"),
+    tag_ids: Optional[str] = Query(None, description="Comma list of tag ids; hands carrying any of them (implies marked)"),
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    search: Optional[str] = None,
+    stat_flag: list[str] | None = Query(None),
+    stat_key: Optional[str] = Query(None),
+    player_id: Optional[int] = Query(None),
+    workspace_id: int = Query(1),
+    chain: Optional[str] = Query(None, description="Reports filter chain: URL-encoded JSON Step[] "
+                                 "(frontend/src/lib/reports/types.ts), resolved for player_id "
+                                 "or the hero; combined with the other filters with AND. Any "
+                                 "chain, even [], keeps only H2N-valid hands (as the Reports "
+                                 "counts do)"),
+):
+    db = get_read_cursor()
+    f = _list_filters(
+        db, position=position, stakes=stakes, result=result, marked=marked, tag_ids=tag_ids,
+        date_from=date_from, date_to=date_to, search=search, stat_flag=stat_flag,
+        stat_key=stat_key, player_id=player_id, workspace_id=workspace_id, chain=chain)
+    if f.status == "no_subject":
+        return HandListResponse(hands=[], total=0, page=1, per_page=per_page, total_pages=0)
+    if f.status == "empty_chain":
+        return HandListResponse(hands=[], total=0, page=1, per_page=per_page, total_pages=1)
+    join_player, where_sql, params = f.join_player, f.where_sql, f.params
+    hero_id, hero_username, all_marked = f.hero_id, f.hero_username, f.all_marked
 
     count_sql = f"""
         SELECT COUNT(*)
@@ -165,17 +198,7 @@ def list_hands(
     total = db.execute(count_sql, params).fetchone()[0]
     total_pages = max(1, math.ceil(total / per_page))
 
-    allowed_sorts = {
-        "played_at": "h.played_at",
-        "won_bb": "hp.won_bb",
-        "won_usd": "hp.won_bb * h.bb_amount",
-        "stakes": "h.bb_amount",
-        # Tags column: the first tag's catalogue position, untagged rows -1
-        "tags": "COALESCE((SELECT MIN(td.position) FROM marked_hand_tags mt "
-                "JOIN tag_defs td ON td.id = mt.tag_id WHERE mt.workspace_id = h.workspace_id "
-                "AND mt.hand_id = h.id AND mt.player_id = hp.player_id), -1)",
-    }
-    sort_col = allowed_sorts.get(sort, "h.played_at")
+    sort_col = _SORTS.get(sort, "h.played_at")
     sort_dir = "DESC" if order.lower() == "desc" else "ASC"
 
     offset = (page - 1) * per_page
@@ -337,6 +360,90 @@ def list_hands(
 
 
 # ── Hand detail ──────────────────────────────────────────────────────
+
+EXPORT_CAP = 100_000
+_EXPORT_BATCH = 500
+
+
+@router.get("/hands/export")
+def export_hands(
+    sort: str = Query("played_at"),
+    order: str = Query("desc"),
+    format: str = Query("txt", pattern="^txt$"),
+    position: Optional[str] = None,
+    stakes: Optional[str] = None,
+    result: Optional[str] = None,
+    marked: Optional[bool] = Query(None),
+    tag_ids: Optional[str] = Query(None),
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    search: Optional[str] = None,
+    stat_flag: list[str] | None = Query(None),
+    stat_key: Optional[str] = Query(None),
+    player_id: Optional[int] = Query(None),
+    workspace_id: int = Query(1),
+    chain: Optional[str] = Query(None),
+):
+    """The original hand histories of the whole filtered list (same filters and order as
+    GET /api/hands, not just a page): text/plain attachment, hands separated by two blank
+    lines, each hand once, at most EXPORT_CAP hands (`X-OHM-Truncated: 1` when capped)."""
+    db = get_read_cursor()
+    f = _list_filters(
+        db, position=position, stakes=stakes, result=result, marked=marked, tag_ids=tag_ids,
+        date_from=date_from, date_to=date_to, search=search, stat_flag=stat_flag,
+        stat_key=stat_key, player_id=player_id, workspace_id=workspace_id, chain=chain)
+    ids: list[str] = []
+    if f.status == "ok":
+        sort_col = _SORTS.get(sort, "h.played_at")
+        sort_dir = "DESC" if order.lower() == "desc" else "ASC"
+        # A marked list without a subject has one row per marked (hand, player): one per hand.
+        ids = [r[0] for r in db.execute(f"""
+            SELECT id FROM (
+                SELECT h.id, {sort_col} AS sk, h.played_at AS pa,
+                       ROW_NUMBER() OVER (PARTITION BY h.id ORDER BY {sort_col} {sort_dir}) AS rn
+                FROM hands h
+                JOIN hand_players hp ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
+                     AND {f.join_player}
+                WHERE h.raw_text IS NOT NULL AND h.raw_text <> '' {f.where_sql}
+            ) WHERE rn = 1
+            ORDER BY sk {sort_dir}, pa DESC, id
+            LIMIT ?
+        """, [*f.params, EXPORT_CAP + 1]).fetchall()]
+    truncated = len(ids) > EXPORT_CAP
+    ids = ids[:EXPORT_CAP]
+
+    def stream():
+        # The request's cursors are closed when the endpoint returns; the stream has its own.
+        cur = get_db().cursor()
+        try:
+            yield from _stream_texts(cur)
+        finally:
+            cur.close()
+
+    def _stream_texts(db):
+        first = True
+        for i in range(0, len(ids), _EXPORT_BATCH):
+            batch = ids[i:i + _EXPORT_BATCH]
+            ph = ",".join("?" for _ in batch)
+            texts = dict(db.execute(
+                f"SELECT id, raw_text FROM hands WHERE workspace_id = ? AND id IN ({ph})",
+                [workspace_id, *batch]).fetchall())
+            chunk = []
+            for hid in batch:
+                t = (texts.get(hid) or "").strip()
+                if t:
+                    chunk.append(t)
+            if chunk:
+                yield (("" if first else "\n\n\n") + "\n\n\n".join(chunk)).encode("utf-8")
+                first = False
+        if not first:
+            yield b"\n"
+
+    headers = {"Content-Disposition": 'attachment; filename="OHM hands.txt"'}
+    if truncated:
+        headers["X-OHM-Truncated"] = "1"
+    return StreamingResponse(stream(), media_type="text/plain; charset=utf-8", headers=headers)
+
 
 @router.get("/hands/{hand_id}", response_model=HandDetail)
 def get_hand(hand_id: str, workspace_id: int = Query(1),

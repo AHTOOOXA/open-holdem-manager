@@ -484,18 +484,37 @@ ROW_SPOTS: dict[str, tuple[str, SpotCtx]] = {
 }
 
 
-def row_ctx(key: str) -> SpotCtx:
-    if key in ROW_SPOTS:
-        label, ctx = ROW_SPOTS[key]
-        return replace(ctx, name=label)
-    d = COMPILED[key]
+def _def_ctx(d, street: int, name: str) -> SpotCtx:
     last = d.parts[-1]
     types = {r[-1].typ for r in last.rows}
     sides = {r[-1].hero for r in last.rows}
     return SpotCtx(side="hero" if sides == {True} else "villain" if sides == {False} else "hero",
                    typ=types.pop() if len(types) == 1 else None,
-                   street=STREET_INDEX[ROWS[key].street] if key in ROWS else d.street,
-                   name=key, named=False)
+                   street=street, name=name, named=False)
+
+
+def row_ctx(key: str) -> SpotCtx:
+    if key in ROW_SPOTS:
+        label, ctx = ROW_SPOTS[key]
+        return replace(ctx, name=label)
+    d = COMPILED[key]
+    return _def_ctx(d, STREET_INDEX[ROWS[key].street] if key in ROWS else d.street, key)
+
+
+@lru_cache(maxsize=512)
+def compile_line(dsl: str):
+    """Compiled custom action line (cached by notation). ValueError names the bad token."""
+    try:
+        return compile_def(dsl)
+    except ValueError as e:
+        raise ValueError(f"invalid action line: {e}") from None
+    except Exception as e:  # float() of a bad amt= etc.
+        raise ValueError(f"invalid action line {dsl!r}: {e}") from None
+
+
+def line_ctx(dsl: str) -> SpotCtx:
+    d = compile_line(dsl)
+    return _def_ctx(d, d.street, "Action line")
 
 
 def _bet_name(level: int) -> str:
