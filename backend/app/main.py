@@ -22,6 +22,8 @@ from app.api import heroes as heroes_api
 from app.api import app_settings as app_settings_api
 from app.api import config as config_api
 from app.api import marked_hands as marked_hands_api
+from app.api import auto_import as auto_import_api
+from app import auto_import
 
 MultiPartParser.max_part_size = 50 * 1024 * 1024  # 50MB
 
@@ -72,11 +74,13 @@ app.include_router(heroes_api.router, prefix="/api", tags=["heroes"])
 app.include_router(app_settings_api.router, prefix="/api", tags=["settings"])
 app.include_router(config_api.router, prefix="/api", tags=["config"])
 app.include_router(marked_hands_api.router, prefix="/api", tags=["marked-hands"])
+app.include_router(auto_import_api.router, prefix="/api", tags=["import"])
 
 
 @app.on_event("startup")
 def startup():
     get_db()
+    auto_import.start()  # idle unless the auto_import config section is enabled
 
 
 @app.on_event("shutdown")
@@ -84,6 +88,7 @@ def shutdown():
     # Stop any running import/rebuild (it rolls back) so the lock frees up,
     # then checkpoint and close.
     request_shutdown()
+    auto_import.stop()
     close_db()
 
 

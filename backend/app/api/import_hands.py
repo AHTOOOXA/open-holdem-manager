@@ -1,4 +1,4 @@
-from fastapi import APIRouter, UploadFile, File
+from fastapi import APIRouter, HTTPException, Response, UploadFile, File
 from fastapi.responses import StreamingResponse, FileResponse
 from decimal import Decimal
 from app.models import ImportResult
@@ -19,7 +19,9 @@ import json
 import os
 import shutil
 import tempfile
+import threading
 import time
+import uuid
 import pyarrow as pa
 from concurrent.futures import ThreadPoolExecutor, Future
 from contextlib import contextmanager
@@ -522,13 +524,17 @@ def _parse_batch(
     ids: list[str | None],
     existing_ids: set[str],
     parser=None,
+    in_range=None,
+    out_of_range: list[int] | None = None,
 ) -> tuple[list[tuple[ParsedHand, dict, tuple]], int, int, list[str], float, float, float]:
     """Parse+stats+financials for a chunk of hands. Pure CPU, no DB.
 
     Args:
         parser: Parser module with parse_hand_history(). If None, uses GGPoker parser.
+        in_range: optional predicate on parsed.played_at (date range filter); hands
+            outside it are dropped before stats and counted in out_of_range[0].
 
-    Returns (prepared, new_count, error_count, error_details, t_parse, t_stats, t_equity).
+    Returns (prepared, dup_count, error_count, error_details, t_parse, t_stats, t_equity).
     """
     if parser is None:
         from app.parsers import ggpoker as parser
@@ -553,6 +559,10 @@ def _parse_batch(
         try:
             t0 = time.perf_counter()
             parsed = parser.parse_hand_history(hand_text)
+            if in_range is not None and not in_range(parsed.played_at):
+                if out_of_range is not None:
+                    out_of_range[0] += 1
+                continue
             t1 = time.perf_counter()
             stats = compute_stat_flags(parsed)
             t2 = time.perf_counter()
@@ -580,46 +590,150 @@ async def import_files(files: list[UploadFile] = File(...), workspace_id: int = 
     return result
 
 
+# ── Import jobs: every streaming import registers one so it can be cancelled ──
+_jobs: dict[str, threading.Event] = {}
+_jobs_lock = threading.Lock()
+
+
+def _register_job() -> tuple[str, threading.Event]:
+    job_id = uuid.uuid4().hex
+    ev = threading.Event()
+    with _jobs_lock:
+        _jobs[job_id] = ev
+    return job_id, ev
+
+
+def _finish_job(job_id: str) -> None:
+    with _jobs_lock:
+        _jobs.pop(job_id, None)
+
+
+def cancel_job(job_id: str) -> bool:
+    """Ask a running import to stop after its current batch. False if unknown / finished."""
+    with _jobs_lock:
+        ev = _jobs.get(job_id)
+    if ev is None:
+        return False
+    ev.set()
+    return True
+
+
+def active_import_jobs() -> int:
+    """Streaming imports registered right now (auto-import skips its tick while > 0)."""
+    with _jobs_lock:
+        return len(_jobs)
+
+
+@router.post("/import/jobs/{job_id}/cancel", status_code=204)
+def cancel_import_job(job_id: str):
+    """Cancel a running import. Never touches the DB (no write lock): it only flags the job."""
+    if not cancel_job(job_id):
+        raise HTTPException(status_code=404, detail="Unknown or finished import job")
+    return Response(status_code=204)
+
+
+def import_date_filter(date_from: str | None, date_to: str | None):
+    """played_at predicate for an import's date range (None = all time), with the
+    `day_start_hour` app setting applied. Raises HTTPException 400 on a bad date."""
+    if not date_from and not date_to:
+        return None
+    from app.app_settings import get_app_settings
+    from app.date_filters import played_at_filter
+    cur = get_db().cursor()
+    try:
+        day_start = get_app_settings(cur)["day_start_hour"]
+    finally:
+        cur.close()
+    try:
+        return played_at_filter(date_from, date_to, day_start)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid date range: {e}")
+
+
+def _acquire_lock_or_cancel(cancel: threading.Event) -> bool:
+    """Wait for the write lock; give up (False) when the job is cancelled meanwhile."""
+    lock = db_lock()
+    while not lock.acquire(timeout=0.25):
+        if cancel.is_set():
+            return False
+    return True
+
+
 def _stream_import(
     all_hands: list[str],
     hand_parsers: list,
     file_count: int,
     workspace_id: int,
     pre_errors: list[str] | None = None,
+    *,
+    date_from: str | None = None,
+    date_to: str | None = None,
 ) -> StreamingResponse:
-    """Import already-split hands, streaming NDJSON progress (start / progress / done | error).
+    """Import already-split hands, streaming NDJSON (start / progress / done | error).
 
-    hand_parsers[i] is the parser module for all_hands[i].
-    pre_errors: problems found before parsing (counted as errors in the result).
+    Contract: frontend/src/lib/import/types.ts section 1. hand_parsers[i] is the parser
+    module for all_hands[i]. pre_errors: problems found before parsing (counted as errors).
+    date_from / date_to: inclusive ISO dates (day-start hour applied); hands outside are
+    skipped and counted in `out_of_range`. Validated here, before streaming (400).
+    The job is registered when the stream starts (first line: job_id) and removed when it
+    ends; POST /api/import/jobs/{job_id}/cancel stops it after the batch in progress
+    (written hands stay, indexes + finalisation still run, done line has cancelled=true).
     """
     pre_errors = pre_errors or []
     total = len(all_hands)
+    in_range = import_date_filter(date_from, date_to)
 
     def generate():
+        job_id, cancel = _register_job()
         try:
-            yield from _generate()
+            yield from _generate(job_id, cancel)
         except Exception as e:
             logging.getLogger(__name__).exception("Import failed, rolled back")
             yield json.dumps({
                 "type": "error",
                 "message": f"Import failed, nothing was imported: {e}",
             }) + "\n"
+        finally:
+            _finish_job(job_id)
 
-    def _generate():
+    def _done(t_start, imported, duplicates, errors, out_of_range, cancelled, error_details, extra):
+        elapsed = time.perf_counter() - t_start
+        hps = imported / elapsed if elapsed > 0 else 0
+        return json.dumps({
+            "type": "done",
+            "imported": imported,
+            "duplicates": duplicates,
+            "errors": errors,
+            "out_of_range": out_of_range,
+            "cancelled": cancelled,
+            "error_details": error_details[:20],
+            "elapsed_ms": round(elapsed * 1000),
+            "hands_per_sec": round(hps),
+            **extra,
+        }) + "\n"
+
+    def _generate(job_id: str, cancel: threading.Event):
         yield json.dumps({
             "type": "start",
-            "total_hands": total,
+            "job_id": job_id,
+            "total": total,
+            "total_hands": total,  # pre-M7 field, kept for older clients
             "files": file_count,
         }) + "\n"
 
-        with db_lock():
+        t_start = time.perf_counter()
+        if not _acquire_lock_or_cancel(cancel):
+            yield _done(t_start, 0, 0, len(pre_errors), 0, True, list(pre_errors), {})
+            return
+        try:
             db = get_db()
             imported = 0
             duplicates = 0
             errors = len(pre_errors)
             error_details: list[str] = list(pre_errors)
+            out_of_range = [0]  # shared with the parse worker
+            cancelled = False
 
-            t_start = time.perf_counter()
             t_parse = 0.0
             t_stats = 0.0
             t_equity = 0.0
@@ -627,17 +741,7 @@ def _stream_import(
 
             # Bulk duplicate check (scoped to workspace)
             all_ids = [hand_parsers[i].extract_hand_id(h) for i, h in enumerate(all_hands)]
-            existing_ids: set[str] = set()
-            valid_ids = [hid for hid in all_ids if hid is not None]
-            if valid_ids:
-                for j in range(0, len(valid_ids), 500):
-                    batch = valid_ids[j:j + 500]
-                    placeholders = ",".join(["?"] * len(batch))
-                    rows = db.execute(
-                        f"SELECT id FROM hands WHERE workspace_id = ? AND id IN ({placeholders})",
-                        [workspace_id] + batch,
-                    ).fetchall()
-                    existing_ids.update(r[0] for r in rows)
+            existing_ids = _existing_hand_ids(db, all_ids, workspace_id)
 
             # Split hands into BATCH_SIZE chunks for pipeline parallelism
             # One parser per chunk: start a new chunk at BATCH_SIZE or when the
@@ -649,17 +753,21 @@ def _stream_import(
                     chunks.append((all_hands[start:ci], all_ids[start:ci], hand_parsers[start]))
                     start = ci
 
+            def submit(executor, chunk):
+                return executor.submit(
+                    _parse_batch, chunk[0], chunk[1], existing_ids, chunk[2], in_range, out_of_range,
+                )
+
             processed = 0
             with _bulk_write(db), ThreadPoolExecutor(max_workers=1) as executor:
                 # Start parsing first batch
-                parse_future: Future | None = None
-                if chunks:
-                    parse_future = executor.submit(
-                        _parse_batch, chunks[0][0], chunks[0][1], existing_ids, chunks[0][2]
-                    )
+                parse_future: Future | None = submit(executor, chunks[0]) if chunks else None
 
                 for ci in range(len(chunks)):
                     _check_shutdown()
+                    if cancel.is_set():
+                        cancelled = True
+                        break
                     # Wait for current parse result
                     batch_prepared, batch_dups, batch_errs, batch_details, bp, bs, be = parse_future.result()
                     duplicates += batch_dups
@@ -669,11 +777,9 @@ def _stream_import(
                     t_stats += bs
                     t_equity += be
 
-                    # Submit next batch for parsing (overlaps with DB insert)
-                    if ci + 1 < len(chunks):
-                        parse_future = executor.submit(
-                            _parse_batch, chunks[ci + 1][0], chunks[ci + 1][1], existing_ids, chunks[ci + 1][2]
-                        )
+                    # Submit next batch for parsing (overlaps with DB insert), unless cancelled
+                    if ci + 1 < len(chunks) and not cancel.is_set():
+                        parse_future = submit(executor, chunks[ci + 1])
                     else:
                         parse_future = None
 
@@ -697,6 +803,7 @@ def _stream_import(
                         "imported": imported,
                         "duplicates": duplicates,
                         "errors": errors,
+                        "out_of_range": out_of_range[0],
                         "elapsed_ms": round(elapsed * 1000),
                         "hands_per_sec": round(hps),
                     }) + "\n"
@@ -708,29 +815,42 @@ def _stream_import(
 
             finalize_import(db, workspace_id=workspace_id)
             _checkpoint_after_bulk(db)
+        finally:
+            db_lock().release()
 
-        elapsed = time.perf_counter() - t_start
-        hps = imported / elapsed if elapsed > 0 else 0
-        yield json.dumps({
-            "type": "done",
-            "imported": imported,
-            "duplicates": duplicates,
-            "errors": errors,
-            "error_details": error_details[:20],
-            "elapsed_ms": round(elapsed * 1000),
-            "hands_per_sec": round(hps),
+        yield _done(t_start, imported, duplicates, errors, out_of_range[0], cancelled, error_details, {
             "parse_ms": round(t_parse * 1000),
             "stats_ms": round(t_stats * 1000),
             "equity_ms": round(t_equity * 1000),
             "db_ms": round(t_db * 1000),
             "index_ms": round(t_idx * 1000),
-        }) + "\n"
+        })
 
     return StreamingResponse(generate(), media_type="application/x-ndjson")
 
 
+def _existing_hand_ids(db, ids: list[str | None], workspace_id: int) -> set[str]:
+    """Which of these hand ids the workspace already has."""
+    existing: set[str] = set()
+    valid = [hid for hid in ids if hid is not None]
+    for j in range(0, len(valid), 500):
+        batch = valid[j:j + 500]
+        placeholders = ",".join(["?"] * len(batch))
+        rows = db.execute(
+            f"SELECT id FROM hands WHERE workspace_id = ? AND id IN ({placeholders})",
+            [workspace_id] + batch,
+        ).fetchall()
+        existing.update(r[0] for r in rows)
+    return existing
+
+
 @router.post("/import/files/stream")
-async def import_files_stream(files: list[UploadFile] = File(...), workspace_id: int = 1):
+async def import_files_stream(
+    files: list[UploadFile] = File(...),
+    workspace_id: int = 1,
+    date_from: str | None = None,
+    date_to: str | None = None,
+):
     files_data = [(f.filename or "", await f.read()) for f in files]
     text_contents = _read_uploads(files_data)
 
@@ -749,7 +869,54 @@ async def import_files_stream(files: list[UploadFile] = File(...), workspace_id:
                 all_hands.append(h)
                 hand_parsers.append(parser)
 
-    return _stream_import(all_hands, hand_parsers, len(text_contents), workspace_id)
+    return _stream_import(
+        all_hands, hand_parsers, len(text_contents), workspace_id,
+        date_from=date_from, date_to=date_to,
+    )
+
+
+def import_hand_texts(db, hands: list[tuple[str, object]], workspace_id: int) -> dict:
+    """Import a small set of (hand_text, parser) without streaming and without dropping
+    indexes (auto-import: a few hands per tick). Caller holds the write lock.
+
+    Same pipeline as file import: dedup by id within the workspace, parse, stats, money,
+    one transaction, then finalize_import (bumps the data generation). Raises on a failed
+    insert (rolled back, nothing written). Returns imported / duplicates / errors counts.
+    """
+    texts = [h for h, _ in hands]
+    ids = [p.extract_hand_id(h) for h, p in hands]
+    existing_ids = _existing_hand_ids(db, ids, workspace_id)
+    prepared: list = []
+    duplicates = errors = 0
+    error_details: list[str] = []
+    # Group consecutive hands by parser (one parser per _parse_batch call)
+    start = 0
+    for i in range(1, len(hands) + 1):
+        if i == len(hands) or hands[i][1] is not hands[start][1]:
+            prep, dups, errs, details, *_ = _parse_batch(
+                texts[start:i], ids[start:i], existing_ids, hands[start][1],
+            )
+            prepared.extend(prep)
+            duplicates += dups
+            errors += errs
+            error_details.extend(details)
+            start = i
+    imported = 0
+    if prepared:
+        db.execute("BEGIN TRANSACTION")
+        try:
+            imported, _, _ = _flush_batch(db, prepared, in_transaction=True, workspace_id=workspace_id)
+            db.execute("COMMIT")
+        except BaseException:
+            try:
+                db.execute("ROLLBACK")
+            except Exception:
+                logging.getLogger(__name__).exception("ROLLBACK failed")
+            reset_import_cache()
+            raise
+        finalize_import(db, workspace_id=workspace_id)
+    return {"imported": imported, "duplicates": duplicates, "errors": errors,
+            "error_details": error_details[:20]}
 
 
 def _process_hands(db, text_contents: list[str], workspace_id: int = 1) -> ImportResult:

@@ -391,6 +391,16 @@ def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
             value VARCHAR NOT NULL
         )
     """)
+    # Auto-import per-file read state (app/auto_import.py): bytes consumed so far
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS auto_import_files (
+            path VARCHAR PRIMARY KEY,
+            size BIGINT NOT NULL,
+            mtime DOUBLE NOT NULL,
+            "offset" BIGINT NOT NULL,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS hand_tags (
             hand_id VARCHAR ,
