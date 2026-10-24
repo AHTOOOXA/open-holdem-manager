@@ -46,7 +46,16 @@ export interface ActionRows {
   streets: Partial<Record<Street, StreetRow[]>>; // preflop: no bet_* / check_* rows
   /** per street: "Selected action was the last action on this street" */
   last: Partial<Record<Street, boolean>>;
+  /**
+   * Faced preflop (OR'd): what hero faced before his first preflop action. Only the situations
+   * the matcher can express (see `FACED_PREFLOP` in lib/lines/dsl.ts); UI-only like the rows.
+   */
+  faced?: FacedPreflop[];
 }
+
+export type FacedPreflop =
+  | 'unopened' | 'one_limp' | 'two_plus_limps' | 'limp_raise'
+  | 'open_raise' | 'open_3bet' | 'raise_call' | 'raise_calls';
 
 // ── Hand export (M8) ─────────────────────────────────────────────────────────────────────
 // GET /api/hands/export?<every /api/hands filter param, incl. chain, marked, tag_ids, player_id>

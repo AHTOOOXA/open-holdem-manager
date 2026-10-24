@@ -15,6 +15,7 @@ import {
   closeFrom, createChain, openNext, setPageState, truncateAfter,
   type Page, type PageChain,
 } from '@/lib/page-chain';
+import { sanitizeLineStep } from '@/lib/lines/step';
 import { resolvePresets } from './steps';
 import type { ReportQuery, SplitType, Step, Street } from './types';
 
@@ -374,12 +375,16 @@ export function stepLabel(step: Step): string {
   }
 }
 
-export type FilterDialogTab = 'quick' | 'positions' | 'general' | 'session';
+export type FilterDialogTab = 'quick' | 'positions' | 'general' | 'actions' | 'session';
 
-/** Filter-dialog tab a chip reopens on (double-click). */
+/**
+ * Filter-dialog tab a chip reopens on (double-click). Line steps: the Actions tab; a Custom
+ * Filter chip (line step without Actions-tab rows) opens the line builder instead (ReportPageView).
+ */
 export function filterTabFor(step: Step): FilterDialogTab {
   switch (step.k) {
     case 'row': return 'quick';
+    case 'line': return 'actions';
     case 'pos': return 'positions';
     case 'date':
     case 'hour': return 'session';
@@ -449,8 +454,9 @@ function parseSelected(v: unknown): SelectedRow | null {
   return (r.tab === 'stats' || isLowerTab(r.tab)) && isStr(r.key) ? { tab: r.tab, key: r.key } : null;
 }
 
-const stepsOrNull = (v: unknown): Step[] | null => (Array.isArray(v) && v.every(isStep) ? v : null);
-const validSteps = (v: unknown): Step[] => (Array.isArray(v) ? v.filter(isStep) : []);
+// Line steps keep their editor models (`rows` / `line`) when those are well-formed
+const stepsOrNull = (v: unknown): Step[] | null => (Array.isArray(v) && v.every(isStep) ? v.map(sanitizeLineStep) : null);
+const validSteps = (v: unknown): Step[] => (Array.isArray(v) ? v.filter(isStep).map(sanitizeLineStep) : []);
 
 /**
  * Restore a stored chain. Returns null (caller starts fresh) on a version mismatch or bad JSON.

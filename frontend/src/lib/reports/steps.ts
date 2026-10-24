@@ -1,8 +1,9 @@
 /** Pure helpers for the filter steps a Reports page edits itself (FilterDialog). */
 import { formatLocalDate } from '../format/date';
+import { isActionsLineStep, LINE_UI_FIELDS, type LineStep } from '../lines/step';
 import type { Pos, Step } from './types';
 
-export type FilterTab = 'quick' | 'positions' | 'general' | 'session';
+export type FilterTab = 'quick' | 'positions' | 'general' | 'actions' | 'session';
 
 type Of<K extends Step['k']> = Extract<Step, { k: K }>;
 
@@ -14,6 +15,10 @@ export interface OwnSteps {
   tsize?: Of<'tsize'>;
   stack?: Of<'stack'>;
   date?: Of<'date'>;
+  /** The Actions tab's line step (carries `rows`). */
+  actions?: LineStep;
+  /** The line builder's step (Custom Filter): the first other line step. */
+  custom?: LineStep;
   /** Everything the dialog does not edit (and duplicates of an edited kind), original order. */
   other: Step[];
 }
@@ -72,6 +77,8 @@ export function stepKindTab(step: Step): FilterTab | null {
     case 'pos': return 'positions';
     case 'stakes': case 'mode': case 'tsize': case 'stack': return 'general';
     case 'date': return 'session';
+    // Custom Filter chips open the line builder itself
+    case 'line': return isActionsLineStep(step) ? 'actions' : null;
     default: return null;
   }
 }
@@ -80,7 +87,11 @@ export function splitOwnSteps(steps: Step[]): OwnSteps {
   const out: OwnSteps = { other: [] };
   for (const s of steps) {
     const kind = s.k as OwnKind;
-    if (OWN_ORDER.includes(kind) && out[kind] === undefined) {
+    if (s.k === 'line') {
+      const slot = isActionsLineStep(s) ? 'actions' : 'custom';
+      if (out[slot] === undefined) out[slot] = s;
+      else out.other.push(s);
+    } else if (OWN_ORDER.includes(kind) && out[kind] === undefined) {
       (out as unknown as Record<string, Step>)[kind] = s;
     } else {
       out.other.push(s);
@@ -98,14 +109,21 @@ function isEmpty(s: Step): boolean {
   }
 }
 
-/** Drop empty steps, fill labels, order row, pos, stakes, mode, tsize, stack, date; others follow unchanged. */
+/**
+ * Drop empty steps, fill labels, order row, Actions-tab line, Custom Filter line, pos, stakes, mode,
+ * tsize, stack, date; others follow unchanged. (Spot steps first: the last one is the page's hit point.)
+ */
 export function normaliseOwnSteps(steps: Step[]): Step[] {
   const parts = splitOwnSteps(steps);
   const own: Step[] = [];
   for (const kind of OWN_ORDER) {
     const s = parts[kind];
-    if (!s || isEmpty(s)) continue;
-    own.push({ ...s, label: stepLabel(s) } as Step);
+    if (s && !isEmpty(s)) own.push({ ...s, label: stepLabel(s) } as Step);
+    if (kind === 'row') {
+      for (const line of [parts.actions, parts.custom]) {
+        if (line && line.dsl) own.push({ ...line, label: stepLabel(line) } as Step);
+      }
+    }
   }
   return [...own, ...parts.other];
 }
@@ -201,11 +219,15 @@ export function resolvePresets(steps: readonly Step[], now: Date = new Date()): 
   });
 }
 
-/** Drop the fields the backend does not take (`preset`); keeps `label` unless `keepLabel` is false. */
+/**
+ * Drop the fields the backend does not take (`preset` on date steps, the editor models `rows` /
+ * `line` / `name` on line steps); keeps `label` unless `keepLabel` is false.
+ */
 export function stripUiFields(steps: readonly Step[], keepLabel = true): Step[] {
   return steps.map((step) => {
     const rest = { ...step } as Record<string, unknown>;
     delete rest.preset;
+    if (step.k === 'line') for (const f of LINE_UI_FIELDS) delete rest[f];
     if (!keepLabel) delete rest.label;
     return rest as unknown as Step;
   });
