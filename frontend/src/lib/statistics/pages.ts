@@ -41,8 +41,9 @@ export const HANDS_PAGE_WIDTH = 820;
 
 const EMPTY: PageState = { selection: null };
 
-export function freshStatChain(): StatChain {
-  return createChain<StatPage, PageState>({ title: '', inherited: { kind: 'root' }, state: EMPTY, width: ROOT_PAGE_WIDTH });
+/** A chain with page 0 only; `rootWidth` = its width while pages are open to its right. */
+export function freshStatChain(rootWidth = ROOT_PAGE_WIDTH): StatChain {
+  return createChain<StatPage, PageState>({ title: '', inherited: { kind: 'root' }, state: EMPTY, width: rootWidth });
 }
 
 /** Select something on page `index` and open `page` right of it (everything after `index` closes). */
@@ -118,9 +119,9 @@ const store = new Map<string, StoredPages>();
 
 export const pagesStoreKey = (workspaceId: number, dashboardId: number) => `${workspaceId}:${dashboardId}`;
 
-export function loadPages(key: string, defKey: string): StoredPages {
+export function loadPages(key: string, defKey: string, rootWidth = ROOT_PAGE_WIDTH): StoredPages {
   const s = store.get(key);
-  return s && s.defKey === defKey ? s : { defKey, chain: freshStatChain() };
+  return s && s.defKey === defKey ? s : { defKey, chain: freshStatChain(rootWidth) };
 }
 
 export function savePages(key: string, pages: StoredPages): void {
