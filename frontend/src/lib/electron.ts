@@ -4,6 +4,7 @@ export interface ElectronAPI {
   isElectron?: boolean;
   getAppVersion?: () => Promise<string>;
   openExternal?: (url: string) => void;
+  openDataFolder?: () => Promise<void>;
   onUpdateAvailable?: (cb: (info: { version: string; releaseNotes?: string }) => void) => void;
   onDownloadProgress?: (cb: (info: { percent: number }) => void) => void;
   onUpdateDownloaded?: (cb: () => void) => void;

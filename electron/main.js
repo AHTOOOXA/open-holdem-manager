@@ -43,6 +43,13 @@ function getResourcePath(...parts) {
   return path.join(process.resourcesPath, ...parts);
 }
 
+// The folder holding the DuckDB file: what packaged mode passes as OHM_DATA_DIR, the repo's
+// data/ folder in dev (the backend default).
+function getDataDir() {
+  if (isDev) return path.join(__dirname, '..', 'data');
+  return path.join(app.getPath('userData'), 'data');
+}
+
 function startBackend(port) {
   if (isDev) {
     // In dev mode, backend is started separately (make dev / make backend)
@@ -53,7 +60,7 @@ function startBackend(port) {
     ? getResourcePath('backend', 'ohm-backend.exe')
     : getResourcePath('backend', 'ohm-backend');
 
-  const dataDir = path.join(app.getPath('userData'), 'data');
+  const dataDir = getDataDir();
   const staticDir = getResourcePath('frontend');
 
   const env = {
@@ -381,6 +388,13 @@ ipcMain.handle('open-external', (_event, url) => {
   if (typeof url === 'string' && url.startsWith('https://github.com/')) {
     shell.openExternal(url);
   }
+});
+
+// Opens the app's own data folder; the renderer never supplies a path.
+ipcMain.handle('open-data-folder', async () => {
+  const dir = getDataDir();
+  try { require('fs').mkdirSync(dir, { recursive: true }); } catch (_e) { /* ignore */ }
+  await shell.openPath(dir);
 });
 
 app.whenReady().then(async () => {

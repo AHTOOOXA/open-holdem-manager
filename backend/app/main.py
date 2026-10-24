@@ -20,6 +20,7 @@ from app.api import reports_lite
 from app.api import statistics_dashboards
 from app.api import heroes as heroes_api
 from app.api import app_settings as app_settings_api
+from app.api import config as config_api
 
 MultiPartParser.max_part_size = 50 * 1024 * 1024  # 50MB
 
@@ -67,6 +68,7 @@ app.include_router(reports_lite.router, prefix="/api", tags=["reports"])
 app.include_router(statistics_dashboards.router, prefix="/api", tags=["statistics"])
 app.include_router(heroes_api.router, prefix="/api", tags=["heroes"])
 app.include_router(app_settings_api.router, prefix="/api", tags=["settings"])
+app.include_router(config_api.router, prefix="/api", tags=["config"])
 
 
 @app.on_event("startup")
@@ -112,6 +114,7 @@ def health(workspace_id: int = 1):
             "status": "ok",
             "hands": rebuild["total"],
             "rebuilding": True,
+            "rebuild_required": False,
             "rebuild_progress": {
                 "processed": rebuild["processed"],
                 "total": rebuild["total"],
@@ -124,7 +127,12 @@ def health(workspace_id: int = 1):
         hand_count = row[0] if row else 0
     except Exception:
         hand_count = 0
-    resp = {"status": "ok", "hands": hand_count, "rebuilding": False}
+    try:
+        from app.config_sections import rebuild_required
+        needs_rebuild = rebuild_required(get_read_cursor())
+    except Exception:
+        needs_rebuild = False
+    resp = {"status": "ok", "hands": hand_count, "rebuilding": False, "rebuild_required": needs_rebuild}
     wal_recovery = get_wal_recovery()
     if wal_recovery:
         resp["wal_recovery"] = wal_recovery

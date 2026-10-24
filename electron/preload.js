@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // App info
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
   openExternal: (url) => ipcRenderer.invoke('open-external', url),
+  openDataFolder: () => ipcRenderer.invoke('open-data-folder'),
 
   // Update system
   // Windows: electron-updater, download and install only on user click

@@ -7,10 +7,31 @@ from app.db import get_db, db_lock, get_read_cursor, get_hero_player_id
 from app.parsers.common import POSITIONS_BY_COUNT
 from app.stats_engine import compute_player_stats
 from app.models import HeroStats
+from app.config_sections import get_markers
 
 router = APIRouter()
 
 # ── Player list ─────────────────────────────────────────────────────
+
+class PlayerMarker(BaseModel):
+    id: int
+    name: str
+    color: str
+
+
+def resolve_marker(markers: list[dict], reg: bool | None, color_tag: str | None) -> PlayerMarker | None:
+    """Manual marker (players.color_tag = marker id as a string) wins; else the first marker
+    whose is_regular matches the reg classification (none when the player has no hands)."""
+    if color_tag:
+        for m in markers:
+            if str(m["id"]) == color_tag.strip():
+                return PlayerMarker(id=m["id"], name=m["name"], color=m["color"])
+    if reg is not None:
+        for m in markers:
+            if m["is_regular"] == reg:
+                return PlayerMarker(id=m["id"], name=m["name"], color=m["color"])
+    return None
+
 
 class PlayerSummary(BaseModel):
     id: int
@@ -24,6 +45,8 @@ class PlayerSummary(BaseModel):
     last_seen: str | None = None
     stakes: list[str] = []
     site: str | None = None  # site name, e.g. "GGPoker"
+    reg: bool | None = None  # configured reg rule; null = no hands
+    marker: PlayerMarker | None = None
 
 
 class PlayerListResponse(BaseModel):
@@ -113,13 +136,15 @@ def list_players(
                       + COALESCE(hp.river_bets, 0) + COALESCE(hp.river_raises, 0)) AS DOUBLE)
                      / SUM(COALESCE(hp.flop_calls, 0) + COALESCE(hp.turn_calls, 0) + COALESCE(hp.river_calls, 0))
                 ELSE NULL END as af,
-            MAX(p.last_seen) as last_seen
+            MAX(p.last_seen) as last_seen,
+            pc.is_reg,
+            p.color_tag
         FROM players p
         JOIN hand_players hp ON hp.player_id = p.id
         JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
         LEFT JOIN player_classifications pc ON pc.player_id = p.id AND pc.workspace_id = h.workspace_id
         WHERE h.workspace_id = ? {where_sql}
-        GROUP BY p.id, p.username, COALESCE(pc.player_type, 'UNK')
+        GROUP BY p.id, p.username, COALESCE(pc.player_type, 'UNK'), pc.is_reg, p.color_tag
         HAVING COUNT(*) >= ?
         ORDER BY {sort_col} {direction} NULLS LAST
         LIMIT ? OFFSET ?
@@ -153,6 +178,7 @@ def list_players(
         player_ids,
     ).fetchall())
 
+    markers = get_markers(db)
     players = []
     for r in rows:
         players.append(PlayerSummary(
@@ -167,6 +193,8 @@ def list_players(
             last_seen=r[8].isoformat() if r[8] else None,
             stakes=sorted(stakes_map.get(r[0], [])),
             site=site_map.get(r[0]),
+            reg=r[9],
+            marker=resolve_marker(markers, r[9], r[10]),
         ))
 
     return PlayerListResponse(
@@ -190,6 +218,8 @@ class PlayerHeader(BaseModel):
     stakes: list[str] = []
     notes: str | None = None
     color_tag: str | None = None
+    reg: bool | None = None
+    marker: PlayerMarker | None = None
 
 
 @router.get("/players/{player_id}", response_model=PlayerHeader)
@@ -198,7 +228,7 @@ def get_player(player_id: int, workspace_id: int = Query(1)):
 
     row = db.execute(
         "SELECT p.id, p.username, COALESCE(pc.player_type, 'UNK'), "
-        "p.notes, p.color_tag, p.first_seen, p.last_seen "
+        "p.notes, p.color_tag, p.first_seen, p.last_seen, pc.is_reg "
         "FROM players p "
         "LEFT JOIN player_classifications pc ON pc.player_id = p.id AND pc.workspace_id = ? "
         "WHERE p.id = ?",
@@ -231,6 +261,8 @@ def get_player(player_id: int, workspace_id: int = Query(1)):
         stakes=[s[0] for s in stakes_rows],
         notes=row[3],
         color_tag=row[4],
+        reg=row[7],
+        marker=resolve_marker(get_markers(db), row[7], row[4]),
     )
 
 

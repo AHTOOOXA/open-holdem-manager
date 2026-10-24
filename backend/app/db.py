@@ -557,6 +557,9 @@ def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
     # Hero accounts (manual + auto-detected); backfills existing databases
     _ensure_hero_accounts(conn)
 
+    # Configuration sections: reg classification, alias flags, rebuild fingerprint
+    _migrate_config_sections(conn)
+
     # Check stat version — trigger rebuild if outdated
     _check_stat_version(conn)
 
@@ -1153,6 +1156,22 @@ def get_rebuild_status() -> dict:
     return dict(_rebuild_status)
 
 
+def _migrate_config_sections(conn: duckdb.DuckDBPyConnection) -> None:
+    """Columns + defaults added by the Configuration sections (idempotent)."""
+    cols = {c[0] for c in conn.execute(
+        "SELECT column_name FROM information_schema.columns WHERE table_name = 'player_classifications'"
+    ).fetchall()}
+    if "is_reg" not in cols:
+        conn.execute("ALTER TABLE player_classifications ADD COLUMN is_reg BOOLEAN")
+        if conn.execute("SELECT COUNT(*) FROM hands").fetchone()[0] > 0:
+            from app.player_classification import batch_update_player_types
+            batch_update_player_types(conn)
+    for col in ("is_single_person", "pinned"):
+        conn.execute(f"ALTER TABLE player_identities ADD COLUMN IF NOT EXISTS {col} BOOLEAN DEFAULT FALSE")
+    from app.config_sections import ensure_rebuild_fingerprint
+    ensure_rebuild_fingerprint(conn)
+
+
 def _check_stat_version(conn: duckdb.DuckDBPyConnection) -> None:
     """Auto-rebuild stats if STAT_VERSION has been bumped since last run.
 
@@ -1200,6 +1219,8 @@ def _check_stat_version(conn: duckdb.DuckDBPyConnection) -> None:
                     "INSERT OR REPLACE INTO settings VALUES ('stat_version', ?)",
                     [str(STAT_VERSION)],
                 )
+                from app.config_sections import store_rebuild_fingerprint
+                store_rebuild_fingerprint(db)
                 logger.info("Background rebuild complete, stat_version set to %d", STAT_VERSION)
         except Exception:
             logger.exception("Background rebuild failed")
