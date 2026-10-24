@@ -234,3 +234,46 @@ def test_alias_flags_and_csv_roundtrip(client, db):
         client.delete(f"/api/identities/{i['id']}")
     r = _csv(client, exp.text)
     assert r.json() == {"aliases": 2, "players": 3, "skipped_lines": 0}
+
+
+def test_marker_next_id_never_reused(client):
+    a = client.get("/api/config/color_markers/next-id").json()["id"]
+    assert a == 3  # defaults use 1, 2
+    b = client.get("/api/config/color_markers/next-id").json()["id"]
+    assert b == a + 1
+    markers = client.get("/api/config/color_markers").json()["value"]
+    markers.append({"id": b, "name": "New", "color": "tag-1", "is_regular": False})
+    assert client.put("/api/config/color_markers", json=markers).status_code == 200
+    client.put("/api/config/color_markers", json=markers[:2])  # delete it again
+    assert client.get("/api/config/color_markers/next-id").json()["id"] == b + 1
+
+
+def test_identities_csv_malformed_is_422(client):
+    r = client.post("/api/identities/import-csv", params={"workspace_id": 1},
+                    files={"file": ("a.csv", b'a, b, "unterminated\x00', "text/csv")})
+    assert r.status_code in (200, 422)
+    import csv as _csv
+    import app.api.identities as ident
+    orig = ident.csv.reader
+    def bad(*a, **k):
+        raise _csv.Error("field larger than field limit")
+    ident.csv.reader = bad
+    try:
+        r = client.post("/api/identities/import-csv", params={"workspace_id": 1},
+                        files={"file": ("a.csv", b"a,b,c", "text/csv")})
+    finally:
+        ident.csv.reader = orig
+    assert r.status_code == 422 and "Invalid CSV" in r.text
+
+
+def test_player_color_tag_validation(client, db):
+    db.execute("INSERT INTO players (id, site_id, username) VALUES (9001, 1, 'ZZ')")
+    ok = client.patch("/api/players/9001/notes", json={"color_tag": "2"})
+    assert ok.status_code == 200
+    assert client.patch("/api/players/9001/notes", json={"color_tag": "99"}).status_code == 422
+    assert client.patch("/api/players/9001/notes", json={"color_tag": "red"}).status_code == 422
+    assert client.patch("/api/players/9001/notes", json={"color_tag": ""}).status_code == 200
+    # legacy stored value is no manual marker
+    from app.api.players import resolve_marker
+    from app import config_sections as cs
+    assert resolve_marker(cs.get_markers(db), None, "red") is None

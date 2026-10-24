@@ -167,3 +167,21 @@ def rebuild_required(db) -> bool:
     if row is None or row[0] == current_fingerprint(db):
         return False
     return db.execute("SELECT COUNT(*) FROM hands").fetchone()[0] > 0
+
+
+# ── Colour marker ids: never reused ─────────────────────────────────────────────────────
+
+NEXT_MARKER_ID_KEY = "config.color_markers.next_id"
+
+
+def reserve_marker_id(db) -> int:
+    """Reserve and return a never-used marker id: counter = max(counter, max id in the stored
+    value) + 1, persisted. Caller holds the write lock."""
+    row = db.execute("SELECT value FROM settings WHERE key = ?", [NEXT_MARKER_ID_KEY]).fetchone()
+    try:
+        counter = int(row[0]) if row else 0
+    except ValueError:
+        counter = 0
+    nxt = max(counter, max((m["id"] for m in get_markers(db)), default=0)) + 1
+    db.execute("INSERT OR REPLACE INTO settings VALUES (?, ?)", [NEXT_MARKER_ID_KEY, str(nxt)])
+    return nxt

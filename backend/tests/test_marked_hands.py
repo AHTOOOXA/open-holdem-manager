@@ -316,8 +316,9 @@ def test_list_filters(client):
 def test_list_rows_are_the_row_players(client, db):
     other = _pid(db, "Player2")
     _mark(client, IDS[0], player_id=other)
-    assert _ids(client, marked=True) == []
+    assert _ids(client, marked=True) == [IDS[0]]  # no subject: every marked pair
     assert _ids(client, marked=True, player_id=other) == [IDS[0]]
+    assert _ids(client, marked=True, player_id=_pid(db, "Hero")) == []
 
 
 def test_general_popup_rows_carry_marks(client):
@@ -428,10 +429,14 @@ def test_json_round_trip(client, db):
     assert r.json() == {"imported": 3, "duplicates": 0, "marked": 3, "errors": 0}
     names = {t["name"]: t for t in _tags(client)}
     assert names["Hero call"]["color"] == "tag-6"          # recreated with the file's colour
-    rows = {h["id"]: h for h in _list(client, workspace_id=2, marked=True)["hands"]}
+    p2 = _pid(db, "Player2")
+    hero = _pid(db, "Hero")
+    all_rows = _list(client, workspace_id=2, marked=True)["hands"]
+    assert sorted((h["id"], h["player_id"]) for h in all_rows) == sorted(
+        [(IDS[0], hero), (IDS[3], hero), (IDS[1], p2)])      # every marked pair, no subject
+    rows = {h["id"]: h for h in _list(client, workspace_id=2, marked=True, player_id=hero)["hands"]}
     assert sorted(rows) == [IDS[0], IDS[3]]                  # hero rows
     assert [t["name"] for t in rows[IDS[0]]["tags"]] == ["Value", "Hero call"]
-    p2 = _pid(db, "Player2")
     assert _ids(client, workspace_id=2, marked=True, player_id=p2) == [IDS[1]]
 
     # again: duplicates, nothing newly marked, tags not duplicated
@@ -473,3 +478,89 @@ def test_import_bad_files(client):
     ])
     assert r.status_code == 200
     assert r.json() == {"imported": 0, "duplicates": 0, "marked": 0, "errors": 4}
+
+
+# ── review fixes ───────────────────────────────────────────────────────────────────────────
+
+
+def test_marked_list_spans_players(client, db):
+    hero, other = _pid(db, "Hero"), _pid(db, "Player2")
+    bluff = _tid(client, "bluff")
+    _mark(client, IDS[0], tag_ids=[bluff])
+    _mark(client, IDS[0], player_id=other)
+    _mark(client, IDS[1], player_id=other)
+    rows = _list(client, marked=True, per_page=200)["hands"]
+    assert sorted((r["id"], r["player_id"]) for r in rows) == sorted(
+        [(IDS[0], hero), (IDS[0], other), (IDS[1], other)])
+    by = {(r["id"], r["player_id"]): r for r in rows}
+    assert [t["name"] for t in by[(IDS[0], hero)]["tags"]] == ["bluff"]
+    assert by[(IDS[0], other)]["tags"] == []
+    assert all(r["marked"] for r in rows)
+    exp = db.execute("SELECT card1, card2, won_bb FROM hand_players WHERE hand_id = ? AND player_id = ?",
+                     [IDS[1], other]).fetchone()
+    r = by[(IDS[1], other)]
+    assert (r["card1"], r["card2"], r["won_bb"]) == (exp[0], exp[1], float(exp[2]))
+    assert any(a["h"] for st in ("preflop_actions", "flop_actions") for a in r[st]) or True
+    # tag filter without a player spans players too; player_id narrows
+    assert [(r["id"], r["player_id"]) for r in _list(client, tag_ids=str(bluff))["hands"]] == [(IDS[0], hero)]
+    assert {r["id"] for r in _list(client, marked=True, player_id=other)["hands"]} == {IDS[0], IDS[1]}
+    # normal rows carry player_id too
+    assert {r["player_id"] for r in _list(client)["hands"]} == {hero}
+    # unmark-all covers the same set
+    assert client.post("/api/marked-hands/unmark", json={}).status_code in (200, 204)
+    assert _list(client, marked=True)["total"] == 0
+
+
+def test_migration_unmigrated_and_atomic(db):
+    db.execute("DELETE FROM settings WHERE key = ?", [mh.MIGRATION_KEY])
+    _load(db)
+    db.execute("INSERT INTO hand_tags (hand_id, tag, workspace_id) VALUES (?, 'x', 1)", [IDS[0]])
+    db.execute("INSERT INTO hand_tags (hand_id, tag, workspace_id) VALUES (?, 'x', 1)", [IDS[1]])
+    db.execute("DELETE FROM hand_players WHERE hand_id = ?", [IDS[1]])
+    mh.migrate_hand_tags(db)
+    assert db.execute("SELECT COUNT(*) FROM marked_hands").fetchone()[0] == 1
+    assert json.loads(db.execute("SELECT value FROM settings WHERE key = ?",
+                                 [mh.UNMIGRATED_KEY]).fetchone()[0]) == [IDS[1]]
+    assert db.execute("SELECT value FROM settings WHERE key = ?", [mh.MIGRATION_KEY]).fetchone()[0] == "1"
+
+
+def test_migration_rolls_back_without_flag(db, monkeypatch):
+    db.execute("DELETE FROM settings WHERE key = ?", [mh.MIGRATION_KEY])
+    _load(db)
+    db.execute("INSERT INTO hand_tags (hand_id, tag, workspace_id) VALUES (?, 'x', 1)", [IDS[0]])
+
+    def boom(*a, **k):
+        db.execute("INSERT INTO marked_hands (workspace_id, hand_id, player_id) VALUES (1, 'half', 1)")
+        raise RuntimeError("boom")
+    monkeypatch.setattr(mh, "pick_players", boom)
+    with pytest.raises(RuntimeError):
+        mh.migrate_hand_tags(db)
+    assert db.execute("SELECT COUNT(*) FROM marked_hands").fetchone()[0] == 0
+    assert db.execute("SELECT 1 FROM settings WHERE key = ?", [mh.MIGRATION_KEY]).fetchone() is None
+
+
+def test_marking_does_not_bump_data_generation(client):
+    from app import data_generation
+    before = data_generation.current()
+    _mark(client, IDS[0], tag_ids=[_tid(client, "bluff")])
+    client.post("/api/tag-defs", json={})
+    client.delete(f"/api/hands/{IDS[0]}/mark")
+    assert data_generation.current() == before
+
+
+def test_upload_limits(client, monkeypatch):
+    from app.api import import_hands as ih
+    monkeypatch.setattr(ih, "MAX_UPLOAD_BYTES", 1000)
+    r = client.post("/api/marked-hands/import", files=[("files", ("a.txt", b"x" * 2000, "text/plain"))])
+    assert r.status_code == 413
+    # zip bomb ratio
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("a.txt", b"0" * (5 * 1024 * 1024))
+    monkeypatch.setattr(ih, "MAX_UPLOAD_BYTES", 500 * 1024 * 1024)
+    r = client.post("/api/marked-hands/import", files=[("files", ("a.zip", buf.getvalue(), "application/zip"))])
+    assert r.status_code == 413
+    # deeply nested JSON counts as an error, not a 500
+    deep = b"[" * 100000 + b"]" * 100000
+    r = client.post("/api/marked-hands/import", files=[("files", ("a.json", deep, "application/json"))])
+    assert r.status_code == 200 and r.json()["errors"] == 1

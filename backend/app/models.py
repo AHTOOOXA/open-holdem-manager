@@ -173,6 +173,7 @@ class TagRef(BaseModel):
 
 class HandSummary(BaseModel):
     id: str
+    player_id: int = 0  # the row's player (the hero / player_id filter, or the marked player)
     played_at: datetime
     stakes: str
     game_mode: str = ""

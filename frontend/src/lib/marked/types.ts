@@ -15,6 +15,11 @@
  * marked for the workspace hero's row in that hand (fallback: the only player with known hole
  * cards, else the first player) with those tags in created_at order. `hand_tags` rows are kept
  * untouched (no longer read or written). Fresh install (no hand_tags): OHM's default catalogue.
+ *
+ * Hand lists (GET /api/hands): every row carries `player_id` (the row's player). With `marked=true`
+ * (or `tag_ids`) and NO `player_id` the list holds every marked (hand, player) pair of the
+ * workspace, each row from the marked player's point of view (a hand can appear once per marked
+ * player); with `player_id` only that player's marks. Same set as Unmark All and export.
  */
 
 export type TagColor = 'tag-1' | 'tag-2' | 'tag-3' | 'tag-4' | 'tag-5' | 'tag-6' | 'tag-7' | 'tag-8' | 'tag-9';

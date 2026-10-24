@@ -18,6 +18,13 @@ def _section(name: str) -> str:
     return name
 
 
+@router.get("/config/color_markers/next-id")
+def next_marker_id() -> dict:
+    """Reserve the next never-used colour marker id (ids are never reused after deletion)."""
+    with db_lock():
+        return {"id": cs.reserve_marker_id(get_db())}
+
+
 @router.get("/config/{section}")
 def read_config(section: str) -> dict:
     return cs.envelope(get_read_cursor(), _section(section))

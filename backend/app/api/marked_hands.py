@@ -8,7 +8,6 @@ from typing import Literal, Optional
 from fastapi import APIRouter, File, HTTPException, Query, Response, UploadFile
 from pydantic import BaseModel, ConfigDict, field_validator
 
-from app import data_generation
 from app import marked_hands as mh
 from app.db import db_lock, get_db, get_read_cursor
 from app.models import TagRef
@@ -95,7 +94,6 @@ def create_tag_def(body: TagCreate | None = None):
         db = get_db()
         with mh.txn(db):
             tid = mh.create_tag(db, body.name or mh.NEW_TAG_NAME, body.color or mh.NEW_TAG_COLOR)
-        data_generation.bump()
         return mh.get_tag(db, tid)
 
 
@@ -116,7 +114,6 @@ def update_tag_def(tag_id: int, body: TagPatch):
                 db.execute("UPDATE tag_defs SET name = ? WHERE id = ?", [body.name, tag_id])
             if body.color is not None:
                 db.execute("UPDATE tag_defs SET color = ? WHERE id = ?", [body.color, tag_id])
-        data_generation.bump()
         return mh.get_tag(db, tag_id)
 
 
@@ -127,7 +124,6 @@ def delete_tag_def(tag_id: int):
         _require_tag(db, tag_id)
         with mh.txn(db):
             mh.delete_tags(db, [tag_id])
-        data_generation.bump()
     return Response(status_code=204)
 
 
@@ -138,7 +134,6 @@ def move_tag_def(tag_id: int, body: MoveBody):
         _require_tag(db, tag_id)
         with mh.txn(db):
             mh.move_tag(db, tag_id, body.direction)
-        data_generation.bump()
         return mh.list_tags(db)
 
 
@@ -148,7 +143,6 @@ def reset_tag_defs():
         db = get_db()
         with mh.txn(db):
             mh.reset_tags(db)
-        data_generation.bump()
         return mh.list_tags(db)
 
 
@@ -198,7 +192,6 @@ def put_mark(hand_id: str, body: MarkBody | None = None, workspace_id: int = Que
             mh.mark(db, workspace_id, hand_id, pid)
             if tag_ids is not None:
                 mh.set_tags(db, workspace_id, hand_id, pid, tag_ids)
-        data_generation.bump()
         return _state(db, workspace_id, hand_id, pid)
 
 
@@ -209,7 +202,6 @@ def delete_mark(hand_id: str, workspace_id: int = Query(1), player_id: Optional[
         pid = _resolve_player(db, workspace_id, hand_id, player_id)
         with mh.txn(db):
             mh.unmark(db, workspace_id, hand_id, pid)
-        data_generation.bump()
     return Response(status_code=204)
 
 
@@ -220,7 +212,6 @@ def unmark_hands(body: UnmarkBody | None = None, workspace_id: int = Query(1)):
         db = get_db()
         with mh.txn(db):
             n = mh.unmark_all(db, workspace_id, tag_ids or None)
-        data_generation.bump()
     return UnmarkResult(unmarked=n)
 
 
@@ -303,6 +294,9 @@ def _split_ids(texts: list[str]) -> tuple[list[str | None], int]:
     return ids, unknown
 
 
+MAX_MARKED_UPLOAD_BYTES = 500 * 1024 * 1024
+
+
 @router.post("/marked-hands/import", response_model=MarkedImportResult)
 async def import_marked(files: list[UploadFile] = File(...), workspace_id: int = Query(1)):
     from app.api.import_hands import _process_hands, _read_uploads
@@ -310,16 +304,20 @@ async def import_marked(files: list[UploadFile] = File(...), workspace_id: int =
     result = MarkedImportResult()
     plain: list[tuple[str, bytes]] = []
     entries: list[dict] = []
+    total_bytes = 0
     for f in files:
         name = (f.filename or "").lower()
         raw = await f.read()
+        total_bytes += len(raw)
+        if total_bytes > MAX_MARKED_UPLOAD_BYTES:
+            raise HTTPException(status_code=413, detail="Upload too large (limit 500 MB)")
         if name.endswith(".json"):
             try:
                 doc = json.loads(raw.decode("utf-8-sig"))
                 if not isinstance(doc, dict) or doc.get("format") != "ohm-marked-hands" \
                         or not isinstance(doc.get("hands"), list):
                     raise ValueError("not an OHM marked hands file")
-            except (ValueError, UnicodeDecodeError):
+            except (ValueError, UnicodeDecodeError, RecursionError):
                 result.errors += 1
                 continue
             for e in doc["hands"]:
@@ -405,5 +403,4 @@ async def import_marked(files: list[UploadFile] = File(...), workspace_id: int =
                 pid = picks.get(hid)
                 if pid is not None and mh.mark(db, workspace_id, hid, pid):
                     result.marked += 1
-        data_generation.bump()
     return result

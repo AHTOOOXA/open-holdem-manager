@@ -137,55 +137,60 @@ async def import_identities_csv(workspace_id: int = Query(...), file: UploadFile
 
         skipped = 0
         groups: dict[str, dict] = {}
-        for fields in csv.reader(io.StringIO(text), skipinitialspace=True):
-            if not fields or all(not f.strip() for f in fields):
-                continue
-            fields = [f.strip() for f in fields]
-            if len(fields) < 3 or not fields[0] or not fields[1]:
-                skipped += 1
-                continue
-            site_id = site_ids.get(fields[2].lower())
-            player = db.execute(
-                "SELECT p.id FROM players p WHERE p.site_id = ? AND p.username = ? "
-                "AND EXISTS (SELECT 1 FROM hand_players hp WHERE hp.player_id = p.id AND hp.workspace_id = ?)",
-                [site_id, fields[1], workspace_id],
-            ).fetchone() if site_id is not None else None
-            if player is None:
-                skipped += 1
-                continue
-            g = groups.setdefault(fields[0], {"players": [], "single": False})
-            g["players"].append(player[0])
-            if len(fields) > 3 and fields[3].lower() == "true":
-                g["single"] = True
-
-        n_players = 0
-        for name, g in groups.items():
-            row = db.execute(
-                "SELECT id FROM player_identities WHERE display_name = ? ORDER BY id LIMIT 1", [name]
-            ).fetchone()
-            if row:
-                identity_id = row[0]
-            else:
-                identity_id = db.execute("SELECT nextval('seq_identities')").fetchone()[0]
-                db.execute("INSERT INTO player_identities (id, display_name, tags) VALUES (?, ?, '[]')",
-                           [identity_id, name])
-            if g["single"]:
-                db.execute("UPDATE player_identities SET is_single_person = TRUE WHERE id = ?", [identity_id])
-            for pid in dict.fromkeys(g["players"]):
-                taken = db.execute(
-                    "SELECT identity_id FROM player_aliases WHERE workspace_id = ? AND player_id = ?",
-                    [workspace_id, pid],
-                ).fetchone()
-                if taken:
-                    if taken[0] != identity_id:
-                        skipped += 1
+        try:
+            for fields in csv.reader(io.StringIO(text), skipinitialspace=True):
+                if not fields or all(not f.strip() for f in fields):
                     continue
-                alias_id = db.execute("SELECT nextval('seq_aliases')").fetchone()[0]
-                db.execute(
-                    "INSERT INTO player_aliases (id, identity_id, workspace_id, player_id) VALUES (?, ?, ?, ?)",
-                    [alias_id, identity_id, workspace_id, pid],
-                )
-                n_players += 1
+                fields = [f.strip() for f in fields]
+                if len(fields) < 3 or not fields[0] or not fields[1]:
+                    skipped += 1
+                    continue
+                site_id = site_ids.get(fields[2].lower())
+                player = db.execute(
+                    "SELECT p.id FROM players p WHERE p.site_id = ? AND p.username = ? "
+                    "AND EXISTS (SELECT 1 FROM hand_players hp WHERE hp.player_id = p.id AND hp.workspace_id = ?)",
+                    [site_id, fields[1], workspace_id],
+                ).fetchone() if site_id is not None else None
+                if player is None:
+                    skipped += 1
+                    continue
+                g = groups.setdefault(fields[0], {"players": [], "single": False})
+                g["players"].append(player[0])
+                if len(fields) > 3 and fields[3].lower() == "true":
+                    g["single"] = True
+        except csv.Error as e:
+            raise HTTPException(status_code=422, detail=f"Invalid CSV: {e}")
+
+        from app.marked_hands import txn
+        with txn(db):
+            n_players = 0
+            for name, g in groups.items():
+                row = db.execute(
+                    "SELECT id FROM player_identities WHERE display_name = ? ORDER BY id LIMIT 1", [name]
+                ).fetchone()
+                if row:
+                    identity_id = row[0]
+                else:
+                    identity_id = db.execute("SELECT nextval('seq_identities')").fetchone()[0]
+                    db.execute("INSERT INTO player_identities (id, display_name, tags) VALUES (?, ?, '[]')",
+                               [identity_id, name])
+                if g["single"]:
+                    db.execute("UPDATE player_identities SET is_single_person = TRUE WHERE id = ?", [identity_id])
+                for pid in dict.fromkeys(g["players"]):
+                    taken = db.execute(
+                        "SELECT identity_id FROM player_aliases WHERE workspace_id = ? AND player_id = ?",
+                        [workspace_id, pid],
+                    ).fetchone()
+                    if taken:
+                        if taken[0] != identity_id:
+                            skipped += 1
+                        continue
+                    alias_id = db.execute("SELECT nextval('seq_aliases')").fetchone()[0]
+                    db.execute(
+                        "INSERT INTO player_aliases (id, identity_id, workspace_id, player_id) VALUES (?, ?, ?, ?)",
+                        [alias_id, identity_id, workspace_id, pid],
+                    )
+                    n_players += 1
         return {"aliases": len(groups), "players": n_players, "skipped_lines": skipped}
 
 
