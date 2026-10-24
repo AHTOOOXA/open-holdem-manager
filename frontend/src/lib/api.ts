@@ -481,6 +481,7 @@ export interface HandListResponse {
 
 export interface HandPlayerDetail {
   seat: number;
+  player_id?: number;
   position: string;
   username: string;
   stack_bb: number;

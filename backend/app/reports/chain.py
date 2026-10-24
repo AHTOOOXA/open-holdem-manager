@@ -455,7 +455,13 @@ def evaluate_spot(seq, p: int, steps: list[_Step]) -> tuple[int, tuple[int, int]
         if st.k == "row":
             code, hit = spots.eval_row(seq, p, st.key)
         elif st.k == "line":
-            code, hit = spots.evaluate_code(spots.compile_line(st.dsl), seq, p)
+            lcode, lhit = spots.evaluate_code(spots.compile_line(st.dsl), seq, p)
+            if hit is None:
+                code, hit = lcode, lhit
+            elif lcode & CASE:   # after a hit-moving step the line only filters; the hit stays
+                continue
+            else:
+                return 0, None
         elif st.k == "next":
             code, hit = spots.eval_next(seq, p, hit, spots.STREET_INDEX[st.street], st.a)
         else:
@@ -468,15 +474,20 @@ def evaluate_spot(seq, p: int, steps: list[_Step]) -> tuple[int, tuple[int, int]
 def chain_ctx(chain: list[_Step]) -> SpotCtx:
     """Static context of the chain's final hit point (hand start for plain chains)."""
     ctx = START
+    moved = False
     for st in chain:
         if st.k == "row":
             ctx = spots.row_ctx(st.key)
         elif st.k == "line":
-            ctx = spots.line_ctx(st.dsl)
+            if not moved:   # a later line only filters, the hit point stays
+                ctx = spots.line_ctx(st.dsl)
         elif st.k == "next":
             ctx = spots.next_spot(ctx, spots.STREET_INDEX[st.street], st.a)
         elif st.k == "faced":
             ctx = spots.faced_spot(ctx, spots.STREET_INDEX[st.street], st.a)
+        else:
+            continue
+        moved = True
     return ctx
 
 

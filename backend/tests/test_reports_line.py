@@ -203,3 +203,109 @@ def test_export_marked_spans_players_once_per_hand(client, bench_db, hero_id):
         assert _export(client, marked="true", player_id=other).text.count("Poker Hand #") == 1
     finally:
         bench_db.execute("DELETE FROM marked_hands")
+
+
+# ── review fixes (M8 fix B) ──────────────────────────────────────────────
+
+from app.h2n.sequence import BET, CALL, CHECK, FOLD, RAISE  # noqa: E402
+
+_TYPE = {"F": FOLD, "X": CHECK, "C": CALL, "B": BET, "R": RAISE}
+
+
+def _hero_seqs(bench_db, hero_id):
+    """[(hand id, seq, hero index)] of every bench hand with a decodable sequence."""
+    from app.reports.chain import fetch_seqs
+    from app.h2n.seqcodec import decode_sequence
+    ids = [r[0] for r in bench_db.execute(
+        "SELECT hand_id FROM hand_players WHERE player_id = ?", [hero_id]).fetchall()]
+    out = []
+    blobs = fetch_seqs(bench_db, 1, ids)
+    for hid in ids:
+        seq = decode_sequence(blobs.get(hid))
+        if seq is None:
+            continue
+        p = seq.index.get("Hero")
+        if p is not None:
+            out.append((hid, seq, p))
+    return out
+
+
+def _street_types(seq, p, street):
+    end = seq.seq_end[p][street]
+    return [seq.streets[street][i].eff for i in seq.own[p][street] if i < end]
+
+
+def test_line_after_hit_step_is_filter(client):
+    base = [{"k": "row", "key": "P01"}, {"k": "next", "street": "flop", "a": "bet_vs_call"}]
+    d0 = _post(client, "spot", base)
+    assert d0["hit_label"] == "Continuation Bet"
+    chain = base + _line("pre: H:R[fr,pos=BTN]")
+    d1 = _post(client, "spot", chain)
+    assert d1["hit_label"] == "Continuation Bet"
+    assert 0 < d1["hands"] < d0["hands"]
+    # the hands are those of the c-bet that also contain the line, hit stays on the flop
+    plain = set(_case_ids(client, base))
+    line = set(_case_ids(client, _line("pre: H:R[fr,pos=BTN]")))
+    assert set(_case_ids(client, chain)) == plain & line
+    assert _spot_numbers(client, chain)[0] == len(plain & line)
+    # a line as the first spot step still moves the hit
+    assert _post(client, "spot", _line("pre: H:R[fr,pos=BTN]"))["hit_label"] == "Action line"
+    # a never-matching line empties the set
+    assert _post(client, "spot", base + _line("pre: H:R[fr] > H:R[fr]"))["hands"] == 0
+
+
+def test_list_and_export_order_is_stable(client, bench_db):
+    # same-second hands: collapse all timestamps of a slice onto one second
+    ids = [h["id"] for h in client.get("/api/hands", params={"per_page": 40}).json()["hands"]]
+    ph = ",".join("?" for _ in ids)
+    saved = bench_db.execute(f"SELECT id, played_at FROM hands WHERE id IN ({ph})", ids).fetchall()
+    bench_db.execute(f"UPDATE hands SET played_at = TIMESTAMP '2024-01-01 12:00:00' WHERE id IN ({ph})", ids)
+    try:
+        for sort, order in (("played_at", "desc"), ("played_at", "asc")):
+            seen, page = [], 1
+            while True:
+                d = client.get("/api/hands", params={"per_page": 7, "page": page, "sort": sort,
+                                                     "order": order, "date_from": "2024-01-01",
+                                                     "date_to": "2024-01-01"}).json()
+                seen += [h["id"] for h in d["hands"]]
+                if page >= d["total_pages"]:
+                    break
+                page += 1
+            assert len(seen) == len(set(seen)) == d["total"] == len(ids)
+            r = _export(client, sort=sort, order=order, date_from="2024-01-01", date_to="2024-01-01")
+            ex = [x.split(":")[0].replace("Poker Hand #", "") for x in r.text.split("\n")
+                  if x.startswith("Poker Hand #")]
+            assert ex == [i.replace("Poker Hand #", "") for i in seen]
+    finally:
+        for hid, ts in saved:
+            bench_db.execute("UPDATE hands SET played_at = ? WHERE id = ?", [ts, hid])
+
+
+def test_hand_detail_has_player_id(client, hero_id):
+    hid = client.get("/api/hands", params={"per_page": 1}).json()["hands"][0]["id"]
+    d = client.get(f"/api/hands/{hid}").json()
+    assert all(isinstance(p["player_id"], int) for p in d["players"])
+    assert len({p["player_id"] for p in d["players"]}) == len(d["players"])
+    assert [p["player_id"] for p in d["players"] if p["is_hero"]] == [hero_id]
+
+
+def test_villain_call_line_shows_next_action_stats(client):
+    chain = _line("pre: H:R[fr] > V:C")
+    d = _post(client, "spot", chain)
+    assert d["kind"] == "villain"
+    ids = {s["id"]: s for s in d["stats"]}
+    nxt = _split(client, chain, "next_actions")
+    rows = {(r["caption"]): _co(r) for r in nxt["rows"]}
+    assert "Bet vs. Call, Flop" in rows and "Check vs. Call, Flop" in rows
+    for key, cap in (("bet_vs_call", "Bet vs. Call, Flop"),
+                     ("check_vs_call", "Check vs. Call, Flop")):
+        st = next(s for k, s in ids.items() if k.endswith(f":{key}"))
+        assert st["filter"] == {"k": "next", "street": "flop", "a": key, "label": st["filter"]["label"]}
+        assert st["sample"] == rows[cap][1] and st["sample"] > 0
+        assert st["value"] == pytest.approx(rows[cap][0] / rows[cap][1] * 100)
+
+
+def test_villain_fold_line_has_no_next_stats(client):
+    d = _post(client, "spot", _line("pre: H:R[fr] > V:F"))
+    if d["hands"]:
+        assert not any(s["id"].startswith("next:") for s in d["stats"])

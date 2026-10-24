@@ -209,7 +209,7 @@ def list_hands(
         FROM hands h
         JOIN hand_players hp ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id AND {join_player}
         WHERE 1=1 {where_sql}
-        ORDER BY {sort_col} {sort_dir}, h.played_at DESC
+        ORDER BY {sort_col} {sort_dir}, h.played_at DESC, h.id, hp.player_id
         LIMIT ? OFFSET ?
     """
     params.extend([per_page, offset])
@@ -400,7 +400,7 @@ def export_hands(
         ids = [r[0] for r in db.execute(f"""
             SELECT id FROM (
                 SELECT h.id, {sort_col} AS sk, h.played_at AS pa,
-                       ROW_NUMBER() OVER (PARTITION BY h.id ORDER BY {sort_col} {sort_dir}) AS rn
+                       ROW_NUMBER() OVER (PARTITION BY h.id ORDER BY {sort_col} {sort_dir}, hp.player_id) AS rn
                 FROM hands h
                 JOIN hand_players hp ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
                      AND {f.join_player}
@@ -482,6 +482,7 @@ def get_hand(hand_id: str, workspace_id: int = Query(1),
         player_name_map[pr[7]] = (pr[2], pr[1])
         players.append(HandPlayerDetail(
             seat=pr[0],
+            player_id=pr[7],
             position=pr[1],
             username=pr[2],
             stack_bb=float(pr[3]) if pr[3] is not None else 0.0,
