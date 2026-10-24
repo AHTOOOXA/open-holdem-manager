@@ -51,7 +51,8 @@ function dollars(v: number): string {
   return Math.abs(v) < 0.005 ? '\u2014' : `${v < 0 ? '-' : ''}${fixed(Math.abs(v), 2)}$`;
 }
 
-const handId = (h: HandSummary) => h.id;
+/** Row key: a hand can be listed once per marked player (Marked Hands lists every player). */
+const handId = (h: HandSummary) => (h.player_id ? `${h.id}:${h.player_id}` : h.id);
 const NO_HANDS: HandSummary[] = [];
 const col = createDataGridColumns<HandSummary>();
 
@@ -374,20 +375,21 @@ export default function HandExplorer({
     if (id) gridRef.current?.focusRow(id);
   }, []);
   const handleSelectionChange = useCallback((ids: string[]) => setSelectedId(ids[0] ?? null), []);
-  const handleRowClick = useCallback((h: HandSummary) => openDrawer(h.id), [openDrawer]);
+  const handleRowClick = useCallback((h: HandSummary) => openDrawer(handId(h)), [openDrawer]);
 
   // A sticky header lets you re-sort / re-filter while scrolled down: start the new result at the top
   const queryKeyJson = JSON.stringify(handsQueryParams);
   useEffect(() => { gridRef.current?.scrollToTop(); }, [queryKeyJson]);
 
   const hands = data?.hands ?? NO_HANDS;
-  const selectedIndex = selectedId ? hands.findIndex((h) => h.id === selectedId) : -1;
+  const selectedIndex = selectedId ? hands.findIndex((h) => handId(h) === selectedId) : -1;
+  const selectedHand = selectedIndex >= 0 ? hands[selectedIndex] : undefined;
 
   const handlePrev = () => {
-    if (selectedIndex > 0) setSelectedId(hands[selectedIndex - 1].id);
+    if (selectedIndex > 0) setSelectedId(handId(hands[selectedIndex - 1]));
   };
   const handleNext = () => {
-    if (selectedIndex >= 0 && selectedIndex < hands.length - 1) setSelectedId(hands[selectedIndex + 1].id);
+    if (selectedIndex >= 0 && selectedIndex < hands.length - 1) setSelectedId(handId(hands[selectedIndex + 1]));
   };
 
   const hasUserFilters = filters.position.length > 0 || filters.stakes.length > 0 ||
@@ -521,7 +523,7 @@ export default function HandExplorer({
           key={picker.handId}
           handId={picker.handId}
           playerId={picker.playerId}
-          initialTags={hands.find((h) => h.id === picker.handId)?.tags ?? []}
+          initialTags={hands.find((h) => h.id === picker.handId && (picker.playerId === undefined || h.player_id === picker.playerId))?.tags ?? []}
           point={picker}
           onClose={() => setPicker(null)}
         />
@@ -530,8 +532,8 @@ export default function HandExplorer({
       {/* Drawer */}
       {selectedId && drawerOpen && (
         <HandDrawer
-          handId={selectedId}
-          playerId={hands.find((h) => h.id === selectedId)?.player_id ?? fixedPlayerId}
+          handId={selectedHand?.id ?? selectedId.split(':')[0]}
+          playerId={selectedHand?.player_id ?? fixedPlayerId}
           onClose={closeDrawer}
           onCloseAutoFocus={handleCloseAutoFocus}
           onPrev={handlePrev}
