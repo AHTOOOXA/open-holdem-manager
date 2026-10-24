@@ -119,8 +119,10 @@ export interface SplitQuery extends ReportQuery {
 //   session: anchors Hands, Duration, Hands / h | Won, Won EV, Win Rate EV;
 //            grid Avg. Tables, VPIP, PFR, Ag., 3Bet, WTSD, W%SD, WWSF%, Rake paid, Rake Paid bb/100, Won bb
 //   table:   as session without Avg. Tables
-//   villain: anchors Hands, VPIP, PFR | Won From Hero, EV diff.;
+//   villain: anchors Hands, VPIP, PFR | EV diff. (Won EV - Won; "Won From Hero" is not computed);
 //            grid Ag., Win Rate, Won Without Showdown, 3Bet, WTSD, W%SD, WWSF%, Rake paid, Rake Paid bb/100
+// Stat ids: hands, duration, hands_h, won, won_ev, ev_bb100, avg_tables, vpip, pfr, ag, threebet,
+// wtsd, wsd, wwsf, rake, rake_bb100, won_bb; villain: ev_diff, bb100, won_nsd.
 // Recipe stats are never clickable (no `filter`). `group` splits anchors from the grid.
 
 export type SpotRecipe = 'session' | 'table' | 'villain';

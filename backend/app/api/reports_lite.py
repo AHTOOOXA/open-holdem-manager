@@ -1,7 +1,7 @@
 """Reports screen endpoints (contract: frontend/src/lib/reports/types.ts).
 
     POST /api/reports/split            SplitQuery -> SplitResponse
-    POST /api/reports/spot             ReportQuery -> SpotResponse
+    POST /api/reports/spot             SpotQuery -> SpotResponse (`recipe`: Sessions recipes)
     POST /api/reports/preflop-range    ReportQuery -> PreflopRangeResponse
     POST /api/reports/hand-strength    HandStrengthQuery -> HandStrengthResponse
     GET  /api/reports/quick-filters    -> QuickFilter[]
@@ -15,7 +15,7 @@ URL-encoded JSON `chain` query parameter (`chain_hand_ids`).
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, Optional
 
 from fastapi import APIRouter, HTTPException
 
@@ -27,11 +27,15 @@ from app.reports.chain import ReportQuery, parse_chain, resolve
 router = APIRouter()
 
 SplitType = Literal["results", "positions", "next_actions", "faced_next", "bet_sizing",
-                    "stack_sizes", "hour_of_day", "table_size"]
+                    "stack_sizes", "hour_of_day", "table_size", "tables", "players"]
 
 
 class SplitQuery(ReportQuery):
     type: SplitType
+
+
+class SpotQuery(ReportQuery):
+    recipe: Optional[Literal["session", "table", "villain"]] = None
 
 
 class HandStrengthQuery(ReportQuery):
@@ -53,8 +57,10 @@ def post_split(q: SplitQuery) -> dict:
 
 
 @router.post("/reports/spot")
-def post_spot(q: ReportQuery) -> dict:
+def post_spot(q: SpotQuery) -> dict:
     db, res = _resolve(q)
+    if q.recipe:
+        return views.recipe(db, res, q.recipe)
     return views.spot(db, res)
 
 

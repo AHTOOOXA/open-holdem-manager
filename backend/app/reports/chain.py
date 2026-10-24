@@ -7,9 +7,11 @@ player that passes the chain's plain steps and is an opportunity of its last spo
 with the hit point and the per-hand facts the reports read. Plain chains (no spot step)
 have no hit point and every matching hand is a case.
 
-- Plain steps (pos, stakes, mode, tsize, date, hour, stack, game, cells, hv) become one SQL
-  WHERE over `hands` / `hand_players`, together with `COALESCE(hp.h2n_valid, TRUE)` (the
-  General screen leaves hands H2N would refuse out of every number).
+- Plain steps (pos, stakes, mode, tsize, date, hour, stack, game, cells, hv, and the Sessions
+  steps session / table / with) become one SQL WHERE over `hands` / `hand_players`,
+  together with `COALESCE(hp.h2n_valid, TRUE)` (the General screen leaves hands H2N would
+  refuse out of every number). `pos`, `stack`, `cells`, `hv` and the spot steps are about
+  the reporting player's own seat; the others are about the hand.
 - Spot steps (row, next, faced, betsize) are evaluated in chain order on the hand's stored
   action sequence (`hand_players.h2n_seq`, re-parsed from `raw_text` when missing) by
   `app.reports.spots`. Every spot step but the last must be a case; the last one decides
@@ -172,6 +174,39 @@ class HvStep(_Step):
         return self
 
 
+def _naive_iso(v: str) -> _dt.datetime:
+    t = _dt.datetime.fromisoformat(v)
+    if t.tzinfo is not None:
+        raise ValueError("session bounds are naive local datetimes (no zone)")
+    return t
+
+
+class SessionStep(_Step):
+    """A Sessions list row: played_at in [start, end] (end = the session's last hand start)."""
+
+    k: Literal["session"]
+    start: str
+    end: str
+
+    @model_validator(mode="after")
+    def _bounds(self):
+        if _naive_iso(self.end) < _naive_iso(self.start):
+            raise ValueError("session end is before its start")
+        return self
+
+
+class TableStep(_Step):
+    k: Literal["table"]
+    v: list[str] = Field(min_length=1)
+
+
+class WithStep(_Step):
+    """Hands where this player was dealt in (any seat of the hand)."""
+
+    k: Literal["with"]
+    player_id: int
+
+
 class RowStep(_Step):
     k: Literal["row"]
     key: str
@@ -217,13 +252,14 @@ class BetsizeStep(_Step):
 
 Step = Annotated[
     Union[PosStep, StakesStep, ModeStep, TsizeStep, DateStep, HourStep, StackStep, GameStep,
-          CellsStep, HvStep, RowStep, NextStep, FacedStep, BetsizeStep],
+          CellsStep, HvStep, SessionStep, TableStep, WithStep, RowStep, NextStep, FacedStep,
+          BetsizeStep],
     Field(discriminator="k"),
 ]
 CHAIN = TypeAdapter(list[Step])
 
 PLAIN_KINDS = frozenset(("pos", "stakes", "mode", "tsize", "date", "hour", "stack", "game",
-                         "cells", "hv"))
+                         "cells", "hv", "session", "table", "with"))
 SPOT_KINDS = frozenset(("row", "next", "faced", "betsize"))
 
 
@@ -350,6 +386,17 @@ def plain_sql(chain: list[_Step]) -> tuple[str, list]:
             idx = [hv_index(st.street, c) for c in st.cats]
             sql.append(f"hp.hv_{st.street} IN ({_marks(len(idx))})")
             params += idx
+        elif k == "session":
+            sql.append("h.played_at BETWEEN CAST(? AS TIMESTAMP) AND CAST(? AS TIMESTAMP)")
+            params += [_naive_iso(st.start).isoformat(sep=" "),
+                       _naive_iso(st.end).isoformat(sep=" ")]
+        elif k == "table":
+            sql.append(f"h.table_name IN ({_marks(len(st.v))})")
+            params += list(st.v)
+        elif k == "with":
+            sql.append("EXISTS (SELECT 1 FROM hand_players wp WHERE wp.hand_id = h.id "
+                       "AND wp.workspace_id = h.workspace_id AND wp.player_id = ?)")
+            params.append(st.player_id)
     return "".join(" AND " + s for s in sql), params
 
 
@@ -458,6 +505,8 @@ class HandRec:
     pre_case: int
     post_opp: int
     post_case: int
+    rake_bb: float = 0.0
+    table: str | None = None
     ap: float | None = None      # Action Profit, bb (hero action hits)
     hit_eff: int | None = None   # effective type of the hit action
     hit_hero: bool = False       # the hit action is the player's own
@@ -487,8 +536,7 @@ class Resolution:
         return [h.hid for h in self.hands if h.case]
 
 
-_SELECT = """
-    SELECT h.id, COALESCE(hp.won, 0), COALESCE(hp.won_bb, 0),
+_COLS = """h.id, COALESCE(hp.won, 0), COALESCE(hp.won_bb, 0),
            COALESCE(hp.all_in_ev_bb, hp.won_bb, 0),
            COALESCE(hp.all_in_ev_bb, hp.won_bb, 0) * h.bb_amount,
            COALESCE(hp.rake, 0), COALESCE(hp.went_to_showdown, FALSE),
@@ -496,10 +544,13 @@ _SELECT = """
            h.bb_amount, h.game_mode, h.table_size, hp.card1, hp.card2,
            hp.hv_flop, hp.hv_turn, hp.hv_river,
            COALESCE(hp.h2n_pre_opp, 0), COALESCE(hp.h2n_pre_case, 0),
-           COALESCE(hp.h2n_post_opp, 0), COALESCE(hp.h2n_post_case, 0)
+           COALESCE(hp.h2n_post_opp, 0), COALESCE(hp.h2n_post_case, 0),
+           COALESCE(hp.rake_bb, 0), h.table_name"""
+_FROM = """
     FROM hand_players hp
     JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
 """
+_SELECT = f"SELECT {_COLS} {_FROM}"
 _BASE_WHERE = "hp.player_id = ? AND h.workspace_id = ? AND COALESCE(hp.h2n_valid, TRUE)"
 
 
@@ -511,8 +562,26 @@ def _rec(r, case: bool = True, hit=None) -> HandRec:
         stack_bb=None if r[9] is None else float(r[9]), played_at=r[10], stakes=r[11],
         bb_amount=f(r[12]), mode=r[13] or "", tsize=r[14], card1=r[15], card2=r[16],
         hv=(r[17], r[18], r[19]), pre_opp=int(r[20]), pre_case=int(r[21]),
-        post_opp=int(r[22]), post_case=int(r[23]),
+        post_opp=int(r[22]), post_case=int(r[23]), rake_bb=f(r[24]), table=r[25],
     )
+
+
+def opponent_recs(db, workspace_id: int, ids: list[str], player_id: int
+                  ) -> list[tuple[int, str, HandRec]]:
+    """(player id, username, record) of every other player dealt in to the given hands
+    (H2N-valid rows only, as the opponent's own Reports page would count them)."""
+    out: list[tuple[int, str, HandRec]] = []
+    for i in range(0, len(ids), 5000):
+        chunk = ids[i:i + 5000]
+        for r in db.execute(
+            f"SELECT hp.player_id, p.username, {_COLS} {_FROM} "
+            "JOIN players p ON p.id = hp.player_id "
+            "WHERE h.workspace_id = ? AND hp.player_id <> ? AND COALESCE(hp.h2n_valid, TRUE) "
+            "AND hp.hand_id IN (SELECT UNNEST(?::VARCHAR[]))",
+            [workspace_id, player_id, chunk],
+        ).fetchall():
+            out.append((int(r[0]), r[1], _rec(r[2:])))
+    return out
 
 
 def fetch_seqs(db, workspace_id: int, ids: list[str]) -> dict[str, bytes]:
@@ -717,7 +786,7 @@ def resolved_ids(db, workspace_id: int, player_id: int | None, chain: list[_Step
 
 __all__ = [
     "Step", "ReportQuery", "CHAIN", "parse_chain", "resolve", "resolved_ids", "Resolution",
-    "HandRec", "SeqSource", "plain_sql", "card_class", "card_class_sql", "CLASSES",
+    "HandRec", "SeqSource", "plain_sql", "opponent_recs", "card_class", "card_class_sql", "CLASSES",
     "chain_ctx", "canonical", "clear_cache", "POS_NAMES",
     "stakes_caption", "stack_caption", "target_player", "ROWS",
 ]
