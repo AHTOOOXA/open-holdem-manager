@@ -13,6 +13,13 @@ export function fixed(value: number, digits = 0): string {
   return (r === 0 ? 0 : r).toFixed(digits);
 }
 
+const GROUPED = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 });
+
+/** Whole number with thousands separators: grouped(1234567) -> "1,234,567". */
+export function grouped(value: number): string {
+  return Number.isFinite(value) ? GROUPED.format(value) : String(value);
+}
+
 /** `fixed` with trailing zeros stripped: 6.00 -> "6", 3.50 -> "3.5". */
 export function trimmed(value: number, digits = 1): string {
   const s = fixed(value, digits);

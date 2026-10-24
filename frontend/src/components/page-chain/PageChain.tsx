@@ -16,7 +16,7 @@
  * uses level i%3, its lower block (usePageLevel().lower) uses (i+1)%3, so a lower block always
  * differs from its own page and matches the next page's upper area.
  *
- * Focus: a newly opened (or reused) page 1+ moves focus to its header; page 0 and
+ * Focus: a newly opened (or reused) page 1+ moves focus to its header and scrolls into view; page 0 and
  * Escape are left alone (Hand2Note has no Escape-to-close).
  */
 import {
@@ -161,7 +161,13 @@ export function PageChain<I, S>({
     if (!prev) return;
     for (let i = pages.length - 1; i >= 1; i--) {
       const p = pages[i];
-      if (prev.get(p.id) !== p.rev) { headers.current.get(p.id)?.focus(); break; }
+      if (prev.get(p.id) !== p.rev) {
+        headers.current.get(p.id)?.focus({ preventScroll: true });
+        // Bring the whole page (header and close button included) into the row's viewport
+        const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+        sections.current.get(p.id)?.scrollIntoView({ inline: 'nearest', block: 'nearest', behavior: reduced ? 'auto' : 'smooth' });
+        break;
+      }
     }
   }, [pages]);
 

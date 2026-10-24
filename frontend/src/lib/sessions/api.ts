@@ -1,4 +1,5 @@
 /** Typed client for /api/sessions (contract in ./types.ts). */
+import { responseError } from '../api-error';
 import type { SessionsLive, SessionsQuery, SessionsResponse } from './types';
 
 export async function getSessions(q: SessionsQuery, signal?: AbortSignal): Promise<SessionsResponse> {
@@ -7,7 +8,7 @@ export async function getSessions(q: SessionsQuery, signal?: AbortSignal): Promi
   if (q.date_from) sp.set('date_from', q.date_from);
   if (q.date_to) sp.set('date_to', q.date_to);
   const res = await fetch(`/api/sessions?${sp}`, { signal });
-  if (!res.ok) throw new Error(`Sessions failed: ${res.statusText}`);
+  if (!res.ok) throw await responseError(res, 'Sessions failed');
   return res.json();
 }
 

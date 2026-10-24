@@ -8,7 +8,7 @@
  * shows it, clicking a folder only selects and opens / closes it, clicking empty space clears the
  * row selection. Folder expansion lives in memory per workspace.
  */
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent } from 'react';
 import { ChevronRight, ChevronsLeft, Folder, FolderOpen, FolderPlus, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -18,6 +18,7 @@ import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
+import { expandedStore } from '@/lib/statistics/pages';
 import type { DashboardsDoc } from '@/lib/statistics/types';
 import {
   TREE_INDENT_PX, TREE_MAX_WIDTH, TREE_MIN_WIDTH, ancestorIds, canDelete, canMove, clampTreeWidth, cloneDashboard,
@@ -27,9 +28,6 @@ import {
 const IS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 const MOD = IS_MAC ? '⌘' : 'Ctrl+';
 const RESIZE_STEP = 16;
-
-/** Open folders per workspace, kept while the app runs (not saved). */
-const expandedStore = new Map<number, Set<number>>();
 
 export interface DashboardTreeProps {
   workspaceId: number;
@@ -69,6 +67,8 @@ export default function DashboardTree({
   const [menuTarget, setMenuTarget] = useState<number | null>(null);
   const [liveWidth, setLiveWidth] = useState<number | null>(null);
   const treeRef = useRef<HTMLDivElement>(null);
+  const idBase = useId();
+  const rowId = (id: number) => `${idBase}-row-${id}`;
   const drag = useRef<{ startX: number; startW: number; w: number } | null>(null);
 
   const setExpanded = (fn: (s: Set<number>) => Set<number>) => {
@@ -91,7 +91,7 @@ export default function DashboardTree({
   });
 
   // A rename asked for from outside: applied once per request (render-time state update)
-  const [seenRename, setSeenRename] = useState(0);
+  const [seenRename, setSeenRename] = useState(() => renameRequest?.rev ?? 0);
   if (renameRequest && renameRequest.rev !== seenRename) {
     setSeenRename(renameRequest.rev);
     setTreeSel(renameRequest.id);
@@ -270,7 +270,11 @@ export default function DashboardTree({
         <ContextMenuTrigger asChild>
           <div
             className="min-h-0 flex-1"
-            onContextMenuCapture={() => setMenuTarget(null)}
+            onContextMenuCapture={(e) => {
+              // Shift+F10 / Menu key on the focused tree (not on a row): act on the selected node
+              const keyboard = e.target === treeRef.current && e.button === 0 && document.activeElement === treeRef.current;
+              setMenuTarget(keyboard ? treeSel : null);
+            }}
           >
             <ScrollArea className="h-full">
               <div
@@ -278,6 +282,7 @@ export default function DashboardTree({
                 role="tree"
                 aria-label="Dashboard tree"
                 tabIndex={0}
+                aria-activedescendant={treeSel != null && rows.some((r) => r.node.id === treeSel) ? rowId(treeSel) : undefined}
                 onKeyDown={onKeyDown}
                 onClick={(e: MouseEvent) => { if (e.target === e.currentTarget) setTreeSel(null); }}
                 className="group/tree flex min-h-40 flex-col px-1 pb-4 outline-none"
@@ -292,6 +297,7 @@ export default function DashboardTree({
                   return (
                     <div
                       key={node.id}
+                      id={rowId(node.id)}
                       role="treeitem"
                       aria-level={level + 1}
                       aria-selected={selected}

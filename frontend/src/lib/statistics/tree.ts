@@ -100,6 +100,12 @@ export function isWithin(nodes: readonly DashboardNode[], id: number, ancestor: 
   return id === ancestor || ancestorIds(nodes, id).includes(ancestor);
 }
 
+/** Ids present in `prev` but not in `next`. */
+export function removedNodeIds(prev: readonly DashboardNode[], next: readonly DashboardNode[]): number[] {
+  const keep = new Set(next.map((n) => n.id));
+  return prev.filter((n) => !keep.has(n.id)).map((n) => n.id);
+}
+
 export function nextNodeId(nodes: readonly DashboardNode[]): number {
   return nodes.reduce((m, n) => Math.max(m, n.id), 0) + 1;
 }

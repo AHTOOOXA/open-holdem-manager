@@ -1,3 +1,4 @@
+import { useDayStartHour } from '@/hooks/useDayStart';
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { getFilterOptions } from '@/lib/api';
@@ -238,7 +239,9 @@ function GeneralTab({ draft, set }: { draft: Draft; set: (p: Partial<Draft>) => 
 }
 
 function SessionTab({ draft, set }: { draft: Draft; set: (p: Partial<Draft>) => void }) {
-  const presets = useMemo(() => sessionPresets(), []);
+  const dayHour = useDayStartHour();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const presets = useMemo(() => sessionPresets(), [dayHour]);
   return (
     <div className="flex flex-col gap-4">
       <Section title="Period">

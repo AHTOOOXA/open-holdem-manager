@@ -3,6 +3,7 @@
  * and the lower block. Upper tabs query [...inherited, ...own]; the lower block and the next page
  * use the full chain (plus the range / hand-strength selections).
  */
+import { useDayKey } from '@/hooks/useDayStart';
 import { useMemo, useState } from 'react';
 import { Plus } from 'lucide-react';
 import { Chip } from '@/components/ui/chip';
@@ -80,16 +81,17 @@ export default function ReportPageView({ page, dashboard, actions, handsInit, on
   const s = page.state;
   const [dialog, setDialog] = useState<{ open: boolean; tab: FilterDialogTab }>({ open: false, tab: 'quick' });
 
+  const dayKey = useDayKey();
   const { inherited } = page;
   const { own, lower } = s;
   const { workspaceId, playerId } = dashboard;
   const upperQuery = useMemo(
     () => reportQuery({ workspaceId, playerId }, composeUpper(inherited, own)),
-    [workspaceId, playerId, inherited, own],
+    [workspaceId, playerId, inherited, own, dayKey], // eslint-disable-line react-hooks/exhaustive-deps
   );
   const lowerQuery = useMemo(
     () => reportQuery({ workspaceId, playerId }, composeFull(inherited, own, lower)),
-    [workspaceId, playerId, inherited, own, lower],
+    [workspaceId, playerId, inherited, own, lower, dayKey], // eslint-disable-line react-hooks/exhaustive-deps
   );
   const cells = useMemo(() => selectedCells(lower), [lower]);
   const hv = useMemo(() => selectedHv(lower), [lower]);

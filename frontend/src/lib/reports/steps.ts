@@ -123,8 +123,28 @@ function shiftMonths(base: Date, months: number): Date {
   return new Date(first.getFullYear(), first.getMonth(), Math.min(base.getDate(), last));
 }
 
-/** Session-tab presets relative to `now` (weeks start on Monday). "All Time" has no bounds. */
-export function sessionPresets(now: Date = new Date()): DatePresetDef[] {
+let appDayStartHour = 0;
+
+/** The app-wide "Day starts at (hour)" setting; presets default to it (kept in sync by `useDayStartHour`). */
+export function setAppDayStartHour(hour: number): void {
+  appDayStartHour = Number.isInteger(hour) && hour >= 0 && hour <= 23 ? hour : 0;
+}
+
+export function getAppDayStartHour(): number {
+  return appDayStartHour;
+}
+
+/** "Day starts at (hour)": before that hour it is still the previous calendar day. */
+export function shiftForDayStart(now: Date, dayStartHour: number): Date {
+  return dayStartHour > 0 ? new Date(now.getTime() - dayStartHour * 3_600_000) : now;
+}
+
+/**
+ * The one date-preset function (Reports, Statistics, Sessions): presets relative to `now` shifted back
+ * by `dayStartHour` (weeks start on Monday). "All Time" has no bounds.
+ */
+export function sessionPresets(realNow: Date = new Date(), dayStartHour: number = appDayStartHour): DatePresetDef[] {
+  const now = shiftForDayStart(realNow, dayStartHour);
   const f = formatLocalDate;
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const addDays = (base: Date, n: number) => {

@@ -4,6 +4,7 @@
  * (only when stale) · gear. Every control edits the dashboard definition; the parent ignores a
  * change that leaves the definition as it is.
  */
+import { useDayStartHour } from '@/hooks/useDayStart';
 import { useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Check, ChevronDown, ChevronsRight, CalendarRange, RefreshCw, Settings, UserRound } from 'lucide-react';
@@ -19,7 +20,7 @@ import { Separator } from '@/components/ui/separator';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useFilterOptions } from '@/hooks/useFilterOptions';
 import { getHeroes } from '@/lib/api';
-import { formatHands } from '@/lib/format';
+import { formatHands, grouped } from '@/lib/format';
 import { sessionPresets } from '@/lib/reports/steps';
 import {
   DEFAULT_PROFILE_ID, PROFILE_IDS, dateButtonLabel, dateChoiceId, dateStepOf, modeOf, profileLabel, stakesOf,
@@ -151,7 +152,7 @@ export default function DashboardHeader({
       <div className="flex shrink-0 items-center gap-2">
         {fetching && <RefreshCw className="size-3 animate-spin text-muted-foreground" aria-label="Updating" role="status" />}
         {hands != null && (
-          <span className="text-sm text-muted-foreground" title={`${hands.toLocaleString()} hands`}>
+          <span className="text-sm text-muted-foreground" title={`${grouped(hands)} hands`}>
             {formatHands(hands)} hands
           </span>
         )}
@@ -200,6 +201,7 @@ function DateFilter({ definition, onChange }: { definition: DashboardDefinition;
   const step = dateStepOf(definition);
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
+  useDayStartHour();
   const presets = sessionPresets().filter((p) => p.from);
 
   const openChange = (o: boolean) => {
@@ -225,7 +227,7 @@ function DateFilter({ definition, onChange }: { definition: DashboardDefinition;
         </Button>
       </PopoverTrigger>
       <PopoverContent align="start" className="w-72 p-2">
-        <div role="listbox" aria-label="Date range" className="flex flex-col">
+        <div role="group" aria-label="Date range" className="flex flex-col">
           <DateOption label="All Time" on={current === 'all'} onPick={() => pick(withDate(definition, { kind: 'all' }))} />
           {presets.map((p) => (
             <DateOption key={p.id} label={p.label} on={current === p.id} onPick={() => pick(withDate(definition, { kind: 'preset', preset: p }))} />
@@ -256,8 +258,7 @@ function DateOption({ label, on, onPick }: { label: string; on: boolean; onPick:
   return (
     <Button
       variant="ghost"
-      role="option"
-      aria-selected={on}
+      aria-pressed={on}
       onClick={onPick}
       className={cn('h-row justify-start gap-2 px-2 font-normal', on && 'bg-overlay-selected')}
     >

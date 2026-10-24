@@ -3,16 +3,19 @@
  * [session list][page 0][page 1…]. The route param is the id of the session to preselect (an id
  * that matches nothing, e.g. an old numeric index, selects the newest session).
  */
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { toast } from 'sonner';
 import { useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Loader2 } from 'lucide-react';
 import { useWorkspace } from '@/contexts/WorkspaceContext';
+import { useDayStartHour } from '@/hooks/useDayStart';
 import { useSessionsLive } from '@/hooks/useSessionsLive';
 import PlayerDialog, { type PickedPlayer } from '@/components/reports/PlayerDialog';
 import SessionNav from '@/components/sessions/SessionNav';
 import SessionPages, { Page0Header } from '@/components/sessions/SessionPages';
 import { getHeroes } from '@/lib/api';
+import { PLAYER_GONE_MESSAGE, isPlayerNotFound } from '@/lib/api-error';
 import { APP_SETTINGS_DEFAULTS, appSettingsQueryKey, getAppSettings, patchAppSettings, type AppSettings } from '@/lib/app-settings';
 import { reportKeys } from '@/lib/reports/query-keys';
 import { getSessions, sessionsQueryKey } from '@/lib/sessions/api';
@@ -57,6 +60,7 @@ function SessionsDashboard({ workspaceId, paramId }: { workspaceId: number; para
   const queryClient = useQueryClient();
   const settingsQuery = useQuery({ queryKey: appSettingsQueryKey, queryFn: getAppSettings });
   const settings: AppSettings = settingsQuery.data ?? APP_SETTINGS_DEFAULTS;
+  useDayStartHour(); // keeps the preset default in sync for the report pages
 
   const [player, setPlayer] = useState<PickedPlayer | null>(() => readPlayer(workspaceId));
   const [playerOpen, setPlayerOpen] = useState(false);
@@ -86,6 +90,18 @@ function SessionsDashboard({ workspaceId, paramId }: { workspaceId: number; para
     queryFn: ({ signal }) => getSessions(query, signal),
   });
   useSessionsLive(workspaceId, true);
+
+  // A stored player that is gone from this database: back to the hero
+  const playerGone = player != null && isPlayerNotFound(list.error);
+  useEffect(() => {
+    if (!playerGone) return;
+    toast.error(PLAYER_GONE_MESSAGE);
+    writeStorage(playerStorageKey(workspaceId), null);
+  }, [playerGone, workspaceId]);
+  if (playerGone) {
+    setPlayer(null);
+    setSelectedId(null);
+  }
 
   const rows = list.data?.sessions;
   const session = useMemo(() => pickSession(rows ?? [], selectedId), [rows, selectedId]);

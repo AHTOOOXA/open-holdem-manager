@@ -17,6 +17,7 @@ import type {
   StrengthBucket,
 } from '@/lib/api-general';
 import type { GeneralCellMeta } from '@/lib/h2n-layout';
+import { grouped } from '@/lib/format';
 import { formatRatio, popupTitle } from '@/lib/general-notation';
 import type { ReportQuery, SplitRow as ReportSplitRow, Step } from '@/lib/reports/types';
 import { cn } from '@/lib/utils';
@@ -138,14 +139,14 @@ export function StatInfo({ cellId, meta, params }: { cellId: string; meta: Gener
           <Info className="size-3.5" />
         </button>
       </TooltipTrigger>
-      <TooltipContent side="bottom" className="max-w-[360px]">
+      <TooltipContent side="bottom" className="max-w-90">
         <div className="space-y-1">
           <div className="font-medium">{title}</div>
           {data && (
             <>
               <div className="font-mono text-label opacity-80">{data.notation}</div>
               <div className="opacity-80">
-                {data.cases.toLocaleString()} of {data.opps.toLocaleString()} opportunities
+                {grouped(data.cases)} of {grouped(data.opps)} opportunities
                 {data.replay_failed > 0 ? ` · ${data.replay_failed} hands could not be replayed` : ''}
               </div>
             </>
@@ -225,7 +226,7 @@ export default function StatPopup({
       aria-label={`Stat detail: ${title}`}
       className={cn(
         'flex flex-col text-sm',
-        embedded ? 'min-h-0 w-full flex-1' : 'h-full w-[517px] shrink-0 border-l border-border-subtle bg-surface-raised',
+        embedded ? 'min-h-0 w-full flex-1' : 'h-full w-129 shrink-0 border-l border-border-subtle bg-surface-raised',
       )}
     >
       {/* Header: title, stat value + bars, summary */}
