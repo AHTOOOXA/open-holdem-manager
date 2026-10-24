@@ -100,7 +100,7 @@ def test_discovery_pt4_and_fallback_column():
     assert (src.table, src.text_col, src.date_col, src.date_table) == (
         "cash_hand_histories", "history", "date_played", "cash_hand_summary")
     alt = FakeConn(_pt4_db(_gg_hands(), history_col="hand_history_text"))
-    assert td.discover(alt, "pt4").text_col == "hand_history_text"  # not in the fallback if type is text? see below
+    assert td.discover(alt, "pt4").text_col == "hand_history_text"
 
 
 def test_discovery_none_when_not_tracker():
