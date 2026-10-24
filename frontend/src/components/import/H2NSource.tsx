@@ -1,16 +1,15 @@
 import { useEffect, useState } from 'react';
-import { Database } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Separator } from '@/components/ui/separator';
+import { grouped } from '@/lib/format';
 import { listH2NDatabases, type H2NDatabase } from '@/lib/api';
 
 interface Props {
   onImport: (path: string, name: string) => void;
 }
 
-/** "Import from Hand2Note": lists H2N 4 databases on this machine, or takes a folder path. */
-export default function H2NImportSection({ onImport }: Props) {
+/** Hand2Note 4 branch of "Import From Database": lists the databases on this machine, or takes a folder path. */
+export default function H2NSource({ onImport }: Props) {
   const [databases, setDatabases] = useState<H2NDatabase[] | null>(null);
   const [customPath, setCustomPath] = useState('');
 
@@ -24,11 +23,6 @@ export default function H2NImportSection({ onImport }: Props) {
 
   return (
     <div className="flex w-full flex-col gap-3">
-      <Separator />
-      <div className="flex items-center gap-2 text-sm font-medium">
-        <Database className="size-4 text-primary" />
-        Import from Hand2Note
-      </div>
       {databases === null ? (
         <p className="text-xs text-text-muted">Looking for Hand2Note databases...</p>
       ) : databases.length > 0 ? (
@@ -37,7 +31,7 @@ export default function H2NImportSection({ onImport }: Props) {
             <div key={db.path} className="flex items-center justify-between gap-4 text-sm">
               <div className="min-w-0">
                 <div className="truncate">{db.name}</div>
-                <div className="text-xs text-text-muted">{db.hands.toLocaleString()} hands</div>
+                <div className="text-xs text-text-muted">{grouped(db.hands)} hands</div>
               </div>
               <Button size="sm" variant="outline" onClick={() => onImport(db.path, db.name)}>
                 Import

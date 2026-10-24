@@ -2,7 +2,7 @@
 
 import type { ImportProgress, ImportResult } from './api';
 
-export type ImportKind = 'files' | 'h2n' | 'sample';
+export type ImportKind = 'files' | 'h2n' | 'tracker' | 'sample';
 export type ImportPhase = 'idle' | 'uploading' | 'rebuilding' | 'done' | 'error';
 export type WelcomeState = 'welcome' | 'progress' | 'content';
 
@@ -35,13 +35,14 @@ export function welcomeState(args: {
 
 export function stageLabel(kind: ImportKind): string {
   if (kind === 'h2n') return 'Importing from Hand2Note…';
+  if (kind === 'tracker') return 'Importing from a tracker database…';
   if (kind === 'sample') return 'Importing sample data…';
   return 'Importing hand histories…';
 }
 
-/** "1,234 / 5,000 hands · 2,100 h/s · 12 duplicates · 3 errors"; parts without data are skipped. */
-export function progressLine(p: ImportProgress | null): string {
-  if (!p) return '';
+/** The parts of the progress line; those without data are skipped. */
+export function progressParts(p: ImportProgress | null): string[] {
+  if (!p) return [];
   const parts: string[] = [];
   const processed = p.processed ?? 0;
   if (p.total != null && p.total > 0) parts.push(`${int(processed)} / ${int(p.total)} hands`);
@@ -49,7 +50,13 @@ export function progressLine(p: ImportProgress | null): string {
   if ((p.hands_per_sec ?? 0) > 0) parts.push(`${int(p.hands_per_sec ?? 0)} h/s`);
   if (p.duplicates != null) parts.push(`${int(p.duplicates)} ${plural(p.duplicates, 'duplicate', 'duplicates')}`);
   if (p.errors != null) parts.push(`${int(p.errors)} ${plural(p.errors, 'error', 'errors')}`);
-  return parts.join(' · ');
+  if ((p.out_of_range ?? 0) > 0) parts.push(`${int(p.out_of_range ?? 0)} outside the date range`);
+  return parts;
+}
+
+/** "1,234 / 5,000 hands · 2,100 h/s · 12 duplicates · 3 errors" */
+export function progressLine(p: ImportProgress | null): string {
+  return progressParts(p).join(' · ');
 }
 
 /** Progress bar value, 0-100. */
@@ -66,12 +73,16 @@ export interface ToastMessage {
 
 export function importStartedMessage(kind: ImportKind, fileCount: number, label?: string | null): ToastMessage {
   const description =
-    kind === 'h2n' ? (label ?? 'Hand2Note database') : `${int(fileCount)} ${plural(fileCount, 'file', 'files')}`;
+    kind === 'h2n' ? (label ?? 'Hand2Note database') : kind === 'tracker' ? (label ?? 'Tracker database') : `${int(fileCount)} ${plural(fileCount, 'file', 'files')}`;
   return { kind: 'info', title: 'Import started', description };
 }
 
-export function importCompletedMessage(r: Pick<ImportResult, 'imported' | 'duplicates' | 'errors'>): ToastMessage {
-  const description = `${int(r.imported)} hands imported · ${int(r.duplicates)} ${plural(r.duplicates, 'duplicate', 'duplicates')} · ${int(r.errors)} ${plural(r.errors, 'error', 'errors')}`;
+export function importCompletedMessage(
+  r: Pick<ImportResult, 'imported' | 'duplicates' | 'errors'> & Partial<Pick<ImportResult, 'out_of_range' | 'cancelled'>>,
+): ToastMessage {
+  let description = `${int(r.imported)} hands imported · ${int(r.duplicates)} ${plural(r.duplicates, 'duplicate', 'duplicates')} · ${int(r.errors)} ${plural(r.errors, 'error', 'errors')}`;
+  if ((r.out_of_range ?? 0) > 0) description += ` · ${int(r.out_of_range ?? 0)} outside the date range`;
+  if (r.cancelled) return { kind: 'info', title: 'Import cancelled', description };
   if (r.imported === 0) return { kind: 'info', title: 'No new hands', description };
   return { kind: 'success', title: 'Import completed', description };
 }

@@ -390,6 +390,17 @@ ipcMain.handle('open-external', (_event, url) => {
   }
 });
 
+// Native folder picker for auto-import folders. The renderer may suggest a start folder; it only
+// gets back the path the user chose (or null).
+ipcMain.handle('pick-folder', async (_event, defaultPath) => {
+  const options = { properties: ['openDirectory'] };
+  if (typeof defaultPath === 'string' && defaultPath) options.defaultPath = defaultPath;
+  const result = mainWindow
+    ? await dialog.showOpenDialog(mainWindow, options)
+    : await dialog.showOpenDialog(options);
+  return result.canceled || result.filePaths.length === 0 ? null : result.filePaths[0];
+});
+
 // Opens the app's own data folder; the renderer never supplies a path.
 ipcMain.handle('open-data-folder', async () => {
   const dir = getDataDir();

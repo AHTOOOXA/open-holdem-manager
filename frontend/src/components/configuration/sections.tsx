@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import type { SectionMeta } from './section-registry';
 import AboutSection from './AboutSection';
+import AutoImportSection from './AutoImportSection';
 import AliasesSection from './AliasesSection';
 import ColorMarkersSection from './ColorMarkersSection';
 import GameTypesSection from './GameTypesSection';
@@ -30,6 +31,7 @@ export const CONFIG_SECTIONS: ConfigSection[] = [
   { id: 'game-types', title: 'Game Types', group: 'Players', render: () => <GameTypesSection /> },
   { id: 'color-markers', title: 'Color Markers', group: 'Players', render: () => <ColorMarkersSection /> },
   { id: 'tags', title: 'Marked Hand Tags', group: 'Hands', render: () => <TagsSection /> },
+  { id: 'auto-import', title: 'Auto Import', group: 'Import', render: () => <AutoImportSection /> },
   { id: 'stat-appearance', title: 'Stat Appearance', group: 'Display', render: () => <StatAppearanceSection /> },
   { id: 'other', title: 'Other', group: 'Display', render: () => <OtherSection /> },
   { id: 'updates', title: 'Updates', group: 'Application', render: () => plain('Updates', <UpdatesSection />) },

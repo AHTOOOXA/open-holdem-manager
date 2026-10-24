@@ -13,6 +13,7 @@ import {
   RotateCw,
   Sparkles,
   Trash2,
+  XCircle,
 } from 'lucide-react';
 import {
   Menubar,
@@ -106,6 +107,9 @@ export default function AppMenuBar() {
   const {
     phase,
     setShowImportOverlay,
+    setShowDatabaseImport,
+    canCancelImport,
+    cancelImport,
     startSampleImport,
     startRebuild,
     exportDatabase,
@@ -171,9 +175,9 @@ export default function AppMenuBar() {
               <FolderUp />
               Import Hand Histories…
             </MenubarItem>
-            <MenubarItem disabled={phase !== 'idle'} title={phase !== 'idle' ? BUSY_TITLE : undefined} onSelect={() => setShowImportOverlay(true)}>
+            <MenubarItem disabled={phase !== 'idle'} title={phase !== 'idle' ? BUSY_TITLE : undefined} onSelect={() => setShowDatabaseImport(true)}>
               <FolderInput />
-              Import from Hand2Note…
+              Import From Database…
             </MenubarItem>
             <MenubarSeparator />
             <MenubarItem disabled={phase !== 'idle'} title={phase !== 'idle' ? BUSY_TITLE : undefined} onSelect={runSample}>
@@ -186,6 +190,15 @@ export default function AppMenuBar() {
         <MenubarMenu>
           <MenubarTrigger className={triggerClass}>Database</MenubarTrigger>
           <MenubarContent>
+            {phase === 'uploading' && (
+              <>
+                <MenubarItem disabled={!canCancelImport} onSelect={cancelImport}>
+                  <XCircle />
+                  Cancel Import
+                </MenubarItem>
+                <MenubarSeparator />
+              </>
+            )}
             <MenubarItem
               disabled={phase !== 'idle' || totalHands === 0}
               onSelect={() => setPending({ kind: 'rebuild' })}

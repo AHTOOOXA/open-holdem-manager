@@ -5,7 +5,10 @@ import { useLocation } from 'react-router-dom';
 import { useImport } from '@/contexts/ImportContext';
 import { useWorkspace } from '@/contexts/WorkspaceContext';
 import { getElectronAPI } from '@/lib/electron';
+import { Button } from '@/components/ui/button';
 import type { ImportProgress } from '@/lib/api';
+import { progressParts, stageLabel } from '@/lib/import-ui';
+import AutoImportIndicator from './AutoImportIndicator';
 import UpdateNotice from './UpdateNotice';
 import { useUpdateState } from './useUpdateState';
 
@@ -21,21 +24,21 @@ function ActivityBar({ value, label }: { value: number; label: string }) {
 }
 
 function ImportActivity({ progress }: { progress: ImportProgress | null }) {
+  const { importKind, cancelImport, canCancelImport, cancelling } = useImport();
   const total = progress?.total ?? progress?.total_hands;
   const processed = progress?.processed ?? 0;
-  const parts: string[] = [];
-  if (total != null) parts.push(`${count(processed)}/${count(total)} hands`);
-  if (progress?.hands_per_sec) parts.push(`${count(progress.hands_per_sec)} h/s`);
-  if (progress?.duplicates != null) parts.push(`${count(progress.duplicates)} duplicates`);
-  if (progress?.errors != null) parts.push(`${count(progress.errors)} errors`);
-  const text = parts.length > 0 ? parts.join(', ') : 'preparing…';
+  const parts = progressParts(progress);
+  const text = cancelling ? 'cancelling…' : parts.length > 0 ? parts.join(', ') : 'preparing…';
 
   return (
     <div className="flex min-w-0 items-center gap-2 px-1">
       <span className="truncate">
-        <span className="text-foreground">Importing:</span> {text}
+        <span className="text-foreground">{stageLabel(importKind).replace(/…$/, '')}:</span> {text}
       </span>
       <ActivityBar value={percentOf(processed, total)} label="Import progress" />
+      <Button variant="ghost" size="xs" className="shrink-0" disabled={!canCancelImport} onClick={cancelImport}>
+        Cancel
+      </Button>
     </div>
   );
 }
@@ -112,8 +115,9 @@ export default function StatusBar() {
       aria-label="Status bar"
       className="sticky bottom-0 z-(--z-sticky) flex h-(--shell-status-h) shrink-0 items-center gap-3 border-t border-border bg-background px-2 text-xs text-muted-foreground"
     >
-      <div className="flex min-w-0 flex-1 items-center">
+      <div className="flex min-w-0 flex-1 items-center gap-3">
         {activity}
+        <AutoImportIndicator />
       </div>
       <div className="flex shrink-0 items-center gap-2">
         {!busy && <WorkspaceSwitcher variant="statusbar" />}

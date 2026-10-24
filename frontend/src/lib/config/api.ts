@@ -1,7 +1,7 @@
 /** Typed client for /api/config/{section} and /api/system/info (contract in ./types.ts). */
 import type { ConfigEnvelope, SystemInfo } from './types';
 
-export type ConfigSection = 'stat_appearance' | 'game_types' | 'color_markers';
+export type ConfigSection = 'stat_appearance' | 'game_types' | 'color_markers' | 'auto_import';
 
 async function req<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, init);

@@ -1,7 +1,9 @@
 import { createContext, useContext, useState, useCallback, useEffect, useRef, type ReactNode } from 'react';
-import { uploadFilesStream, importH2NStream, rebuildHands, getSettings, getHealth, clearDatabase, exportDb, importDb } from '@/lib/api';
+import { uploadFilesStream, importH2NStream, importTrackerStream, cancelImportJob, rebuildHands, getSettings, getHealth, clearDatabase, exportDb, importDb } from '@/lib/api';
 import type { ImportResult, ImportProgress, Settings, HealthResponse } from '@/lib/api';
 import { queryClient } from '@/lib/query-client';
+import type { ImportRange } from '@/lib/import/date-filter';
+import { softwareLabel, type ImportSource } from '@/lib/import/tracker';
 import { toast } from 'sonner';
 import { useWorkspace, type Workspace } from '@/contexts/WorkspaceContext';
 import { createWorkspace, getWorkspaces } from '@/lib/api';
@@ -40,8 +42,21 @@ interface ImportState {
 }
 
 interface ImportActions {
-  startImport: (files: File[]) => void;
-  startH2NImport: (path: string, name: string) => void;
+  /** Manual imports: nothing runs until the "Import Hand History" step is applied. */
+  requestImport: (source: ImportSource) => void;
+  /** Source waiting in the "Import Hand History" step, null when the step is closed. */
+  pendingSource: ImportSource | null;
+  confirmPendingImport: (range: ImportRange) => void;
+  cancelPendingImport: () => void;
+  /** Stop the running import after its current batch (needs the start line's job id). */
+  cancelImport: () => void;
+  canCancelImport: boolean;
+  cancelling: boolean;
+  showDatabaseImport: boolean;
+  setShowDatabaseImport: (open: boolean) => void;
+  startImport: (files: File[], range?: ImportRange) => void;
+  startH2NImport: (path: string, name: string, range?: ImportRange) => void;
+  startTrackerImport: (source: Extract<ImportSource, { kind: 'tracker' }>, range?: ImportRange) => void;
   /** Switch to (or create) the sample workspace and import the bundled sample hands. */
   startSampleImport: () => Promise<void>;
   startRebuild: () => void;
@@ -79,8 +94,15 @@ function ImportProvider({ children }: { children: ReactNode }) {
   const stoppedRef = useRef(false);
   const rebuildTotalRef = useRef(0);
   const importInFlightRef = useRef(false);
+  const phaseRef = useRef<Phase>('idle');
   const [importKind, setImportKind] = useState<ImportKind>('files');
   const [target, setTarget] = useState<{ id: number; wasEmpty: boolean } | null>(null);
+  const [jobId, setJobId] = useState<string | null>(null);
+  const [cancelling, setCancelling] = useState(false);
+  const [pendingSource, setPendingSource] = useState<ImportSource | null>(null);
+  const [showDatabaseImport, setShowDatabaseImport] = useState(false);
+
+  phaseRef.current = phase;
 
   const { workspaces, activeWorkspace, activeWorkspaceId, setActiveWorkspaceId, refetchWorkspaces } = useWorkspace();
   // Latest workspace state for callbacks that must not re-create on every change
@@ -163,6 +185,8 @@ function ImportProvider({ children }: { children: ReactNode }) {
     setProgress(null);
     setFileInfo(null);
     setTarget(null);
+    setJobId(null);
+    setCancelling(false);
     const msg = res ? importCompletedMessage(res) : importFailedMessage(err instanceof Error ? err.message : null);
     if (msg.kind === 'error') toast.error(msg.title, { description: msg.description });
     else if (msg.kind === 'success') toast.success(msg.title, { description: msg.description });
@@ -176,12 +200,20 @@ function ImportProvider({ children }: { children: ReactNode }) {
     setError(null);
     setResult(null);
     setProgress(null);
+    setJobId(null);
+    setCancelling(false);
     setShowImportOverlay(false);
     if (ws.handCount > 0 && started) toast(importStartedMessage(kind, 0).title, { description: started });
   }, []);
 
+  /** Progress sink of a streamed import: keeps the job id of the start line for Cancel. */
+  const onStreamEvent = useCallback((p: ImportProgress) => {
+    if (p.type === 'start' && p.job_id) setJobId(p.job_id);
+    setProgress(p);
+  }, []);
+
   /** Runs an upload. The caller already owns importInFlightRef. */
-  const runFileImport = useCallback(async (files: File[], ws: { id: number; handCount: number }, kind: ImportKind) => {
+  const runFileImport = useCallback(async (files: File[], ws: { id: number; handCount: number }, kind: ImportKind, range?: ImportRange) => {
     const validFiles = files.filter(
       (f) => f.name.endsWith('.txt') || f.name.endsWith('.zip')
     );
@@ -197,12 +229,12 @@ function ImportProvider({ children }: { children: ReactNode }) {
     beginImport(kind, ws, importStartedMessage(kind, validFiles.length).description);
 
     try {
-      const res = await uploadFilesStream(validFiles, (p) => setProgress(p));
+      const res = await uploadFilesStream(validFiles, onStreamEvent, range);
       await finishImport(res, null);
     } catch (e) {
       await finishImport(null, e);
     }
-  }, [beginImport, finishImport]);
+  }, [beginImport, finishImport, onStreamEvent]);
 
   /** Claims the single import slot synchronously; false (with a toast) if one is running. */
   const claimImport = useCallback((): boolean => {
@@ -214,11 +246,11 @@ function ImportProvider({ children }: { children: ReactNode }) {
     return true;
   }, []);
 
-  const startImport = useCallback(async (files: File[]) => {
+  const startImport = useCallback(async (files: File[], range?: ImportRange) => {
     if (!claimImport()) return;
     setPhase('uploading');
     try {
-      await runFileImport(files, activeRef.current, 'files');
+      await runFileImport(files, activeRef.current, 'files', range);
     } finally {
       importInFlightRef.current = false;
     }
@@ -271,21 +303,72 @@ function ImportProvider({ children }: { children: ReactNode }) {
     }
   }, [claimImport, runFileImport]);
 
-  const startH2NImport = useCallback(async (path: string, name: string) => {
+  const startH2NImport = useCallback(async (path: string, name: string, range?: ImportRange) => {
     if (!claimImport()) return;
     const ws = activeRef.current;
     setFileInfo(null);
     setSourceLabel(`Hand2Note database "${name}"`);
     beginImport('h2n', ws, importStartedMessage('h2n', 0, `Hand2Note database "${name}"`).description);
     try {
-      const res = await importH2NStream(path, (p) => setProgress(p));
+      const res = await importH2NStream(path, onStreamEvent, range);
       await finishImport(res, null);
     } catch (e) {
       await finishImport(null, e);
     } finally {
       importInFlightRef.current = false;
     }
-  }, [claimImport, beginImport, finishImport]);
+  }, [claimImport, beginImport, finishImport, onStreamEvent]);
+
+  const startTrackerImport = useCallback(async (source: Extract<ImportSource, { kind: 'tracker' }>, range?: ImportRange) => {
+    if (!claimImport()) return;
+    const ws = activeRef.current;
+    const label = `${softwareLabel(source.software)} database "${source.database}"`;
+    setFileInfo(null);
+    setSourceLabel(label);
+    beginImport('tracker', ws, importStartedMessage('tracker', 0, label).description);
+    try {
+      const res = await importTrackerStream(
+        { software: source.software, database: source.database, ...(source.conn ?? {}) },
+        onStreamEvent,
+        range,
+      );
+      await finishImport(res, null);
+    } catch (e) {
+      await finishImport(null, e);
+    } finally {
+      importInFlightRef.current = false;
+    }
+  }, [claimImport, beginImport, finishImport, onStreamEvent]);
+
+  const requestImport = useCallback((source: ImportSource) => {
+    if (importInFlightRef.current || phaseRef.current !== 'idle') {
+      toast(BUSY_TOAST);
+      return;
+    }
+    setShowImportOverlay(false);
+    setShowDatabaseImport(false);
+    setPendingSource(source);
+  }, []);
+
+  const cancelPendingImport = useCallback(() => setPendingSource(null), []);
+
+  const confirmPendingImport = useCallback((range: ImportRange) => {
+    const src = pendingSource;
+    setPendingSource(null);
+    if (!src) return;
+    if (src.kind === 'files') void startImport(src.files, range);
+    else if (src.kind === 'h2n') void startH2NImport(src.path, src.name, range);
+    else void startTrackerImport(src, range);
+  }, [pendingSource, startImport, startH2NImport, startTrackerImport]);
+
+  const cancelImport = useCallback(() => {
+    if (!jobId || cancelling) return;
+    setCancelling(true);
+    cancelImportJob(jobId).catch((e) => {
+      setCancelling(false);
+      toast.error('Could not cancel the import', { description: e instanceof Error ? e.message : undefined });
+    });
+  }, [jobId, cancelling]);
 
   const startRebuild = useCallback(async () => {
     if (importInFlightRef.current || rebuildPollRef.current) {
@@ -335,7 +418,10 @@ function ImportProvider({ children }: { children: ReactNode }) {
         phase, fileInfo, sourceLabel, progress, result, error, handCount, settings,
         autoRebuildProgress, importKind,
         importWorkspaceId: target?.id ?? null, importWasEmpty: target?.wasEmpty ?? false,
-        startImport, startH2NImport, startSampleImport, startRebuild, clearDb, dismiss, refreshHandCount,
+        requestImport, pendingSource, confirmPendingImport, cancelPendingImport, cancelImport,
+        canCancelImport: phase === 'uploading' && jobId != null && !cancelling, cancelling,
+        showDatabaseImport, setShowDatabaseImport,
+        startImport, startH2NImport, startTrackerImport, startSampleImport, startRebuild, clearDb, dismiss, refreshHandCount,
         exportDatabase, importDatabase, showImportOverlay, setShowImportOverlay,
       }}
     >

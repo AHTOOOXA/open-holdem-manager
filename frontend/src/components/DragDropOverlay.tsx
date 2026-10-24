@@ -1,14 +1,13 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { FolderUp } from 'lucide-react';
+import { Database, FolderUp } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useImport } from '@/contexts/ImportContext';
 import { useWorkspace } from '@/contexts/WorkspaceContext';
 import { collectFilesFromEntry } from '@/lib/file-utils';
 import { BUSY_TITLE } from '@/lib/import-ui';
-import H2NImportSection from '@/components/H2NImportSection';
 
 export default function DragDropOverlay() {
-  const { startImport, startH2NImport, phase, showImportOverlay, setShowImportOverlay } = useImport();
+  const { requestImport, setShowDatabaseImport, phase, showImportOverlay, setShowImportOverlay } = useImport();
   const { activeWorkspace, workspaces } = useWorkspace();
   const [dragging, setDragging] = useState(false);
   const counterRef = useRef(0);
@@ -22,9 +21,9 @@ export default function DragDropOverlay() {
       counterRef.current = 0;
       setDragging(false);
       setShowImportOverlay(false);
-      if (files.length > 0) startImport(files);
+      if (files.length > 0) requestImport({ kind: 'files', files });
     },
-    [startImport, setShowImportOverlay],
+    [requestImport, setShowImportOverlay],
   );
 
   const onDrop = useCallback(
@@ -159,14 +158,19 @@ export default function DragDropOverlay() {
                 e.target.value = '';
               }}
             />
-            <fieldset disabled={busy} title={busy ? BUSY_TITLE : undefined} className={busy ? 'pointer-events-none opacity-50' : undefined}>
-            <H2NImportSection
-              onImport={(path, name) => {
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={busy}
+              title={busy ? BUSY_TITLE : undefined}
+              onClick={() => {
                 setShowImportOverlay(false);
-                startH2NImport(path, name);
+                setShowDatabaseImport(true);
               }}
-            />
-            </fieldset>
+            >
+              <Database className="size-4" aria-hidden />
+              Import From Database…
+            </Button>
           </>
         )}
       </div>

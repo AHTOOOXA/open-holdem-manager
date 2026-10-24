@@ -1,6 +1,8 @@
 import type { TagRef } from '@/lib/marked/types';
 import { chainParam } from '@/lib/reports/api';
 import type { Step } from '@/lib/reports/types';
+import type { ImportRange } from '@/lib/import/date-filter';
+import type { TrackerImportRequest } from '@/lib/import/types';
 const BASE = '/api';
 
 // ── Workspace ID injection ──────────────────────────────────────────
@@ -34,6 +36,10 @@ export interface ImportResult {
   imported: number;
   duplicates: number;
   errors: number;
+  /** Hands skipped by the import date range */
+  out_of_range?: number;
+  /** The import was stopped by the user; hands written before that stay */
+  cancelled?: boolean;
   error_details: string[];
   elapsed_ms?: number;
   hands_per_sec?: number;
@@ -173,6 +179,9 @@ export interface HeroStats {
 export interface ImportProgress {
   type: 'start' | 'progress' | 'done' | 'error';
   message?: string; // set on 'error': the import failed and was rolled back
+  job_id?: string; // set on 'start': what POST /api/import/jobs/{id}/cancel takes
+  out_of_range?: number;
+  cancelled?: boolean; // set on 'done'
   total_hands?: number;
   files?: number;
   processed?: number;
@@ -201,9 +210,15 @@ export async function uploadFiles(files: File[]): Promise<ImportResult> {
   return res.json();
 }
 
+function _addRangeParams(sp: URLSearchParams, range?: ImportRange) {
+  if (range?.date_from) sp.set('date_from', range.date_from);
+  if (range?.date_to) sp.set('date_to', range.date_to);
+}
+
 export async function uploadFilesStream(
   files: File[],
   onProgress: (progress: ImportProgress) => void,
+  range?: ImportRange,
 ): Promise<ImportResult> {
   const form = new FormData();
   for (const f of files) {
@@ -211,6 +226,7 @@ export async function uploadFilesStream(
   }
   const sp = new URLSearchParams();
   _addWorkspaceParam(sp);
+  _addRangeParams(sp, range);
   const res = await fetch(`${BASE}/import/files/stream?${sp}`, { method: 'POST', body: form });
   return readImportStream(res, onProgress);
 }
@@ -233,15 +249,40 @@ export async function listH2NDatabases(): Promise<{ root: string; databases: H2N
 export async function importH2NStream(
   path: string,
   onProgress: (progress: ImportProgress) => void,
+  range?: ImportRange,
 ): Promise<ImportResult> {
   const sp = new URLSearchParams();
   _addWorkspaceParam(sp);
+  _addRangeParams(sp, range);
   const res = await fetch(`${BASE}/import/h2n?${sp}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ path }),
   });
   return readImportStream(res, onProgress);
+}
+
+/** Import one database of another tracker (PokerTracker 4 / Holdem Manager 3), with streamed progress. */
+export async function importTrackerStream(
+  req: TrackerImportRequest,
+  onProgress: (progress: ImportProgress) => void,
+  range?: ImportRange,
+): Promise<ImportResult> {
+  const sp = new URLSearchParams();
+  _addWorkspaceParam(sp);
+  _addRangeParams(sp, range);
+  const res = await fetch(`${BASE}/import/tracker?${sp}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(req),
+  });
+  return readImportStream(res, onProgress);
+}
+
+/** Ask a running import to stop after its current batch (404 = already finished). */
+export async function cancelImportJob(jobId: string): Promise<void> {
+  const res = await fetch(`${BASE}/import/jobs/${encodeURIComponent(jobId)}/cancel`, { method: 'POST' });
+  if (!res.ok && res.status !== 404) throw new Error(`Cancel failed: ${res.status} ${res.statusText}`);
 }
 
 /** Read an NDJSON import stream (start / progress / done | error). */
@@ -278,6 +319,8 @@ async function readImportStream(
         imported: msg.imported ?? 0,
         duplicates: msg.duplicates ?? 0,
         errors: msg.errors ?? 0,
+        out_of_range: msg.out_of_range ?? 0,
+        cancelled: msg.cancelled === true,
         error_details: msg.error_details ?? [],
         elapsed_ms: msg.elapsed_ms,
         hands_per_sec: msg.hands_per_sec,

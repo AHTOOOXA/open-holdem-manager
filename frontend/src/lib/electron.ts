@@ -12,7 +12,8 @@ export interface ElectronAPI {
   downloadUpdate?: () => void;
   installUpdate?: () => void;
   checkForUpdates?: () => void;
-  /** Opens the app's own data folder in the file manager (main process knows the path). */
+  /** Native folder dialog; the chosen absolute path, or null when cancelled. */
+  pickFolder?: (defaultPath?: string) => Promise<string | null>;
 }
 
 export const REPO_URL = 'https://github.com/AHTOOOXA/open-holdem-manager';

@@ -23,6 +23,16 @@ const routes: [RegExp, RouteHandler][] = [
   // Health
   [/^\/api\/health$/, () => json({ status: 'ok', hands: 800, rebuilding: false })],
 
+  // Auto import is off on the landing page (the status bar item stays hidden)
+  [/^\/api\/config\/auto_import$/, () => {
+    const v = { enabled: false, workspace_id: null, folders: [], archive_enabled: false, archive_dir: null };
+    return json({ value: v, default: v, is_default: true });
+  }],
+  [/^\/api\/auto-import\/status$/, () => json({
+    enabled: false, running: false, workspace_id: null, session_hands: 0, hands_per_hour: 0,
+    last_import_at: null, watched_files: 0, last_error: null, large_folders: [],
+  })],
+
   // Settings
   [/^\/api\/settings$/, () => json({ hero_username: 'Hero', hero_site: 'GG' })],
 
