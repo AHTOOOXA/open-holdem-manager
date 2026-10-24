@@ -226,10 +226,16 @@ def test_import_end_to_end(client, db, server):
 
 
 def test_import_date_range_limits_hands(client, db, server):
-    server({"mypt4": _pt4_db(_gg_hands())})
-    done = _stream(client.post("/api/import/tracker", params={"date_from": "2024-01-02", "date_to": "2024-01-02"},
+    # The hand text's own time is authoritative (the SQL date is only a widened pre-filter).
+    hands = _gg_hands()
+    played = sorted({ggpoker.parse_hand_history(h).played_at.date() for h in hands})
+    day = played[0].isoformat()
+    expect = sum(1 for h in hands if ggpoker.parse_hand_history(h).played_at.date().isoformat() == day)
+    server({"mypt4": _pt4_db(hands, dates=[f"{day} 12:00:00"] * len(hands))})
+    done = _stream(client.post("/api/import/tracker", params={"date_from": day, "date_to": day},
                                json={"software": "pt4", "database": "mypt4"}))[-1]
-    assert done["imported"] == 1
+    assert done["imported"] == expect
+    assert done["out_of_range"] == len(hands) - expect
 
 
 def test_import_errors_are_400_without_password(client, server, monkeypatch):

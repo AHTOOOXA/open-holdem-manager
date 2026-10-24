@@ -41,7 +41,7 @@ from app.config_sections import _path_key, get_value
 log = logging.getLogger(__name__)
 
 TICK_SECONDS = 1.0
-IDLE_COMPLETE_SECONDS = 3.0
+IDLE_COMPLETE_SECONDS = 1.0
 ARCHIVE_EVERY_SECONDS = 150.0
 ARCHIVE_IDLE_SECONDS = 300.0
 LARGE_FOLDER_BYTES = 50 * 1024 * 1024
