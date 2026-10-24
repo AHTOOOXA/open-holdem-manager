@@ -79,10 +79,14 @@ jobs:
           --collect-all eval7
           --collect-submodules pyparsing
           --hidden-import multipart
+          --hidden-import psycopg2
+          --collect-submodules psycopg2
           run_server.py
 
       # Fails the build if the packaged backend can't compute all-in EV
-      # (eval7's compiled modules import things PyInstaller can't see).
+      # (eval7's compiled modules import things PyInstaller can't see) or
+      # can't load psycopg2 (tracker import; imported lazily, so PyInstaller
+      # only bundles it through --hidden-import).
       - name: Smoke-test packaged backend
         working-directory: backend
         shell: bash

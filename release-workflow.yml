@@ -52,6 +52,7 @@ jobs:
           --collect-submodules pydantic
           --collect-submodules duckdb
           --hidden-import multipart
+          --hidden-import psycopg2
           run_server.py
 
       # ── Frontend ────────────────────────────────────────────────

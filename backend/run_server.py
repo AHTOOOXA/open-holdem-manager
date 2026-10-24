@@ -5,13 +5,16 @@ from app.main import app
 
 
 def self_check():
-    """Exit non-zero if all-in EV can't be computed (e.g. PyInstaller missed eval7's deps)."""
+    """Exit non-zero if all-in EV can't be computed (e.g. PyInstaller missed eval7's deps)
+    or psycopg2 (tracker import, imported lazily) is missing from the build."""
     from app.equity import calculate_headsup_equity
+    import psycopg2  # noqa: F401  (raises ImportError -> non-zero exit)
+    from psycopg2 import extensions  # noqa: F401  (the compiled _psycopg module)
 
     equity = calculate_headsup_equity(("Ah", "Ad"), ("Kh", "Kd"), ["2c", "7d", "9s"])
     if not 0.85 < equity < 0.95:
         raise SystemExit(f"self-check failed: AA vs KK equity {equity}")
-    print(f"self-check ok (AA vs KK on 2c7d9s: {equity:.3f})")
+    print(f"self-check ok (AA vs KK on 2c7d9s: {equity:.3f}; psycopg2 {psycopg2.__version__})")
 
 
 def main():
