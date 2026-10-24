@@ -13,7 +13,7 @@ from app.db import (
     get_db, close_db, get_read_cursor, get_rebuild_status, get_wal_recovery,
     init_request_cursors, cleanup_request_cursors, request_shutdown,
 )
-from app.api import import_hands, import_h2n, stats, reports, settings, hands, cash_drop, sessions, players, population, workspaces, checkpoints, compare, identities
+from app.api import import_hands, import_h2n, import_tracker, stats, reports, settings, hands, cash_drop, sessions, players, population, workspaces, checkpoints, compare, identities
 from app.api import general
 from app.api import general_popup
 from app.api import reports_lite
@@ -51,6 +51,7 @@ app.add_middleware(CursorCleanupMiddleware)
 
 app.include_router(import_hands.router, prefix="/api")
 app.include_router(import_h2n.router, prefix="/api")
+app.include_router(import_tracker.router, prefix="/api")
 app.include_router(stats.router, prefix="/api")
 app.include_router(reports.router, prefix="/api")
 app.include_router(settings.router, prefix="/api")
