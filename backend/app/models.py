@@ -209,6 +209,7 @@ class HandListResponse(BaseModel):
 
 class HandPlayerDetail(BaseModel):
     seat: int
+    player_id: int
     position: str
     username: str
     stack_bb: float

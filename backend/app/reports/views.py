@@ -127,7 +127,14 @@ def spot(db, res: Resolution) -> dict:
     ]
     if kind == "villain":
         nxt = action_table(db, res, "next")
-        keys = ("fold", "call", "raise") if res.ctx.typ != CHECK else ("bet", "check")
+        if res.ctx.typ == CHECK:
+            keys = ("bet", "check")
+        elif res.ctx.typ == CALL:     # hero's answer on the next street
+            keys = ("bet_vs_call", "check_vs_call")
+        elif res.ctx.typ == FOLD:     # nothing to answer after a villain's fold
+            keys = ()
+        else:
+            keys = ("fold", "call", "raise")
         stats = [head[0], head[3], *_best(res, nxt, keys, "next"), *tail]
     else:
         middle: list[dict] = []

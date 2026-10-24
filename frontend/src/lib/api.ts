@@ -483,6 +483,7 @@ export interface HandPlayerDetail {
   /** Database player id (lets a mixed list pick the row's player; falls back to `is_hero`). */
   player_id?: number;
   seat: number;
+  player_id?: number;
   position: string;
   username: string;
   stack_bb: number;

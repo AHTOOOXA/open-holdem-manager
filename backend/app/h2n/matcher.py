@@ -31,6 +31,8 @@ Row DSL (our own notation):
     side:  H (the player) | V (any other player) | V1 (one bound villain)
     type:  F X C B R  (effective types)
     flags: fr open first last limp 3b ipl oopl ipv oopv
+           skipc / skipa  (opt-in, line steps only: other players' calls / any actions may
+           be skipped before this action; the matcher otherwise skips only folds / checks)
            pos=SB+BB  (H2N column groups)   amt=2-   amt=0.5-1   (bb, inclusive)
     rows on one street are separated by "|", filter actions by ">".
 """
@@ -66,11 +68,13 @@ _TO_POSSIBLE = ((FR, P_FR), (OPEN, P_OPEN), (LIMP, P_LIMP), (TB, P_TB))
 
 
 class FilterAct:
-    __slots__ = ("hero", "typ", "req", "pos", "lo", "hi", "bound", "call_lo", "call_hi")
+    __slots__ = ("hero", "typ", "req", "pos", "lo", "hi", "bound", "call_lo", "call_hi",
+                 "skip")
 
     def __init__(self, hero: bool, typ: int, req: int = 0, pos: frozenset | None = None,
                  lo: float | None = None, hi: float | None = None, bound: bool = False,
-                 call_lo: float | None = None, call_hi: float | None = None):
+                 call_lo: float | None = None, call_hi: float | None = None,
+                 skip: int = 0):
         self.hero = hero
         self.typ = typ
         self.req = req
@@ -81,6 +85,9 @@ class FilterAct:
         # "possible call amount" requirement of an opportunity alternative
         self.call_lo = call_lo
         self.call_hi = call_hi
+        # opt-in (line steps only): other players' calls (1, flag `skipc`) or any actions
+        # (2, flag `skipa`) may be skipped on the way to this action, like folds / checks are
+        self.skip = skip
 
     def __repr__(self) -> str:  # pragma: no cover
         side = "H" if self.hero else ("V1" if self.bound else "V")
@@ -198,7 +205,11 @@ def _parse_action(tok: str) -> FilterAct:
             word = word.strip()
             if not word:
                 continue
-            if word in _FLAG_WORDS:
+            if word == "skipc":
+                fa.skip = max(fa.skip, 1)
+            elif word == "skipa":
+                fa.skip = 2
+            elif word in _FLAG_WORDS:
                 fa.req |= _FLAG_WORDS[word]
             elif word.startswith("pos="):
                 ps = frozenset(word[4:].split("+"))
@@ -267,7 +278,7 @@ def _alternatives(row: tuple[FilterAct, ...], street: int) -> list[FilterAct]:
         if t != CALL:
             raise ValueError("amount filters on a measured bet/raise are not supported")
         call_lo, call_hi = last.lo, last.hi
-    return [FilterAct(last.hero, typ, req, last.pos, None, None, last.bound, call_lo, call_hi)
+    return [FilterAct(last.hero, typ, req, last.pos, None, None, last.bound, call_lo, call_hi, last.skip)
             for typ in types]
 
 
@@ -320,7 +331,7 @@ def _scan(f: FilterAct, acts, q: int, end: int, p: int, bind: int) -> tuple[int,
         nb = _fit(f, a, p, bind)
         if nb != _NOFIT:
             return q, nb
-        if a.eff > CHECK:
+        if a.eff > CHECK and not (f.skip and a.actor != p and (f.skip == 2 or a.eff == CALL)):
             return -1, bind
         if f.bound and bind != _UNBOUND and _fit(f, a, p, _UNBOUND) != _NOFIT:
             return -1, bind
