@@ -61,6 +61,7 @@ export function stepLabel(step: Step): string {
     case 'session': return `Session ${step.start.slice(0, 16).replace('T', ' ')}`;
     case 'table': return step.v.join(', ');
     case 'with': return `With player ${step.player_id}`;
+    case 'line': return 'Custom line';
   }
 }
 

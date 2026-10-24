@@ -344,6 +344,7 @@ export function isStep(x: unknown): x is Step {
     case 'next':
     case 'faced': return isStr(s.street) && STREETS.has(s.street) && isStr(s.a);
     case 'betsize': return isStr(s.bucket);
+    case 'line': return isStr(s.dsl);
     default: return false;
   }
 }
@@ -369,6 +370,7 @@ export function stepLabel(step: Step): string {
     case 'session': return `Session ${step.start.slice(0, 16).replace('T', ' ')}`;
     case 'table': return shortList(step.v);
     case 'with': return `With player ${step.player_id}`;
+    case 'line': return 'Custom line';
   }
 }
 

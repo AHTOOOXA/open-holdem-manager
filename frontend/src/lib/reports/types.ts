@@ -36,6 +36,12 @@ export type Step = { label?: string } & (
   | { k: 'faced'; street: Street; a: FacedAction } // a Faced Next row after the current hit point (backend
   //   generates all but villain_open_4bet / villain_limp_call / villain_limp_raise / villain_open_call; those are 422)
   | { k: 'betsize'; bucket: string } // a Bet Sizing bucket of the current hit action
+  // M8: a custom action line (line builder / filter-dialog Actions tab). `dsl` is the H2N
+  //   matcher row notation (backend/app/h2n/matcher.py docstring), e.g.
+  //   "pre: H:R[3b,pos=BTN] > V1:C; flop: H:B > V1:R". Evaluated per hand like `row` (same
+  //   matcher → the hit point moves to the line's last filter action, so Next Actions etc. work
+  //   after it). Invalid notation → 422 with a readable `detail`. Built by lib/lines (never typed).
+  | { k: 'line'; dsl: string }
 );
 
 export type NextAction =
