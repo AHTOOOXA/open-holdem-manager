@@ -34,10 +34,6 @@ export const queryKeys = {
 
   drift: (filters: Record<string, unknown> | object) => ['drift', filters] as const,
 
-  sessions: {
-    list: ['sessions', 'list'] as const,
-    detail: (index: number) => ['sessions', 'detail', index] as const,
-  },
 
   population: {
     overview: (filters: Record<string, unknown> | object) => ['population', 'overview', filters] as const,

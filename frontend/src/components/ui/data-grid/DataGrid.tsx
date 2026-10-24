@@ -28,7 +28,7 @@
  * - persistKey         localStorage key suffix for column visibility and widths ("ohm.grid.<key>"),
  *                      written 200ms after the last change (a resize drag writes once, not per frame).
  *   defaultHiddenColumns  ids hidden until the user stores prefs (stored prefs win; "Reset" returns to them).
- * - columnPicker       gear menu in the header's last cell (default true). resizable (default true).
+ * - columnPicker       gear menu in the header's last cell (default true); columnPickerExtra adds items to it. resizable (default true).
  * - virtualize         true | false | 'auto' (default: on above 200 rows). estimateRowHeight (px).
  * - onEndReached       infinite loading: called once per row count when one of the last
  *                      `endReachedThreshold` (10) rows renders.
@@ -139,6 +139,8 @@ export interface DataGridProps<T extends RowData> {
   /** Column ids hidden until the user stores their own choice (stored prefs always win). */
   defaultHiddenColumns?: readonly string[];
   columnPicker?: boolean;
+  /** Extra gear-menu content below the column list (check items etc.). */
+  columnPickerExtra?: ReactNode;
   resizable?: boolean;
   virtualize?: boolean | 'auto';
   estimateRowHeight?: number;
@@ -246,6 +248,7 @@ export function DataGrid<T extends RowData>({
   persistKey,
   defaultHiddenColumns = NO_COLUMNS,
   columnPicker = true,
+  columnPickerExtra,
   resizable = true,
   virtualize = 'auto',
   estimateRowHeight,
@@ -809,6 +812,7 @@ export function DataGrid<T extends RowData>({
                     items={pickerItems}
                     onToggle={(id, v) => setColumnVisibility((s) => ({ ...s, [id]: v }))}
                     onReset={resetColumns}
+                    extra={columnPickerExtra}
                   />
                 </div>
               )}

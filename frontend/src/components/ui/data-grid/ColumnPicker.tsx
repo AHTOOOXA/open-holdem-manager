@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { Settings2 } from 'lucide-react';
 import {
   DropdownMenu,
@@ -21,10 +22,13 @@ export function ColumnPicker({
   items,
   onToggle,
   onReset,
+  extra,
 }: {
   items: ColumnPickerItem[];
   onToggle: (id: string, visible: boolean) => void;
   onReset: () => void;
+  /** Extra menu content after "Reset columns" (e.g. a grid-specific check item). */
+  extra?: ReactNode;
 }) {
   return (
     <DropdownMenu>
@@ -51,6 +55,8 @@ export function ColumnPicker({
         ))}
         <DropdownMenuSeparator />
         <DropdownMenuItem onSelect={onReset}>Reset columns</DropdownMenuItem>
+        {extra && <DropdownMenuSeparator />}
+        {extra}
       </DropdownMenuContent>
     </DropdownMenu>
   );
