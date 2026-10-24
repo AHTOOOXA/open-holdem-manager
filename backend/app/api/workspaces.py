@@ -226,6 +226,7 @@ def delete_workspace(workspace_id: int):
         )
 
         db.execute("DELETE FROM hero_accounts WHERE workspace_id = ?", [workspace_id])
+        db.execute("DELETE FROM settings WHERE key = ?", [f"statistics_dashboards.{workspace_id}"])
         invalidate_hero_cache(workspace_id)
 
         # Delete the workspace itself
