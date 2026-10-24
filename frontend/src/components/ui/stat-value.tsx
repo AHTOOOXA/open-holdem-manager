@@ -1,5 +1,6 @@
 import * as React from "react"
 import { cn } from "@/lib/utils"
+import { useStatAppearanceVersion } from "@/lib/format/use-appearance"
 import {
   formatHands,
   formatStatValue,
@@ -65,6 +66,7 @@ export function StatValue({
   className,
   ...props
 }: StatValueProps) {
+  useStatAppearanceVersion()
   const parts = statValueParts(value, sample, format)
   const sampleText =
     parts.sampleText ?? (showSample && sample != null && sample > 0 && parts.text !== "--" ? String(sample) : null)

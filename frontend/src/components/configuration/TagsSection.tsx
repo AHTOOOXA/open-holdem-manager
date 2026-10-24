@@ -49,7 +49,15 @@ export default function TagsSection() {
   const { data, isError, error } = useQuery({ queryKey: tagDefsQueryKey, queryFn: getTagDefs });
   const [deleting, setDeleting] = useState<TagDef | null>(null);
 
-  const refresh = () => void qc.invalidateQueries({ queryKey: tagDefsQueryKey });
+  const refreshLists = () => {
+    // hand lists carry tag chips and filters
+    void qc.invalidateQueries({ queryKey: ['hands'] });
+    void qc.invalidateQueries({ queryKey: ['general', 'hands'] });
+  };
+  const refresh = () => {
+    void qc.invalidateQueries({ queryKey: tagDefsQueryKey });
+    refreshLists();
+  };
   const fail = (title: string) => (e: Error) => {
     toast.error(title, { description: e.message });
     refresh();
@@ -62,7 +70,10 @@ export default function TagsSection() {
   });
   const move = useMutation({
     mutationFn: ({ id, d }: { id: number; d: 'up' | 'down' }) => moveTagDef(id, d),
-    onSuccess: (list) => qc.setQueryData(tagDefsQueryKey, list),
+    onSuccess: (list) => {
+      qc.setQueryData(tagDefsQueryKey, list);
+      refreshLists();
+    },
     onError: fail('Could not move the tag'),
   });
   const remove = useMutation({

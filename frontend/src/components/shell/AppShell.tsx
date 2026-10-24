@@ -38,10 +38,8 @@ export default function AppShell({ children }: { children: ReactNode }) {
 
   const { pathname } = useLocation();
   const rail = railPathFor(pathname);
-  // Number formatting rules changed (or just loaded): remount the screen so its numbers redraw.
-  // Not on Configuration, where the form itself is what changes them and must keep its focus.
-  const appearanceVersion = useStatAppearanceSync();
-  const screenKey = pathname.startsWith('/configuration') ? 'configuration' : appearanceVersion;
+  // Number formatting rules: loaded here, formatting components re-render on change (useStatAppearanceVersion)
+  useStatAppearanceSync();
 
   return (
     <SidebarProvider open={open} onOpenChange={setOpen}>
@@ -59,7 +57,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
         </header>
         <DbRecoveryBanner />
         <RebuildBanner />
-        <div key={screenKey} className="flex-1 p-4">{children}</div>
+        <div className="flex-1 p-4">{children}</div>
         <StatusBar />
       </SidebarInset>
     </SidebarProvider>

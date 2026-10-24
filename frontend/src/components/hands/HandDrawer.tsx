@@ -49,6 +49,7 @@ function MetaHeader({ hand }: { hand: HandDetail }) {
 
 export default function HandDrawer({
   handId,
+  playerId,
   onClose,
   onPrev,
   onNext,
@@ -56,6 +57,8 @@ export default function HandDrawer({
   onCloseAutoFocus,
 }: {
   handId: string;
+  /** The row's player (hand lists that mix players). */
+  playerId?: number;
   onClose: () => void;
   onPrev: () => void;
   onNext: () => void;
@@ -74,13 +77,13 @@ export default function HandDrawer({
   const loadHand = useCallback(async () => {
     setLoading(true);
     try {
-      const h = await getHandDetail(handId);
-      setHand(h);
+      const h = await getHandDetail(handId, playerId);
+      setHand({ ...h, tags: h.tags ?? [] });
       setNote(h.note || '');
     } finally {
       setLoading(false);
     }
-  }, [handId]);
+  }, [handId, playerId]);
 
   useEffect(() => {
     loadHand();
@@ -103,12 +106,19 @@ export default function HandDrawer({
 
   const handleMark = async () => {
     if (!hand) return;
-    const st = await mark(hand.id);
-    if (st) { setHand({ ...hand, marked: st.marked, tags: st.tags }); onTagsChanged(); }
+    const st = await mark(hand.id, undefined, playerId);
+    if (st) {
+      setHand((h) => (h?.id === st.hand_id ? { ...h, marked: st.marked, tags: st.tags ?? [] } : h));
+      onTagsChanged();
+    }
   };
   const handleUnmark = async () => {
     if (!hand) return;
-    if (await unmark(hand.id)) { setHand({ ...hand, marked: false, tags: [] }); onTagsChanged(); }
+    const id = hand.id;
+    if (await unmark(id, playerId)) {
+      setHand((h) => (h?.id === id ? { ...h, marked: false, tags: [] } : h));
+      onTagsChanged();
+    }
   };
   const handlePickerClose = () => {
     setPickerOpen(false);
@@ -279,7 +289,7 @@ export default function HandDrawer({
               <div className="mb-3">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-xs text-muted-foreground">{hand.marked ? 'Marked' : 'Not marked'}</span>
-                  {hand.tags.map((t) => (
+                  {(hand.tags ?? []).map((t) => (
                     <TagChip key={t.id} tag={t} size="md" />
                   ))}
                   {!hand.marked && (
@@ -293,7 +303,7 @@ export default function HandDrawer({
                         Tags…
                       </Button>
                       {pickerOpen && (
-                        <TagPickerPopover handId={hand.id} initialTags={hand.tags} onClose={handlePickerClose}>
+                        <TagPickerPopover handId={hand.id} playerId={playerId} initialTags={hand.tags ?? []} onClose={handlePickerClose}>
                           <span aria-hidden className="absolute inset-0" />
                         </TagPickerPopover>
                       )}

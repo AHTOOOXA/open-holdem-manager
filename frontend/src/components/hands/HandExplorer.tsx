@@ -331,18 +331,35 @@ export default function HandExplorer({
   const navigate = useNavigate();
   const columns = useMemo(() => handColumns(bbPrecision, (id) => navigate(`/marked?tag=${id}`)), [bbPrecision, navigate]);
   // Right-click menu + tag picker (anchored where the menu was opened)
-  const [picker, setPicker] = useState<{ handId: string; x: number; y: number } | null>(null);
+  const [picker, setPicker] = useState<{ handId: string; playerId?: number; x: number; y: number } | null>(null);
   const lastPointer = useRef({ x: 0, y: 0 });
+  // The row menu's FocusScope would hand focus back to the row on close, and the (non-modal) picker dismisses
+  // on focus-outside; while the picker is opening, keep focus where the picker puts it.
+  const pickerOpening = useRef(false);
+  const fixedPlayerId = fixedParams?.player_id;
   const renderRowMenu = useCallback(
-    (h: HandSummary) => (
-      <MarkMenuItems
-        handId={h.id}
-        marked={h.marked}
-        onPickTags={(id) => setPicker({ handId: id, ...lastPointer.current })}
-      />
-    ),
-    [setPicker],
+    (h: HandSummary) => {
+      const playerId = h.player_id ?? fixedPlayerId;
+      return (
+        <MarkMenuItems
+          handId={h.id}
+          playerId={playerId}
+          marked={h.marked}
+          onPickTags={(id) => {
+            pickerOpening.current = true;
+            setPicker({ handId: id, playerId, ...lastPointer.current });
+          }}
+        />
+      );
+    },
+    [setPicker, fixedPlayerId],
   );
+  const handleRowMenuCloseAutoFocus = useCallback((e: Event) => {
+    if (pickerOpening.current) {
+      pickerOpening.current = false;
+      e.preventDefault();
+    }
+  }, []);
   const selectedRowIds = useMemo(() => (selectedId ? [selectedId] : []), [selectedId]);
   const gridRef = useRef<DataGridHandle>(null);
   const openDrawer = useCallback((id: string) => { setSelectedId(id); setDrawerOpen(true); }, []);
@@ -394,6 +411,15 @@ export default function HandExplorer({
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-3">
           {header}
+        </div>
+        {data && (
+          <span className="text-[15px] text-text-muted">
+            {data.total.toLocaleString()} hands
+          </span>
+        )}
+      </div>
+
+      <div className="mb-2 flex items-center justify-end gap-2">
           <button
             onClick={() => setShowLegend(!showLegend)}
             className="text-[12px] text-text-muted hover:text-text w-[18px] h-[18px] rounded-full border border-border flex items-center justify-center"
@@ -410,12 +436,6 @@ export default function HandExplorer({
           >
             .0
           </button>
-        </div>
-        {data && (
-          <span className="text-[15px] text-text-muted">
-            {data.total.toLocaleString()} hands
-          </span>
-        )}
       </div>
 
       {/* Legend tooltip */}
@@ -474,6 +494,7 @@ export default function HandExplorer({
             onRowClick={handleRowClick}
             onRowActivate={handleRowClick}
             renderRowMenu={renderRowMenu}
+            onRowMenuCloseAutoFocus={handleRowMenuCloseAutoFocus}
             defaultHiddenColumns={defaultHiddenColumns}
             loading={loading || isPlaceholderData}
             persistKey="hands"
@@ -499,6 +520,7 @@ export default function HandExplorer({
         <TagPickerPopover
           key={picker.handId}
           handId={picker.handId}
+          playerId={picker.playerId}
           initialTags={hands.find((h) => h.id === picker.handId)?.tags ?? []}
           point={picker}
           onClose={() => setPicker(null)}
@@ -509,6 +531,7 @@ export default function HandExplorer({
       {selectedId && drawerOpen && (
         <HandDrawer
           handId={selectedId}
+          playerId={hands.find((h) => h.id === selectedId)?.player_id ?? fixedPlayerId}
           onClose={closeDrawer}
           onCloseAutoFocus={handleCloseAutoFocus}
           onPrev={handlePrev}

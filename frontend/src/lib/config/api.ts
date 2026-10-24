@@ -29,5 +29,8 @@ export const putConfig = <T>(section: ConfigSection, value: T) =>
   });
 export const resetConfig = <T>(section: ConfigSection) => req<ConfigEnvelope<T>>(`/api/config/${section}`, { method: 'DELETE' });
 
+/** Reserve a never-reused colour marker id. */
+export const getNextMarkerId = () => req<{ id: number }>('/api/config/color_markers/next-id');
+
 export const systemInfoQueryKey = ['system', 'info'] as const;
 export const getSystemInfo = () => req<SystemInfo>('/api/system/info');

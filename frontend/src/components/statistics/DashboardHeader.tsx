@@ -21,6 +21,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { useFilterOptions } from '@/hooks/useFilterOptions';
 import { getHeroes } from '@/lib/api';
 import { formatHands, grouped } from '@/lib/format';
+import { useStatAppearanceVersion } from '@/lib/format/use-appearance';
 import { sessionPresets } from '@/lib/reports/steps';
 import {
   DEFAULT_PROFILE_ID, PROFILE_IDS, dateButtonLabel, dateChoiceId, dateStepOf, modeOf, profileLabel, stakesOf,
@@ -54,6 +55,7 @@ export default function DashboardHeader({
   workspaceId, definition, onChange, onPickStat, treeCollapsed, onExpandTree, player, hands, fetching, stale,
   onRefresh, onExport, canDelete, onDelete, onClone,
 }: DashboardHeaderProps) {
+  useStatAppearanceVersion();
   const [playerOpen, setPlayerOpen] = useState(false);
   // Clone starts an inline rename in the tree: the gear menu must not take the focus back
   const keepFocus = useRef(false);

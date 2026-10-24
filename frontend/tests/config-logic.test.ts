@@ -32,7 +32,7 @@ test('validName', () => {
 
 test('colour markers', () => {
   const m = [{ id: 1, name: 'Fish', color: 'tag-3' as const, is_regular: false }, { id: 5, name: 'Reg', color: 'tag-7' as const, is_regular: true }];
-  assert.deepEqual(newColorMarker(m), { id: 6, name: 'new marker', color: 'tag-3', is_regular: false });
+  assert.deepEqual(newColorMarker(6), { id: 6, name: 'new marker', color: 'tag-3', is_regular: false });
   assert.equal(patchMarker(m, 5, { name: 'X' })[1].name, 'X');
   assert.equal(patchMarker(m, 5, { name: 'X' })[0].name, 'Fish');
 });

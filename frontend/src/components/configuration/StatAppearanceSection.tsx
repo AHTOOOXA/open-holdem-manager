@@ -24,12 +24,12 @@ const SWITCHES: { key: BoolKey; label: string; help: string }[] = [
 ];
 
 export default function StatAppearanceSection() {
-  const { env, isError, error, save, reset } = useConfigSection<StatAppearance>('stat_appearance');
+  const { env, isError, error, update, reset } = useConfigSection<StatAppearance>('stat_appearance');
   const [errors, setErrors] = useState<Partial<Record<NumKey, string | null>>>({});
   if (isError) return <ConfigError error={error} />;
   if (!env) return <ConfigLoading />;
   const { value, default: def } = env;
-  const set = (patch: Partial<StatAppearance>) => save({ ...value, ...patch });
+  const set = (patch: Partial<StatAppearance>) => update((cur) => ({ ...cur, ...patch }));
 
   return (
     <div>

@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { getSpot } from '@/lib/reports/api';
 import { queryKeyOf } from '@/lib/reports/api';
 import type { ReportQuery, SpotStat, Step } from '@/lib/reports/types';
+import { useStatAppearanceVersion } from '@/lib/format/use-appearance';
 import { formatSpotValue, spotTone } from '@/lib/reports/format';
 import { StatValue, type StatValueFormat } from '@/components/ui/stat-value';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -20,6 +21,7 @@ const STAT_VALUE_FORMAT: Partial<Record<SpotStat['format'], StatValueFormat>> = 
 };
 
 export function StatNumber({ stat }: { stat: SpotStat }) {
+  useStatAppearanceVersion();
   const tone = spotTone(stat.value, stat.winnings, stat.format);
   const svFormat = STAT_VALUE_FORMAT[stat.format];
   if (svFormat && !tone) return <StatValue value={stat.value} sample={stat.sample} format={svFormat} />;

@@ -67,8 +67,22 @@ export function markMenuState(marked: boolean, tagCount: number): { mark: boolea
 }
 
 /** Row patch after a mark change (optimistic update). */
-export function patchRow<T extends { id: string; marked: boolean; tags: TagRef[] }>(rows: readonly T[], state: Pick<MarkState, 'hand_id' | 'marked' | 'tags'>): T[] {
-  return rows.map((r) => (r.id === state.hand_id ? { ...r, marked: state.marked, tags: state.tags } : r));
+export function patchRow<T extends { id: string; player_id?: number; marked: boolean; tags: TagRef[] }>(
+  rows: readonly T[],
+  state: Pick<MarkState, 'hand_id' | 'marked' | 'tags'>,
+  playerId?: number,
+): T[] {
+  return rows.map((r) =>
+    r.id === state.hand_id && (playerId === undefined || r.player_id === undefined || r.player_id === playerId)
+      ? { ...r, marked: state.marked, tags: state.tags }
+      : r,
+  );
+}
+
+/** Does a cached ['hands','list', params] query concern this player (its params filter on a different player -> no)? */
+export function listParamsMatchPlayer(params: { player_id?: number } | undefined, playerId: number | undefined): boolean {
+  if (playerId === undefined || params?.player_id === undefined) return true;
+  return params.player_id === playerId;
 }
 
 // Marked Hands page: tag filter kept in memory per workspace (not persisted).

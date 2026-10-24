@@ -44,9 +44,9 @@ export function validName(raw: string, max = 60): string | null {
   return t && t.length <= max ? t : null;
 }
 
-/** A fresh colour marker: "new marker", tag-3, not regular, with the next free id. */
-export function newColorMarker(markers: readonly ColorMarker[]): ColorMarker {
-  return { id: markers.reduce((m, x) => Math.max(m, x.id), 0) + 1, name: 'new marker', color: 'tag-3', is_regular: false };
+/** A fresh colour marker: "new marker", tag-3, not regular. `id` comes from GET /api/config/color_markers/next-id (never reused). */
+export function newColorMarker(id: number): ColorMarker {
+  return { id, name: 'new marker', color: 'tag-3', is_regular: false };
 }
 
 export function patchMarker(markers: readonly ColorMarker[], id: number, patch: Partial<ColorMarker>): ColorMarker[] {

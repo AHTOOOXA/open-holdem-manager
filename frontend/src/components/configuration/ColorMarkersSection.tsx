@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import TagSwatchPicker from '@/components/marked/TagSwatchPicker';
+import { getNextMarkerId } from '@/lib/config/api';
 import { newColorMarker, patchMarker } from '@/lib/config/logic';
 import type { ColorMarker, ColorMarkersConfig } from '@/lib/config/types';
 import InlineName from './InlineName';
@@ -12,11 +13,19 @@ import { ConfigError, ConfigLoading } from './ConfigState';
 import { useConfigSection } from './useConfigSection';
 
 export default function ColorMarkersSection() {
-  const { env, isError, error, save, reset } = useConfigSection<ColorMarkersConfig>('color_markers', { invalidateAll: true });
+  const { env, isError, error, update, reset } = useConfigSection<ColorMarkersConfig>('color_markers', { invalidateAll: true });
   if (isError) return <ConfigError error={error} />;
   if (!env) return <ConfigLoading />;
   const markers = env.value;
-  const patch = (id: number, p: Partial<ColorMarker>) => save(patchMarker(markers, id, p));
+  const add = async () => {
+    try {
+      const { id } = await getNextMarkerId();
+      update((cur) => [...cur, newColorMarker(id)]);
+    } catch (e) {
+      toast.error('Could not add a marker', { description: e instanceof Error ? e.message : undefined });
+    }
+  };
+  const patch = (id: number, p: Partial<ColorMarker>) => update((cur) => patchMarker(cur, id, p));
 
   return (
     <div>
@@ -58,7 +67,7 @@ export default function ColorMarkersSection() {
                   size="icon"
                   className="size-7 opacity-0 group-focus-within:opacity-100 group-hover:opacity-100"
                   aria-label={`Delete marker ${m.name}`}
-                  onClick={() => save(markers.filter((x) => x.id !== m.id))}
+                  onClick={() => update((cur) => cur.filter((x) => x.id !== m.id))}
                 >
                   <Trash2 className="size-3.5" />
                 </Button>
@@ -72,7 +81,7 @@ export default function ColorMarkersSection() {
           )}
         </TableBody>
       </Table>
-      <Button variant="outline" size="sm" className="mt-3" onClick={() => save([...markers, newColorMarker(markers)])}>
+      <Button variant="outline" size="sm" className="mt-3" onClick={() => void add()}>
         <Plus className="size-3.5" />
         Add color marker…
       </Button>

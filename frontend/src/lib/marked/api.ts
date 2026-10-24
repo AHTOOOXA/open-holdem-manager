@@ -33,8 +33,11 @@ export const moveTagDef = (id: number, direction: 'up' | 'down') =>
   req<TagDef[]>(`/api/tag-defs/${id}/move`, json('POST', { direction }));
 export const resetTagDefs = () => req<TagDef[]>('/api/tag-defs/reset', { method: 'POST' });
 
-export const markHand = (workspaceId: number, handId: string, body: MarkBody = {}) =>
-  req<MarkState>(`/api/hands/${encodeURIComponent(handId)}/mark?workspace_id=${workspaceId}`, json('PUT', body));
+export const markHand = (workspaceId: number, handId: string, body: MarkBody = {}, playerId?: number) =>
+  req<MarkState>(
+    `/api/hands/${encodeURIComponent(handId)}/mark?workspace_id=${workspaceId}${playerId !== undefined ? `&player_id=${playerId}` : ''}`,
+    json('PUT', body),
+  );
 export const unmarkHand = (workspaceId: number, handId: string, playerId?: number) =>
   req<void>(
     `/api/hands/${encodeURIComponent(handId)}/mark?workspace_id=${workspaceId}${playerId !== undefined ? `&player_id=${playerId}` : ''}`,

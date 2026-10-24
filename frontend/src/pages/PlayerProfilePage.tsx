@@ -22,6 +22,10 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { fixed } from '@/lib/format';
+import { cn } from '@/lib/utils';
+import { configQueryKey, getConfig } from '@/lib/config/api';
+import type { ColorMarkersConfig } from '@/lib/config/types';
+import { tagClasses } from '@/lib/marked/colors';
 
 function StatsTab({ stats }: { stats: HeroStats }) {
   const [decimals, setDecimals] = useState<0 | 1>(0);
@@ -118,15 +122,6 @@ function H2HTab({ playerId }: { playerId: number }) {
   );
 }
 
-const COLOR_OPTIONS = [
-  { value: '', label: 'None', bg: 'bg-zinc-700' },
-  { value: 'red', label: 'Red', bg: 'bg-red-500' },
-  { value: 'orange', label: 'Orange', bg: 'bg-orange-500' },
-  { value: 'green', label: 'Green', bg: 'bg-emerald-500' },
-  { value: 'blue', label: 'Blue', bg: 'bg-blue-500' },
-  { value: 'purple', label: 'Purple', bg: 'bg-purple-500' },
-];
-
 function NotesTab({ playerId, initialNotes, initialColor }: {
   playerId: number;
   initialNotes: string | null;
@@ -143,8 +138,13 @@ function NotesTab({ playerId, initialNotes, initialColor }: {
     },
   });
 
+  // Colour markers (Configuration > Color Markers); color_tag stores a marker id
+  const { data: markerEnv } = useQuery({ queryKey: configQueryKey('color_markers'), queryFn: () => getConfig<ColorMarkersConfig>('color_markers') });
+  const markers = markerEnv?.value ?? [];
+
   const handleSave = () => {
-    mutation.mutate({ notes, color_tag: colorTag || '' });
+    // the colour is only sent when changed (an old free-text value would be refused)
+    mutation.mutate({ notes, ...(colorTag !== (initialColor || '') ? { color_tag: colorTag } : {}) });
   };
 
   const isDirty = notes !== (initialNotes || '') || colorTag !== (initialColor || '');
@@ -153,18 +153,23 @@ function NotesTab({ playerId, initialNotes, initialColor }: {
     <div className="max-w-lg space-y-4">
       <div>
         <div className="text-[12px] uppercase tracking-wider text-text-muted mb-2">Color Tag</div>
-        <div className="flex items-center gap-2">
-          {COLOR_OPTIONS.map((opt) => (
-            <button
-              key={opt.value}
-              onClick={() => setColorTag(opt.value)}
-              className={`w-7 h-7 rounded-full ${opt.bg} transition-all ${
-                colorTag === opt.value ? 'ring-2 ring-primary ring-offset-2 ring-offset-background' : 'opacity-60 hover:opacity-100'
-              }`}
-              title={opt.label}
-            />
+        <ToggleGroup
+          type="single"
+          variant="outline"
+          size="sm"
+          value={colorTag}
+          onValueChange={(v) => setColorTag(v)}
+          aria-label="Color marker"
+          className="flex-wrap justify-start"
+        >
+          <ToggleGroupItem value="" aria-label="None">None</ToggleGroupItem>
+          {markers.map((m) => (
+            <ToggleGroupItem key={m.id} value={String(m.id)} aria-label={m.name} className="gap-1.5">
+              <span aria-hidden className={cn('size-2.5 shrink-0 rounded-pill', tagClasses(m.color).dot)} />
+              {m.name}
+            </ToggleGroupItem>
           ))}
-        </div>
+        </ToggleGroup>
       </div>
       <div>
         <div className="text-[12px] uppercase tracking-wider text-text-muted mb-2">Notes</div>

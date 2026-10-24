@@ -17,13 +17,13 @@ const RANGES: { key: RangeKey; label: string; help: string }[] = [
 const same = (a: [number, number], b: [number, number]) => a[0] === b[0] && a[1] === b[1];
 
 export default function GameTypesSection() {
-  const { env, isError, error, save, reset } = useConfigSection<GameTypesConfig>('game_types');
+  const { env, isError, error, update, reset } = useConfigSection<GameTypesConfig>('game_types');
   const [errors, setErrors] = useState<Record<string, string | null>>({});
   if (isError) return <ConfigError error={error} />;
   if (!env) return <ConfigLoading />;
   const rule = env.value.reg_rule;
   const def = env.default.reg_rule;
-  const set = (patch: Partial<RegRule>) => save({ ...env.value, reg_rule: { ...rule, ...patch } });
+  const set = (patch: Partial<RegRule>) => update((cur) => ({ ...cur, reg_rule: { ...cur.reg_rule, ...patch } }));
   const err = (k: string) => (m: string | null) => setErrors((p) => (p[k] === m ? p : { ...p, [k]: m }));
 
   return (

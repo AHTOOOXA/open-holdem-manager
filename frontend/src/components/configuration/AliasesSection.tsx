@@ -107,12 +107,14 @@ export default function AliasesSection() {
             <Upload className="size-3.5" />
             Import From CSV…
           </Button>
-          <Button variant="outline" size="sm" asChild>
-            <a href={IDENTITIES_EXPORT_URL} download="aliases.csv">
-              <Download className="size-3.5" />
-              Export to CSV…
-            </a>
-          </Button>
+          {data.length > 0 && (
+            <Button variant="outline" size="sm" asChild>
+              <a href={IDENTITIES_EXPORT_URL} download="aliases.csv">
+                <Download className="size-3.5" />
+                Export to CSV…
+              </a>
+            </Button>
+          )}
           <Button size="sm" onClick={() => setDialog({ identity: null })}>
             <Plus className="size-3.5" />
             Add Alias

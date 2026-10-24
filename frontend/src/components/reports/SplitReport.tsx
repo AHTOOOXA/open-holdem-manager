@@ -7,6 +7,7 @@ import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { DataGrid, createDataGridColumns, statCell, type DataGridColumnDef } from '@/components/ui/data-grid';
 import { getSplit } from '@/lib/reports/api';
 import { reportKeys } from '@/lib/reports/query-keys';
+import { useStatAppearanceVersion } from '@/lib/format/use-appearance';
 import { formatReportValue, NO_VALUE } from '@/lib/reports/format-value';
 import { LOWER_TAB_CAPTION } from '@/lib/reports/catalog';
 import type { ReportQuery, SplitColumn, SplitResponse, SplitRow, SplitType } from '@/lib/reports/types';
@@ -29,6 +30,7 @@ function valueCell(c: SplitColumn) {
     return statCell<GridRow>((r) => r.values[sampleId] ?? null, 'pct');
   }
   return function ValueCell({ row }: { row: { original: GridRow } }) {
+    useStatAppearanceVersion();
     const v = row.original.values[c.id];
     const text = formatReportValue(v, c.format);
     return text === NO_VALUE ? <span className="text-subtle-foreground">{NO_VALUE}</span> : text;

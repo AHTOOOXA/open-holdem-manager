@@ -17,7 +17,7 @@ function json(data: unknown, status = 200): Response {
   });
 }
 
-type RouteHandler = (url: URL) => Response;
+type RouteHandler = (url: URL, init?: RequestInit) => Response;
 
 const routes: [RegExp, RouteHandler][] = [
   // Health
@@ -55,6 +55,23 @@ const routes: [RegExp, RouteHandler][] = [
 
   // Hands list
   [/^\/api\/hands$/, () => json(mockHandListResponse)],
+
+  // Mark / tag / unmark a hand: nothing is stored, the answer is a valid MarkState
+  [/^\/api\/hands\/([^/]+)\/mark$/, (url: URL, init?: RequestInit) => {
+    const id = decodeURIComponent(url.pathname.split('/')[3]);
+    if (init?.method === 'DELETE') return new Response(null, { status: 204 });
+    let tagIds: number[] = [];
+    try {
+      const body = JSON.parse(String(init?.body ?? '{}')) as { tag_ids?: number[] };
+      tagIds = body.tag_ids ?? [];
+    } catch {
+      // no body: plain mark
+    }
+    const tags = mockTagDefs
+      .filter((t) => tagIds.includes(t.id))
+      .map(({ id: tid, name, color }) => ({ id: tid, name, color }));
+    return json({ hand_id: id, player_id: 1, marked: true, tags });
+  }],
 
   // Hand detail
   [/^\/api\/hands\/([^/]+)$/, (url: URL) => {
@@ -97,7 +114,7 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Res
 
     for (const [pattern, handler] of routes) {
       if (pattern.test(url.pathname)) {
-        return handler(url);
+        return handler(url, init);
       }
     }
 

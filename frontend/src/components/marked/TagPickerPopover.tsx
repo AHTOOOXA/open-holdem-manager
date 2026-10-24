@@ -10,6 +10,7 @@ import { useMarkHand, useTagDefs } from './useMarkHand';
 
 interface Props {
   handId: string;
+  playerId?: number;
   /** Tags the hand carries when the picker opens. */
   initialTags: readonly TagRef[];
   onClose: () => void;
@@ -23,7 +24,7 @@ interface Props {
  * unticking the last tag leaves it marked. Render it only while open (state starts from the
  * hand's tags); `children` is the anchor, or pass `point`.
  */
-export default function TagPickerPopover({ handId, initialTags, onClose, point, children }: Props) {
+export default function TagPickerPopover({ handId, playerId, initialTags, onClose, point, children }: Props) {
   const defs = useTagDefs();
   const { mark } = useMarkHand();
   const [ids, setIds] = useState<number[]>(() => initialTags.map((t) => t.id));
@@ -33,9 +34,9 @@ export default function TagPickerPopover({ handId, initialTags, onClose, point, 
     const next = toggleId(ids, id, on);
     setIds(next);
     setBusy(true);
-    const state = await mark(handId, next);
+    const state = await mark(handId, next, playerId);
     setBusy(false);
-    if (state) setIds(state.tags.map((t) => t.id));
+    if (state) setIds((state.tags ?? []).map((t) => t.id));
     else setIds(ids);
   };
 
@@ -48,7 +49,18 @@ export default function TagPickerPopover({ handId, initialTags, onClose, point, 
       ) : (
         <PopoverAnchor asChild>{children}</PopoverAnchor>
       )}
-      <PopoverContent align="start" className="w-auto min-w-52 p-3">
+      <PopoverContent
+        align="start"
+        className="w-auto min-w-52 p-3"
+        onOpenAutoFocus={(e) => {
+          // first checkbox, not the close button
+          const first = e.currentTarget instanceof HTMLElement ? e.currentTarget.querySelector<HTMLElement>('[role="checkbox"]') : null;
+          if (first) {
+            e.preventDefault();
+            first.focus();
+          }
+        }}
+      >
         <div className="mb-2 flex items-center justify-between gap-4">
           <span className="text-label font-medium uppercase text-muted-foreground">Tags</span>
           <Button variant="ghost" size="icon-sm" aria-label="Close" onClick={onClose}>

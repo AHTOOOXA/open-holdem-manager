@@ -4,6 +4,7 @@ import { cn } from '@/lib/utils';
 import { moneyClass } from '@/lib/format';
 import { resolveCellDisplay, wireToNumber } from '@/lib/h2n-format';
 import type { H2NCellInput } from '@/lib/h2n-format';
+import { useStatAppearanceVersion } from '@/lib/format/use-appearance';
 import { GENERAL_TONE_CLASS } from '@/lib/h2n-layout';
 import type { CellAlign, GeneralCellMeta, GeneralTone } from '@/lib/h2n-layout';
 
@@ -66,6 +67,7 @@ interface H2NStatCellProps {
  * fill with a primary ring.
  */
 export function H2NStatCell({ meta, data, tone, align, span, selected, onSelect, tabIndex = 0, onFocus }: H2NStatCellProps) {
+  useStatAppearanceVersion();
   const display = resolveCellDisplay(data, meta.units, { allowVsUser: meta.kind === 'action' });
   const dim = display.opacity < 1;
 

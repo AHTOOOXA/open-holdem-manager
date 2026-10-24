@@ -118,8 +118,7 @@
     "palette": 9
   },
   "src/pages/PlayerProfilePage.tsx": {
-    "text-arbitrary": 9,
-    "palette": 6
+    "text-arbitrary": 9
   },
   "src/pages/PlayersPage.tsx": {
     "text-arbitrary": 25,

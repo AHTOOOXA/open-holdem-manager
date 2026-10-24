@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { useWorkspace } from '@/contexts/WorkspaceContext';
 import { getTagDefs, markHand, tagDefsQueryKey, unmarkHand } from '@/lib/marked/api';
-import { patchRow } from '@/lib/marked/logic';
+import { listParamsMatchPlayer, patchRow } from '@/lib/marked/logic';
 import type { MarkState, TagDef } from '@/lib/marked/types';
 import type { HandListResponse } from '@/lib/api';
 
@@ -24,9 +24,13 @@ export function useMarkHand() {
   const { activeWorkspaceId } = useWorkspace();
 
   const apply = useCallback(
-    (state: Pick<MarkState, 'hand_id' | 'marked' | 'tags'>) => {
-      qc.setQueriesData<HandListResponse>({ queryKey: ['hands', 'list'] }, (old) =>
-        old && Array.isArray(old.hands) ? { ...old, hands: patchRow(old.hands, state) } : old,
+    (state: Pick<MarkState, 'hand_id' | 'marked' | 'tags'>, playerId?: number) => {
+      qc.setQueriesData<HandListResponse>(
+        {
+          queryKey: ['hands', 'list'],
+          predicate: (q) => listParamsMatchPlayer(q.queryKey[2] as { player_id?: number } | undefined, playerId),
+        },
+        (old) => (old && Array.isArray(old.hands) ? { ...old, hands: patchRow(old.hands, state, playerId) } : old),
       );
     },
     [qc],
@@ -38,10 +42,10 @@ export function useMarkHand() {
 
   /** Mark (no tag_ids) or set the full tag list (tag_ids replaces; an empty list keeps the hand marked). */
   const mark = useCallback(
-    async (handId: string, tagIds?: number[]): Promise<MarkState | null> => {
+    async (handId: string, tagIds?: number[], playerId?: number): Promise<MarkState | null> => {
       try {
-        const state = await markHand(activeWorkspaceId, handId, tagIds ? { tag_ids: tagIds } : {});
-        apply(state);
+        const state = await markHand(activeWorkspaceId, handId, tagIds ? { tag_ids: tagIds } : {}, playerId);
+        apply(state, playerId);
         refresh();
         return state;
       } catch (e) {
@@ -52,10 +56,10 @@ export function useMarkHand() {
     [activeWorkspaceId, apply, refresh],
   );
   const unmark = useCallback(
-    async (handId: string): Promise<boolean> => {
+    async (handId: string, playerId?: number): Promise<boolean> => {
       try {
-        await unmarkHand(activeWorkspaceId, handId);
-        apply({ hand_id: handId, marked: false, tags: [] });
+        await unmarkHand(activeWorkspaceId, handId, playerId);
+        apply({ hand_id: handId, marked: false, tags: [] }, playerId);
         refresh();
         return true;
       } catch (e) {

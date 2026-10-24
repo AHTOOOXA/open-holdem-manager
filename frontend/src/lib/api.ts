@@ -402,6 +402,8 @@ export interface ActionItem {
 
 export interface HandSummary {
   id: string;
+  /** The player this row is about (differs per row on the Marked Hands page). */
+  player_id?: number;
   played_at: string;
   stakes: string;
   bb_amount: number;
@@ -529,9 +531,10 @@ export async function getHands(params?: HandListParams): Promise<HandListRespons
   return res.json();
 }
 
-export async function getHandDetail(handId: string): Promise<HandDetail> {
+export async function getHandDetail(handId: string, playerId?: number): Promise<HandDetail> {
   const sp = new URLSearchParams();
   _addWorkspaceParam(sp);
+  if (playerId !== undefined) sp.set('player_id', String(playerId));
   const res = await fetch(`${BASE}/hands/${encodeURIComponent(handId)}?${sp}`);
   if (!res.ok) throw new Error(`Hand detail failed: ${res.statusText}`);
   return res.json();
