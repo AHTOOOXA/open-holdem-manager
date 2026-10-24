@@ -14,7 +14,9 @@
 import type { Step } from '../reports/types';
 
 export interface SessionRow {
-  /** Stable key: the session's first hand id (Hand2Note renumbers; OHM needs stable URLs). */
+  /** Stable key: the session start as epoch seconds of the naive local time (hand ids are
+   *  strings; a player's sessions never overlap, so starts are unique). Hand2Note renumbers;
+   *  OHM needs stable URLs. Changes only if an earlier hand later joins the session. */
   id: number;
   /** 1..n in chronological order over all of the player's sessions (display only). */
   number: number;
