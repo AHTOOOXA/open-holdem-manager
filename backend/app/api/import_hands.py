@@ -463,6 +463,19 @@ def finalize_import(db: duckdb.DuckDBPyConnection, workspace_id: int | None = No
     detect_heroes(db, workspace_id)
 
 
+def light_finalize(db: duckdb.DuckDBPyConnection, workspace_id: int) -> None:
+    """The cheap part of finalize_import, for auto-import ticks: new hands become visible at
+    once (data generation, imported_at, heroes). The workspace-wide player pass
+    (first/last seen, classification) is deferred to finalize_import when the watcher is quiet.
+    """
+    from app import data_generation
+    data_generation.bump()
+    db.execute("UPDATE hands SET imported_at = CURRENT_TIMESTAMP WHERE imported_at IS NULL AND workspace_id = ?",
+               [workspace_id])
+    from app.heroes import detect_heroes
+    detect_heroes(db, workspace_id)
+
+
 def insert_parsed_hand(db: duckdb.DuckDBPyConnection, parsed: ParsedHand, workspace_id: int = 1) -> str:
     """Insert a single parsed hand. Computes stats internally.
 
@@ -875,7 +888,8 @@ async def import_files_stream(
     )
 
 
-def import_hand_texts(db, hands: list[tuple[str, object]], workspace_id: int) -> dict:
+def import_hand_texts(db, hands: list[tuple[str, object]], workspace_id: int, *,
+                      full_finalize: bool = True) -> dict:
     """Import a small set of (hand_text, parser) without streaming and without dropping
     indexes (auto-import: a few hands per tick). Caller holds the write lock.
 
@@ -914,7 +928,10 @@ def import_hand_texts(db, hands: list[tuple[str, object]], workspace_id: int) ->
                 logging.getLogger(__name__).exception("ROLLBACK failed")
             reset_import_cache()
             raise
-        finalize_import(db, workspace_id=workspace_id)
+        if full_finalize:
+            finalize_import(db, workspace_id=workspace_id)
+        else:
+            light_finalize(db, workspace_id)
     return {"imported": imported, "duplicates": duplicates, "errors": errors,
             "error_details": error_details[:20]}
 

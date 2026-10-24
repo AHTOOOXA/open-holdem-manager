@@ -69,9 +69,9 @@ def spy(monkeypatch):
     calls: list[int] = []
     real = ih.import_hand_texts
 
-    def wrapped(db, hands, ws):
+    def wrapped(db, hands, ws, **kw):
         calls.append(len(hands))
-        return real(db, hands, ws)
+        return real(db, hands, ws, **kw)
 
     monkeypatch.setattr(ih, "import_hand_texts", wrapped)
     return calls
@@ -455,3 +455,20 @@ def test_app_startup_starts_and_shutdown_stops_the_watcher(db, folder, monkeypat
         assert ai._thread is not None and ai._thread.is_alive()
         thread = ai._thread
     assert ai._thread is None and not thread.is_alive()
+
+
+def test_player_pass_is_deferred_until_quiet(db, folder, monkeypatch):
+    """Ticks import with the light finalize; the workspace-wide pass runs once quiet."""
+    calls = []
+    real = ih.finalize_import
+    monkeypatch.setattr(ih, "finalize_import", lambda d, workspace_id=None: (calls.append(workspace_id), real(d, workspace_id=workspace_id)))
+    _enable(db, folder)
+    f = folder / "t.txt"
+    f.write_text(_join(HANDS[:3]))
+    t = _idle(f)
+    assert ai.tick(now=t) == 3
+    assert calls == []
+    ai.tick(now=t + 1)
+    assert calls == []
+    ai.tick(now=t + ai.FINALIZE_QUIET_SECONDS + 1)
+    assert calls == [1] or len(calls) == 1

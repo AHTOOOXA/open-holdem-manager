@@ -40,7 +40,9 @@ from app.config_sections import _path_key, get_value
 
 log = logging.getLogger(__name__)
 
-TICK_SECONDS = 1.0
+TICK_SECONDS = 0.5
+# After auto-imported hands, run the full player pass once no new hands came for this long
+FINALIZE_QUIET_SECONDS = 10.0
 IDLE_COMPLETE_SECONDS = 1.0
 ARCHIVE_EVERY_SECONDS = 150.0
 ARCHIVE_IDLE_SECONDS = 300.0
@@ -82,6 +84,9 @@ def _initial_status() -> dict:
     }
 
 
+_pending_finalize: dict[int, float] = {}  # workspace -> time of the last light-finalized import
+
+
 def reset_state() -> None:
     """Forget everything in memory (tests; the persisted file states reload on next tick)."""
     global _files, _last_archive
@@ -91,6 +96,7 @@ def reset_state() -> None:
         _rate.clear()
     _files = None
     _last_archive = 0.0
+    _pending_finalize.clear()
     _cancel_tick.clear()
 
 
@@ -310,6 +316,8 @@ def tick(now: float | None = None) -> int:
 
     candidates = [f for f in files if _needs_read(*f)]
     archive_due = cfg["archive_enabled"] and now - _last_archive >= ARCHIVE_EVERY_SECONDS
+    if not candidates and not _cancel_tick.is_set():
+        _finalize_quiet(now)
     if (not candidates and not archive_due) or _cancel_tick.is_set():
         return 0
     lock = app_db.db_lock()
@@ -331,6 +339,26 @@ def tick(now: float | None = None) -> int:
         return 0
     finally:
         _set_status(running=False)
+        lock.release()
+
+
+def _finalize_quiet(now: float) -> None:
+    """Run the deferred workspace-wide player pass once auto-import has been quiet a while."""
+    from app.api.import_hands import finalize_import
+    due = [ws for ws, t in _pending_finalize.items() if now - t >= FINALIZE_QUIET_SECONDS]
+    if not due:
+        return
+    lock = app_db.db_lock()
+    if not lock.acquire(blocking=False):
+        return
+    try:
+        db = app_db.get_db()
+        for ws in due:
+            finalize_import(db, workspace_id=ws)
+            _pending_finalize.pop(ws, None)
+    except Exception:
+        log.exception("Auto-import: deferred finalize failed")
+    finally:
         lock.release()
 
 
@@ -359,8 +387,10 @@ def _import_files(candidates: list[tuple[str, int, float]], ws: int, now: float)
 
     imported = 0
     if hands:
-        result = import_hand_texts(db, hands, ws)
+        result = import_hand_texts(db, hands, ws, full_finalize=False)
         imported = result["imported"]
+        if imported:
+            _pending_finalize[ws] = now
     if new_states:
         stamp = datetime.now()
         db.executemany(
@@ -532,3 +562,5 @@ def stop(timeout: float = 5.0) -> None:
         _thread.join(timeout)
         _thread = None
     _cancel_tick.clear()
+    if not app_db.shutdown_requested():
+        _finalize_quiet(float("inf"))  # don't leave the player pass pending
