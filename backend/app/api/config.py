@@ -2,6 +2,7 @@
 
 import json
 import os
+from contextlib import contextmanager
 
 from fastapi import APIRouter, Body, HTTPException
 from pydantic import ValidationError
@@ -30,13 +31,30 @@ def read_config(section: str) -> dict:
     return cs.envelope(get_read_cursor(), _section(section))
 
 
+@contextmanager
+def _watcher_paused(section: str):
+    """auto_import: cancel the watcher tick in progress (it holds the write lock) while the
+    new config is written; the next tick uses it. Yields a dict to put old/new values in."""
+    change: dict = {"old": None, "new": None}
+    if section != "auto_import":
+        yield change
+        return
+    from app import auto_import
+    auto_import.pause()
+    try:
+        yield change
+    finally:
+        auto_import.resume(change["old"], change["new"])
+
+
 @router.put("/config/{section}")
 def write_config(section: str, payload=Body(...)) -> dict:
     _section(section)
-    with db_lock():
+    with _watcher_paused(section) as change, db_lock():
         db = get_db()
+        change["old"] = cs.get_value(db, section)
         try:
-            cs.put_value(db, section, payload)
+            change["new"] = cs.put_value(db, section, payload)
         except ValidationError as e:
             raise HTTPException(status_code=422, detail=json.loads(e.json(include_url=False, include_context=False)))
         except ValueError as e:
@@ -47,9 +65,10 @@ def write_config(section: str, payload=Body(...)) -> dict:
 @router.delete("/config/{section}")
 def reset_config(section: str) -> dict:
     _section(section)
-    with db_lock():
+    with _watcher_paused(section) as change, db_lock():
         db = get_db()
-        cs.reset_value(db, section)
+        change["old"] = cs.get_value(db, section)
+        change["new"] = cs.reset_value(db, section)
         return cs.envelope(db, section)
 
 

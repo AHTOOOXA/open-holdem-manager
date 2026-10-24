@@ -1,7 +1,8 @@
 """Configuration sections stored as JSON in the `settings` table (`config.<section>` keys).
 
 Contract: frontend/src/lib/config/types.ts. Sections: stat_appearance, game_types,
-color_markers. Global (not per workspace). A missing / unreadable row means the default.
+color_markers, auto_import (frontend/src/lib/import/types.ts section 2). Global (not per
+workspace). A missing / unreadable row means the default.
 
 Also hosts the rebuild fingerprint: sha256(STAT_VERSION + canonical json of game_types).
 It is stored (settings `rebuild_fingerprint`) when a full rebuild completes; GET /api/health
@@ -12,6 +13,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import sys
 from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, TypeAdapter, field_validator
@@ -77,17 +80,65 @@ DEFAULT_MARKERS = [
 ]
 
 
+def _path_key(path: str) -> str:
+    """Comparison key of a folder path: case-insensitive on macOS / Windows."""
+    return path.casefold() if sys.platform in ("darwin", "win32") else path
+
+
+def _clean_dir(path: str) -> str:
+    path = path.strip()
+    if not path or not os.path.isabs(path):
+        raise ValueError(f"folder must be an absolute path: {path!r}")
+    return os.path.normpath(path)
+
+
+class AutoImportConfig(_Strict):
+    enabled: Annotated[bool, Field(strict=True)] = False
+    workspace_id: Annotated[int, Field(ge=1, strict=True)] | None = None
+    folders: list[str] = []
+    archive_enabled: Annotated[bool, Field(strict=True)] = False
+    archive_dir: str | None = None
+
+    @field_validator("folders")
+    @classmethod
+    def _check_folders(cls, v: list[str]) -> list[str]:
+        out: list[str] = []
+        seen: set[str] = set()
+        for raw in v:
+            path = _clean_dir(raw)
+            key = _path_key(path)
+            if key not in seen:
+                seen.add(key)
+                out.append(path)
+        return out
+
+    @field_validator("archive_dir")
+    @classmethod
+    def _check_archive_dir(cls, v: str | None) -> str | None:
+        return None if v is None or not v.strip() else _clean_dir(v)
+
+
+def _check_auto_import_workspace(db, value: AutoImportConfig) -> None:
+    if value.workspace_id is not None and db.execute(
+        "SELECT 1 FROM workspaces WHERE id = ?", [value.workspace_id]
+    ).fetchone() is None:
+        raise ValueError(f"workspace {value.workspace_id} does not exist")
+
+
 class _Section:
-    def __init__(self, name: str, adapter: TypeAdapter, default: Any, post=None):
+    def __init__(self, name: str, adapter: TypeAdapter, default: Any, post=None, db_check=None):
         self.name = name
         self.adapter = adapter
         self.default = default  # JSON-able
         self.post = post
+        self.db_check = db_check  # (db, validated value) -> None, raises ValueError; on PUT only
 
-    def parse(self, raw: Any) -> Any:
+    def parse(self, raw: Any, db=None) -> Any:
         v = self.adapter.validate_python(raw)
         if self.post:
             self.post(v)
+        if db is not None and self.db_check:
+            self.db_check(db, v)
         return self.adapter.dump_python(v, mode="json")
 
 
@@ -98,6 +149,9 @@ SECTIONS: dict[str, _Section] = {
                            GameTypesConfig().model_dump(mode="json")),
     "color_markers": _Section("color_markers", TypeAdapter(list[ColorMarker]),
                               DEFAULT_MARKERS, post=_validate_markers),
+    "auto_import": _Section("auto_import", TypeAdapter(AutoImportConfig),
+                            AutoImportConfig().model_dump(mode="json"),
+                            db_check=_check_auto_import_workspace),
 }
 
 
@@ -119,7 +173,7 @@ def get_value(db, section: str) -> Any:
 
 def put_value(db, section: str, raw: Any) -> Any:
     """Validate (raises pydantic.ValidationError / ValueError) and store; caller holds the lock."""
-    value = SECTIONS[section].parse(raw)
+    value = SECTIONS[section].parse(raw, db=db)
     db.execute("INSERT OR REPLACE INTO settings VALUES (?, ?)", [_key(section), json.dumps(value)])
     return value
 
