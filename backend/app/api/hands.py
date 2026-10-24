@@ -9,8 +9,9 @@ from app.date_filters import bound_sql
 from app.db import get_db, db_lock, get_read_cursor, get_hero_player_id, get_hero_username
 from app.models import (
     HandSummary, HandListResponse, HandDetail, HandPlayerDetail,
-    HandAction, BoardCards, TagCount, ActionItem,
+    HandAction, BoardCards, ActionItem, TagRef,
 )
+from app import marked_hands
 from app.action_parser import parse_actions_from_raw
 from app.stat_registry import STAT_REGISTRY
 
@@ -26,7 +27,8 @@ def list_hands(
     position: Optional[str] = None,
     stakes: Optional[str] = None,
     result: Optional[str] = None,
-    tags: Optional[str] = None,
+    marked: Optional[bool] = Query(None, description="true: only hands marked for the row's player; false: only unmarked"),
+    tag_ids: Optional[str] = Query(None, description="Comma list of tag ids; hands carrying any of them (implies marked)"),
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
     search: Optional[str] = None,
@@ -85,30 +87,10 @@ def list_hands(
         if result in result_map:
             where_clauses.append(result_map[result])
 
-    if tags:
-        tag_list = [t.strip() for t in tags.split(",") if t.strip()]
-        want_untagged = any(t.lower() == "untagged" for t in tag_list)
-        want_any = "__any__" in tag_list
-        named = [t for t in tag_list if t.lower() != "untagged" and t != "__any__"]
-        # The selected options are a union: untagged hands, plus hands with one of the
-        # named tags (or with any tag when no tag is named)
-        tag_or: list[str] = []
-        if want_untagged:
-            tag_or.append(
-                "NOT EXISTS (SELECT 1 FROM hand_tags ht2 WHERE ht2.hand_id = h.id AND ht2.workspace_id = h.workspace_id)"
-            )
-        if named:
-            ph = ",".join("?" for _ in named)
-            tag_or.append(
-                f"EXISTS (SELECT 1 FROM hand_tags ht2 WHERE ht2.hand_id = h.id AND ht2.workspace_id = h.workspace_id AND ht2.tag IN ({ph}))"
-            )
-            params.extend(named)
-        elif want_any:
-            tag_or.append(
-                "EXISTS (SELECT 1 FROM hand_tags ht2 WHERE ht2.hand_id = h.id AND ht2.workspace_id = h.workspace_id)"
-            )
-        if tag_or:
-            where_clauses.append("(" + " OR ".join(tag_or) + ")")
+    mark_clauses, mark_params = marked_hands.list_filter_sql(
+        marked, marked_hands.parse_id_list(tag_ids) or None, "h.id", "h.workspace_id", "hp.player_id")
+    where_clauses.extend(mark_clauses)
+    params.extend(mark_params)
 
     day_start = int(get_app_settings(db)["day_start_hour"])
     if date_from:
@@ -179,6 +161,10 @@ def list_hands(
         "won_bb": "hp.won_bb",
         "won_usd": "hp.won_bb * h.bb_amount",
         "stakes": "h.bb_amount",
+        # Tags column: the first tag's catalogue position, untagged rows -1
+        "tags": "COALESCE((SELECT MIN(td.position) FROM marked_hand_tags mt "
+                "JOIN tag_defs td ON td.id = mt.tag_id WHERE mt.workspace_id = h.workspace_id "
+                "AND mt.hand_id = h.id AND mt.player_id = hp.player_id), -1)",
     }
     sort_col = allowed_sorts.get(sort, "h.played_at")
     sort_dir = "DESC" if order.lower() == "desc" else "ASC"
@@ -203,14 +189,8 @@ def list_hands(
     hand_ids = [r[0] for r in rows]
     ph = ",".join("?" for _ in hand_ids)
 
-    # Batch fetch tags
-    tag_rows = db.execute(
-        f"SELECT hand_id, tag FROM hand_tags WHERE hand_id IN ({ph}) AND workspace_id = ?",
-        hand_ids + [workspace_id],
-    ).fetchall()
-    tags_map: dict[str, list[str]] = {}
-    for hid, tag in tag_rows:
-        tags_map.setdefault(hid, []).append(tag)
+    # Marks + tags of the row player
+    marked_set, tags_map = marked_hands.marks_for(db, workspace_id, hero_id, hand_ids)
 
     # Batch fetch board cards by street (Board 1 only for list view)
     board_rows = db.execute(
@@ -295,7 +275,8 @@ def list_hands(
             all_in_ev_bb=float(r[8]) if r[8] is not None else float(r[7]),
             rit_boards=int(r[9]) if r[9] is not None else 1,
             is_cashout=bool(r[10]) if r[10] is not None else False,
-            tags=tags_map.get(hid, []),
+            marked=hid in marked_set,
+            tags=[TagRef(**t) for t in tags_map.get(hid, [])],
             preflop_actions=hand_acts["preflop"]["actions"],
             flop_cards=board["flop"],
             flop_pot=hand_acts["flop"]["pot"],
@@ -320,7 +301,8 @@ def list_hands(
 # ── Hand detail ──────────────────────────────────────────────────────
 
 @router.get("/hands/{hand_id}", response_model=HandDetail)
-def get_hand(hand_id: str, workspace_id: int = Query(1)):
+def get_hand(hand_id: str, workspace_id: int = Query(1),
+             player_id: Optional[int] = Query(None, description="Whose mark/tags to return; defaults to the hero")):
     db = get_read_cursor()
     hero_id = get_hero_player_id(db, workspace_id)
     hero_username = get_hero_username(db, workspace_id)
@@ -441,12 +423,10 @@ def get_hand(hand_id: str, workspace_id: int = Query(1)):
     # Prepend blind postings before voluntary actions
     actions = blind_actions + actions
 
-    # Tags
-    tag_rows = db.execute(
-        "SELECT tag FROM hand_tags WHERE hand_id = ? AND workspace_id = ? ORDER BY created_at",
-        [hand_id, workspace_id],
-    ).fetchall()
-    tag_list = [t[0] for t in tag_rows]
+    # Mark + tags (the given player, else the hero)
+    mark_pid = player_id if player_id is not None else hero_id
+    marked_set, tags_map = (marked_hands.marks_for(db, workspace_id, mark_pid, [hand_id])
+                            if mark_pid is not None else (set(), {}))
 
     # Note
     note_row = db.execute(
@@ -469,59 +449,10 @@ def get_hand(hand_id: str, workspace_id: int = Query(1)):
         rit_boards=rit_boards,
         is_cashout=is_cashout,
         actions=actions,
-        tags=tag_list,
+        marked=hand_id in marked_set,
+        tags=[TagRef(**t) for t in tags_map.get(hand_id, [])],
         note=note,
     )
-
-
-# ── Tags ─────────────────────────────────────────────────────────────
-
-class TagBody(BaseModel):
-    tag: str
-
-
-@router.post("/hands/{hand_id}/tags")
-def add_tag(hand_id: str, body: TagBody, workspace_id: int = Query(1)):
-    tag = body.tag.strip()
-    if not tag:
-        raise HTTPException(status_code=400, detail="Tag must not be blank")
-    with db_lock():
-        db = get_db()
-        if not db.execute("SELECT 1 FROM hands WHERE id = ? AND workspace_id = ?", [hand_id, workspace_id]).fetchone():
-            raise HTTPException(status_code=404, detail="Hand not found")
-        # No ON CONFLICT: the composite-key migration recreated hand_tags without
-        # a primary key, so INSERT OR IGNORE raises a BinderException.
-        db.execute(
-            "INSERT INTO hand_tags (hand_id, tag, workspace_id) "
-            "SELECT ?, ?, ? WHERE NOT EXISTS ("
-            "SELECT 1 FROM hand_tags WHERE hand_id = ? AND tag = ? AND workspace_id = ?)",
-            [hand_id, tag, workspace_id, hand_id, tag, workspace_id],
-        )
-        return {"status": "ok"}
-
-
-@router.delete("/hands/{hand_id}/tags/{tag}")
-def remove_tag(hand_id: str, tag: str, workspace_id: int = Query(1)):
-    with db_lock():
-        db = get_db()
-        db.execute(
-            "DELETE FROM hand_tags WHERE hand_id = ? AND tag = ? AND workspace_id = ?",
-            [hand_id, tag, workspace_id],
-        )
-        return {"status": "ok"}
-
-
-@router.get("/tags", response_model=list[TagCount])
-def list_tags(workspace_id: int = Query(1)):
-    db = get_read_cursor()
-    rows = db.execute(
-        "SELECT ht.tag, COUNT(*) as cnt FROM hand_tags ht "
-        "JOIN hands h ON ht.hand_id = h.id AND ht.workspace_id = h.workspace_id "
-        "WHERE h.workspace_id = ? "
-        "GROUP BY ht.tag ORDER BY cnt DESC",
-        [workspace_id],
-    ).fetchall()
-    return [TagCount(tag=r[0], count=r[1]) for r in rows]
 
 
 # ── Notes ────────────────────────────────────────────────────────────

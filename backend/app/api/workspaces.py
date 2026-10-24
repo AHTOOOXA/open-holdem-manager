@@ -215,6 +215,10 @@ def delete_workspace(workspace_id: int):
                 f"DELETE FROM hands WHERE workspace_id = ?", [workspace_id]
             )
 
+        # Marks of this workspace (the tag catalogue is global and stays)
+        from app.marked_hands import delete_workspace_marks
+        delete_workspace_marks(db, workspace_id)
+
         # Delete aliases for this workspace
         db.execute(
             "DELETE FROM player_aliases WHERE workspace_id = ?", [workspace_id]

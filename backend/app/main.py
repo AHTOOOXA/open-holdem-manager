@@ -20,6 +20,7 @@ from app.api import reports_lite
 from app.api import statistics_dashboards
 from app.api import heroes as heroes_api
 from app.api import app_settings as app_settings_api
+from app.api import marked_hands as marked_hands_api
 
 MultiPartParser.max_part_size = 50 * 1024 * 1024  # 50MB
 
@@ -67,6 +68,7 @@ app.include_router(reports_lite.router, prefix="/api", tags=["reports"])
 app.include_router(statistics_dashboards.router, prefix="/api", tags=["statistics"])
 app.include_router(heroes_api.router, prefix="/api", tags=["heroes"])
 app.include_router(app_settings_api.router, prefix="/api", tags=["settings"])
+app.include_router(marked_hands_api.router, prefix="/api", tags=["marked-hands"])
 
 
 @app.on_event("startup")
