@@ -24,6 +24,7 @@ from fastapi import APIRouter, HTTPException, Query
 
 from app.date_filters import DATE_TO_SQL
 from app.db import get_hero_player_id, get_read_cursor
+from app.general_filters import resolve_filters
 from app.general_cells import (
     GENERAL_CELLS,
     ActionCell,
@@ -246,9 +247,11 @@ def _vs_user_cell(ref: StatRef, vs: dict[tuple[str, str | None], Counts]) -> Gen
 
 def compute_general(db, player_id: int, workspace_id: int = 1, *, stakes: str | None = None,
                     game_mode: str | None = None, date_from: str | None = None,
-                    date_to: str | None = None, hero_id: int | None = None) -> GeneralResponse:
-    """Every General cell for `player_id` over the filtered hands."""
-    fsql, fparams = _filters(stakes, game_mode, date_from, date_to)
+                    date_to: str | None = None, hero_id: int | None = None,
+                    filter_sql: tuple[str, list] | None = None) -> GeneralResponse:
+    """Every General cell for `player_id` over the filtered hands (`filter_sql` = ready
+    AND-ed SQL + params, e.g. from a Reports chain, replaces the stakes/mode/date params)."""
+    fsql, fparams = filter_sql or _filters(stakes, game_mode, date_from, date_to)
     # Hands H2N refuses to import (app.h2n.hand_rejection) are in none of its stats.
     where = "hp.player_id = ? AND h.workspace_id = ? AND COALESCE(hp.h2n_valid, TRUE)" + fsql
     params = [player_id, workspace_id, *fparams]
@@ -300,9 +303,11 @@ def get_general(
     game_mode: str | None = Query(None),
     date_from: str | None = Query(None),
     date_to: str | None = Query(None),
+    chain: str | None = Query(None, description="JSON plain Reports steps, instead of the filters above"),
     workspace_id: int = Query(1),
     player_id: int | None = Query(None, description="Defaults to the workspace hero"),
 ):
+    fsql, fparams, _steps = resolve_filters(chain, stakes, game_mode, date_from, date_to)
     db = get_read_cursor()
     hero_id = get_hero_player_id(db, workspace_id)
     target = player_id if player_id is not None else hero_id
@@ -313,8 +318,7 @@ def get_general(
     if player_id is not None and not db.execute(
             "SELECT 1 FROM players WHERE id = ?", [player_id]).fetchone():
         raise HTTPException(status_code=404, detail="Player not found")
-    return compute_general(db, target, workspace_id, stakes=stakes, game_mode=game_mode,
-                           date_from=date_from, date_to=date_to, hero_id=hero_id)
+    return compute_general(db, target, workspace_id, hero_id=hero_id, filter_sql=(fsql, fparams))
 
 
 def _empty_cell(cell) -> GeneralCell:

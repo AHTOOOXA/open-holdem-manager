@@ -41,6 +41,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.date_filters import DATE_TO_SQL
 from app.db import get_hero_player_id, get_read_cursor
 from app.general_cells import GENERAL_CELLS, ActionCell
+from app.general_filters import cell_steps, resolve_filters
 from app.h2n.definitions import COMPILED
 from app.h2n.replay import match_row, parser_for, replay_parsed
 from app.h2n.seqcodec import decode_sequence
@@ -159,6 +160,7 @@ class CellDetail(BaseModel):
     bet_sizes: list[SplitRow] = []
     replayed: int = 0                  # hands whose actions were replayed for this answer
     replay_failed: int = 0
+    chain: list[dict] = []             # the cell as a Reports chain: filters + pos + row
 
 
 class ActionToken(BaseModel):
@@ -965,7 +967,7 @@ def _strength(street: int, counts: dict[int, int]) -> Strength:
 
 
 def compute_detail(db, stat: _Stat, player_id: int, workspace_id: int,
-                   filters: tuple[str, list]) -> CellDetail:
+                   filters: tuple[str, list], filter_steps: list[dict] | None = None) -> CellDetail:
     hands = _query_hands(db, stat, player_id, workspace_id, filters, cases_only=False)
     cases = [h for h in hands if h.case]
     n_cases = len(cases)
@@ -1075,6 +1077,8 @@ def compute_detail(db, stat: _Stat, player_id: int, workspace_id: int,
         summary=Summary(won_hand=_ratio(won, n_cases), wtsd=_ratio(sd, n_cases),
                         wsd=_ratio(won_sd, sd), next=summary_next.model()),
         boards=boards, bet_sizes=sizes, replayed=replayed, replay_failed=failed,
+        chain=[*(filter_steps or []), *cell_steps(stat.cell.ref.positions, stat.cell.ref.exclude,
+                                                  stat.row, ROWS[stat.row].notation)],
     )
 
 
@@ -1288,17 +1292,20 @@ def get_cell_detail(
     game_mode: str | None = Query(None),
     date_from: str | None = Query(None),
     date_to: str | None = Query(None),
+    chain: str | None = Query(None, description="JSON plain Reports steps, instead of the filters above"),
     workspace_id: int = Query(1),
     player_id: int | None = Query(None, description="Defaults to the workspace hero"),
 ):
     stat = _resolve(cell_id)
+    fsql, fparams, fsteps = resolve_filters(chain, stakes, game_mode, date_from, date_to)
     db = get_read_cursor()
     target = _target_player(db, workspace_id, player_id)
     if target is None:
         return CellDetail(cell_id=cell_id, row=stat.row,
-                          notation=ROWS[stat.row].notation, street=STREET_NAMES[stat.street])
-    return compute_detail(db, stat, target, workspace_id,
-                          _filters(stakes, game_mode, date_from, date_to))
+                          notation=ROWS[stat.row].notation, street=STREET_NAMES[stat.street],
+                          chain=[*fsteps, *cell_steps(stat.cell.ref.positions, stat.cell.ref.exclude,
+                                                      stat.row, ROWS[stat.row].notation)])
+    return compute_detail(db, stat, target, workspace_id, (fsql, fparams), fsteps)
 
 
 @router.get("/general/cell/{cell_id}/hands", response_model=CellHands)
@@ -1315,16 +1322,18 @@ def get_cell_hands(
     game_mode: str | None = Query(None),
     date_from: str | None = Query(None),
     date_to: str | None = Query(None),
+    chain: str | None = Query(None, description="JSON plain Reports steps, instead of the filters above"),
     workspace_id: int = Query(1),
     player_id: int | None = Query(None, description="Defaults to the workspace hero"),
 ):
     stat = _resolve(cell_id)
+    fsql, fparams, fsteps = resolve_filters(chain, stakes, game_mode, date_from, date_to)
     db = get_read_cursor()
     target = _target_player(db, workspace_id, player_id)
     if target is None:
         return CellHands(cell_id=cell_id, offset=offset, limit=limit)
     return compute_hands(db, stat, target, workspace_id,
-                         _filters(stakes, game_mode, date_from, date_to),
+                         (fsql, fparams),
                          bucket=bucket, board=board, size=size, offset=offset, limit=limit,
                          sort=sort, order=order)
 
