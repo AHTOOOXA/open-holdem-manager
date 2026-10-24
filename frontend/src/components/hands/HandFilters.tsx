@@ -1,4 +1,7 @@
-import type { TagCount } from '@/lib/api';
+import type { MarkedMode } from '@/lib/marked/logic';
+import { toggleId } from '@/lib/marked/logic';
+import TagCheckboxGrid from '@/components/marked/TagCheckboxGrid';
+import { useTagDefs } from '@/components/marked/useMarkHand';
 import { formatStakes } from '@/lib/utils';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -12,7 +15,10 @@ interface FilterState {
   position: string[];
   stakes: string[];
   result: string;
-  tags: string[];
+  /** Marked / not marked only ('' = all). Selected tags imply marked. */
+  marked: MarkedMode;
+  /** Hands carrying any of these tags. */
+  tagIds: number[];
   date: string;
   dateFrom: string;
   dateTo: string;
@@ -110,6 +116,11 @@ function CheckboxOption({
   );
 }
 
+const MARKED_OPTIONS: { value: MarkedMode; label: string }[] = [
+  { value: '', label: 'All' },
+  { value: 'marked', label: 'Marked' },
+  { value: 'unmarked', label: 'Not marked' },
+];
 const POSITIONS = ['EP', 'MP', 'CO', 'BTN', 'SB', 'BB'];
 const RESULTS = [
   { value: '', label: 'All' },
@@ -127,27 +138,24 @@ const DATE_PRESETS = [
   { value: 'custom', label: 'Custom Range' },
 ];
 
-/** Pseudo-tag understood by the backend: hands that carry at least one tag. */
-export const ANY_TAG = '__any__';
-
 export default function HandFilters({
   filters,
   onChange,
   distinctStakes,
-  allTags,
   lockedStatFlags,
 }: {
   filters: FilterState;
   onChange: (f: FilterState) => void;
   distinctStakes: string[];
-  allTags: TagCount[];
   lockedStatFlags?: string[];
 }) {
+  const tagDefs = useTagDefs();
   const hasFilters =
     filters.position.length > 0 ||
     filters.stakes.length > 0 ||
     filters.result !== '' ||
-    filters.tags.length > 0 ||
+    filters.marked !== '' ||
+    filters.tagIds.length > 0 ||
     filters.date !== '' ||
     filters.search !== '' ||
     filters.statFlags.length > 0 ||
@@ -158,7 +166,8 @@ export default function HandFilters({
       position: [],
       stakes: [],
       result: '',
-      tags: [],
+      marked: '',
+      tagIds: [],
       date: '',
       dateFrom: '',
       dateTo: '',
@@ -266,40 +275,29 @@ export default function HandFilters({
         </FilterDropdown>
 
         {/* Tags */}
-        <FilterDropdown label="Tags" active={filters.tags.length > 0}>
-          <CheckboxOption
-            label="Any tag"
-            checked={filters.tags.includes(ANY_TAG)}
-            onChange={(c) => {
-              const next = c
-                ? [...filters.tags, ANY_TAG]
-                : filters.tags.filter((x) => x !== ANY_TAG);
-              onChange({ ...filters, tags: next });
-            }}
-          />
-          <CheckboxOption
-            label="Untagged"
-            checked={filters.tags.includes('untagged')}
-            onChange={(c) => {
-              const next = c
-                ? [...filters.tags, 'untagged']
-                : filters.tags.filter((x) => x !== 'untagged');
-              onChange({ ...filters, tags: next });
-            }}
-          />
-          {allTags.map((t) => (
-            <CheckboxOption
-              key={t.tag}
-              label={`${t.tag} (${t.count})`}
-              checked={filters.tags.includes(t.tag)}
-              onChange={(c) => {
-                const next = c
-                  ? [...filters.tags, t.tag]
-                  : filters.tags.filter((x) => x !== t.tag);
-                onChange({ ...filters, tags: next });
-              }}
-            />
-          ))}
+        <FilterDropdown label="Tags" active={filters.marked !== '' || filters.tagIds.length > 0}>
+          <RadioGroup
+            value={filters.tagIds.length > 0 ? 'marked' : filters.marked}
+            onValueChange={(v) => onChange({ ...filters, marked: v as MarkedMode, tagIds: [] })}
+            className="gap-1"
+          >
+            {MARKED_OPTIONS.map((o) => (
+              <label key={o.value} className="flex items-center gap-2 py-0.5 cursor-pointer text-xs text-foreground hover:text-primary">
+                <RadioGroupItem value={o.value} />
+                {o.label}
+              </label>
+            ))}
+          </RadioGroup>
+          {tagDefs.length > 0 && (
+            <div className="mt-2 border-t border-border pt-2">
+              <div className="mb-1 text-label text-muted-foreground">With any of these tags</div>
+              <TagCheckboxGrid
+                tags={tagDefs}
+                selected={filters.tagIds}
+                onToggle={(id, on) => onChange({ ...filters, marked: '', tagIds: toggleId(filters.tagIds, id, on) })}
+              />
+            </div>
+          )}
         </FilterDropdown>
 
         {/* Date */}

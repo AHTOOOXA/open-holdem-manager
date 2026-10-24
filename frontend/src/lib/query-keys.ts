@@ -25,7 +25,6 @@ export const queryKeys = {
   hands: {
     list: (params: Record<string, unknown> | object) => ['hands', 'list', params] as const,
     detail: (id: string) => ['hands', 'detail', id] as const,
-    tags: ['hands', 'tags'] as const,
   },
 
   range: (filters: Record<string, unknown> | object) => ['range', filters] as const,

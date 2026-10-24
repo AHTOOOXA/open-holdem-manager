@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
-import { getHands, getTags } from '@/lib/api';
+import { useNavigate } from 'react-router-dom';
+import { getHands } from '@/lib/api';
 import { chainParam } from '@/lib/reports/api';
 import type { Step } from '@/lib/reports/types';
-import type { HandListParams, HandSummary, TagCount } from '@/lib/api';
+import type { HandListParams, HandSummary } from '@/lib/api';
 import { useFilterOptions } from '@/hooks/useFilterOptions';
 import { queryKeys } from '@/lib/query-keys';
 import { queryClient } from '@/lib/query-client';
@@ -16,12 +17,14 @@ import { QUICK_FILTERS_MAP } from '@/components/hands/HandFilters';
 import { CardBoxPair, CardBoxRow, CardBox } from '@/components/hands/CardDisplay';
 import { RitBadge, CashoutBadge } from '@/components/hands/HandTypeBadge';
 import Actions, { actionTitle, formatBb } from '@/components/hands/Actions';
-import TagPill from '@/components/hands/TagPill';
+import TagChip from '@/components/marked/TagChip';
+import MarkMenuItems from '@/components/marked/MarkMenuItems';
+import TagPickerPopover from '@/components/marked/TagPickerPopover';
+import { markedListParams } from '@/lib/marked/logic';
 import Pagination from '@/components/hands/Pagination';
 import HandDrawer from '@/components/hands/HandDrawer';
 import { DataGrid, createDataGridColumns, type DataGridHandle, type GridSorting } from '@/components/ui/data-grid';
 import { fixed } from '@/lib/format';
-import { ANY_TAG } from '@/components/hands/HandFilters';
 
 function getDateRange(preset: string, dateFrom: string, dateTo: string): { from?: string; to?: string } {
   const today = new Date();
@@ -61,13 +64,26 @@ function StreetActions({ items, precision, trimFolds }: { items: HandSummary['pr
 }
 
 /** Hand list columns. Sortable ones (stakes, won_usd, played_at) use the API's sort keys as ids; display columns never sort. */
-function handColumns(precision: 0 | 1) {
+function handColumns(precision: 0 | 1, openTag: (id: number) => void) {
   const potCell = (has: (h: HandSummary) => boolean, pot: (h: HandSummary) => number) =>
     function PotCell({ row }: { row: { original: HandSummary } }) {
       return has(row.original) ? formatBb(pot(row.original), precision) : '';
     };
   const potMeta = (street: string) => ({ align: 'center' as const, title: `${street} pot (bb)`, className: 'px-1 text-sm text-muted-foreground' });
   return col.columns([
+    col.accessor('tags', {
+      header: 'Tags',
+      size: 120,
+      enableSorting: false,
+      meta: { title: 'Marked hand tags' },
+      cell: (i) => (
+        <div className="flex flex-col items-start gap-0.5 py-0.5">
+          {i.getValue().map((t) => (
+            <TagChip key={t.id} tag={t} onClick={(e) => { e.stopPropagation(); openTag(t.id); }} />
+          ))}
+        </div>
+      ),
+    }),
     col.display({
       id: 'preflop',
       header: 'Preflop',
@@ -164,22 +180,6 @@ function handColumns(precision: 0 | 1) {
       meta: { align: 'right', sortDescFirst: true, className: 'text-sm text-muted-foreground' },
       cell: (i) => formatRelativeDate(i.getValue()),
     }),
-    col.accessor('tags', {
-      header: 'Tags',
-      size: 130,
-      enableSorting: false,
-      cell: (i) => {
-        const tags = i.getValue();
-        return (
-          <div className="flex items-center gap-0.5">
-            {tags.slice(0, 2).map((t) => (
-              <TagPill key={t} tag={t} />
-            ))}
-            {tags.length > 2 && <span className="text-2xs text-muted-foreground">+{tags.length - 2}</span>}
-          </div>
-        );
-      },
-    }),
   ]);
 }
 
@@ -209,6 +209,8 @@ export interface HandExplorerProps {
   chain?: Step[];
   /** Hide the built-in filter bar (the page provides its own filters). */
   hideFilters?: boolean;
+  /** Page-owned filter row, shown where the built-in filter bar would be. */
+  filterRow?: React.ReactNode;
 }
 
 export default function HandExplorer({
@@ -222,6 +224,7 @@ export default function HandExplorer({
   defaultHiddenColumns,
   chain,
   hideFilters = false,
+  filterRow,
 }: HandExplorerProps) {
   const [page, setPage] = useState(1);
   const [perPage, setPerPage] = useState(defaultPerPage);
@@ -232,7 +235,8 @@ export default function HandExplorer({
     position: initialFilters?.position ?? [],
     stakes: initialFilters?.stakes ?? [],
     result: initialFilters?.result ?? '',
-    tags: initialFilters?.tags ?? [],
+    marked: initialFilters?.marked ?? '',
+    tagIds: initialFilters?.tagIds ?? [],
     date: initialFilters?.date ?? '',
     dateFrom: initialFilters?.dateFrom ?? '',
     dateTo: initialFilters?.dateTo ?? '',
@@ -283,7 +287,7 @@ export default function HandExplorer({
     position: filters.position.length > 0 ? filters.position.join(',') : undefined,
     stakes: filters.stakes.length > 0 ? filters.stakes.join(',') : undefined,
     result: filters.result || undefined,
-    tags: filters.tags.length > 0 ? filters.tags.join(',') : undefined,
+    ...markedListParams({ mode: filters.marked, tagIds: filters.tagIds }),
     date_from: dateRange.from,
     date_to: dateRange.to,
     search: debouncedSearch || undefined,
@@ -305,12 +309,6 @@ export default function HandExplorer({
     placeholderData: keepPreviousData,
   });
 
-  // Tags query
-  const { data: allTags = [] } = useQuery<TagCount[]>({
-    queryKey: queryKeys.hands.tags,
-    queryFn: getTags,
-  });
-
   const sorting = useMemo<GridSorting>(() => [{ id: sort, desc: order === 'desc' }], [sort, order]);
   const handleSortingChange = useCallback((next: GridSorting) => {
     const head = next[0];
@@ -330,7 +328,21 @@ export default function HandExplorer({
 
   const handleFilterChange = (f: FilterState) => { setFilters(f); setPage(1); };
 
-  const columns = useMemo(() => handColumns(bbPrecision), [bbPrecision]);
+  const navigate = useNavigate();
+  const columns = useMemo(() => handColumns(bbPrecision, (id) => navigate(`/marked?tag=${id}`)), [bbPrecision, navigate]);
+  // Right-click menu + tag picker (anchored where the menu was opened)
+  const [picker, setPicker] = useState<{ handId: string; x: number; y: number } | null>(null);
+  const lastPointer = useRef({ x: 0, y: 0 });
+  const renderRowMenu = useCallback(
+    (h: HandSummary) => (
+      <MarkMenuItems
+        handId={h.id}
+        marked={h.marked}
+        onPickTags={(id) => setPicker({ handId: id, ...lastPointer.current })}
+      />
+    ),
+    [setPicker],
+  );
   const selectedRowIds = useMemo(() => (selectedId ? [selectedId] : []), [selectedId]);
   const gridRef = useRef<DataGridHandle>(null);
   const openDrawer = useCallback((id: string) => { setSelectedId(id); setDrawerOpen(true); }, []);
@@ -361,10 +373,8 @@ export default function HandExplorer({
     if (selectedIndex >= 0 && selectedIndex < hands.length - 1) setSelectedId(hands[selectedIndex + 1].id);
   };
 
-  // "Any tag" is the page's own filter on Marked Hands (pinned via initialFilters), a user filter elsewhere
-  const anyTagPinned = initialFilters?.tags?.includes(ANY_TAG) ?? false;
   const hasUserFilters = filters.position.length > 0 || filters.stakes.length > 0 ||
-    filters.result !== '' || filters.tags.some((t) => !(anyTagPinned && t === ANY_TAG)) || filters.date !== '' || debouncedSearch !== '' ||
+    filters.result !== '' || filters.marked !== '' || filters.tagIds.length > 0 || filters.date !== '' || debouncedSearch !== '' ||
     filters.statFlags.length > 0 || filters.quickFilters.length > 0;
   const hasFixedFilters = !!(fixedParams?.stat_key || fixedParams?.stat_flag?.length || fixedParams?.position || fixedParams?.stakes);
   const hasFilters = hasUserFilters || hasFixedFilters || !!emptyMessage;
@@ -421,13 +431,14 @@ export default function HandExplorer({
         </div>
       )}
 
+      {filterRow}
+
       {/* Filters (hidden where the page owns filtering, e.g. a Reports page's chips) */}
       {!hideFilters && <div className="mb-3">
         <HandFilters
           filters={filters}
           onChange={handleFilterChange}
           distinctStakes={distinctStakes}
-          allTags={allTags}
           lockedStatFlags={lockedStatFlags.length > 0 ? lockedStatFlags : undefined}
         />
       </div>}
@@ -441,10 +452,11 @@ export default function HandExplorer({
         <EmptyState
           variant={hasFilters ? 'no-match' : 'no-data'}
           message={!hasUserFilters ? emptyMessage : undefined}
-          onClearFilters={hasUserFilters ? () => handleFilterChange({ position: [], stakes: [], result: '', tags: anyTagPinned ? [ANY_TAG] : [], date: '', dateFrom: '', dateTo: '', search: '', statFlags: [], quickFilters: [] }) : undefined}
+          onClearFilters={hasUserFilters ? () => handleFilterChange({ position: [], stakes: [], result: '', marked: '', tagIds: [], date: '', dateFrom: '', dateTo: '', search: '', statFlags: [], quickFilters: [] }) : undefined}
         />
       ) : (
         <>
+          <div onContextMenuCapture={(e) => { lastPointer.current = { x: e.clientX, y: e.clientY }; }} className="contents">
           <DataGrid
             handleRef={gridRef}
             ariaLabel="Hands"
@@ -461,6 +473,7 @@ export default function HandExplorer({
             onSelectionChange={handleSelectionChange}
             onRowClick={handleRowClick}
             onRowActivate={handleRowClick}
+            renderRowMenu={renderRowMenu}
             defaultHiddenColumns={defaultHiddenColumns}
             loading={loading || isPlaceholderData}
             persistKey="hands"
@@ -468,6 +481,7 @@ export default function HandExplorer({
             maxHeight={gridMaxHeight}
             className="min-h-0 flex-1"
           />
+          </div>
 
           {data && (
             <Pagination
@@ -479,6 +493,16 @@ export default function HandExplorer({
             />
           )}
         </>
+      )}
+
+      {picker && (
+        <TagPickerPopover
+          key={picker.handId}
+          handId={picker.handId}
+          initialTags={hands.find((h) => h.id === picker.handId)?.tags ?? []}
+          point={picker}
+          onClose={() => setPicker(null)}
+        />
       )}
 
       {/* Drawer */}

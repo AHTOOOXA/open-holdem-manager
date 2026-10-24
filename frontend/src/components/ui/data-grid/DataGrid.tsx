@@ -75,6 +75,7 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import { ArrowDown, ArrowUp } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { moneyClass } from '@/lib/format';
+import { ContextMenu, ContextMenuContent, ContextMenuTrigger } from '@/components/ui/context-menu';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ColumnPicker } from './ColumnPicker';
@@ -135,6 +136,8 @@ export interface DataGridProps<T extends RowData> {
   onSelectionChange?: (ids: string[]) => void;
   onRowClick?: (row: T, event: React.MouseEvent<HTMLTableRowElement>) => void;
   onRowActivate?: (row: T) => void;
+  /** Right-click menu of a body row: return ContextMenuItem children (rows without a menu keep the browser's). */
+  renderRowMenu?: (row: T) => ReactNode;
   persistKey?: string;
   /** Column ids hidden until the user stores their own choice (stored prefs always win). */
   defaultHiddenColumns?: readonly string[];
@@ -245,6 +248,7 @@ export function DataGrid<T extends RowData>({
   onSelectionChange,
   onRowClick,
   onRowActivate,
+  renderRowMenu,
   persistKey,
   defaultHiddenColumns = NO_COLUMNS,
   columnPicker = true,
@@ -736,6 +740,7 @@ export function DataGrid<T extends RowData>({
     onRowClick?.(row.original, e);
   });
   const onRowActivateInner = useStableCallback((row: Row<DataGridFeatures, T>) => onRowActivate?.(row.original));
+  const renderMenuInner = useStableCallback((row: Row<DataGridFeatures, T>) => renderRowMenu?.(row.original));
   const onRowToggle = useStableCallback((id: string) => select(id, { toggle: true }));
   const measure = virtual ? virtualizer.measureElement : undefined;
 
@@ -873,6 +878,7 @@ export function DataGrid<T extends RowData>({
                   onClickRow={onRowClickInner}
                   onActivateRow={onRowActivateInner}
                   onToggleRow={onRowToggle}
+                  renderMenu={renderRowMenu ? renderMenuInner : undefined}
                 />
               ))}
               {padBottom > 0 && (
@@ -970,6 +976,7 @@ interface GridRowProps<T extends RowData> {
   onClickRow: (row: Row<DataGridFeatures, T>, e: React.MouseEvent<HTMLTableRowElement>) => void;
   onActivateRow: (row: Row<DataGridFeatures, T>) => void;
   onToggleRow: (id: string) => void;
+  renderMenu?: (row: Row<DataGridFeatures, T>) => ReactNode;
 }
 
 /**
@@ -995,6 +1002,7 @@ function GridRowInner<T extends RowData>({
   onClickRow,
   onActivateRow,
   onToggleRow,
+  renderMenu,
 }: GridRowProps<T>) {
   const cells = row.getVisibleCells();
   const stateBg = isSelected ? 'bg-selection' : '';
@@ -1004,7 +1012,7 @@ function GridRowInner<T extends RowData>({
       ? 'group-hover/row:bg-linear-to-r group-hover/row:from-overlay-hover group-hover/row:to-overlay-hover'
       : '';
   const line = rowLines && 'border-b border-border-subtle';
-  return (
+  const tr = (
     <tr
       data-row-index={index}
       data-row-id={row.id}
@@ -1070,6 +1078,13 @@ function GridRowInner<T extends RowData>({
       })}
       <td aria-hidden className={cn(stateBg, line, CELL_TRANSITION, RING_LAST)} />
     </tr>
+  );
+  if (!renderMenu) return tr;
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger asChild>{tr}</ContextMenuTrigger>
+      <ContextMenuContent>{renderMenu(row)}</ContextMenuContent>
+    </ContextMenu>
   );
 }
 

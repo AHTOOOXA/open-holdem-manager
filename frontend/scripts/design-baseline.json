@@ -63,15 +63,6 @@
   "src/components/hands/replayer/ReplayerControls.tsx": {
     "text-arbitrary": 4
   },
-  "src/components/hands/tagColors.ts": {
-    "hex": 7
-  },
-  "src/components/hands/TagPicker.tsx": {
-    "text-arbitrary": 3
-  },
-  "src/components/hands/TagPill.tsx": {
-    "text-arbitrary": 1
-  },
   "src/components/LeakSummaryPanel.tsx": {
     "text-arbitrary": 7
   },

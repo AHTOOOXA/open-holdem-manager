@@ -1,3 +1,4 @@
+import type { TagRef } from '@/lib/marked/types';
 import { chainParam } from '@/lib/reports/api';
 import type { Step } from '@/lib/reports/types';
 const BASE = '/api';
@@ -409,7 +410,8 @@ export interface HandSummary {
   all_in_ev_bb: number;
   rit_boards: number;
   is_cashout: boolean;
-  tags: string[];
+  marked: boolean;
+  tags: TagRef[];
   preflop_actions: ActionItem[];
   flop_cards: string[];
   flop_pot: number;
@@ -472,13 +474,9 @@ export interface HandDetail {
   rit_boards: number;
   is_cashout: boolean;
   actions: HandAction[];
-  tags: string[];
+  marked: boolean;
+  tags: TagRef[];
   note: string | null;
-}
-
-export interface TagCount {
-  tag: string;
-  count: number;
 }
 
 export interface HandListParams {
@@ -489,7 +487,10 @@ export interface HandListParams {
   position?: string;
   stakes?: string;
   result?: string;
-  tags?: string;
+  /** Marked (true) or not marked (false) hands only. */
+  marked?: boolean;
+  /** Hands carrying any of these tags (implies marked). */
+  tag_ids?: number[];
   date_from?: string;
   date_to?: string;
   search?: string;
@@ -509,7 +510,8 @@ export async function getHands(params?: HandListParams): Promise<HandListRespons
   setPositionParam(sp, params?.position);
   if (params?.stakes) sp.set('stakes', params.stakes);
   if (params?.result) sp.set('result', params.result);
-  if (params?.tags) sp.set('tags', params.tags);
+  if (params?.marked !== undefined) sp.set('marked', String(params.marked));
+  if (params?.tag_ids?.length) sp.set('tag_ids', params.tag_ids.join(','));
   if (params?.date_from) sp.set('date_from', params.date_from);
   if (params?.date_to) sp.set('date_to', params.date_to);
   if (params?.search) sp.set('search', params.search);
@@ -530,34 +532,6 @@ export async function getHandDetail(handId: string): Promise<HandDetail> {
   _addWorkspaceParam(sp);
   const res = await fetch(`${BASE}/hands/${encodeURIComponent(handId)}?${sp}`);
   if (!res.ok) throw new Error(`Hand detail failed: ${res.statusText}`);
-  return res.json();
-}
-
-export async function addTag(handId: string, tag: string): Promise<void> {
-  const sp = new URLSearchParams();
-  _addWorkspaceParam(sp);
-  const res = await fetch(`${BASE}/hands/${encodeURIComponent(handId)}/tags?${sp}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ tag }),
-  });
-  if (!res.ok) throw new Error(`Add tag failed: ${res.statusText}`);
-}
-
-export async function removeTag(handId: string, tag: string): Promise<void> {
-  const sp = new URLSearchParams();
-  _addWorkspaceParam(sp);
-  const res = await fetch(`${BASE}/hands/${encodeURIComponent(handId)}/tags/${encodeURIComponent(tag)}?${sp}`, {
-    method: 'DELETE',
-  });
-  if (!res.ok) throw new Error(`Remove tag failed: ${res.statusText}`);
-}
-
-export async function getTags(): Promise<TagCount[]> {
-  const sp = new URLSearchParams();
-  _addWorkspaceParam(sp);
-  const res = await fetch(`${BASE}/tags?${sp}`);
-  if (!res.ok) throw new Error(`Tags failed: ${res.statusText}`);
   return res.json();
 }
 

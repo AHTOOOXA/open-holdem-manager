@@ -1,11 +1,12 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { HandDetail } from '@/lib/api';
-import { getHandDetail, addTag, removeTag, updateNote } from '@/lib/api';
+import { getHandDetail, updateNote } from '@/lib/api';
 import { CardPair } from './CardDisplay';
 import HandActionsDisplay from './HandActions';
 import HandReplayer from './replayer/HandReplayer';
-import TagPill from './TagPill';
-import TagPicker from './TagPicker';
+import TagChip from '@/components/marked/TagChip';
+import TagPickerPopover from '@/components/marked/TagPickerPopover';
+import { useMarkHand, useTagDefs } from '@/components/marked/useMarkHand';
 import { formatStakes } from '@/lib/utils';
 import { getShareUrl, anonymizeHand } from '@/lib/hand-codec';
 import PlayerTypeBadge from '@/components/PlayerTypeBadge';
@@ -96,17 +97,23 @@ export default function HandDrawer({
     return () => document.removeEventListener('keydown', handleKey);
   }, [onClose, onPrev, onNext]);
 
-  const handleAddTag = async (tag: string) => {
-    if (!hand) return;
-    await addTag(hand.id, tag);
-    setHand({ ...hand, tags: [...hand.tags, tag] });
-    onTagsChanged();
-  };
+  const { mark, unmark } = useMarkHand();
+  const tagDefCount = useTagDefs().length;
+  const [pickerOpen, setPickerOpen] = useState(false);
 
-  const handleRemoveTag = async (tag: string) => {
+  const handleMark = async () => {
     if (!hand) return;
-    await removeTag(hand.id, tag);
-    setHand({ ...hand, tags: hand.tags.filter((t) => t !== tag) });
+    const st = await mark(hand.id);
+    if (st) { setHand({ ...hand, marked: st.marked, tags: st.tags }); onTagsChanged(); }
+  };
+  const handleUnmark = async () => {
+    if (!hand) return;
+    if (await unmark(hand.id)) { setHand({ ...hand, marked: false, tags: [] }); onTagsChanged(); }
+  };
+  const handlePickerClose = () => {
+    setPickerOpen(false);
+    // the picker saves as it goes; refresh the drawer's own copy
+    void loadHand();
     onTagsChanged();
   };
 
@@ -268,17 +275,35 @@ export default function HandDrawer({
                 </>
               )}
 
-              {/* ── Tags (all views) ─────────────────────────────── */}
+              {/* ── Marked state + tags (all views) ──────────────── */}
               <div className="mb-3">
-                <div className="flex items-center gap-2 flex-wrap">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-xs text-muted-foreground">{hand.marked ? 'Marked' : 'Not marked'}</span>
                   {hand.tags.map((t) => (
-                    <TagPill key={t} tag={t} onRemove={() => handleRemoveTag(t)} />
+                    <TagChip key={t.id} tag={t} size="md" />
                   ))}
-                  <TagPicker
-                    currentTags={hand.tags}
-                    onAdd={handleAddTag}
-                    onRemove={handleRemoveTag}
-                  />
+                  {!hand.marked && (
+                    <Button variant="outline" size="sm" className="h-6 px-2 text-xs" onClick={handleMark}>
+                      Mark
+                    </Button>
+                  )}
+                  {tagDefCount > 0 && (
+                    <span className="relative inline-flex">
+                      <Button variant="outline" size="sm" className="h-6 px-2 text-xs" onClick={() => setPickerOpen(true)}>
+                        Tags…
+                      </Button>
+                      {pickerOpen && (
+                        <TagPickerPopover handId={hand.id} initialTags={hand.tags} onClose={handlePickerClose}>
+                          <span aria-hidden className="absolute inset-0" />
+                        </TagPickerPopover>
+                      )}
+                    </span>
+                  )}
+                  {hand.marked && (
+                    <Button variant="outline" size="sm" className="h-6 px-2 text-xs" onClick={handleUnmark}>
+                      Unmark
+                    </Button>
+                  )}
                 </div>
               </div>
 

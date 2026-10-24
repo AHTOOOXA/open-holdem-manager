@@ -1,6 +1,7 @@
 import type { CSSProperties, ReactNode } from 'react';
 import { cn, formatStakes } from '@/lib/utils';
 import { usd } from '@/lib/format';
+import TagChip from '@/components/marked/TagChip';
 import type { ActionToken, HandRow, StreetCell } from '@/lib/api-general';
 import {
   cardParts,
@@ -185,7 +186,7 @@ export default function GeneralHandRow({ row, expandedStreets, onExpandStreet, s
       <Td>
         <button
           type="button"
-          className="flex cursor-pointer rounded-control outline-none focus-visible:ring-2 focus-visible:ring-primary"
+          className="inline-flex cursor-pointer rounded-control align-middle outline-none focus-visible:ring-2 focus-visible:ring-primary"
           aria-label={`Open hand${row.hole_cards.length ? ` ${row.hole_cards.map(cardName).join(', ')}` : ''}${row.played_at ? `, ${formatHandDate(row.played_at)}` : ''}`}
           onClick={(e) => {
             e.stopPropagation();
@@ -194,6 +195,14 @@ export default function GeneralHandRow({ row, expandedStreets, onExpandStreet, s
         >
           {row.hole_cards.length ? <CardGroup cards={row.hole_cards} /> : <span className="text-subtle-foreground">??</span>}
         </button>
+        {row.tags && row.tags.length > 0 && (
+          <span className="ml-2 inline-flex items-center gap-1 align-middle">
+            {row.tags.slice(0, 2).map((t) => (
+              <TagChip key={t.id} tag={t} />
+            ))}
+            {row.tags.length > 2 && <span className="text-2xs text-muted-foreground">+{row.tags.length - 2}</span>}
+          </span>
+        )}
       </Td>
       {row.error ? (
         // Spans exactly the street cells: preflop actions + (cards, pot, actions) x 3 streets.

@@ -1,3 +1,4 @@
+import type { TagRef } from '@/lib/marked/types';
 /**
  * API client + types for the H2N-style General screen.
  *
@@ -255,6 +256,9 @@ export interface HandRow {
   won_bb: number | null;
   ev_diff_bb: number | null;
   error: string | null;
+  /** Marked-hand state of this player's row (absent when the backend does not send it). */
+  marked?: boolean;
+  tags?: TagRef[];
 }
 
 export interface CellHands {

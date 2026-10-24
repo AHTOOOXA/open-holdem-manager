@@ -109,6 +109,7 @@ function fromCompact(c: CompactHand): HandDetail {
     players,
     board,
     actions,
+    marked: false,
     tags: [],
     note: null,
     extra_boards: [],

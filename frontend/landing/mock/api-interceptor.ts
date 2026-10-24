@@ -6,7 +6,7 @@
 
 import { mockGraphResponse, mockFilterOptions, mockBreakdown } from './graph-data';
 import { mockHeroStats, mockDriftResponse } from './stats-data';
-import { mockHandListResponse, mockHandDetails, mockTags } from './hands-data';
+import { mockHandListResponse, mockHandDetails, mockTagDefs } from './hands-data';
 
 const originalFetch = window.fetch.bind(window);
 
@@ -66,8 +66,8 @@ const routes: [RegExp, RouteHandler][] = [
     return json(fallback);
   }],
 
-  // Tags
-  [/^\/api\/tags$/, () => json(mockTags)],
+  // Tag catalogue
+  [/^\/api\/tag-defs$/, () => json(mockTagDefs)],
 
   // Stat detail endpoints — return minimal data
   [/^\/api\/stats\/detail\//, () => json({
