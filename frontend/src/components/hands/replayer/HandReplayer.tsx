@@ -4,10 +4,28 @@ import { useReplayerState } from './useReplayerState';
 import PokerTable from './PokerTable';
 import ReplayerControls from './ReplayerControls';
 import { fixed } from '@/lib/format';
+import { QUICK_REPLAY_STEP_MS } from '@/lib/hands/gestures';
 
-export default function HandReplayer({ hand }: { hand: HandDetail }) {
+export default function HandReplayer({
+  hand,
+  quick = false,
+  onManualControl,
+}: {
+  hand: HandDetail;
+  /** Quick-replay mode: starts playing, one step per QUICK_REPLAY_STEP_MS, no document-level keys; any control stops it. */
+  quick?: boolean;
+  onManualControl?: () => void;
+}) {
   const [showBb, setShowBb] = useState(true);
-  const replayer = useReplayerState(hand);
+  const replayer = useReplayerState(hand, quick ? { autoPlay: true, stepMs: QUICK_REPLAY_STEP_MS } : undefined);
+  // Any manual control stops the auto-play first, then does its own thing
+  const manual = <A extends unknown[]>(fn: (...args: A) => void) => (...args: A) => {
+    if (quick) {
+      replayer.pause();
+      onManualControl?.();
+    }
+    fn(...args);
+  };
 
   const hero = hand.players.find(p => p.is_hero);
   const heroWonBb = hero?.won_bb ?? 0;
@@ -48,13 +66,14 @@ export default function HandReplayer({ hand }: { hand: HandDetail }) {
         streetLabel={replayer.current.streetLabel}
         showBb={showBb}
         onTogglePlay={replayer.togglePlay}
-        onStepForward={replayer.stepForward}
-        onStepBack={replayer.stepBack}
-        onGoToStart={replayer.goToStart}
-        onGoToEnd={replayer.goToEnd}
-        onGoToStep={replayer.goToStep}
-        onSetSpeed={replayer.setSpeed}
+        onStepForward={manual(replayer.stepForward)}
+        onStepBack={manual(replayer.stepBack)}
+        onGoToStart={manual(replayer.goToStart)}
+        onGoToEnd={manual(replayer.goToEnd)}
+        onGoToStep={manual(replayer.goToStep)}
+        onSetSpeed={manual(replayer.setSpeed)}
         onSetShowBb={setShowBb}
+        keyboard={!quick}
       />
     </div>
   );

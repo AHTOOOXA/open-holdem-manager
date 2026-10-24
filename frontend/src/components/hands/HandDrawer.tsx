@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { HandDetail } from '@/lib/api';
 import { getHandDetail, updateNote } from '@/lib/api';
-import { CardPair } from './CardDisplay';
+import { HandPlayersTable, HandResultLine } from './HandTextParts';
 import HandActionsDisplay from './HandActions';
 import HandReplayer from './replayer/HandReplayer';
 import TagChip from '@/components/marked/TagChip';
@@ -9,24 +9,14 @@ import TagPickerPopover from '@/components/marked/TagPickerPopover';
 import { useMarkHand, useTagDefs } from '@/components/marked/useMarkHand';
 import { formatStakes } from '@/lib/utils';
 import { getShareUrl, anonymizeHand } from '@/lib/hand-codec';
-import PlayerTypeBadge from '@/components/PlayerTypeBadge';
 import { RitBadge, CashoutBadge } from '@/components/hands/HandTypeBadge';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { Share2, Check, EyeOff, Eye } from 'lucide-react';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
-import { fixed } from '@/lib/format';
-
-type ViewMode = 'visual' | 'text' | 'raw';
+export type HandViewMode = 'visual' | 'text' | 'raw';
+type ViewMode = HandViewMode;
 
 /* Shared meta header used in visual + text views */
 function MetaHeader({ hand }: { hand: HandDetail }) {
@@ -55,6 +45,8 @@ export default function HandDrawer({
   onNext,
   onTagsChanged,
   onCloseAutoFocus,
+  initialMode = 'visual',
+  evBb,
 }: {
   handId: string;
   /** The row's player (hand lists that mix players). */
@@ -65,10 +57,14 @@ export default function HandDrawer({
   onTagsChanged: () => void;
   /** Radix focus-restore hook: preventDefault() it to place focus yourself. */
   onCloseAutoFocus?: (event: Event) => void;
+  /** View the drawer opens in (the replayer by default). */
+  initialMode?: HandViewMode;
+  /** The row's all-in EV (bb), shown on the result line when it differs from the result. */
+  evBb?: number | null;
 }) {
   const [hand, setHand] = useState<HandDetail | null>(null);
   const [loading, setLoading] = useState(true);
-  const [viewMode, setViewMode] = useState<ViewMode>('visual');
+  const [viewMode, setViewMode] = useState<ViewMode>(initialMode);
   const [note, setNote] = useState('');
   const [noteSaving, setNoteSaving] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -234,53 +230,15 @@ export default function HandDrawer({
 
                   {/* Players — position-first */}
                   <div className="mb-4">
-                    <Table>
-                      <TableHeader>
-                        <TableRow className="text-[13px]">
-                          <TableHead className="py-1.5 px-2 h-auto w-[60px]">Pos</TableHead>
-                          <TableHead className="py-1.5 px-2 h-auto">Player</TableHead>
-                          <TableHead className="py-1.5 px-2 h-auto text-right">Stack</TableHead>
-                          <TableHead className="py-1.5 px-2 h-auto">Cards</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {displayHand!.players.map((p) => (
-                          <TableRow
-                            key={p.seat}
-                            className={`text-[13px] ${p.is_hero ? 'bg-primary/5' : ''}`}
-                          >
-                            <TableCell className="py-1.5 px-2">
-                              <span className="text-[12px] font-bold text-text bg-surface-hover rounded px-2 py-0.5">
-                                {p.position}
-                              </span>
-                            </TableCell>
-                            <TableCell className={`py-1.5 px-2 ${p.is_hero ? 'font-semibold text-primary' : 'text-text-muted'}`}>
-                              <span className="flex items-center gap-1.5">
-                                {p.username}
-                                {!p.is_hero && p.player_type && p.player_type !== 'UNK' && (
-                                  <PlayerTypeBadge type={p.player_type} />
-                                )}
-                              </span>
-                            </TableCell>
-                            <TableCell className="py-1.5 px-2 text-right">
-                              {fixed(p.stack_bb, 1)}
-                            </TableCell>
-                            <TableCell className="py-1.5 px-2">
-                              <CardPair card1={p.card1} card2={p.card2} />
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
+                    <HandPlayersTable players={displayHand!.players} />
                   </div>
 
                   {/* Actions */}
                   <HandActionsDisplay actions={displayHand!.actions} board={displayHand!.board} extraBoards={displayHand!.extra_boards} />
 
                   {/* Result */}
-                  <div className={`mt-1 mb-4 text-[14px] font-bold ${heroWonBb >= 0 ? 'text-green' : 'text-red'}`}>
-                    Hero {heroWonBb >= 0 ? 'wins' : 'loses'} {fixed(Math.abs(heroWonBb), 1)} BB
-                    {hand.is_cashout && <span className="text-amber-400 ml-1">(EV Cashout)</span>}
+                  <div className="mt-1 mb-4">
+                    <HandResultLine wonBb={heroWonBb} evBb={evBb} isCashout={hand.is_cashout} />
                   </div>
                 </>
               )}

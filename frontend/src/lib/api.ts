@@ -548,12 +548,9 @@ export interface HandListParams {
   chain?: Step[];
 }
 
-export async function getHands(params?: HandListParams): Promise<HandListResponse> {
+/** Query string shared by the hand list and the hand export (no paging, no workspace). */
+export function handListFilterQuery(params?: HandListParams): URLSearchParams {
   const sp = new URLSearchParams();
-  if (params?.page) sp.set('page', String(params.page));
-  if (params?.per_page) sp.set('per_page', String(params.per_page));
-  if (params?.sort) sp.set('sort', params.sort);
-  if (params?.order) sp.set('order', params.order);
   setPositionParam(sp, params?.position);
   if (params?.stakes) sp.set('stakes', params.stakes);
   if (params?.result) sp.set('result', params.result);
@@ -568,6 +565,37 @@ export async function getHands(params?: HandListParams): Promise<HandListRespons
   if (params?.stat_key) sp.set('stat_key', params.stat_key);
   if (params?.player_id) sp.set('player_id', String(params.player_id));
   if (params?.chain) sp.set('chain', chainParam(params.chain));
+  return sp;
+}
+
+/**
+ * URL of GET /api/hands/export for a list's current params: every filter incl. chain / marked / tag_ids /
+ * player_id plus sort and order; never page / per_page (the export is the whole filtered list).
+ */
+export function handsExportUrl(params: HandListParams | undefined, workspaceId: number): string {
+  const sp = new URLSearchParams();
+  sp.set('workspace_id', String(workspaceId));
+  if (params?.sort) sp.set('sort', params.sort);
+  if (params?.order) sp.set('order', params.order);
+  for (const [k, v] of handListFilterQuery(params)) sp.append(k, v);
+  sp.set('format', 'txt');
+  return `${BASE}/hands/export?${sp}`;
+}
+
+/** Download the whole filtered list as text. Resolves to the hand-history text and whether the server capped it. */
+export async function exportHandsText(params: HandListParams | undefined): Promise<{ blob: Blob; truncated: boolean }> {
+  const res = await fetch(handsExportUrl(params, _getWorkspaceId()));
+  if (!res.ok) throw new Error(`Export failed: ${res.statusText}`);
+  return { blob: await res.blob(), truncated: res.headers.get('X-OHM-Truncated') === '1' };
+}
+
+export async function getHands(params?: HandListParams): Promise<HandListResponse> {
+  const sp = new URLSearchParams();
+  if (params?.page) sp.set('page', String(params.page));
+  if (params?.per_page) sp.set('per_page', String(params.per_page));
+  if (params?.sort) sp.set('sort', params.sort);
+  if (params?.order) sp.set('order', params.order);
+  for (const [k, v] of handListFilterQuery(params)) sp.append(k, v);
   _addWorkspaceParam(sp);
   const res = await fetch(`${BASE}/hands?${sp}`);
   if (!res.ok) throw new Error(`Hands failed: ${res.statusText}`);

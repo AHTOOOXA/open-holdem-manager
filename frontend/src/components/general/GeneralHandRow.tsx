@@ -2,6 +2,7 @@ import type { CSSProperties, ReactNode } from 'react';
 import { cn, formatStakes } from '@/lib/utils';
 import { usd } from '@/lib/format';
 import TagChip from '@/components/marked/TagChip';
+import { ContextMenu, ContextMenuContent, ContextMenuTrigger } from '@/components/ui/context-menu';
 import type { ActionToken, HandRow, StreetCell } from '@/lib/api-general';
 import {
   cardParts,
@@ -150,6 +151,11 @@ interface GeneralHandRowProps {
   onExpandStreet: (street: HandStreet) => void;
   selected: boolean;
   onOpen: (handId: string) => void;
+  /** Double click: open the replayer. */
+  onActivate?: (handId: string) => void;
+  /** Right-click menu items (ContextMenuItem children). */
+  menu?: ReactNode;
+  onMenuCloseAutoFocus?: (event: Event) => void;
 }
 
 /**
@@ -159,10 +165,10 @@ interface GeneralHandRowProps {
  * position; the stat owner's are underlined with a dashed line. Streets after
  * the player folded stay blank.
  */
-export default function GeneralHandRow({ row, expandedStreets, onExpandStreet, selected, onOpen }: GeneralHandRowProps) {
+export default function GeneralHandRow({ row, expandedStreets, onExpandStreet, selected, onOpen, onActivate, menu, onMenuCloseAutoFocus }: GeneralHandRowProps) {
   const won = row.won_bb;
   const ev = row.ev_diff_bb;
-  return (
+  const tr = (
     // Plain table row: the whole row is a mouse target for convenience, while
     // keyboard and screen-reader users get one real button (the hole cards).
     // The +N buttons sit in other cells, so no control is nested in another.
@@ -170,6 +176,7 @@ export default function GeneralHandRow({ row, expandedStreets, onExpandStreet, s
       data-hand-id={row.hand_id}
       aria-current={selected ? 'true' : undefined}
       onClick={() => onOpen(row.hand_id)}
+      onDoubleClick={() => onActivate?.(row.hand_id)}
       className={cn(
         'cursor-pointer border-b border-border',
         selected ? 'bg-selection' : 'hover:bg-overlay-hover focus-within:bg-overlay-hover',
@@ -258,5 +265,12 @@ export default function GeneralHandRow({ row, expandedStreets, onExpandStreet, s
       </Td>
       <Td className="pr-4 text-muted-foreground">{formatHandDate(row.played_at)}</Td>
     </tr>
+  );
+  if (!menu) return tr;
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger asChild>{tr}</ContextMenuTrigger>
+      <ContextMenuContent onCloseAutoFocus={onMenuCloseAutoFocus}>{menu}</ContextMenuContent>
+    </ContextMenu>
   );
 }

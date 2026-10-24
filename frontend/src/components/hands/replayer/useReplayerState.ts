@@ -354,10 +354,18 @@ function buildSnapshots(hand: HandDetail): Snapshot[] {
 
 // ── Hook ─────────────────────────────────────────────────────────────
 
-export function useReplayerState(hand: HandDetail): ReplayerState {
+export interface ReplayerOptions {
+  /** Start playing as soon as the hand is shown (quick replay). */
+  autoPlay?: boolean;
+  /** Fixed delay between steps in ms, ignoring speed and street pauses. */
+  stepMs?: number;
+}
+
+export function useReplayerState(hand: HandDetail, options: ReplayerOptions = {}): ReplayerState {
+  const { autoPlay = false, stepMs } = options;
   const snapshots = useMemo(() => buildSnapshots(hand), [hand]);
   const [currentStep, setCurrentStep] = useState(0);
-  const [isPlaying, setIsPlaying] = useState(false);
+  const [isPlaying, setIsPlaying] = useState(autoPlay);
   const [speed, setSpeed] = useState(1);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -415,7 +423,7 @@ export function useReplayerState(hand: HandDetail): ReplayerState {
 
     const nextSnapshot = snapshots[currentStep + 1];
     const baseDelay = 800 / speed;
-    const delay = nextSnapshot?.isStreetTransition ? baseDelay * 1.5 : baseDelay;
+    const delay = stepMs ?? (nextSnapshot?.isStreetTransition ? baseDelay * 1.5 : baseDelay);
 
     timerRef.current = setTimeout(() => {
       setCurrentStep(s => {
@@ -428,15 +436,15 @@ export function useReplayerState(hand: HandDetail): ReplayerState {
     }, delay);
 
     return () => clearTimer();
-  }, [isPlaying, currentStep, maxStep, speed, snapshots, clearTimer]);
+  }, [isPlaying, currentStep, maxStep, speed, stepMs, snapshots, clearTimer]);
 
   // Reset when hand changes
   const handId = hand.id;
   useEffect(() => {
     setCurrentStep(0); // eslint-disable-line react-hooks/set-state-in-effect -- legitimate reset on prop change
-    setIsPlaying(false);
+    setIsPlaying(autoPlay);
     clearTimer();
-  }, [handId, clearTimer]);
+  }, [handId, autoPlay, clearTimer]);
 
   return {
     snapshots,

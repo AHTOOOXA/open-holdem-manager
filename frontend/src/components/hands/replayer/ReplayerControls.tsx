@@ -25,6 +25,8 @@ interface ReplayerControlsProps {
   onGoToStep: (step: number) => void;
   onSetSpeed: (speed: number) => void;
   onSetShowBb: (showBb: boolean) => void;
+  /** Space / arrows / Home / End drive the replayer (default). Off for popovers that must not grab list keys. */
+  keyboard?: boolean;
 }
 
 export default function ReplayerControls({
@@ -42,6 +44,7 @@ export default function ReplayerControls({
   onGoToStep,
   onSetSpeed,
   onSetShowBb,
+  keyboard = true,
 }: ReplayerControlsProps) {
   const handleKey = useCallback(
     (e: KeyboardEvent) => {
@@ -73,9 +76,10 @@ export default function ReplayerControls({
   );
 
   useEffect(() => {
+    if (!keyboard) return;
     document.addEventListener('keydown', handleKey);
     return () => document.removeEventListener('keydown', handleKey);
-  }, [handleKey]);
+  }, [handleKey, keyboard]);
 
   const progress = totalSteps > 0 ? (currentStep / totalSteps) * 100 : 0;
 

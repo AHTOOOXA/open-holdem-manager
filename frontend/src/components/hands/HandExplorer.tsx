@@ -18,11 +18,19 @@ import { CardBoxPair, CardBoxRow, CardBox } from '@/components/hands/CardDisplay
 import { RitBadge, CashoutBadge } from '@/components/hands/HandTypeBadge';
 import Actions, { actionTitle, formatBb } from '@/components/hands/Actions';
 import TagChip from '@/components/marked/TagChip';
-import MarkMenuItems from '@/components/marked/MarkMenuItems';
 import TagPickerPopover from '@/components/marked/TagPickerPopover';
 import { markedListParams } from '@/lib/marked/logic';
 import Pagination from '@/components/hands/Pagination';
-import HandDrawer from '@/components/hands/HandDrawer';
+import HandDrawer, { type HandViewMode } from '@/components/hands/HandDrawer';
+import HandPanel from '@/components/hands/HandPanel';
+import HandHistoryDialog from '@/components/hands/HandHistoryDialog';
+import HandRowMenuItems from '@/components/hands/HandRowMenuItems';
+import QuickReplay from '@/components/hands/QuickReplay';
+import { downloadHandsExport } from '@/components/hands/handListActions';
+import { canDockPanel, neighbourId } from '@/lib/hands/gestures';
+import { Button } from '@/components/ui/button';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { Download } from 'lucide-react';
 import { DataGrid, createDataGridColumns, type DataGridHandle, type GridSorting } from '@/components/ui/data-grid';
 import { fixed } from '@/lib/format';
 
@@ -65,7 +73,7 @@ function StreetActions({ items, precision, trimFolds }: { items: HandSummary['pr
 }
 
 /** Hand list columns. Sortable ones (stakes, won_usd, played_at) use the API's sort keys as ids; display columns never sort. */
-function handColumns(precision: 0 | 1, openTag: (id: number) => void) {
+function handColumns(precision: 0 | 1, openTag: (id: number) => void, fixedPlayerId?: number) {
   const potCell = (has: (h: HandSummary) => boolean, pot: (h: HandSummary) => number) =>
     function PotCell({ row }: { row: { original: HandSummary } }) {
       return has(row.original) ? formatBb(pot(row.original), precision) : '';
@@ -84,6 +92,14 @@ function handColumns(precision: 0 | 1, openTag: (id: number) => void) {
           ))}
         </div>
       ),
+    }),
+    col.display({
+      id: 'replay',
+      header: '',
+      size: 40,
+      enableSorting: false,
+      meta: { title: 'Quick replay', align: 'center', className: 'px-1' },
+      cell: ({ row: { original: h } }) => <QuickReplay handId={h.id} playerId={h.player_id ?? fixedPlayerId} />,
     }),
     col.display({
       id: 'preflop',
@@ -247,6 +263,20 @@ export default function HandExplorer({
   });
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [drawerMode, setDrawerMode] = useState<HandViewMode>('visual');
+  const [panelOpen, setPanelOpen] = useState(false);
+  const [historyFor, setHistoryFor] = useState<{ id: string; playerId?: number } | null>(null);
+  // The docked hand panel needs room: measure the explorer, fall back to the drawer when narrow
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [width, setWidth] = useState<number | null>(null);
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => setWidth(entries[0]?.contentRect.width ?? null));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const docked = canDockPanel(width);
   const [showLegend, setShowLegend] = useState(false);
   const [bbPrecision, setBbPrecision] = useState<0 | 1>(1);
 
@@ -330,30 +360,61 @@ export default function HandExplorer({
   const handleFilterChange = (f: FilterState) => { setFilters(f); setPage(1); };
 
   const navigate = useNavigate();
-  const columns = useMemo(() => handColumns(bbPrecision, (id) => navigate(`/marked?tag=${id}`)), [bbPrecision, navigate]);
+  const fixedPlayerId = fixedParams?.player_id;
+  const columns = useMemo(() => handColumns(bbPrecision, (id) => navigate(`/marked?tag=${id}`), fixedPlayerId), [bbPrecision, navigate, fixedPlayerId]);
   // Right-click menu + tag picker (anchored where the menu was opened)
+  const openDrawer = useCallback((id: string, mode: HandViewMode = 'visual') => {
+    setSelectedId(id);
+    setDrawerMode(mode);
+    setDrawerOpen(true);
+  }, []);
+  // "Show Hand Details": the docked panel, or the drawer's Text view where there is no room
+  const showDetails = useCallback((id: string) => {
+    if (docked) {
+      setSelectedId(id);
+      setPanelOpen(true);
+    } else openDrawer(id, 'text');
+  }, [docked, openDrawer]);
+  // Export Hands…: the whole filtered list (current filters, chain, sort), not just this page
+  const exportParams = useRef<HandListParams>({});
+  const [exporting, setExporting] = useState(false);
+  const exportList = useCallback(async () => {
+    setExporting(true);
+    try {
+      await downloadHandsExport(exportParams.current);
+    } finally {
+      setExporting(false);
+    }
+  }, []);
   const [picker, setPicker] = useState<{ handId: string; playerId?: number; x: number; y: number } | null>(null);
   const lastPointer = useRef({ x: 0, y: 0 });
   // The row menu's FocusScope would hand focus back to the row on close, and the (non-modal) picker dismisses
   // on focus-outside; while the picker is opening, keep focus where the picker puts it.
   const pickerOpening = useRef(false);
-  const fixedPlayerId = fixedParams?.player_id;
   const renderRowMenu = useCallback(
     (h: HandSummary) => {
       const playerId = h.player_id ?? fixedPlayerId;
+      const key = handId(h);
       return (
-        <MarkMenuItems
+        <HandRowMenuItems
           handId={h.id}
           playerId={playerId}
           marked={h.marked}
+          onOpenReplayer={() => openDrawer(key)}
+          onShowDetails={() => showDetails(key)}
           onPickTags={(id) => {
             pickerOpening.current = true;
             setPicker({ handId: id, playerId, ...lastPointer.current });
           }}
+          onShowHistory={() => {
+            pickerOpening.current = true;
+            setHistoryFor({ id: h.id, playerId });
+          }}
+          onExport={() => void exportList()}
         />
       );
     },
-    [setPicker, fixedPlayerId],
+    [setPicker, fixedPlayerId, openDrawer, showDetails, exportList],
   );
   const handleRowMenuCloseAutoFocus = useCallback((e: Event) => {
     if (pickerOpening.current) {
@@ -363,7 +424,6 @@ export default function HandExplorer({
   }, []);
   const selectedRowIds = useMemo(() => (selectedId ? [selectedId] : []), [selectedId]);
   const gridRef = useRef<DataGridHandle>(null);
-  const openDrawer = useCallback((id: string) => { setSelectedId(id); setDrawerOpen(true); }, []);
   const closeDrawer = useCallback(() => setDrawerOpen(false), []);
   // Radix would restore focus to the row that opened the drawer; the user may have paged through other hands since,
   // so take over and focus (revealing it if off-screen) the last viewed hand's row instead
@@ -375,15 +435,38 @@ export default function HandExplorer({
     if (id) gridRef.current?.focusRow(id);
   }, []);
   const handleSelectionChange = useCallback((ids: string[]) => setSelectedId(ids[0] ?? null), []);
-  const handleRowClick = useCallback((h: HandSummary) => openDrawer(handId(h)), [openDrawer]);
+  // Single click: the docked panel (drawer when narrow); double click / Enter: the replayer
+  const handleRowClick = useCallback((h: HandSummary) => {
+    if (docked) {
+      setSelectedId(handId(h));
+      setPanelOpen(true);
+    } else openDrawer(handId(h));
+  }, [docked, openDrawer]);
+  const handleRowActivate = useCallback((h: HandSummary) => openDrawer(handId(h)), [openDrawer]);
 
   // A sticky header lets you re-sort / re-filter while scrolled down: start the new result at the top
   const queryKeyJson = JSON.stringify(handsQueryParams);
+  useEffect(() => { exportParams.current = handsQueryParams; });
   useEffect(() => { gridRef.current?.scrollToTop(); }, [queryKeyJson]);
 
   const hands = data?.hands ?? NO_HANDS;
   const selectedIndex = selectedId ? hands.findIndex((h) => handId(h) === selectedId) : -1;
   const selectedHand = selectedIndex >= 0 ? hands[selectedIndex] : undefined;
+
+  const handleGridKeyDown = (e: React.KeyboardEvent) => {
+    if (!panelOpen || drawerOpen) return;
+    const target = e.target as HTMLElement;
+    if (target.closest('[data-slot="popover-content"]')) return;
+    if (e.key === 'Escape') {
+      setPanelOpen(false);
+      if (selectedId) gridRef.current?.focusRow(selectedId);
+    } else if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && !e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey) {
+      // the grid moves its active row; the panel follows the selection
+      const onRow = target.tagName === 'TR' ? target.dataset.rowId ?? null : selectedId;
+      const next = neighbourId(hands.map(handId), onRow ?? selectedId, e.key === 'ArrowDown' ? 1 : -1);
+      if (next) setSelectedId(next);
+    }
+  };
 
   const handlePrev = () => {
     if (selectedIndex > 0) setSelectedId(handId(hands[selectedIndex - 1]));
@@ -408,7 +491,7 @@ export default function HandExplorer({
   }
 
   return (
-    <div className={cn('flex w-full flex-col', className)}>
+    <div ref={rootRef} className={cn('flex w-full flex-col', className)}>
       {/* Header */}
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-3">
@@ -422,6 +505,23 @@ export default function HandExplorer({
       </div>
 
       <div className="mb-2 flex items-center justify-end gap-2">
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-xs"
+                  aria-label="Export hands"
+                  disabled={exporting || !data || data.total === 0}
+                  onClick={() => void exportList()}
+                >
+                  <Download />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Export Hands… (the whole filtered list, .txt)</TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
           <button
             onClick={() => setShowLegend(!showLegend)}
             className="text-[12px] text-text-muted hover:text-text w-[18px] h-[18px] rounded-full border border-border flex items-center justify-center"
@@ -477,7 +577,8 @@ export default function HandExplorer({
           onClearFilters={hasUserFilters ? () => handleFilterChange({ position: [], stakes: [], result: '', marked: '', tagIds: [], date: '', dateFrom: '', dateTo: '', search: '', statFlags: [], quickFilters: [] }) : undefined}
         />
       ) : (
-        <>
+        <div className="flex min-h-0 flex-1 items-start" onKeyDown={handleGridKeyDown}>
+          <div className="flex min-w-0 flex-1 flex-col">
           <div onContextMenuCapture={(e) => { lastPointer.current = { x: e.clientX, y: e.clientY }; }} className="contents">
           <DataGrid
             handleRef={gridRef}
@@ -494,7 +595,7 @@ export default function HandExplorer({
             selectedRowIds={selectedRowIds}
             onSelectionChange={handleSelectionChange}
             onRowClick={handleRowClick}
-            onRowActivate={handleRowClick}
+            onRowActivate={handleRowActivate}
             renderRowMenu={renderRowMenu}
             onRowMenuCloseAutoFocus={handleRowMenuCloseAutoFocus}
             defaultHiddenColumns={defaultHiddenColumns}
@@ -515,7 +616,27 @@ export default function HandExplorer({
               onPerPageChange={(pp) => { setPerPage(pp); setPage(1); }}
             />
           )}
-        </>
+          </div>
+          {docked && panelOpen && selectedId && (
+            <div className="sticky top-0 flex min-h-0 self-start" style={{ maxHeight: gridMaxHeight }}>
+              <HandPanel
+                key={selectedId}
+                handId={selectedHand?.id ?? selectedId.split(':')[0]}
+                playerId={selectedHand?.player_id ?? fixedPlayerId}
+                evBb={selectedHand?.all_in_ev_bb}
+                onClose={() => {
+                  setPanelOpen(false);
+                  gridRef.current?.focusRow(selectedId);
+                }}
+                onReplay={() => openDrawer(selectedId)}
+              />
+            </div>
+          )}
+        </div>
+      )}
+
+      {historyFor && (
+        <HandHistoryDialog handId={historyFor.id} playerId={historyFor.playerId} onClose={() => setHistoryFor(null)} />
       )}
 
       {picker && (
@@ -538,6 +659,8 @@ export default function HandExplorer({
           onCloseAutoFocus={handleCloseAutoFocus}
           onPrev={handlePrev}
           onNext={handleNext}
+          initialMode={drawerMode}
+          evBb={selectedHand?.all_in_ev_bb}
           onTagsChanged={() => { queryClient.invalidateQueries({ queryKey: ['hands'] }); }}
         />
       )}

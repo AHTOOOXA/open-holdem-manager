@@ -1,0 +1,43 @@
+import { useQuery } from '@tanstack/react-query';
+import { Copy } from 'lucide-react';
+import { getHandDetail } from '@/lib/api';
+import { queryKeys } from '@/lib/query-keys';
+import { handHistoryText } from '@/lib/hands/hand-plot';
+import { copyHandHistory } from '@/components/hands/handListActions';
+import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+
+/** "Show Hand History": the hand's original text in monospace with a copy button. */
+export default function HandHistoryDialog({ handId, playerId, onClose }: { handId: string; playerId?: number; onClose: () => void }) {
+  const { data, isError } = useQuery({
+    queryKey: [...queryKeys.hands.detail(handId), playerId ?? null],
+    queryFn: () => getHandDetail(handId, playerId),
+  });
+  const text = data ? handHistoryText(data) : null;
+  return (
+    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            Hand history
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              aria-label="Copy hand history"
+              title="Copy hand history"
+              disabled={text === null}
+              onClick={() => void copyHandHistory(handId, playerId)}
+            >
+              <Copy />
+            </Button>
+          </DialogTitle>
+          <DialogDescription className="font-mono text-xs">{handId}</DialogDescription>
+        </DialogHeader>
+        <pre className="max-h-[60vh] overflow-auto rounded-card border border-border bg-surface-sunken p-3 font-mono text-sm leading-relaxed whitespace-pre-wrap text-foreground">
+          {isError ? 'Could not load the hand.' : !data ? 'Loading…' : (text ?? 'No hand history stored for this hand.')}
+        </pre>
+      </DialogContent>
+    </Dialog>
+  );
+}
