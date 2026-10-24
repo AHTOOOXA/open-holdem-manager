@@ -30,8 +30,7 @@
     "palette": 2
   },
   "src/components/hands/HandDrawer.tsx": {
-    "text-arbitrary": 13,
-    "palette": 1
+    "text-arbitrary": 9
   },
   "src/components/hands/HandExplorer.tsx": {
     "text-arbitrary": 4
