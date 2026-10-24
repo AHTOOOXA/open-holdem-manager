@@ -40,6 +40,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.app_settings import get_app_settings
 from app.date_filters import bound_sql
+from app import marked_hands
+from app.models import TagRef
 from app.db import get_hero_player_id, get_read_cursor
 from app.general_cells import GENERAL_CELLS, ActionCell
 from app.general_filters import cell_steps, resolve_filters
@@ -208,6 +210,8 @@ class HandRow(BaseModel):
     won: Optional[float] = None
     won_bb: Optional[float] = None
     ev_diff_bb: Optional[float] = None
+    marked: bool = False                     # marked for this player (marked hands)
+    tags: list[TagRef] = []                  # the mark's tags, catalogue order
     error: Optional[str] = None
 
 
@@ -1254,6 +1258,8 @@ def compute_hands(db, stat: _Stat, player_id: int, workspace_id: int, filters: t
     total = len(hands)
     page = hands[offset:offset + limit]
     raw = _fetch_raw(db, workspace_id, [h.hand_id for h in page])
+    marked_set, tags_map = marked_hands.marks_for(db, workspace_id, player_id,
+                                                  [h.hand_id for h in page])
     rows: list[HandRow] = []
     for h in page:
         src = raw.get(h.hand_id)
@@ -1281,6 +1287,8 @@ def compute_hands(db, stat: _Stat, player_id: int, workspace_id: int, filters: t
         row.won_bb = h.won_bb
         row.ev_diff_bb = (h.ev_bb - h.won_bb) if h.ev_bb is not None and h.won_bb is not None \
             else None
+        row.marked = h.hand_id in marked_set
+        row.tags = [TagRef(**t) for t in tags_map.get(h.hand_id, [])]
         rows.append(row)
     return CellHands(cell_id=stat.cell_id, total=total, offset=offset, limit=limit, rows=rows)
 

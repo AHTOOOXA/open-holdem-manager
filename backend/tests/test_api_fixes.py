@@ -48,55 +48,8 @@ class TestDateTo:
         assert same_day == all_hands
 
 
-# ── #14: empty tag filters and blank tags ────────────────────────────
-
-class TestTags:
-    @pytest.mark.parametrize("tags", [",", " , ", ""])
-    def test_empty_tag_list_is_ignored(self, client, tags):
-        assert _hand_count(client, tags=tags) == _hand_count(client)
-
-    @pytest.mark.parametrize("tag", ["", "   "])
-    def test_blank_tag_rejected(self, client, db, tag):
-        hand_id = db.execute("SELECT id FROM hands LIMIT 1").fetchone()[0]
-        resp = client.post(f"/api/hands/{hand_id}/tags", json={"tag": tag})
-        assert resp.status_code == 400
-        assert db.execute("SELECT COUNT(*) FROM hand_tags").fetchone()[0] == 0
-
-    def test_tag_is_stripped(self, client, db):
-        hand_id = db.execute("SELECT id FROM hands LIMIT 1").fetchone()[0]
-        resp = client.post(f"/api/hands/{hand_id}/tags", json={"tag": "  bluff  "})
-        assert resp.status_code == 200
-        assert db.execute("SELECT tag FROM hand_tags").fetchall() == [("bluff",)]
-
-    def test_duplicate_tag_is_ignored(self, client, db):
-        hand_id = db.execute("SELECT id FROM hands LIMIT 1").fetchone()[0]
-        for _ in range(2):
-            resp = client.post(f"/api/hands/{hand_id}/tags", json={"tag": "bluff"})
-            assert resp.status_code == 200, resp.text
-        assert db.execute("SELECT COUNT(*) FROM hand_tags").fetchone()[0] == 1
-        assert _hand_count(client, tags="bluff") == 1
-
-    def test_any_tag_pseudo_value(self, client, db):
-        total = _hand_count(client)
-        assert total > 1
-        assert _hand_count(client, tags="__any__") == 0
-        hand_id = db.execute("SELECT id FROM hands LIMIT 1").fetchone()[0]
-        client.post(f"/api/hands/{hand_id}/tags", json={"tag": "bluff"})
-        client.post(f"/api/hands/{hand_id}/tags", json={"tag": "hero call"})
-        assert _hand_count(client, tags="__any__") == 1
-        assert _hand_count(client, tags="untagged") == total - 1
-
-    def test_tag_options_are_a_union(self, client, db):
-        total = _hand_count(client)
-        ids = [r[0] for r in db.execute("SELECT id FROM hands ORDER BY id LIMIT 2").fetchall()]
-        client.post(f"/api/hands/{ids[0]}/tags", json={"tag": "bluff"})
-        client.post(f"/api/hands/{ids[1]}/tags", json={"tag": "cooler"})
-        # a named tag narrows "any tag"
-        assert _hand_count(client, tags="__any__,bluff") == 1
-        # untagged + a named tag: both sets
-        assert _hand_count(client, tags="untagged,bluff") == total - 1
-        # untagged + any tag: everything
-        assert _hand_count(client, tags="untagged,__any__") == total
+# ── #14: empty tag filters ── moved to test_marked_hands.py (tag_ids filter; the
+# free-text hand tags were replaced by the tag catalogue + marked hands)
 
 
 # ── #16: head-to-head rows in action order ───────────────────────────

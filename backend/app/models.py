@@ -164,6 +164,13 @@ class ActionItem(BaseModel):
     ai: Optional[bool] = None  # is all-in (detail view only)
 
 
+class TagRef(BaseModel):
+    """A tag on a marked hand (frontend/src/lib/marked/types.ts)."""
+    id: int
+    name: str
+    color: str
+
+
 class HandSummary(BaseModel):
     id: str
     played_at: datetime
@@ -177,7 +184,8 @@ class HandSummary(BaseModel):
     all_in_ev_bb: float = 0
     rit_boards: int = 1
     is_cashout: bool = False
-    tags: list[str] = []
+    marked: bool = False
+    tags: list[TagRef] = []   # the row player's mark tags, catalogue order
     preflop_actions: list[ActionItem] = []
     flop_cards: list[str] = []
     flop_pot: float = 0
@@ -240,13 +248,9 @@ class HandDetail(BaseModel):
     rit_boards: int = 1
     is_cashout: bool = False
     actions: list[HandAction] = []
-    tags: list[str] = []
+    marked: bool = False
+    tags: list[TagRef] = []
     note: Optional[str] = None
-
-
-class TagCount(BaseModel):
-    tag: str
-    count: int
 
 
 # ── Results Dashboard Models ─────────────────────────────────────────

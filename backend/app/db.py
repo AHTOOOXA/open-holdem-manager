@@ -559,6 +559,9 @@ def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
 
     # Configuration sections: reg classification, alias flags, rebuild fingerprint
     _migrate_config_sections(conn)
+    # Tag catalogue + marked hands; one-time migration from hand_tags (needs heroes)
+    from app.marked_hands import ensure_schema as _ensure_marked_hands
+    _ensure_marked_hands(conn)
 
     # Check stat version — trigger rebuild if outdated
     _check_stat_version(conn)

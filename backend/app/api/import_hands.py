@@ -1018,6 +1018,8 @@ async def clear_hands(workspace_id: int = 1):
             [workspace_id, workspace_id],
         )
         db.execute("DELETE FROM hands WHERE workspace_id = ?", [workspace_id])
+        from app.marked_hands import delete_workspace_marks
+        delete_workspace_marks(db, workspace_id)
         db.execute("DELETE FROM player_classifications WHERE workspace_id = ?", [workspace_id])
         # Manual hero accounts stay; auto-detected ones go with the hands
         db.execute(
