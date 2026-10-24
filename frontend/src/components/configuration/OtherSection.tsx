@@ -51,8 +51,8 @@ function OtherForm({ settings }: { settings: AppSettings }) {
     mutationFn: (patch: Partial<AppSettings>) => patchAppSettings(patch),
     onSuccess: (next) => {
       queryClient.setQueryData(appSettingsQueryKey, next);
-      // Session boundaries (and date presets) depend on these
-      void queryClient.invalidateQueries({ queryKey: ['sessions'] });
+      // Session boundaries and date presets (Sessions, Statistics, Reports) depend on these
+      void queryClient.invalidateQueries();
     },
   });
 
@@ -75,7 +75,7 @@ function OtherForm({ settings }: { settings: AppSettings }) {
       <Field
         id="day-start"
         label="Day starts at (hour)"
-        hint="0-23. Used by the Sessions date presets (Today, This Week, ...); Reports presets do not use it yet."
+        hint="0-23. Before this hour it is still the previous day for the date presets (Today, This Week, ...) in Sessions, Statistics and Reports."
         value={dayText}
         error={dayError}
         onChange={setDayText}

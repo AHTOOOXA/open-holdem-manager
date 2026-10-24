@@ -11,7 +11,7 @@
  * refetches right away, a cached one shown later keeps its numbers and offers Refresh
  * (`isStale` of the General query).
  */
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 import { RefreshCw } from 'lucide-react';
 import EmptyState from '@/components/EmptyState';
@@ -23,6 +23,9 @@ import { PageChain } from '@/components/page-chain/PageChain';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { toast } from 'sonner';
+import { PLAYER_GONE_MESSAGE, isPlayerNotFound } from '@/lib/api-error';
+import { useDayKey } from '@/hooks/useDayStart';
 import { useWorkspace } from '@/contexts/WorkspaceContext';
 import { cellDetailQueryKey, generalQueryKey, getGeneral } from '@/lib/api-general';
 import type { CellDetail, GeneralCell, GeneralResponse } from '@/lib/api-general';
@@ -32,7 +35,7 @@ import { setWidth } from '@/lib/page-chain';
 import { stripUiFields } from '@/lib/reports/steps';
 import { reportKeys } from '@/lib/reports/query-keys';
 import {
-  definitionKey, exportFileName, generalParams, resolvedDateRange, sameDefinition, singleStatMeta,
+  definitionKey, exportFileName, withPlayer, generalParams, resolvedDateRange, sameDefinition, singleStatMeta,
 } from '@/lib/statistics/definition';
 import {
   ROOT_PAGE_WIDTH, STAT_PAGE_WIDTH, cellHandsPage, closePages, freshStatChain, labelDetailChain,
@@ -90,7 +93,9 @@ export default function DashboardView({
   const defKey = definitionKey(def);
   const single = singleStatMeta(def.profile_id);
   const rootWidth = single ? STAT_PAGE_WIDTH : ROOT_PAGE_WIDTH;
-  const params = useMemo(() => generalParams(def, workspaceId), [def, workspaceId]);
+  const dayKey = useDayKey(); // presets re-derive when the day (or the day-start hour) changes
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const params = useMemo(() => generalParams(def, workspaceId), [def, workspaceId, dayKey]);
   const [statDialog, setStatDialog] = useState(false);
 
   const general = useQuery({
@@ -102,6 +107,15 @@ export default function DashboardView({
     refetchOnWindowFocus: false,
   });
   const data = general.data;
+
+  // A stored player that is gone from this database: save the dashboard back to the hero
+  const playerGone = def.player_id != null && isPlayerNotFound(general.error);
+  useEffect(() => {
+    if (!playerGone) return;
+    onDefinitionChange(withPlayer(def, null));
+    toast.error(PLAYER_GONE_MESSAGE);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [playerGone]);
 
   // ── Pages (in memory per dashboard; a new definition starts over)
   const storeKey = pagesStoreKey(workspaceId, dashboard.id);

@@ -99,7 +99,7 @@ export default function SessionNav(p: SessionNavProps) {
   };
 
   return (
-    <nav aria-label="Sessions" className="flex w-136 min-w-100 shrink-0 flex-col border-r border-border bg-card">
+    <nav aria-label="Sessions" className="flex w-152 min-w-100 shrink-0 flex-col border-r border-border bg-card">
       <div className="flex items-center justify-between gap-2 py-3 pr-3 pl-6">
         <div className="flex items-center gap-1">
           <h2 className="text-lg font-normal">Sessions ({count(data.length)})</h2>

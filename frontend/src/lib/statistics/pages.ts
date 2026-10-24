@@ -128,7 +128,23 @@ export function savePages(key: string, pages: StoredPages): void {
   store.set(key, pages);
 }
 
+/** Open folders per workspace, kept while the app runs (not saved). */
+export const expandedStore = new Map<number, Set<number>>();
+
+/** Drop the in-memory state of removed tree nodes, so a later node reusing an id starts clean. */
+export function forgetNodes(workspaceId: number, ids: readonly number[]): void {
+  if (ids.length === 0) return;
+  for (const id of ids) store.delete(pagesStoreKey(workspaceId, id));
+  const open = expandedStore.get(workspaceId);
+  if (open && ids.some((id) => open.has(id))) {
+    const next = new Set(open);
+    for (const id of ids) next.delete(id);
+    expandedStore.set(workspaceId, next);
+  }
+}
+
 /** Test hook. */
 export function clearPagesStore(): void {
   store.clear();
+  expandedStore.clear();
 }

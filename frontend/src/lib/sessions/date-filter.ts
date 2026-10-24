@@ -1,5 +1,7 @@
 /** The Sessions date filter: All Time, a relative preset (re-derived on every use) or a custom range. */
-import { sessionPresets } from '../reports/steps';
+import { sessionPresets, shiftForDayStart } from '../reports/steps';
+
+export { shiftForDayStart };
 
 export type SessionDateFilter =
   | { kind: 'preset'; id: string }
@@ -14,12 +16,7 @@ const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 /** Presets offered by the popover (no "All Time" - it has its own item - and no "Last Session"). */
 export function datePresets(now: Date = new Date(), dayStartHour = 0) {
-  return sessionPresets(shiftForDayStart(now, dayStartHour)).filter((p) => p.id !== 'all');
-}
-
-/** "Day starts at (hour)": before that hour it is still the previous calendar day. */
-export function shiftForDayStart(now: Date, dayStartHour: number): Date {
-  return dayStartHour > 0 ? new Date(now.getTime() - dayStartHour * 3_600_000) : now;
+  return sessionPresets(now, dayStartHour).filter((p) => p.id !== 'all');
 }
 
 export function parseDateFilter(raw: string | null | undefined, now: Date = new Date(), dayStartHour = 0): StoredDateFilter {

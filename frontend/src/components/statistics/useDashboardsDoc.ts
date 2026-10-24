@@ -11,7 +11,8 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { dashboardsQueryKey, getDashboards, putDashboards } from '@/lib/statistics/api';
 import type { DashboardsDoc } from '@/lib/statistics/types';
-import { EMPTY_HISTORY, pushHistory, redo as redoDoc, undo as undoDoc, type History } from '@/lib/statistics/tree';
+import { forgetNodes } from '@/lib/statistics/pages';
+import { EMPTY_HISTORY, removedNodeIds, pushHistory, redo as redoDoc, undo as undoDoc, type History } from '@/lib/statistics/tree';
 
 export interface DashboardsDocApi {
   doc: DashboardsDoc | undefined;
@@ -29,16 +30,24 @@ export interface DashboardsDocApi {
 export function useDashboardsDoc(workspaceId: number): DashboardsDocApi {
   const qc = useQueryClient();
   const key = dashboardsQueryKey(workspaceId);
-  const q = useQuery({
-    queryKey: key,
-    queryFn: () => getDashboards(workspaceId),
-    staleTime: Infinity,
-    refetchOnWindowFocus: false,
-  });
   const [history, setHistory] = useState<History>(EMPTY_HISTORY);
 
   const pending = useRef<DashboardsDoc | null>(null);
   const inFlight = useRef(false);
+  const q = useQuery({
+    queryKey: key,
+    queryFn: async () => {
+      const fetched = await getDashboards(workspaceId);
+      // A save is pending or in flight: the local document is newer than this response
+      const local = qc.getQueryData<DashboardsDoc>(dashboardsQueryKey(workspaceId));
+      if (local && (pending.current || inFlight.current)) return local;
+      // The server document replaces the local one (restore, workspace switch): old undo steps no longer apply
+      setHistory(EMPTY_HISTORY);
+      return fetched;
+    },
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
+  });
 
   /** Send pending documents one at a time until none is left (a newer edit replaces an unsent one). */
   const flush = useCallback(async () => {
@@ -64,6 +73,10 @@ export function useDashboardsDoc(workspaceId: number): DashboardsDocApi {
   }, [qc, workspaceId]);
 
   const save = useCallback((next: DashboardsDoc) => {
+    // A refetch in flight must not overwrite the optimistic document (no revert: keep the cache as is)
+    const cur = qc.getQueryData<DashboardsDoc>(dashboardsQueryKey(workspaceId));
+    if (cur) forgetNodes(workspaceId, removedNodeIds(cur.nodes, next.nodes));
+    void qc.cancelQueries({ queryKey: dashboardsQueryKey(workspaceId) }, { revert: false });
     qc.setQueryData(dashboardsQueryKey(workspaceId), next);
     pending.current = next;
     void flush();

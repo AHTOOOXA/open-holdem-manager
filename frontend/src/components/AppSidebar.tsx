@@ -65,15 +65,14 @@ function LiveBadge() {
     <>
       <Badge
         variant="destructive"
-        role="status"
-        aria-label="Live session"
+        aria-hidden
         className="ml-auto rounded-cell px-1 py-0 text-2xs font-semibold uppercase group-data-[collapsible=icon]:hidden"
       >
         Live
       </Badge>
+      <span className="sr-only">live session</span>
       <span
-        role="status"
-        aria-label="Live session"
+        aria-hidden
         className="absolute top-1 right-1 hidden size-2 rounded-pill bg-destructive group-data-[collapsible=icon]:block"
       />
     </>
