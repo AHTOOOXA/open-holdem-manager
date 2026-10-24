@@ -14,6 +14,7 @@ import {
   Users,
   type LucideIcon,
 } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
 import { NavLink, useLocation } from 'react-router-dom';
 import {
   Sidebar,
@@ -30,6 +31,8 @@ import {
   useSidebar,
 } from '@/components/ui/sidebar';
 import { RAIL_LABELS, railPathFor, type RailPath } from '@/lib/routes';
+import { useWorkspace } from '@/contexts/WorkspaceContext';
+import { useSessionsLive } from '@/hooks/useSessionsLive';
 
 interface RailItem {
   to: RailPath;
@@ -56,7 +59,28 @@ const systemItems: RailItem[] = [
   { to: '/configuration', icon: Settings },
 ];
 
-function RailLink({ item, active }: { item: RailItem; active: boolean }) {
+/** Red "LIVE" pill on the Sessions item; a dot on the collapsed rail (only one of the two is rendered by CSS). */
+function LiveBadge() {
+  return (
+    <>
+      <Badge
+        variant="destructive"
+        role="status"
+        aria-label="Live session"
+        className="ml-auto rounded-cell px-1 py-0 text-2xs font-semibold uppercase group-data-[collapsible=icon]:hidden"
+      >
+        Live
+      </Badge>
+      <span
+        role="status"
+        aria-label="Live session"
+        className="absolute top-1 right-1 hidden size-2 rounded-pill bg-destructive group-data-[collapsible=icon]:block"
+      />
+    </>
+  );
+}
+
+function RailLink({ item, active, live }: { item: RailItem; active: boolean; live?: boolean }) {
   const label = RAIL_LABELS[item.to];
   return (
     <SidebarMenuItem>
@@ -71,17 +95,18 @@ function RailLink({ item, active }: { item: RailItem; active: boolean }) {
         <NavLink to={item.to} aria-current={active ? 'page' : undefined}>
           <item.icon />
           <span>{label}</span>
+          {live && <LiveBadge />}
         </NavLink>
       </SidebarMenuButton>
     </SidebarMenuItem>
   );
 }
 
-function RailMenu({ items, current }: { items: RailItem[]; current: RailPath | null }) {
+function RailMenu({ items, current, liveSessions = false }: { items: RailItem[]; current: RailPath | null; liveSessions?: boolean }) {
   return (
     <SidebarMenu>
       {items.map((item) => (
-        <RailLink key={item.to} item={item} active={current === item.to} />
+        <RailLink key={item.to} item={item} active={current === item.to} live={liveSessions && item.to === '/sessions'} />
       ))}
     </SidebarMenu>
   );
@@ -108,6 +133,8 @@ function CollapseButton() {
 export default function AppSidebar() {
   const { pathname } = useLocation();
   const current = railPathFor(pathname);
+  const { activeWorkspaceId } = useWorkspace();
+  const live = useSessionsLive(activeWorkspaceId)?.live ?? false;
 
   return (
     <Sidebar collapsible="icon">
@@ -126,7 +153,7 @@ export default function AppSidebar() {
       <SidebarContent>
         <SidebarGroup>
           <SidebarGroupContent>
-            <RailMenu items={mainItems} current={current} />
+            <RailMenu items={mainItems} current={current} liveSessions={live} />
           </SidebarGroupContent>
         </SidebarGroup>
 
