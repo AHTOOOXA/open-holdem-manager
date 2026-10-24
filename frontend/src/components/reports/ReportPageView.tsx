@@ -9,6 +9,8 @@ import { Plus } from 'lucide-react';
 import { Chip } from '@/components/ui/chip';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import FilterDialog from './FilterDialog';
+import LineBuilderDialog from './LineBuilderDialog';
+import { isCustomLineStep, lineStepDescription, type LineStep } from '@/lib/lines/step';
 import LowerReports, { type HandsInit } from './LowerReports';
 import StatsTab from './tabs/StatsTab';
 import GraphTab from './tabs/GraphTab';
@@ -36,7 +38,8 @@ export interface PageActions {
 function FilterChips({ own, onAdd, onEdit, onRemove }: {
   own: Step[];
   onAdd: () => void;
-  onEdit: (tab: FilterDialogTab) => void;
+  /** Double-click / Enter on chip `i`. */
+  onEdit: (i: number) => void;
   onRemove: (i: number) => void;
 }) {
   return (
@@ -56,10 +59,11 @@ function FilterChips({ own, onAdd, onEdit, onRemove }: {
             // Steps have no ids; position + content is stable enough for a chip row
             key={`${i}:${label}`}
             tone="accent"
-            title="Double-click to edit"
-            onDoubleClick={() => onEdit(filterTabFor(step))}
+            // Custom Filter chips: the hover text is the line itself (the label may be a name)
+            title={isCustomLineStep(step) ? `${lineStepDescription(step)}\nDouble-click to edit` : 'Double-click to edit'}
+            onDoubleClick={() => onEdit(i)}
             // Mouse: double-click edits (Hand2Note). Keyboard (Enter/Space, detail 0): edit directly.
-            onClick={(e) => { if (e.detail === 0) onEdit(filterTabFor(step)); }}
+            onClick={(e) => { if (e.detail === 0) onEdit(i); }}
             onRemove={() => onRemove(i)}
             removeLabel={`Remove filter ${label}`}
           >
@@ -80,6 +84,9 @@ export default function ReportPageView({ page, dashboard, actions, handsInit, on
 }) {
   const s = page.state;
   const [dialog, setDialog] = useState<{ open: boolean; tab: FilterDialogTab }>({ open: false, tab: 'quick' });
+  // Custom Filter chip: the line builder opens directly and OK applies straight away (Hand2Note)
+  const [builder, setBuilder] = useState<{ open: boolean; index: number }>({ open: false, index: -1 });
+  const builderStep = builder.index >= 0 ? s.own[builder.index] : undefined;
 
   const dayKey = useDayKey();
   const { inherited } = page;
@@ -101,7 +108,11 @@ export default function ReportPageView({ page, dashboard, actions, handsInit, on
       <FilterChips
         own={own}
         onAdd={() => setDialog({ open: true, tab: 'quick' })}
-        onEdit={(tab) => setDialog({ open: true, tab })}
+        onEdit={(i) => {
+          const step = own[i];
+          if (step && isCustomLineStep(step)) setBuilder({ open: true, index: i });
+          else if (step) setDialog({ open: true, tab: filterTabFor(step) });
+        }}
         onRemove={actions.removeOwn}
       />
       <div className="flex flex-col gap-2 pt-2">
@@ -136,6 +147,12 @@ export default function ReportPageView({ page, dashboard, actions, handsInit, on
         value={own}
         onApply={(steps) => { actions.setOwn(steps); setDialog((d) => ({ ...d, open: false })); }}
         initialTab={dialog.tab}
+      />
+      <LineBuilderDialog
+        open={builder.open}
+        onOpenChange={(open) => setBuilder((b) => ({ ...b, open }))}
+        initial={builderStep && isCustomLineStep(builderStep) ? (builderStep as LineStep) : null}
+        onOk={(step) => actions.setOwn(own.map((x, j) => (j === builder.index ? step : x)))}
       />
     </>
   );

@@ -1,5 +1,6 @@
 import { useDayStartHour } from '@/hooks/useDayStart';
 import { useMemo, useState } from 'react';
+import { Pencil, Plus, Trash2 } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { getFilterOptions } from '@/lib/api';
 import { queryKeys } from '@/lib/query-keys';
@@ -17,6 +18,11 @@ import {
   type FilterTab,
 } from '@/lib/reports/steps';
 import type { Pos, QuickFilter, Step } from '@/lib/reports/types';
+import { EMPTY_ROWS, LINE_MAX_LENGTH, rowsToDsl } from '@/lib/lines/dsl';
+import { actionsLineStep, lineStepDescription, type LineStep } from '@/lib/lines/step';
+import type { ActionRows } from '@/lib/lines/types';
+import ActionsTab from './ActionsTab';
+import LineBuilderDialog from './LineBuilderDialog';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -25,6 +31,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
 interface FilterDialogProps {
   open: boolean;
@@ -54,14 +61,22 @@ interface Draft {
   presetId: string; // 'all' | preset id | 'custom'
   from: string;
   to: string;
+  /** Actions tab rows (one `line` step carrying them). */
+  rows: ActionRows;
+  /** Custom Filter: the line builder's step. */
+  custom: LineStep | null;
 }
 
-const EMPTY: Draft = { row: null, pos: [], stakes: [], mode: '', tsize: null, lo: '', hi: '', presetId: 'all', from: '', to: '' };
+const EMPTY: Draft = {
+  row: null, pos: [], stakes: [], mode: '', tsize: null, lo: '', hi: '', presetId: 'all', from: '', to: '', rows: EMPTY_ROWS, custom: null,
+};
 
 function toDraft(value: Step[]): Draft {
   const p = splitOwnSteps(value);
   const d: Draft = { ...EMPTY };
   if (p.row) d.row = { key: p.row.key, label: p.row.label ?? p.row.key };
+  if (p.actions?.rows) d.rows = p.actions.rows;
+  if (p.custom) d.custom = p.custom;
   if (p.pos) d.pos = [...p.pos.v];
   if (p.stakes) d.stakes = [...p.stakes.v];
   if (p.mode) d.mode = p.mode.v;
@@ -88,6 +103,9 @@ function num(s: string): number | null {
 function toSteps(d: Draft, value: Step[]): Step[] {
   const steps: Step[] = [];
   if (d.row) steps.push({ k: 'row', key: d.row.key, label: d.row.label });
+  const actions = actionsLineStep(d.rows);
+  if (actions) steps.push(actions);
+  if (d.custom) steps.push(d.custom);
   if (d.pos.length) {
     const v = POSITIONS.filter((p) => d.pos.includes(p));
     steps.push({ k: 'pos', v, label: v.join(', ') });
@@ -275,14 +293,55 @@ function SessionTab({ draft, set }: { draft: Draft; set: (p: Partial<Draft>) => 
   );
 }
 
+/** Footer left: "+ Custom Filter", or the set custom filter with edit / delete. */
+function CustomFilterControl({ custom, onEdit, onDelete }: { custom: LineStep | null; onEdit: () => void; onDelete: () => void }) {
+  if (!custom) {
+    return (
+      <button
+        type="button"
+        onClick={onEdit}
+        className="inline-flex h-control items-center gap-1 rounded-pill border border-border pr-4 pl-3 text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        <Plus className="size-3.5" aria-hidden />
+        Custom Filter
+      </button>
+    );
+  }
+  return (
+    <div className="flex min-w-0 items-center gap-1">
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            onClick={onEdit}
+            className="max-w-56 truncate rounded-control px-1 text-sm font-medium text-primary outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            Custom Filter
+          </button>
+        </TooltipTrigger>
+        <TooltipContent className="max-w-sm">{lineStepDescription(custom)}</TooltipContent>
+      </Tooltip>
+      <Button type="button" variant="ghost" size="icon-sm" aria-label="Edit custom filter" onClick={onEdit}>
+        <Pencil aria-hidden />
+      </Button>
+      <Button type="button" variant="ghost" size="icon-sm" aria-label="Delete custom filter" onClick={onDelete}>
+        <Trash2 aria-hidden />
+      </Button>
+    </div>
+  );
+}
+
 function FilterForm({ value, onApply, onCancel, initialTab }: Omit<FilterDialogProps, 'open' | 'onOpenChange'> & { onCancel: () => void }) {
   const [draft, setDraft] = useState<Draft>(() => toDraft(value));
   const [tab, setTab] = useState<FilterTab>(initialTab ?? 'quick');
+  const [builderOpen, setBuilderOpen] = useState(false);
   const set = (p: Partial<Draft>) => setDraft((d) => ({ ...d, ...p }));
+  const actionsDsl = rowsToDsl(draft.rows);
   const marks = {
     quick: draft.row != null,
     positions: draft.pos.length > 0,
     general: draft.stakes.length > 0 || draft.mode !== '' || draft.tsize != null || num(draft.lo) != null || num(draft.hi) != null,
+    actions: actionsDsl !== '',
     session: !!(draft.from || draft.to),
   };
   return (
@@ -292,22 +351,31 @@ function FilterForm({ value, onApply, onCancel, initialTab }: Omit<FilterDialogP
           <TabsTrigger value="quick" marker={marks.quick}>Quick Filters</TabsTrigger>
           <TabsTrigger value="positions" marker={marks.positions}>Positions</TabsTrigger>
           <TabsTrigger value="general" marker={marks.general}>General</TabsTrigger>
+          <TabsTrigger value="actions" marker={marks.actions}>Actions</TabsTrigger>
           <TabsTrigger value="session" marker={marks.session}>Session</TabsTrigger>
         </TabsList>
         <div className="min-h-56 pt-3">
           <TabsContent value="quick"><QuickTab draft={draft} set={set} /></TabsContent>
           <TabsContent value="positions"><PositionsTab draft={draft} set={set} /></TabsContent>
           <TabsContent value="general"><GeneralTab draft={draft} set={set} /></TabsContent>
+          <TabsContent value="actions"><ActionsTab rows={draft.rows} onChange={(rows) => set({ rows })} /></TabsContent>
           <TabsContent value="session"><SessionTab draft={draft} set={set} /></TabsContent>
         </div>
       </Tabs>
       <DialogFooter className="sm:justify-between">
-        <Button type="button" variant="ghost" onClick={() => setDraft(EMPTY)}>Reset</Button>
+        <CustomFilterControl custom={draft.custom} onEdit={() => setBuilderOpen(true)} onDelete={() => set({ custom: null })} />
         <div className="flex gap-2">
+          <Button type="button" variant="ghost" onClick={() => setDraft(EMPTY)}>Reset</Button>
           <Button type="button" variant="outline" onClick={onCancel}>Cancel</Button>
-          <Button type="button" onClick={() => onApply(toSteps(draft, value))}>Apply</Button>
+          <Button type="button" disabled={actionsDsl.length > LINE_MAX_LENGTH} onClick={() => onApply(toSteps(draft, value))}>Apply</Button>
         </div>
       </DialogFooter>
+      <LineBuilderDialog
+        open={builderOpen}
+        onOpenChange={setBuilderOpen}
+        initial={draft.custom}
+        onOk={(custom) => set({ custom })}
+      />
     </>
   );
 }
@@ -315,7 +383,7 @@ function FilterForm({ value, onApply, onCancel, initialTab }: Omit<FilterDialogP
 export default function FilterDialog({ open, onOpenChange, value, onApply, initialTab }: FilterDialogProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-xl">
+      <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>Filter</DialogTitle>
           <DialogDescription className="sr-only">Choose the filters for this report page.</DialogDescription>
