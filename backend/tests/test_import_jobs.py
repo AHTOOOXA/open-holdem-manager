@@ -3,6 +3,7 @@ job id, date range filtering with out_of_range, cancel between batches."""
 
 import json
 import threading
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -117,16 +118,53 @@ def _generator(monkeypatch, hands, workspace_id=1):
     return ih._stream_import(hands, [ggpoker] * len(hands), 1, workspace_id)
 
 
+def _gate_first_flush(monkeypatch):
+    """The import worker waits after its first batch insert (`inside` set) until `go` is set."""
+    go, inside = threading.Event(), threading.Event()
+    real = ih._flush_batch
+    calls = []
+
+    def gated(*a, **k):
+        out = real(*a, **k)
+        calls.append(1)
+        if len(calls) == 1:
+            inside.set()
+            go.wait(5)
+        return out
+
+    monkeypatch.setattr(ih, "_flush_batch", gated)
+    return inside, go
+
+
+def _lock_is_free() -> bool:
+    """Acquire + release the write lock from a fresh thread (an RLock held by any other thread fails)."""
+    got = []
+
+    def probe():
+        ok = app_db.db_lock().acquire(timeout=0.1)
+        got.append(ok)
+        if ok:
+            app_db.db_lock().release()
+
+    t = threading.Thread(target=probe)
+    t.start()
+    t.join()
+    return got[0]
+
+
 def test_cancel_mid_stream_keeps_written_hands(client, db, monkeypatch):
     monkeypatch.setattr(ih, "BATCH_SIZE", 2)
+    inside, go = _gate_first_flush(monkeypatch)
     hands = _hands()
     gen = _generator(monkeypatch, hands)
     start = json.loads(next(gen))
     assert ih.active_import_jobs() == 1
+    assert inside.wait(5)
+    # The import worker holds the write lock: cancel must not need it
+    assert client.post(f"/api/import/jobs/{start['job_id']}/cancel").status_code == 204
+    go.set()
     first = json.loads(next(gen))
     assert first["type"] == "progress" and first["imported"] == 2
-    # The import thread (this one) holds the write lock: cancel must not need it
-    assert client.post(f"/api/import/jobs/{start['job_id']}/cancel").status_code == 204
     rest = [json.loads(line) for line in gen]
     done = rest[-1]
     assert done["type"] == "done" and done["cancelled"] is True
@@ -138,6 +176,86 @@ def test_cancel_mid_stream_keeps_written_hands(client, db, monkeypatch):
     assert db.execute("SELECT COUNT(*) FROM hands WHERE imported_at IS NULL").fetchone()[0] == 0
     assert ih.active_import_jobs() == 0
     assert client.post(f"/api/import/jobs/{start['job_id']}/cancel").status_code == 404
+    assert _lock_is_free()
+
+
+def test_each_next_on_a_different_thread(client, db, monkeypatch):
+    """Starlette runs every next() of a sync generator in a threadpool thread, possibly a
+    different one each time. The write lock (an RLock) must still be taken and released by
+    one thread: the import worker, never the generator."""
+    monkeypatch.setattr(ih, "BATCH_SIZE", 3)
+    owners: list[tuple[str, str]] = []
+    real_lock = app_db._lock
+
+    class Recording:
+        def acquire(self, *a, **k):
+            ok = real_lock.acquire(*a, **k)
+            if ok:
+                owners.append(("acquire", threading.current_thread().name))
+            return ok
+
+        def release(self):
+            owners.append(("release", threading.current_thread().name))
+            real_lock.release()
+
+        def __enter__(self):
+            self.acquire()
+            return self
+
+        def __exit__(self, *exc):
+            self.release()
+
+    monkeypatch.setattr(app_db, "_lock", Recording())
+    monkeypatch.setattr(ih, "db_lock", lambda: app_db._lock)
+    gen = _generator(monkeypatch, _hands())
+    lines, consumers = [], set()
+
+    def step():
+        consumers.add(threading.current_thread().name)
+        try:
+            lines.append(json.loads(next(gen)))
+        except StopIteration:
+            lines.append(None)
+
+    while not lines or lines[-1] is not None:
+        t = threading.Thread(target=step, name=f"consumer-{len(lines)}")  # a fresh thread per next()
+        t.start()
+        t.join(10)
+    msgs = lines[:-1]
+    assert msgs[0]["type"] == "start" and msgs[-1]["type"] == "done", msgs[-1]
+    assert msgs[-1]["imported"] == len(_hands()) == _hand_count(db)
+    assert len(consumers) > 1
+    assert [o for o, _ in owners] == ["acquire", "release"]
+    assert owners[0][1] == owners[1][1] and owners[0][1].startswith("import-")
+    monkeypatch.setattr(app_db, "_lock", real_lock)
+    assert _lock_is_free()
+
+
+def test_streaming_through_starlette_releases_the_lock(client, db):
+    """The real StreamingResponse path (TestClient): the lock is free right after."""
+    msgs = _lines(_upload(client, R1.read_text()))
+    assert msgs[-1]["type"] == "done" and msgs[-1]["imported"] == len(_hands())
+    assert _lock_is_free()
+    # A second import is not blocked by a leaked lock
+    again = _lines(_upload(client, R1.read_text()))[-1]
+    assert again["type"] == "done" and again["duplicates"] == len(_hands())
+
+
+def test_client_disconnect_cancels_and_releases(client, db, monkeypatch):
+    monkeypatch.setattr(ih, "BATCH_SIZE", 2)
+    inside, go = _gate_first_flush(monkeypatch)
+    hands = _hands()
+    gen = _generator(monkeypatch, hands)
+    json.loads(next(gen))  # start line
+    assert inside.wait(5)  # the worker is inside its first batch
+    gen.close()  # what a client disconnect does to the response generator
+    go.set()
+    deadline = time.monotonic() + 5
+    while ih.active_import_jobs() and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert ih.active_import_jobs() == 0
+    assert _lock_is_free()
+    assert 0 < _hand_count(db) < len(hands)  # stopped after the batch in progress, kept it
 
 
 def test_cancel_while_waiting_for_the_lock(client, db, monkeypatch):

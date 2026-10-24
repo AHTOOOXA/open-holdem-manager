@@ -22,7 +22,9 @@ import tempfile
 import threading
 import time
 import uuid
+import queue
 import pyarrow as pa
+from typing import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor, Future
 from contextlib import contextmanager
 
@@ -672,6 +674,84 @@ def _acquire_lock_or_cancel(cancel: threading.Event) -> bool:
     return True
 
 
+_STREAM_END = object()
+
+
+def _job_stream(work: "Callable[[str, threading.Event, Callable[[dict], None]], None]") -> StreamingResponse:
+    """NDJSON response for an import job that runs in ONE dedicated worker thread.
+
+    work(job_id, cancel, emit) does the whole import in that thread: it takes the write
+    lock, writes, and releases the lock itself (db._lock is an RLock: it must be released
+    by the thread that acquired it). emit(dict) queues one NDJSON line. The generator handed
+    to StreamingResponse only reads the queue: Starlette runs each next() of a sync
+    generator in some threadpool thread (a different one each time, possibly), so the
+    generator must never own the lock. The job is registered when the stream starts and
+    removed when the worker ends. When the generator is closed early (client disconnect),
+    its `finally` sets the job's cancel event: the worker stops after its current batch and
+    releases the lock in its own thread.
+    """
+    def generate():
+        job_id, cancel = _register_job()
+        lines: queue.Queue = queue.Queue()
+
+        def emit(msg: dict) -> None:
+            lines.put(json.dumps(msg) + "\n")
+
+        def run() -> None:
+            try:
+                work(job_id, cancel, emit)
+            except Exception as e:
+                logging.getLogger(__name__).exception("Import failed, rolled back")
+                emit({"type": "error", "message": f"Import failed, nothing was imported: {e}"})
+            finally:
+                _finish_job(job_id)
+                lines.put(_STREAM_END)
+
+        threading.Thread(target=run, name=f"import-{job_id[:8]}", daemon=True).start()
+        try:
+            while True:
+                line = lines.get()
+                if line is _STREAM_END:
+                    return
+                yield line
+        finally:
+            cancel.set()  # no-op once the worker is done; stops it when the client went away
+
+    return StreamingResponse(generate(), media_type="application/x-ndjson")
+
+
+def _list_batches(all_hands: list[str], hand_parsers: list) -> "Iterator[list[tuple[str, object]]]":
+    """Already-split hands as one source batch."""
+    if all_hands:
+        yield list(zip(all_hands, hand_parsers))
+
+
+def _chunks(batches, unsupported: list[str]):
+    """(hand texts, parser, source items consumed) chunks of <= BATCH_SIZE hands of one parser.
+
+    One parser per chunk: a new chunk starts at BATCH_SIZE or when the site changes (several
+    files from different sites in one upload). Items whose parser is None (no parser knows
+    the site) are reported in `unsupported` and counted in the next chunk's consumed count.
+    """
+    texts: list[str] = []
+    parser = None
+    consumed = 0
+    for batch in batches:
+        for text, p in batch:
+            consumed += 1
+            if p is None:
+                first = text.splitlines()[0][:80] if text else ""
+                unsupported.append(f"Unsupported site: {first}")
+                continue
+            if texts and (p is not parser or len(texts) >= BATCH_SIZE):
+                yield texts, parser, consumed - 1
+                texts, consumed = [], 1
+            parser = p
+            texts.append(text)
+    if texts or consumed:
+        yield texts, parser, consumed
+
+
 def _stream_import(
     all_hands: list[str],
     hand_parsers: list,
@@ -684,35 +764,45 @@ def _stream_import(
 ) -> StreamingResponse:
     """Import already-split hands, streaming NDJSON (start / progress / done | error).
 
-    Contract: frontend/src/lib/import/types.ts section 1. hand_parsers[i] is the parser
-    module for all_hands[i]. pre_errors: problems found before parsing (counted as errors).
-    date_from / date_to: inclusive ISO dates (day-start hour applied); hands outside are
-    skipped and counted in `out_of_range`. Validated here, before streaming (400).
-    The job is registered when the stream starts (first line: job_id) and removed when it
-    ends; POST /api/import/jobs/{job_id}/cancel stops it after the batch in progress
-    (written hands stay, indexes + finalisation still run, done line has cancelled=true).
+    hand_parsers[i] is the parser module for all_hands[i]. See _stream_source.
     """
-    pre_errors = pre_errors or []
-    total = len(all_hands)
-    in_range = import_date_filter(date_from, date_to)
+    return _stream_source(
+        lambda: _list_batches(all_hands, hand_parsers), len(all_hands), file_count, workspace_id,
+        pre_errors, date_from=date_from, date_to=date_to,
+    )
 
-    def generate():
-        job_id, cancel = _register_job()
-        try:
-            yield from _generate(job_id, cancel)
-        except Exception as e:
-            logging.getLogger(__name__).exception("Import failed, rolled back")
-            yield json.dumps({
-                "type": "error",
-                "message": f"Import failed, nothing was imported: {e}",
-            }) + "\n"
-        finally:
-            _finish_job(job_id)
+
+def _stream_source(
+    open_batches: "Callable[[], Iterator[list[tuple[str, object]]]]",
+    total: int,
+    file_count: int,
+    workspace_id: int,
+    pre_errors: list[str] | None = None,
+    *,
+    date_from: str | None = None,
+    date_to: str | None = None,
+) -> StreamingResponse:
+    """Import hands from a lazy source, streaming NDJSON (start / progress / done | error).
+
+    Contract: frontend/src/lib/import/types.ts section 1. open_batches() is called in the
+    import worker thread (after the start line and once the write lock is held) and yields
+    batches of (hand text, parser module or None = unsupported site); it may read from a
+    database as it goes (the import checks for cancel between chunks), and is closed in the
+    worker thread. total: hands in the source, for progress. pre_errors: problems found
+    before parsing (counted as errors). date_from / date_to: inclusive ISO dates (day-start
+    hour applied); hands outside are skipped and counted in `out_of_range`. Validated here,
+    before streaming (400). The job is registered when the stream starts (first line:
+    job_id) and removed when it ends; POST /api/import/jobs/{job_id}/cancel (or a client
+    disconnect) stops it after the batch in progress (written hands stay, indexes +
+    finalisation still run, done line has cancelled=true).
+    """
+    pre_errors = list(pre_errors or [])
+    in_range = import_date_filter(date_from, date_to)
 
     def _done(t_start, imported, duplicates, errors, out_of_range, cancelled, error_details, extra):
         elapsed = time.perf_counter() - t_start
         hps = imported / elapsed if elapsed > 0 else 0
-        return json.dumps({
+        return {
             "type": "done",
             "imported": imported,
             "duplicates": duplicates,
@@ -723,27 +813,29 @@ def _stream_import(
             "elapsed_ms": round(elapsed * 1000),
             "hands_per_sec": round(hps),
             **extra,
-        }) + "\n"
+        }
 
-    def _generate(job_id: str, cancel: threading.Event):
-        yield json.dumps({
+    def work(job_id: str, cancel: threading.Event, emit) -> None:
+        emit({
             "type": "start",
             "job_id": job_id,
             "total": total,
             "total_hands": total,  # pre-M7 field, kept for older clients
             "files": file_count,
-        }) + "\n"
+        })
 
         t_start = time.perf_counter()
         if not _acquire_lock_or_cancel(cancel):
-            yield _done(t_start, 0, 0, len(pre_errors), 0, True, list(pre_errors), {})
+            emit(_done(t_start, 0, 0, len(pre_errors), 0, True, list(pre_errors), {}))
             return
+        batches = None
         try:
             db = get_db()
             imported = 0
             duplicates = 0
-            errors = len(pre_errors)
             error_details: list[str] = list(pre_errors)
+            errors = len(pre_errors)
+            unsupported: list[str] = []
             out_of_range = [0]  # shared with the parse worker
             cancelled = False
 
@@ -752,49 +844,52 @@ def _stream_import(
             t_equity = 0.0
             t_db = 0.0
 
-            # Bulk duplicate check (scoped to workspace)
-            all_ids = [hand_parsers[i].extract_hand_id(h) for i, h in enumerate(all_hands)]
-            existing_ids = _existing_hand_ids(db, all_ids, workspace_id)
-
-            # Split hands into BATCH_SIZE chunks for pipeline parallelism
-            # One parser per chunk: start a new chunk at BATCH_SIZE or when the
-            # site changes (several files from different sites in one upload)
-            chunks: list[tuple[list[str], list[str | None], object]] = []
-            start = 0
-            for ci in range(1, total + 1):
-                if ci == total or ci - start == BATCH_SIZE or hand_parsers[ci] is not hand_parsers[start]:
-                    chunks.append((all_hands[start:ci], all_ids[start:ci], hand_parsers[start]))
-                    start = ci
+            # Duplicate check per chunk (scoped to workspace), in this thread (the parse
+            # worker never touches the DB); ids parsed earlier in this import are added
+            # by _parse_batch.
+            existing_ids: set[str] = set()
+            batches = open_batches()
+            chunks = _chunks(batches, unsupported)
 
             def submit(executor, chunk):
+                texts, parser, _ = chunk
+                if not texts:
+                    return None
+                ids = [parser.extract_hand_id(h) for h in texts]
+                existing_ids.update(_existing_hand_ids(db, ids, workspace_id))
                 return executor.submit(
-                    _parse_batch, chunk[0], chunk[1], existing_ids, chunk[2], in_range, out_of_range,
+                    _parse_batch, texts, ids, existing_ids, parser, in_range, out_of_range,
                 )
 
             processed = 0
             with _bulk_write(db), ThreadPoolExecutor(max_workers=1) as executor:
-                # Start parsing first batch
-                parse_future: Future | None = submit(executor, chunks[0]) if chunks else None
+                chunk = next(chunks, None)
+                parse_future: Future | None = submit(executor, chunk) if chunk else None
 
-                for ci in range(len(chunks)):
+                while chunk is not None:
                     _check_shutdown()
                     if cancel.is_set():
                         cancelled = True
                         break
-                    # Wait for current parse result
-                    batch_prepared, batch_dups, batch_errs, batch_details, bp, bs, be = parse_future.result()
+                    if parse_future is not None:
+                        batch_prepared, batch_dups, batch_errs, batch_details, bp, bs, be = parse_future.result()
+                    else:
+                        batch_prepared, batch_dups, batch_errs, batch_details, bp, bs, be = [], 0, 0, [], 0, 0, 0
                     duplicates += batch_dups
                     errors += batch_errs
                     error_details.extend(batch_details)
                     t_parse += bp
                     t_stats += bs
                     t_equity += be
+                    processed += chunk[2]
 
-                    # Submit next batch for parsing (overlaps with DB insert), unless cancelled
-                    if ci + 1 < len(chunks) and not cancel.is_set():
-                        parse_future = submit(executor, chunks[ci + 1])
+                    # Read + submit the next chunk for parsing (overlaps with the DB insert), unless cancelled
+                    if cancel.is_set():
+                        cancelled = True
+                        nxt = None
                     else:
-                        parse_future = None
+                        nxt = next(chunks, None)
+                    parse_future = submit(executor, nxt) if nxt else None
 
                     # Flush current batch to DB
                     if batch_prepared:
@@ -804,12 +899,15 @@ def _stream_import(
                         imported += imp
                         errors += errs
                         error_details.extend(details)
+                    if unsupported:
+                        errors += len(unsupported)
+                        error_details.extend(unsupported)
+                        unsupported.clear()
 
                     # Progress update (every batch = BATCH_SIZE hands)
-                    processed += len(chunks[ci][0])
                     elapsed = time.perf_counter() - t_start
                     hps = imported / elapsed if elapsed > 0 else 0
-                    yield json.dumps({
+                    emit({
                         "type": "progress",
                         "processed": processed,
                         "total": total,
@@ -819,7 +917,8 @@ def _stream_import(
                         "out_of_range": out_of_range[0],
                         "elapsed_ms": round(elapsed * 1000),
                         "hands_per_sec": round(hps),
-                    }) + "\n"
+                    })
+                    chunk = nxt
 
             # Recreate indexes (bulk build is faster than incremental)
             t0_idx = time.perf_counter()
@@ -829,17 +928,21 @@ def _stream_import(
             finalize_import(db, workspace_id=workspace_id)
             _checkpoint_after_bulk(db)
         finally:
-            db_lock().release()
+            try:
+                if batches is not None and hasattr(batches, "close"):
+                    batches.close()  # e.g. the tracker DB connection, closed in this thread
+            finally:
+                db_lock().release()
 
-        yield _done(t_start, imported, duplicates, errors, out_of_range[0], cancelled, error_details, {
+        emit(_done(t_start, imported, duplicates, errors, out_of_range[0], cancelled, error_details, {
             "parse_ms": round(t_parse * 1000),
             "stats_ms": round(t_stats * 1000),
             "equity_ms": round(t_equity * 1000),
             "db_ms": round(t_db * 1000),
             "index_ms": round(t_idx * 1000),
-        })
+        }))
 
-    return StreamingResponse(generate(), media_type="application/x-ndjson")
+    return _job_stream(work)
 
 
 def _existing_hand_ids(db, ids: list[str | None], workspace_id: int) -> set[str]:
