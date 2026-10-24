@@ -1,6 +1,9 @@
+import csv
+import io
 import json
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, File, HTTPException, Query, UploadFile
+from fastapi.responses import Response
 from app.date_filters import DATE_TO_SQL
 from app.db import get_db, db_lock, get_read_cursor
 from app.stat_registry import POS_SQL
@@ -15,7 +18,8 @@ router = APIRouter()
 def _build_identity(db, identity_id: int) -> IdentityResponse | None:
     """Build a full IdentityResponse with aliases and hand count."""
     row = db.execute(
-        "SELECT id, display_name, notes, color, tags, created_at "
+        "SELECT id, display_name, notes, color, tags, created_at, "
+        "COALESCE(is_single_person, FALSE), COALESCE(pinned, FALSE) "
         "FROM player_identities WHERE id = ?",
         [identity_id],
     ).fetchone()
@@ -66,6 +70,9 @@ def _build_identity(db, identity_id: int) -> IdentityResponse | None:
         tags=tags,
         aliases=aliases,
         total_hands=total,
+        is_single_person=bool(row[6]),
+        pinned=bool(row[7]),
+        player_count=len(aliases),
         created_at=row[5],
     )
 
@@ -79,6 +86,107 @@ def list_identities():
         ).fetchall()
     ]
     return [_build_identity(db, i) for i in ids]
+
+
+def _csv_field(v: str) -> str:
+    if any(c in v for c in ',"\n\r') or v != v.strip():
+        return '"' + v.replace('"', '""') + '"'
+    return v
+
+
+@router.get("/identities/export.csv")
+def export_identities_csv():
+    """One line per member, no header: `alias name, nickname, site, True|False`."""
+    db = get_read_cursor()
+    rows = db.execute(
+        "SELECT i.display_name, p.username, s.name, COALESCE(i.is_single_person, FALSE) "
+        "FROM player_identities i "
+        "JOIN player_aliases pa ON pa.identity_id = i.id "
+        "JOIN players p ON p.id = pa.player_id "
+        "LEFT JOIN sites s ON s.id = p.site_id "
+        "GROUP BY i.id, i.display_name, p.id, p.username, s.name, i.is_single_person "
+        "ORDER BY i.id, p.id"
+    ).fetchall()
+    lines = [
+        ", ".join([_csv_field(r[0]), _csv_field(r[1]), _csv_field(r[2] or ""), "True" if r[3] else "False"])
+        for r in rows
+    ]
+    return Response(
+        content="\n".join(lines) + ("\n" if lines else ""),
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="aliases.csv"'},
+    )
+
+
+@router.post("/identities/import-csv")
+async def import_identities_csv(workspace_id: int = Query(...), file: UploadFile = File(...)):
+    """Import `alias name, nickname, site[, True|False]` lines into a workspace.
+
+    Lines need >= 3 fields; an unknown site, or a nickname with no hands in this workspace, or
+    a player already in another alias there, is skipped. Lines group by alias name; an existing
+    alias with that name gets the members added (merge); single person if any line says True.
+    Returns { aliases: groups with at least one valid line, players: members newly linked,
+    skipped_lines }.
+    """
+    text = (await file.read()).decode("utf-8-sig", errors="replace")
+    with db_lock():
+        db = get_db()
+        if not db.execute("SELECT 1 FROM workspaces WHERE id = ?", [workspace_id]).fetchone():
+            raise HTTPException(status_code=404, detail="Workspace not found")
+        site_ids = {name.lower(): sid for sid, name in db.execute("SELECT id, name FROM sites").fetchall()}
+
+        skipped = 0
+        groups: dict[str, dict] = {}
+        for fields in csv.reader(io.StringIO(text), skipinitialspace=True):
+            if not fields or all(not f.strip() for f in fields):
+                continue
+            fields = [f.strip() for f in fields]
+            if len(fields) < 3 or not fields[0] or not fields[1]:
+                skipped += 1
+                continue
+            site_id = site_ids.get(fields[2].lower())
+            player = db.execute(
+                "SELECT p.id FROM players p WHERE p.site_id = ? AND p.username = ? "
+                "AND EXISTS (SELECT 1 FROM hand_players hp WHERE hp.player_id = p.id AND hp.workspace_id = ?)",
+                [site_id, fields[1], workspace_id],
+            ).fetchone() if site_id is not None else None
+            if player is None:
+                skipped += 1
+                continue
+            g = groups.setdefault(fields[0], {"players": [], "single": False})
+            g["players"].append(player[0])
+            if len(fields) > 3 and fields[3].lower() == "true":
+                g["single"] = True
+
+        n_players = 0
+        for name, g in groups.items():
+            row = db.execute(
+                "SELECT id FROM player_identities WHERE display_name = ? ORDER BY id LIMIT 1", [name]
+            ).fetchone()
+            if row:
+                identity_id = row[0]
+            else:
+                identity_id = db.execute("SELECT nextval('seq_identities')").fetchone()[0]
+                db.execute("INSERT INTO player_identities (id, display_name, tags) VALUES (?, ?, '[]')",
+                           [identity_id, name])
+            if g["single"]:
+                db.execute("UPDATE player_identities SET is_single_person = TRUE WHERE id = ?", [identity_id])
+            for pid in dict.fromkeys(g["players"]):
+                taken = db.execute(
+                    "SELECT identity_id FROM player_aliases WHERE workspace_id = ? AND player_id = ?",
+                    [workspace_id, pid],
+                ).fetchone()
+                if taken:
+                    if taken[0] != identity_id:
+                        skipped += 1
+                    continue
+                alias_id = db.execute("SELECT nextval('seq_aliases')").fetchone()[0]
+                db.execute(
+                    "INSERT INTO player_aliases (id, identity_id, workspace_id, player_id) VALUES (?, ?, ?, ?)",
+                    [alias_id, identity_id, workspace_id, pid],
+                )
+                n_players += 1
+        return {"aliases": len(groups), "players": n_players, "skipped_lines": skipped}
 
 
 @router.post("/identities", response_model=IdentityResponse, status_code=201)
@@ -127,6 +235,12 @@ def update_identity(identity_id: int, body: UpdateIdentity):
         if body.tags is not None:
             updates.append("tags = ?")
             params.append(json.dumps(body.tags))
+        if body.is_single_person is not None:
+            updates.append("is_single_person = ?")
+            params.append(body.is_single_person)
+        if body.pinned is not None:
+            updates.append("pinned = ?")
+            params.append(body.pinned)
 
         if updates:
             params.append(identity_id)

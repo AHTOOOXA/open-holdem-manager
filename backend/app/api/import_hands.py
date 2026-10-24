@@ -864,6 +864,8 @@ async def rebuild_hands():
                     "INSERT OR REPLACE INTO settings VALUES ('stat_version', ?)",
                     [str(STAT_VERSION)],
                 )
+                from app.config_sections import store_rebuild_fingerprint
+                store_rebuild_fingerprint(conn)
                 logging.getLogger(__name__).info("User-triggered rebuild complete")
         except Exception:
             logging.getLogger(__name__).exception("Rebuild failed")

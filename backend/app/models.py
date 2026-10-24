@@ -661,6 +661,9 @@ class IdentityResponse(BaseModel):
     tags: list[str] = []
     aliases: list[AliasResponse] = []
     total_hands: int = 0
+    is_single_person: bool = False
+    pinned: bool = False
+    player_count: int = 0
     created_at: datetime
 
 
@@ -676,6 +679,8 @@ class UpdateIdentity(BaseModel):
     notes: str | None = None
     color: str | None = None
     tags: list[str] | None = None
+    is_single_person: bool | None = None
+    pinned: bool | None = None
 
 
 class AddAlias(BaseModel):
