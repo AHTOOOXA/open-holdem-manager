@@ -99,14 +99,18 @@ function ResizeHandle({ label, width, onLive, onCommit }: {
   );
 }
 
-function PageHeader({ title, onClose, headerRef }: {
+function PageHeader({ title, addon, onClose, headerRef }: {
   title: string;
+  addon?: ReactNode;
   onClose: () => void;
   headerRef: (el: HTMLDivElement | null) => void;
 }) {
   return (
-    <div ref={headerRef} tabIndex={-1} className="mx-6 mt-4 flex items-center justify-between outline-none">
-      <Chip tone="neutral">{title}</Chip>
+    <div ref={headerRef} tabIndex={-1} className="mx-6 mt-4 flex items-center justify-between gap-2 outline-none">
+      <span className="flex min-w-0 items-center gap-1.5">
+        <Chip tone="neutral">{title}</Chip>
+        {addon}
+      </span>
       <button
         type="button"
         aria-label="Close page"
@@ -133,11 +137,16 @@ export interface PageChainProps<I, S> {
   trailingWidth?: number;
   onCloseTrailing?: () => void;
   className?: string;
+  /** Extra header content right of the title chip of page i (1+), e.g. an info button. */
+  titleAddon?: (page: Page<I, S>, index: number) => ReactNode;
+  /** Minimum width of the last (growing) page; default LAST_PAGE_BASE_WIDTH. */
+  lastPageMinWidth?: number;
 }
 
 export function PageChain<I, S>({
   pages, renderPage, renderHeader0, onClose, onSelectionCleared, onResize,
   trailing, trailingTitle = 'Details', trailingWidth = 500, onCloseTrailing, className,
+  titleAddon, lastPageMinWidth = LAST_PAGE_BASE_WIDTH,
 }: PageChainProps<I, S>) {
   const [live, setLive] = useState<{ id: number; px: number } | null>(null);
   const headers = useRef(new Map<number, HTMLDivElement>());
@@ -187,12 +196,13 @@ export function PageChain<I, S>({
             style={{
               zIndex: 100 - i,
               width: isLast ? undefined : w,
-              minWidth: isLast ? LAST_PAGE_BASE_WIDTH : undefined,
+              minWidth: isLast ? lastPageMinWidth : undefined,
             }}
           >
             {i === 0 ? renderHeader0?.() : (
               <PageHeader
                 title={page.title}
+                addon={titleAddon?.(page, i)}
                 onClose={() => close(i)}
                 headerRef={(el) => { if (el) headers.current.set(page.id, el); else headers.current.delete(page.id); }}
               />

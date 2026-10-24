@@ -82,6 +82,19 @@ export function openNext<I, S>(
   return { ...chain, pages: [...chain.pages.slice(0, next), reused] };
 }
 
+/**
+ * Statistics rule: close every page right of `fromIndex`, then append a brand-new page (new id,
+ * fresh state). Unlike `openNext`, an existing next page is never reused.
+ */
+export function openFresh<I, S>(
+  chain: PageChain<I, S>,
+  fromIndex: number,
+  page: NewPage<I, S>,
+): PageChain<I, S> {
+  if (fromIndex < 0 || fromIndex >= chain.pages.length) return chain;
+  return { pages: [...chain.pages.slice(0, fromIndex + 1), make(chain, page)], nextId: chain.nextId + 1 };
+}
+
 /** Close page `index` and every page to its right. Page 0 can't be closed. */
 export function closeFrom<I, S>(chain: PageChain<I, S>, index: number): PageChain<I, S> {
   if (index < 1 || index >= chain.pages.length) return chain;

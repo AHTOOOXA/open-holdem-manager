@@ -1,10 +1,12 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Info, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import SplitReport from '@/components/reports/SplitReport';
+import PreflopRangeTab from '@/components/reports/tabs/PreflopRangeTab';
 import { cellDetailQueryKey, getCellDetail } from '@/lib/api-general';
 import type {
   CellDetail,
@@ -16,6 +18,7 @@ import type {
 } from '@/lib/api-general';
 import type { GeneralCellMeta } from '@/lib/h2n-layout';
 import { formatRatio, popupTitle } from '@/lib/general-notation';
+import type { ReportQuery, SplitRow as ReportSplitRow, Step } from '@/lib/reports/types';
 import { cn } from '@/lib/utils';
 import { statAction, statTitle } from '@/lib/general-titles';
 import BetSizesTab from './BetSizesTab';
@@ -25,12 +28,13 @@ import GeneralHandList from './GeneralHandList';
 import RangeTab from './RangeTab';
 import StrengthBar from './StrengthBar';
 
-type PopupTab = 'range' | 'boards' | 'bet_sizes' | 'hands';
+type PopupTab = 'range' | 'boards' | 'bet_sizes' | 'next_actions' | 'hands';
 
 const TAB_LABELS: Record<PopupTab, string> = {
   range: 'Range',
   boards: 'Boards',
   bet_sizes: 'Bet Sizes',
+  next_actions: 'Next Actions',
   hands: 'Hands',
 };
 
@@ -98,22 +102,79 @@ interface StatPopupProps {
   cellId: string;
   meta: GeneralCellMeta;
   params: GeneralFilterParams;
-  /** Current selection (drives the hands pane to the right). */
+  /** Current Range category / board / bet size selection (drives the hands page to the right). */
   selection: HandsSelection | null;
   onSelect: (selection: HandsSelection) => void;
-  onClose: () => void;
+  /** Preflop Range tab (13x13): selected hand classes; a click hands the classes and the cell's chain over. */
+  rangeCells?: string[];
+  onSelectRange?: (cells: string[], chain: Step[]) => void;
+  /** Next Actions tab: selected row key; a click hands the row and the cell's chain over. */
+  nextKey?: string | null;
+  onSelectNext?: (row: ReportSplitRow, chain: Step[]) => void;
+  /** Absent = no close X (page 0 of a single-stat dashboard, or a page chain that has its own). */
+  onClose?: () => void;
+  /** Hide the title pill (the page chain header shows the title). */
+  hideTitle?: boolean;
+  /** Fill the parent (a page of a page chain) instead of the fixed-width pane. */
+  embedded?: boolean;
+}
+
+/** The "(i)" button of the stat title: full name, matcher notation, cases of opportunities. */
+export function StatInfo({ cellId, meta, params }: { cellId: string; meta: GeneralCellMeta; params: GeneralFilterParams }) {
+  const { data } = useQuery({
+    queryKey: cellDetailQueryKey(cellId, params),
+    queryFn: () => getCellDetail(cellId, params),
+    staleTime: 60_000,
+  });
+  const title = titleFor(meta);
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          className="shrink-0 cursor-help rounded-pill text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-primary"
+          aria-label="About this stat"
+        >
+          <Info className="size-3.5" />
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side="bottom" className="max-w-[360px]">
+        <div className="space-y-1">
+          <div className="font-medium">{title}</div>
+          {data && (
+            <>
+              <div className="font-mono text-label opacity-80">{data.notation}</div>
+              <div className="opacity-80">
+                {data.cases.toLocaleString()} of {data.opps.toLocaleString()} opportunities
+                {data.replay_failed > 0 ? ` · ${data.replay_failed} hands could not be replayed` : ''}
+              </div>
+            </>
+          )}
+        </div>
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+function ChainMissing() {
+  return <p className="px-4 py-4 text-sm text-muted-foreground">This report needs a newer backend.</p>;
 }
 
 /**
- * Page 1 of the General screen: the detail of one action stat
- * (docs/specs/H2N-COMPATIBLE-STATS.md section 6). Header with the stat name, the stat
- * value with its hand-value strength bar, Won Hand / WTSD / W%SD and hero's
- * next decision, then the Range / Boards / Bet Sizes / Hands tabs. Picking a
- * category, board or bet size opens its hands on page 2.
+ * The detail of one action stat (docs/specs/H2N-COMPATIBLE-STATS.md section 6), a page of a
+ * Statistics dashboard. Header with the stat name, the stat value with its hand-value strength
+ * bar, Won Hand / WTSD / W%SD and hero's next decision, then the tabs: Range (postflop: hand-value
+ * categories; preflop: the 13x13 grid), Boards (postflop), Bet Sizes, Next Actions and Hands.
+ * Picking a category, board, bet size, grid class or Next Actions row opens its hands on the
+ * next page; the 13x13 grid and Next Actions use the cell's Reports chain (`CellDetail.chain`).
  */
-export default function StatPopup({ cellId, meta, params, selection, onSelect, onClose }: StatPopupProps) {
+export default function StatPopup({
+  cellId, meta, params, selection, onSelect, rangeCells, onSelectRange, nextKey, onSelectNext, onClose, hideTitle, embedded,
+}: StatPopupProps) {
   const isPreflop = meta.street === 'preflop';
-  const tabs: PopupTab[] = isPreflop ? ['bet_sizes', 'hands'] : ['range', 'boards', 'bet_sizes', 'hands'];
+  const tabs: PopupTab[] = isPreflop
+    ? ['range', 'bet_sizes', 'next_actions', 'hands']
+    : ['range', 'boards', 'bet_sizes', 'next_actions', 'hands'];
   const memoryKey = `${isPreflop ? 'preflop' : 'postflop'}:${statAction(meta) ?? 'other'}`;
   const [tab, setTab] = useState<PopupTab>(() => {
     const t = lastTab.get(memoryKey);
@@ -133,6 +194,17 @@ export default function StatPopup({ cellId, meta, params, selection, onSelect, o
 
   const title = titleFor(meta);
 
+  // The Reports-backed tabs (13x13 Range, Next Actions) count exactly the cell's cases via its chain
+  const detailChain = data?.chain;
+  const workspaceId = params.workspace_id ?? 1;
+  const playerId = params.player_id;
+  const reportQuery = useMemo<ReportQuery | null>(() => {
+    if (!detailChain) return null;
+    const q: ReportQuery = { workspace_id: workspaceId, chain: detailChain };
+    if (playerId != null) q.player_id = playerId;
+    return q;
+  }, [detailChain, workspaceId, playerId]);
+
   // Selection helpers: which part of the popup the current selection belongs to.
   const plainBucket = selection && !selection.board && !selection.size ? (selection.bucket ?? null) : null;
   const boardSel: SplitSelection | null = selection?.board
@@ -151,51 +223,36 @@ export default function StatPopup({ cellId, meta, params, selection, onSelect, o
   return (
     <section
       aria-label={`Stat detail: ${title}`}
-      className="flex h-full w-[517px] shrink-0 flex-col border-l border-border-subtle bg-surface-raised text-sm"
+      className={cn(
+        'flex flex-col text-sm',
+        embedded ? 'min-h-0 w-full flex-1' : 'h-full w-[517px] shrink-0 border-l border-border-subtle bg-surface-raised',
+      )}
     >
       {/* Header: title, stat value + bars, summary */}
-      <div className="shrink-0 bg-surface-sunken px-4 pt-3 pb-6">
-        <div className="flex items-center justify-between gap-2">
-          <span className="inline-flex h-6 min-w-0 items-center gap-1.5 rounded-pill bg-muted px-2 text-xs text-foreground">
-            <span className="truncate">{title}</span>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  className="shrink-0 cursor-help rounded-pill text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-primary"
-                  aria-label="About this stat"
-                >
-                  <Info className="size-3.5" />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom" className="max-w-[360px]">
-                <div className="space-y-1">
-                  <div className="font-medium">{title}</div>
-                  {data && (
-                    <>
-                      <div className="font-mono text-label opacity-80">{data.notation}</div>
-                      <div className="opacity-80">
-                        {data.cases.toLocaleString()} of {data.opps.toLocaleString()} opportunities
-                        {data.replay_failed > 0 ? ` · ${data.replay_failed} hands could not be replayed` : ''}
-                      </div>
-                    </>
-                  )}
-                </div>
-              </TooltipContent>
-            </Tooltip>
-          </span>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-8 shrink-0 text-muted-foreground hover:text-foreground"
-            onClick={onClose}
-            aria-label="Close stat detail"
-          >
-            <X className="size-5" />
-          </Button>
-        </div>
+      <div className={cn('shrink-0 px-4 pt-3 pb-6', !embedded && 'bg-surface-sunken')}>
+        {(!hideTitle || onClose) && (
+          <div className="flex items-center justify-between gap-2">
+            {!hideTitle ? (
+              <span className="inline-flex h-6 min-w-0 items-center gap-1.5 rounded-pill bg-muted px-2 text-xs text-foreground">
+                <span className="truncate">{title}</span>
+                <StatInfo cellId={cellId} meta={meta} params={params} />
+              </span>
+            ) : <span />}
+            {onClose && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-8 shrink-0 text-muted-foreground hover:text-foreground"
+                onClick={onClose}
+                aria-label="Close stat detail"
+              >
+                <X className="size-5" />
+              </Button>
+            )}
+          </div>
+        )}
 
-        <div className="mt-5 grid items-center gap-y-2.5" style={{ gridTemplateColumns: '72px 32px auto' }}>
+        <div className={cn('grid items-center gap-y-2.5', (!hideTitle || onClose) && 'mt-5')} style={{ gridTemplateColumns: '72px 32px auto' }}>
           <span className="text-muted-foreground">Stat Value</span>
           <span>{data ? <RatioValue r={data} large /> : <span className="text-subtle-foreground">…</span>}</span>
           {!isPreflop ? (
@@ -246,6 +303,17 @@ export default function StatPopup({ cellId, meta, params, selection, onSelect, o
                 />
               </TabsContent>
             )}
+            {isPreflop && (
+              <TabsContent value="range" className="min-h-0 overflow-y-auto px-4 py-3">
+                {reportQuery && onSelectRange ? (
+                  <PreflopRangeTab
+                    query={reportQuery}
+                    selected={rangeCells ?? []}
+                    onSelect={(cells) => onSelectRange(cells, reportQuery.chain)}
+                  />
+                ) : <ChainMissing />}
+              </TabsContent>
+            )}
             <TabsContent value="bet_sizes" className="min-h-0 overflow-y-auto">
               <BetSizesTab
                 rows={data.bet_sizes}
@@ -254,6 +322,16 @@ export default function StatPopup({ cellId, meta, params, selection, onSelect, o
                 onSelectRow={selectSize}
                 onSelectSegment={selectSizeSegment}
               />
+            </TabsContent>
+            <TabsContent value="next_actions" className="min-h-0 overflow-y-auto px-2 py-2">
+              {reportQuery && onSelectNext ? (
+                <SplitReport
+                  type="next_actions"
+                  query={reportQuery}
+                  selectedKey={nextKey ?? null}
+                  onOpenRow={(row) => onSelectNext(row, reportQuery.chain)}
+                />
+              ) : <ChainMissing />}
             </TabsContent>
             <TabsContent value="hands" className="min-h-0">
               <GeneralHandList cellId={cellId} params={params} filter={{}} />

@@ -46,6 +46,9 @@ export interface GeneralResponse {
   /** Selected player name and site, when the backend knows them. */
   player?: string | null;
   site?: string | null;
+  /** The player the numbers are for (the workspace hero when none was asked for). */
+  player_id?: number | null;
+  is_hero?: boolean;
   cells: Record<string, GeneralCell>;
   /** True when the numbers are the built-in sample data, not the user's hands. */
   mock?: boolean;

@@ -11,7 +11,7 @@ import AppShell from '@/components/shell/AppShell';
 import { HomeRedirect, LegacyRedirect } from '@/components/shell/Redirects';
 import { Toaster } from '@/components/ui/sonner';
 import ReportsPage from './pages/ReportsPage';
-import GeneralPage from './pages/GeneralPage';
+import StatisticsPage from './pages/StatisticsPage';
 import SessionsPage from './pages/SessionsPage';
 import MarkedHandsPage from './pages/MarkedHandsPage';
 import DatabasesPage from './pages/DatabasesPage';
@@ -39,7 +39,7 @@ export default function App() {
 
             {/* Main screens */}
             <Route path="/reports" element={<WelcomeGate><ReportsPage /></WelcomeGate>} />
-            <Route path="/statistics" element={<WelcomeGate><GeneralPage /></WelcomeGate>} />
+            <Route path="/statistics" element={<WelcomeGate><StatisticsPage /></WelcomeGate>} />
             <Route path="/sessions" element={<WelcomeGate><SessionsPage /></WelcomeGate>} />
             <Route path="/sessions/:sessionIndex" element={<WelcomeGate><SessionsPage /></WelcomeGate>} />
             <Route path="/marked" element={<MarkedHandsPage />} />
