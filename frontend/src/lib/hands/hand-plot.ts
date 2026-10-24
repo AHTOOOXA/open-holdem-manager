@@ -1,10 +1,16 @@
 /** Formatting for the docked hand panel ("hand plot") and the hand export, kept pure for tests. */
-import { bb, signedBb } from '@/lib/format';
+import { bb, count, signedBb } from '@/lib/format';
 import type { HandDetail } from '@/lib/api';
 
 /** Largest export the server returns; a longer list comes back capped (header X-OHM-Truncated: 1). */
 export const EXPORT_MAX_HANDS = 100_000;
 export const EXPORT_FILENAME = 'OHM hands.txt';
+
+/** Notice shown before an export that the server will cap; null when the whole list fits. */
+export function exportCapNotice(total: number | null | undefined): string | null {
+  if (total === null || total === undefined || total <= EXPORT_MAX_HANDS) return null;
+  return `Only the first ${count(EXPORT_MAX_HANDS)} of ${count(total)} hands are exported`;
+}
 
 /** A bet or stack in big blinds, "6.5 bb". */
 export function plotAmount(amountBb: number | null | undefined): string {
@@ -31,9 +37,15 @@ export function plotResult(wonBb: number, evBb?: number | null): PlotResult {
   return { label, tone, ev: showEv ? `All-in EV ${signedBb(ev, 1)} bb` : null };
 }
 
-/** Players in seat order with the hero first when present (the panel leads with the hand's owner). */
-export function plotPlayers(hand: Pick<HandDetail, 'players'>): HandDetail['players'] {
-  return [...hand.players].sort((a, b) => Number(b.is_hero) - Number(a.is_hero) || a.seat - b.seat);
+/** The row's player: matched by `player_id`, else the hero (hand lists that do not mix players). */
+export function rowPlayer<P extends { player_id?: number; is_hero: boolean }>(players: readonly P[], playerId?: number): P | undefined {
+  return (playerId !== undefined ? players.find((p) => p.player_id === playerId) : undefined) ?? players.find((p) => p.is_hero);
+}
+
+/** Players in seat order with the row's player first (the panel leads with the hand's owner). */
+export function plotPlayers(hand: Pick<HandDetail, 'players'>, playerId?: number): HandDetail['players'] {
+  const owner = rowPlayer(hand.players, playerId);
+  return [...hand.players].sort((a, b) => Number(b === owner) - Number(a === owner) || a.seat - b.seat);
 }
 
 /** Text for the clipboard / the history dialog; empty hands say so instead of copying nothing. */

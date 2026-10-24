@@ -10,11 +10,16 @@ export default function HandReplayer({
   hand,
   quick = false,
   onManualControl,
+  keyboard,
+  keyScope,
 }: {
   hand: HandDetail;
   /** Quick-replay mode: starts playing, one step per QUICK_REPLAY_STEP_MS, no document-level keys; any control stops it. */
   quick?: boolean;
   onManualControl?: () => void;
+  /** Quick mode only: turn the replayer keys on (the popover was opened with the keyboard), scoped to `keyScope`. */
+  keyboard?: boolean;
+  keyScope?: HTMLElement | null;
 }) {
   const [showBb, setShowBb] = useState(true);
   const replayer = useReplayerState(hand, quick ? { autoPlay: true, stepMs: QUICK_REPLAY_STEP_MS } : undefined);
@@ -73,7 +78,8 @@ export default function HandReplayer({
         onGoToStep={manual(replayer.goToStep)}
         onSetSpeed={manual(replayer.setSpeed)}
         onSetShowBb={setShowBb}
-        keyboard={!quick}
+        keyboard={quick ? keyboard === true : true}
+        keyScope={quick ? keyScope : undefined}
       />
     </div>
   );

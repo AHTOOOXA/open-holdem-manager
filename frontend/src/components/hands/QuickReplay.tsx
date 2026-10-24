@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Pin, PinOff, Play } from 'lucide-react';
 import { getHandDetail } from '@/lib/api';
@@ -15,7 +15,7 @@ import HandReplayer from '@/components/hands/replayer/HandReplayer';
 /** Stop pointer / click events here so the popover (portaled, but React-wise inside the row) never selects or opens the row, or its menu. */
 const stop = (e: { stopPropagation: () => void }) => e.stopPropagation();
 
-function MiniReplayer({ handId, playerId }: { handId: string; playerId?: number }) {
+function MiniReplayer({ handId, playerId, keyboard, keyScope }: { handId: string; playerId?: number; keyboard: boolean; keyScope: HTMLElement | null }) {
   const { data, isError } = useQuery({
     queryKey: [...queryKeys.hands.detail(handId), playerId ?? null],
     queryFn: () => getHandDetail(handId, playerId),
@@ -23,7 +23,7 @@ function MiniReplayer({ handId, playerId }: { handId: string; playerId?: number 
   });
   if (isError) return <p className="text-sm text-muted-foreground">Could not load the hand.</p>;
   if (!data) return <p className="text-sm text-muted-foreground">Loading…</p>;
-  return <HandReplayer hand={data} quick />;
+  return <HandReplayer hand={data} quick keyboard={keyboard} keyScope={keyScope} />;
 }
 
 /**
@@ -34,6 +34,12 @@ function MiniReplayer({ handId, playerId }: { handId: string; playerId?: number 
 export default function QuickReplay({ handId, playerId }: { handId: string; playerId?: number }) {
   const [open, setOpen] = useState(false);
   const [pinned, setPinned] = useState(false);
+  // Opened with the keyboard (Enter on the button): focus moves into the popover, whose keys drive the replayer
+  const [byKeyboard, setByKeyboard] = useState(false);
+  const [popEl, setPopEl] = useState<HTMLElement | null>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  // Mirror of byKeyboard for the close handler (the state is already reset when Radix calls it)
+  const keyboardOpen = useRef(false);
 
   const [intent] = useState(() =>
     createHoverIntent({
@@ -50,22 +56,26 @@ export default function QuickReplay({ handId, playerId }: { handId: string; play
     intent.notifyClosed();
     setPinned(false);
     setOpen(false);
+    setByKeyboard(false);
   };
 
   return (
     <Popover open={open} onOpenChange={onOpenChange}>
       <PopoverAnchor asChild>
         <Button
+          ref={triggerRef}
           type="button"
           variant="outline"
           size="icon-xs"
           className="rounded-pill text-muted-foreground hover:text-primary"
           aria-label="Quick replay"
-          title="Quick replay (hover, or Enter)"
-          onPointerEnter={() => intent.enter()}
+          title="Quick replay (hover, or Enter; then Space and arrow keys step, Esc closes)"
+          onPointerEnter={() => { keyboardOpen.current = false; intent.enter(); }}
           onPointerLeave={() => intent.leave()}
           onClick={(e) => {
             e.stopPropagation();
+            keyboardOpen.current = e.detail === 0;
+            setByKeyboard(keyboardOpen.current);
             intent.openNow();
           }}
           onDoubleClick={stop}
@@ -77,9 +87,14 @@ export default function QuickReplay({ handId, playerId }: { handId: string; play
       <PopoverContent
         side="right"
         align="start"
+        ref={setPopEl}
         className="w-105 p-3"
-        onOpenAutoFocus={(e) => e.preventDefault()}
-        onCloseAutoFocus={(e) => e.preventDefault()}
+        // Hover-opened: focus stays where it is. Keyboard-opened: the first control (pin) takes it, and Esc gives it back
+        onOpenAutoFocus={(e) => { if (!byKeyboard) e.preventDefault(); }}
+        onCloseAutoFocus={(e) => {
+          e.preventDefault();
+          if (keyboardOpen.current) triggerRef.current?.focus();
+        }}
         onPointerEnter={() => intent.enter()}
         onPointerLeave={() => intent.leave()}
         onClick={stop}
@@ -105,7 +120,7 @@ export default function QuickReplay({ handId, playerId }: { handId: string; play
             {pinned ? <PinOff className="size-3.5" /> : <Pin className="size-3.5" />}
           </Button>
         </div>
-        <MiniReplayer handId={handId} playerId={playerId} />
+        <MiniReplayer handId={handId} playerId={playerId} keyboard={byKeyboard} keyScope={popEl} />
       </PopoverContent>
     </Popover>
   );

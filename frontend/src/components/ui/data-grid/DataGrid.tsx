@@ -756,6 +756,7 @@ export function DataGrid<T extends RowData>({
     // contain-inline-size: a wide table scrolls inside the box instead of widening every ancestor
     <div
       ref={scrollRef}
+      data-grid-scroll=""
       tabIndex={-1}
       onKeyDown={onGridKeyDown}
       onScroll={onScroll}

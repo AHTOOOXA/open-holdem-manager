@@ -8,6 +8,7 @@ import TagChip from '@/components/marked/TagChip';
 import TagPickerPopover from '@/components/marked/TagPickerPopover';
 import { useMarkHand, useTagDefs } from '@/components/marked/useMarkHand';
 import { formatStakes } from '@/lib/utils';
+import { plotPlayers, rowPlayer } from '@/lib/hands/hand-plot';
 import { getShareUrl, anonymizeHand } from '@/lib/hand-codec';
 import { RitBadge, CashoutBadge } from '@/components/hands/HandTypeBadge';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
@@ -143,8 +144,8 @@ export default function HandDrawer({
   };
 
   const displayHand = hand && anonymized ? anonymizeHand(hand) : hand;
-  const hero = displayHand?.players.find((p) => p.is_hero);
-  const heroWonBb = hero?.won_bb ?? 0;
+  const owner = displayHand ? rowPlayer(displayHand.players, playerId) : undefined;
+  const heroWonBb = owner?.won_bb ?? 0;
 
   return (
     <Sheet open={true} onOpenChange={(open) => { if (!open) onClose(); }}>
@@ -230,7 +231,7 @@ export default function HandDrawer({
 
                   {/* Players — position-first */}
                   <div className="mb-4">
-                    <HandPlayersTable players={displayHand!.players} />
+                    <HandPlayersTable players={plotPlayers(displayHand!, playerId)} />
                   </div>
 
                   {/* Actions */}

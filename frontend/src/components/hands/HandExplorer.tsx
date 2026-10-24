@@ -27,7 +27,7 @@ import HandHistoryDialog from '@/components/hands/HandHistoryDialog';
 import HandRowMenuItems from '@/components/hands/HandRowMenuItems';
 import QuickReplay from '@/components/hands/QuickReplay';
 import { downloadHandsExport } from '@/components/hands/handListActions';
-import { canDockPanel, neighbourId } from '@/lib/hands/gestures';
+import { canDockPanel, isGridKeyTarget, neighbourId } from '@/lib/hands/gestures';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { Download } from 'lucide-react';
@@ -265,7 +265,7 @@ export default function HandExplorer({
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerMode, setDrawerMode] = useState<HandViewMode>('visual');
   const [panelOpen, setPanelOpen] = useState(false);
-  const [historyFor, setHistoryFor] = useState<{ id: string; playerId?: number } | null>(null);
+  const [historyFor, setHistoryFor] = useState<{ id: string; playerId?: number; rowKey: string } | null>(null);
   // The docked hand panel needs room: measure the explorer, fall back to the drawer when narrow
   const rootRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState<number | null>(null);
@@ -377,11 +377,12 @@ export default function HandExplorer({
   }, [docked, openDrawer]);
   // Export Hands…: the whole filtered list (current filters, chain, sort), not just this page
   const exportParams = useRef<HandListParams>({});
+  const exportTotal = useRef<number | undefined>(undefined);
   const [exporting, setExporting] = useState(false);
   const exportList = useCallback(async () => {
     setExporting(true);
     try {
-      await downloadHandsExport(exportParams.current);
+      await downloadHandsExport(exportParams.current, exportTotal.current);
     } finally {
       setExporting(false);
     }
@@ -408,7 +409,7 @@ export default function HandExplorer({
           }}
           onShowHistory={() => {
             pickerOpening.current = true;
-            setHistoryFor({ id: h.id, playerId });
+            setHistoryFor({ id: h.id, playerId, rowKey: key });
           }}
           onExport={() => void exportList()}
         />
@@ -435,18 +436,17 @@ export default function HandExplorer({
     if (id) gridRef.current?.focusRow(id);
   }, []);
   const handleSelectionChange = useCallback((ids: string[]) => setSelectedId(ids[0] ?? null), []);
-  // Single click: the docked panel (drawer when narrow); double click / Enter: the replayer
+  // Single click: the docked panel; where there is no room it only selects (a drawer opened by the first click of a
+  // double click would be dismissed by the second one). Double click / Enter: the replayer drawer.
   const handleRowClick = useCallback((h: HandSummary) => {
-    if (docked) {
-      setSelectedId(handId(h));
-      setPanelOpen(true);
-    } else openDrawer(handId(h));
-  }, [docked, openDrawer]);
+    setSelectedId(handId(h));
+    if (docked) setPanelOpen(true);
+  }, [docked]);
   const handleRowActivate = useCallback((h: HandSummary) => openDrawer(handId(h)), [openDrawer]);
 
   // A sticky header lets you re-sort / re-filter while scrolled down: start the new result at the top
   const queryKeyJson = JSON.stringify(handsQueryParams);
-  useEffect(() => { exportParams.current = handsQueryParams; });
+  useEffect(() => { exportParams.current = handsQueryParams; exportTotal.current = data?.total; });
   useEffect(() => { gridRef.current?.scrollToTop(); }, [queryKeyJson]);
 
   const hands = data?.hands ?? NO_HANDS;
@@ -456,7 +456,7 @@ export default function HandExplorer({
   const handleGridKeyDown = (e: React.KeyboardEvent) => {
     if (!panelOpen || drawerOpen) return;
     const target = e.target as HTMLElement;
-    if (target.closest('[data-slot="popover-content"]')) return;
+    if (!isGridKeyTarget(target)) return;
     if (e.key === 'Escape') {
       setPanelOpen(false);
       if (selectedId) gridRef.current?.focusRow(selectedId);
@@ -636,7 +636,15 @@ export default function HandExplorer({
       )}
 
       {historyFor && (
-        <HandHistoryDialog handId={historyFor.id} playerId={historyFor.playerId} onClose={() => setHistoryFor(null)} />
+        <HandHistoryDialog
+          handId={historyFor.id}
+          playerId={historyFor.playerId}
+          onClose={() => setHistoryFor(null)}
+          onCloseAutoFocus={(e) => {
+            e.preventDefault();
+            gridRef.current?.focusRow(historyFor.rowKey);
+          }}
+        />
       )}
 
       {picker && (

@@ -40,21 +40,24 @@ interface GeneralHandListProps {
 /**
  * The stat's hands (cases) for one popup selection, newest first, in H2N's
  * list notation. Loads 50 rows, then more as you scroll, up to 512 per sort
- * order. Click or double-click a row to open the hand in the replayer drawer; right-click for the hand menu.
+ * order. Click a row to select it, double-click (or Enter on its cards) to open the hand in the replayer drawer; right-click for the hand menu.
  */
 export default function GeneralHandList({ cellId, params, filter, title, onClose }: GeneralHandListProps) {
   const [sortValue, setSortValue] = useState('date-desc');
   const { sort, order } = SORTS.find((s) => s.value === sortValue) ?? SORTS[0];
   const [expanded, setExpanded] = useState<ReadonlySet<HandStreet>>(new Set());
   const [openHandId, setOpenHandId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const playerId = params.player_id ?? undefined;
   const [drawerMode, setDrawerMode] = useState<HandViewMode>('visual');
   const [historyId, setHistoryId] = useState<string | null>(null);
-  const [picker, setPicker] = useState<{ handId: string; x: number; y: number } | null>(null);
+  const [picker, setPicker] = useState<{ handId: string; playerId?: number; x: number; y: number } | null>(null);
   const lastPointer = useRef({ x: 0, y: 0 });
   // Keep focus where the dialog / picker puts it instead of handing it back to the row when the menu closes
   const overlayOpening = useRef(false);
   const openHand = (id: string, mode: HandViewMode = 'visual') => {
     setDrawerMode(mode);
+    setSelectedId(id);
     setOpenHandId(id);
   };
 
@@ -153,9 +156,9 @@ export default function GeneralHandList({ cellId, params, filter, title, onClose
                     row={r}
                     expandedStreets={expanded}
                     onExpandStreet={(s) => setExpanded((prev) => new Set(prev).add(s))}
-                    selected={r.hand_id === openHandId}
+                    selected={r.hand_id === (openHandId ?? selectedId)}
+                    onSelect={setSelectedId}
                     onOpen={(id) => openHand(id)}
-                    onActivate={(id) => openHand(id)}
                     onMenuCloseAutoFocus={(e) => {
                       if (overlayOpening.current) {
                         overlayOpening.current = false;
@@ -165,12 +168,13 @@ export default function GeneralHandList({ cellId, params, filter, title, onClose
                     menu={
                       <HandRowMenuItems
                         handId={r.hand_id}
+                        playerId={playerId}
                         marked={r.marked ?? (r.tags?.length ?? 0) > 0}
                         onOpenReplayer={() => openHand(r.hand_id)}
                         onShowDetails={() => openHand(r.hand_id, 'text')}
                         onPickTags={(id) => {
                           overlayOpening.current = true;
-                          setPicker({ handId: id, ...lastPointer.current });
+                          setPicker({ handId: id, playerId, ...lastPointer.current });
                         }}
                         onShowHistory={() => {
                           overlayOpening.current = true;
@@ -191,6 +195,7 @@ export default function GeneralHandList({ cellId, params, filter, title, onClose
       {openHandId && (
         <HandDrawer
           handId={openHandId}
+          playerId={playerId}
           initialMode={drawerMode}
           onClose={() => setOpenHandId(null)}
           onPrev={() => openIndex > 0 && setOpenHandId(rows[openIndex - 1].hand_id)}
@@ -198,11 +203,22 @@ export default function GeneralHandList({ cellId, params, filter, title, onClose
           onTagsChanged={() => { void queryClient.invalidateQueries({ queryKey: ['general'] }); }}
         />
       )}
-      {historyId && <HandHistoryDialog handId={historyId} onClose={() => setHistoryId(null)} />}
+      {historyId && (
+        <HandHistoryDialog
+          handId={historyId}
+          playerId={playerId}
+          onClose={() => setHistoryId(null)}
+          onCloseAutoFocus={(e) => {
+            e.preventDefault();
+            scrollRef.current?.querySelector<HTMLElement>(`tr[data-hand-id="${CSS.escape(historyId)}"] button`)?.focus();
+          }}
+        />
+      )}
       {picker && (
         <TagPickerPopover
           key={picker.handId}
           handId={picker.handId}
+          playerId={picker.playerId}
           initialTags={rows.find((r) => r.hand_id === picker.handId)?.tags ?? []}
           point={picker}
           onClose={() => setPicker(null)}

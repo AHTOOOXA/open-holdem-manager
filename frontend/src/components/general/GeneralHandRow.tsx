@@ -150,9 +150,10 @@ interface GeneralHandRowProps {
   expandedStreets: ReadonlySet<HandStreet>;
   onExpandStreet: (street: HandStreet) => void;
   selected: boolean;
+  /** Single mouse click: select the row only (a drawer opened by the first click of a double click is closed by the second). */
+  onSelect: (handId: string) => void;
+  /** Double click or keyboard activation of the hole-cards button: open the replayer. */
   onOpen: (handId: string) => void;
-  /** Double click: open the replayer. */
-  onActivate?: (handId: string) => void;
   /** Right-click menu items (ContextMenuItem children). */
   menu?: ReactNode;
   onMenuCloseAutoFocus?: (event: Event) => void;
@@ -165,7 +166,7 @@ interface GeneralHandRowProps {
  * position; the stat owner's are underlined with a dashed line. Streets after
  * the player folded stay blank.
  */
-export default function GeneralHandRow({ row, expandedStreets, onExpandStreet, selected, onOpen, onActivate, menu, onMenuCloseAutoFocus }: GeneralHandRowProps) {
+export default function GeneralHandRow({ row, expandedStreets, onExpandStreet, selected, onSelect, onOpen, menu, onMenuCloseAutoFocus }: GeneralHandRowProps) {
   const won = row.won_bb;
   const ev = row.ev_diff_bb;
   const tr = (
@@ -175,8 +176,8 @@ export default function GeneralHandRow({ row, expandedStreets, onExpandStreet, s
     <tr
       data-hand-id={row.hand_id}
       aria-current={selected ? 'true' : undefined}
-      onClick={() => onOpen(row.hand_id)}
-      onDoubleClick={() => onActivate?.(row.hand_id)}
+      onClick={() => onSelect(row.hand_id)}
+      onDoubleClick={() => onOpen(row.hand_id)}
       className={cn(
         'cursor-pointer border-b border-border',
         selected ? 'bg-selection' : 'hover:bg-overlay-hover focus-within:bg-overlay-hover',
@@ -197,7 +198,9 @@ export default function GeneralHandRow({ row, expandedStreets, onExpandStreet, s
           aria-label={`Open hand${row.hole_cards.length ? ` ${row.hole_cards.map(cardName).join(', ')}` : ''}${row.played_at ? `, ${formatHandDate(row.played_at)}` : ''}`}
           onClick={(e) => {
             e.stopPropagation();
-            onOpen(row.hand_id);
+            // detail 0 = Enter / Space; a mouse click only selects (double click opens)
+            if (e.detail === 0) onOpen(row.hand_id);
+            else onSelect(row.hand_id);
           }}
         >
           {row.hole_cards.length ? <CardGroup cards={row.hole_cards} /> : <span className="text-subtle-foreground">??</span>}

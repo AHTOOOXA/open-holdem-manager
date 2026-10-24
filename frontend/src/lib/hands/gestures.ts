@@ -105,3 +105,22 @@ export function createHoverIntent(o: HoverIntentOptions): HoverIntent {
     },
   };
 }
+
+/** What `isGridKeyTarget` needs of a DOM element (kept structural so tests need no DOM). */
+export interface GridKeyTarget {
+  tagName: string;
+  closest: (selector: string) => unknown;
+  hasAttribute: (name: string) => boolean;
+}
+
+/** Keys inside menus, listboxes, dialogs, popovers and the hand panel belong to them, not to the list. */
+const FOREIGN_KEY_SCOPES = '[role="menu"], [role="listbox"], [role="dialog"], [data-slot="popover-content"], aside';
+
+/**
+ * Arrow keys and Escape move / close the docked panel only when they come from a grid row or the grid's scroll box,
+ * never from a menu, select, dialog or the panel itself (they bubble through React portals to the list).
+ */
+export function isGridKeyTarget(el: GridKeyTarget): boolean {
+  if (el.closest(FOREIGN_KEY_SCOPES)) return false;
+  return el.tagName === 'TR' || el.hasAttribute('data-grid-scroll');
+}

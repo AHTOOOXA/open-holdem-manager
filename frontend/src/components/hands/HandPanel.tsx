@@ -4,7 +4,7 @@ import { getHandDetail } from '@/lib/api';
 import { queryKeys } from '@/lib/query-keys';
 import { formatStakes } from '@/lib/utils';
 import { formatDateTime } from '@/lib/format';
-import { plotPlayers } from '@/lib/hands/hand-plot';
+import { plotPlayers, rowPlayer } from '@/lib/hands/hand-plot';
 import HandActionsDisplay from '@/components/hands/HandActions';
 import { HandPlayersTable, HandResultLine } from '@/components/hands/HandTextParts';
 import { RitBadge, CashoutBadge } from '@/components/hands/HandTypeBadge';
@@ -35,7 +35,7 @@ export default function HandPanel({
     queryFn: () => getHandDetail(handId, playerId),
     staleTime: 30_000,
   });
-  const hero = hand?.players.find((p) => p.is_hero);
+  const owner = hand ? rowPlayer(hand.players, playerId) : undefined;
 
   return (
     <aside aria-label="Hand details" className="flex min-h-0 w-125 shrink-0 flex-col border-l border-border bg-card">
@@ -74,10 +74,10 @@ export default function HandPanel({
         ) : (
           <>
             <div className="mb-3">
-              <HandPlayersTable players={plotPlayers(hand)} dense />
+              <HandPlayersTable players={plotPlayers(hand, playerId)} dense />
             </div>
             <HandActionsDisplay actions={hand.actions} board={hand.board} extraBoards={hand.extra_boards} />
-            <HandResultLine wonBb={hero?.won_bb ?? 0} evBb={evBb} isCashout={hand.is_cashout} />
+            <HandResultLine wonBb={owner?.won_bb ?? 0} evBb={evBb} isCashout={hand.is_cashout} />
           </>
         )}
       </div>

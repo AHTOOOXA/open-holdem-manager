@@ -8,7 +8,13 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 
 /** "Show Hand History": the hand's original text in monospace with a copy button. */
-export default function HandHistoryDialog({ handId, playerId, onClose }: { handId: string; playerId?: number; onClose: () => void }) {
+export default function HandHistoryDialog({ handId, playerId, onClose, onCloseAutoFocus }: {
+  handId: string;
+  playerId?: number;
+  onClose: () => void;
+  /** Radix focus-restore hook: the list focuses the row the dialog was opened from (the row menu is gone by then). */
+  onCloseAutoFocus?: (event: Event) => void;
+}) {
   const { data, isError } = useQuery({
     queryKey: [...queryKeys.hands.detail(handId), playerId ?? null],
     queryFn: () => getHandDetail(handId, playerId),
@@ -16,7 +22,7 @@ export default function HandHistoryDialog({ handId, playerId, onClose }: { handI
   const text = data ? handHistoryText(data) : null;
   return (
     <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="sm:max-w-2xl" onCloseAutoFocus={onCloseAutoFocus}>
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             Hand history

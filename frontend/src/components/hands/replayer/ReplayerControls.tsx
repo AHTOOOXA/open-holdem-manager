@@ -27,6 +27,11 @@ interface ReplayerControlsProps {
   onSetShowBb: (showBb: boolean) => void;
   /** Space / arrows / Home / End drive the replayer (default). Off for popovers that must not grab list keys. */
   keyboard?: boolean;
+  /**
+   * With `keyboard`: only keys pressed inside this element count (a popover keeps list keys out of the replayer).
+   * Listens in the capture phase, because the popover stops the keys from bubbling to the document.
+   */
+  keyScope?: HTMLElement | null;
 }
 
 export default function ReplayerControls({
@@ -45,10 +50,15 @@ export default function ReplayerControls({
   onSetSpeed,
   onSetShowBb,
   keyboard = true,
+  keyScope,
 }: ReplayerControlsProps) {
   const handleKey = useCallback(
     (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (keyScope) {
+        if (!(e.target instanceof Node) || !keyScope.contains(e.target)) return;
+        if (e.key === ' ' && e.target instanceof HTMLButtonElement) return; // Space presses the focused button
+      }
       switch (e.key) {
         case ' ':
           e.preventDefault();
@@ -72,14 +82,15 @@ export default function ReplayerControls({
           break;
       }
     },
-    [onTogglePlay, onStepForward, onStepBack, onGoToStart, onGoToEnd],
+    [onTogglePlay, onStepForward, onStepBack, onGoToStart, onGoToEnd, keyScope],
   );
 
   useEffect(() => {
     if (!keyboard) return;
-    document.addEventListener('keydown', handleKey);
-    return () => document.removeEventListener('keydown', handleKey);
-  }, [handleKey, keyboard]);
+    const capture = !!keyScope;
+    document.addEventListener('keydown', handleKey, capture);
+    return () => document.removeEventListener('keydown', handleKey, capture);
+  }, [handleKey, keyboard, keyScope]);
 
   const progress = totalSteps > 0 ? (currentStep / totalSteps) * 100 : 0;
 

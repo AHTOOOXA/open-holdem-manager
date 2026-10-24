@@ -480,6 +480,8 @@ export interface HandListResponse {
 }
 
 export interface HandPlayerDetail {
+  /** Database player id (lets a mixed list pick the row's player; falls back to `is_hero`). */
+  player_id?: number;
   seat: number;
   position: string;
   username: string;
@@ -582,11 +584,9 @@ export function handsExportUrl(params: HandListParams | undefined, workspaceId: 
   return `${BASE}/hands/export?${sp}`;
 }
 
-/** Download the whole filtered list as text. Resolves to the hand-history text and whether the server capped it. */
-export async function exportHandsText(params: HandListParams | undefined): Promise<{ blob: Blob; truncated: boolean }> {
-  const res = await fetch(handsExportUrl(params, _getWorkspaceId()));
-  if (!res.ok) throw new Error(`Export failed: ${res.statusText}`);
-  return { blob: await res.blob(), truncated: res.headers.get('X-OHM-Truncated') === '1' };
+/** Export URL for the current workspace (what a hidden download link points at). */
+export function currentHandsExportUrl(params: HandListParams | undefined): string {
+  return handsExportUrl(params, _getWorkspaceId());
 }
 
 export async function getHands(params?: HandListParams): Promise<HandListResponse> {

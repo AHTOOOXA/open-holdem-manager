@@ -8,9 +8,10 @@ import {
   HAND_PANEL_MIN_CONTAINER_WIDTH,
   canDockPanel,
   createHoverIntent,
+  isGridKeyTarget,
   neighbourId,
 } from '../src/lib/hands/gestures';
-import { handHistoryText, plotAmount, plotPlayers, plotResult } from '../src/lib/hands/hand-plot';
+import { handHistoryText, plotAmount, plotPlayers, exportCapNotice, plotResult, rowPlayer } from '../src/lib/hands/hand-plot';
 import { handsExportUrl } from '../src/lib/api';
 
 test('canDockPanel: unmeasured and narrow containers fall back to the drawer', () => {
@@ -134,7 +135,37 @@ test('hand plot: hero listed first, then seat order; empty history is null', () 
   const p = (seat: number, is_hero = false) => ({ seat, is_hero }) as never;
   const sorted = plotPlayers({ players: [p(1), p(4, true), p(2)] });
   assert.deepEqual(sorted.map((x) => x.seat), [4, 1, 2]);
+  // a mixed list: the row's player leads, matched by player_id; no match falls back to the hero
+  const q = (seat: number, player_id: number, is_hero = false) => ({ seat, player_id, is_hero }) as never;
+  const mixed = { players: [q(1, 10), q(2, 20, true), q(3, 30)] };
+  assert.deepEqual(plotPlayers(mixed, 30).map((x) => x.seat), [3, 1, 2]);
+  assert.equal(rowPlayer(mixed.players, 10)?.seat, 1);
+  assert.equal(rowPlayer(mixed.players, 99)?.seat, 2);
+  assert.equal(rowPlayer(mixed.players)?.seat, 2);
+  assert.equal(rowPlayer([] as never[], 1), undefined);
   assert.equal(handHistoryText({ raw_text: '  ' }), null);
   assert.equal(handHistoryText({ raw_text: null }), null);
   assert.equal(handHistoryText({ raw_text: 'Poker Hand #1' }), 'Poker Hand #1');
+});
+
+test('isGridKeyTarget: only rows and the grid scroll box; never menus, listboxes, dialogs, popovers or the panel', () => {
+  const el = (tagName: string, opts: { scroll?: boolean; inside?: boolean } = {}) => ({
+    tagName,
+    closest: () => (opts.inside ? {} : null),
+    hasAttribute: (n: string) => !!opts.scroll && n === 'data-grid-scroll',
+  });
+  assert.equal(isGridKeyTarget(el('TR')), true);
+  assert.equal(isGridKeyTarget(el('DIV', { scroll: true })), true);
+  assert.equal(isGridKeyTarget(el('DIV')), false);
+  assert.equal(isGridKeyTarget(el('BUTTON')), false);
+  // a row-like target inside a menu / dialog / aside is not the grid's
+  assert.equal(isGridKeyTarget(el('TR', { inside: true })), false);
+  assert.equal(isGridKeyTarget(el('DIV', { scroll: true, inside: true })), false);
+});
+
+test('exportCapNotice: warns before an export the server will cap', () => {
+  assert.equal(exportCapNotice(100_000), null);
+  assert.equal(exportCapNotice(5), null);
+  assert.equal(exportCapNotice(undefined), null);
+  assert.match(exportCapNotice(250_000) ?? '', /first 100k of 250k/);
 });
