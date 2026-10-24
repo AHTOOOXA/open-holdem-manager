@@ -18,7 +18,7 @@ import {
   type FilterTab,
 } from '@/lib/reports/steps';
 import type { Pos, QuickFilter, Step } from '@/lib/reports/types';
-import { EMPTY_ROWS, LINE_MAX_LENGTH, rowsToDsl } from '@/lib/lines/dsl';
+import { EMPTY_ROWS, LINE_MAX_LENGTH, rowsIssues, rowsToDsl } from '@/lib/lines/dsl';
 import { actionsLineStep, lineStepDescription, type LineStep } from '@/lib/lines/step';
 import type { ActionRows } from '@/lib/lines/types';
 import ActionsTab from './ActionsTab';
@@ -367,7 +367,7 @@ function FilterForm({ value, onApply, onCancel, initialTab }: Omit<FilterDialogP
         <div className="flex gap-2">
           <Button type="button" variant="ghost" onClick={() => setDraft(EMPTY)}>Reset</Button>
           <Button type="button" variant="outline" onClick={onCancel}>Cancel</Button>
-          <Button type="button" disabled={actionsDsl.length > LINE_MAX_LENGTH} onClick={() => onApply(toSteps(draft, value))}>Apply</Button>
+          <Button type="button" disabled={actionsDsl.length > LINE_MAX_LENGTH || rowsIssues(draft.rows).length > 0} onClick={() => onApply(toSteps(draft, value))}>Apply</Button>
         </div>
       </DialogFooter>
       <LineBuilderDialog

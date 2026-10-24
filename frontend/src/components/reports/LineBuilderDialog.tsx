@@ -4,7 +4,7 @@
  * ("+ Custom Filter") and by double-clicking a Custom Filter chip. Spec: reports/04 §2.10 (own
  * layout and look), docs/specs/QUERY-ENGINE-PRD.md "Action Line Builder".
  */
-import { useId, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, Trash2 } from 'lucide-react';
 import {
   LINE_MAX_LENGTH, LINE_POSITIONS, LINE_STREETS, STREET_TITLE, actionChipLabel, describeLine, newActionId, raiseKindLabel,
@@ -134,6 +134,10 @@ function Options({ action, index, laneSize, onChange, onMove, onRemove }: {
                 <ToggleGroupItem key={k} value={k}>{k === 'any' ? 'Any' : raiseKindLabel(k, action.street)}</ToggleGroupItem>
               ))}
             </ToggleGroup>
+            <span aria-hidden />
+            <p className="text-xs text-subtle-foreground">
+              First Raise is the first raise of the street (isolation raises included). 3-Bet is the second preflop raise.
+            </p>
           </>
         )}
         <span className="text-xs text-muted-foreground">Position</span>
@@ -182,6 +186,15 @@ function BuilderForm({ initial, onCancel, onOk }: { initial: LineStep | null; on
   const [showDsl, setShowDsl] = useState(false);
   const [dragId, setDragId] = useState<string | null>(null);
   const nameId = useId();
+  const chipRefs = useRef(new Map<string, HTMLElement>());
+  const refocus = useRef<string | null>(null);
+  // After a keyboard reorder React moves the chip's node: give its button the focus back
+  useEffect(() => {
+    const id = refocus.current;
+    if (!id) return;
+    refocus.current = null;
+    chipRefs.current.get(id)?.querySelector('button')?.focus();
+  }, [actions]);
 
   const check = useMemo(() => validateLine({ actions }), [actions]);
   const summary = describeLine(check.line);
@@ -270,6 +283,10 @@ function BuilderForm({ initial, onCancel, onOk }: { initial: LineStep | null; on
                     return (
                       <Chip
                         key={a.id}
+                        ref={(el: HTMLElement | null) => {
+                          if (el) chipRefs.current.set(a.id, el);
+                          else chipRefs.current.delete(a.id);
+                        }}
                         tone={a.who === 'hero' ? 'accent' : 'neutral'}
                         className={cn('cursor-grab', on && 'ring-2 ring-primary', dragId === a.id && 'opacity-60')}
                         draggable
@@ -279,8 +296,8 @@ function BuilderForm({ initial, onCancel, onOk }: { initial: LineStep | null; on
                         onDrop={drop(street, a.id)}
                         onKeyDown={(e) => {
                           if (!e.altKey) return;
-                          if (e.key === 'ArrowLeft' && i > 0) { e.preventDefault(); setActions((xs) => shift(xs, a.id, -1)); }
-                          if (e.key === 'ArrowRight' && i < acts.length - 1) { e.preventDefault(); setActions((xs) => shift(xs, a.id, 1)); }
+                          if (e.key === 'ArrowLeft' && i > 0) { e.preventDefault(); refocus.current = a.id; setActions((xs) => shift(xs, a.id, -1)); }
+                          if (e.key === 'ArrowRight' && i < acts.length - 1) { e.preventDefault(); refocus.current = a.id; setActions((xs) => shift(xs, a.id, 1)); }
                         }}
                         title="Alt + arrow keys or drag to reorder"
                         onClick={() => select(a)}

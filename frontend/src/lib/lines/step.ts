@@ -6,7 +6,7 @@
  * `stripUiFields` (lib/reports/steps.ts) removes these before a request.
  */
 import type { Pos, Step, Street } from '../reports/types';
-import { cleanRows, describeLine, describeRows, fromDsl, LINE_POSITIONS, LINE_STREETS, ROW_ORDER, FACED_PREFLOP, rowsToDsl, toDsl, validateLine } from './dsl';
+import { cleanRows, describeLine, describeRows, fromDsl, LINE_POSITIONS, LINE_STREETS, ROW_ORDER, FACED_PREFLOP, rowsIssues, rowsToDsl, toDsl, validateLine } from './dsl';
 import type { ActionRows, Line, LineAction } from './types';
 
 export type LineStep = Extract<Step, { k: 'line' }> & { rows?: ActionRows; line?: Line; name?: string };
@@ -31,6 +31,7 @@ export function isCustomLineStep(s: Step): s is LineStep {
 /** Actions tab rows -> one line step; null when nothing is selected. */
 export function actionsLineStep(rows: ActionRows): LineStep | null {
   const clean = cleanRows(rows);
+  if (rowsIssues(clean).length) return null;
   const dsl = rowsToDsl(clean);
   return dsl ? { k: 'line', dsl, label: describeRows(clean), rows: clean } : null;
 }

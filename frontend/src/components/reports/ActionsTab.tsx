@@ -5,7 +5,7 @@
  */
 import { useId, useState } from 'react';
 import {
-  FACED_LABEL, LINE_MAX_LENGTH, LINE_STREETS, ROW_LABEL, STREET_TITLE, rowsToDsl, streetHasRows,
+  FACED_LABEL, LINE_MAX_LENGTH, LINE_STREETS, ROW_LABEL, STREET_TITLE, rowsIssues, rowsToDsl, streetHasRows,
 } from '@/lib/lines/dsl';
 import type { ActionRows, FacedPreflop, StreetRow } from '@/lib/lines/types';
 import type { Street } from '@/lib/reports/types';
@@ -80,6 +80,7 @@ export default function ActionsTab({ rows, onChange }: { rows: ActionRows; onCha
   const preRows = rows.streets.preflop ?? [];
   const unopenedGap = faced.includes('unopened') && (preRows.length === 0 || preRows.includes('fold'));
   const tooLong = rowsToDsl(rows).length > LINE_MAX_LENGTH;
+  const issues = rowsIssues(rows);
 
   return (
     <Tabs value={street} onValueChange={(v) => setStreet(v as Street)} className="gap-3">
@@ -146,6 +147,15 @@ export default function ActionsTab({ rows, onChange }: { rows: ActionRows; onCha
           <LastCheckbox street={s} rows={rows} onChange={onChange} />
         </TabsContent>
       ))}
+      {issues.length > 0 && (
+        <ul role="alert" className="flex flex-col gap-0.5 text-xs text-destructive">
+          {issues.map((i) => <li key={i}>{i}</li>)}
+        </ul>
+      )}
+      <p className="text-xs text-subtle-foreground">
+        A row is the player's whole action on the street, with only folds or checks of others in between. It can miss
+        multiway spots where another player calls between his actions.
+      </p>
       {tooLong && (
         <p role="alert" className="text-xs text-destructive">
           Too many combinations of Faced Preflop and preflop actions: select fewer.

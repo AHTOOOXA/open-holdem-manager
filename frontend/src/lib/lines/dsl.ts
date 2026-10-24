@@ -4,7 +4,7 @@
  *
  *   toDsl(line)       "pre: H:R[3b,pos=BTN] > V1:C; flop: H:B > V1:R"
  *   rowsToDsl(rows)   filter-dialog Actions tab rows, e.g. flop Bet Call = "flop: H:B > V:R > H:C"
- *   describeLine      "3-Bet BTN → Villain calls → Flop: C-Bet → Villain raises"
+ *   describeLine      "3-Bet BTN → Villain calls → Flop: Bet → Villain raises"
  *   validateLine      normalised line + the reasons it can never match
  *   fromDsl           the inverse of toDsl for one-row-per-street notation (chips without a model)
  */
@@ -93,9 +93,10 @@ export function rowAllowed(street: Street, row: StreetRow): boolean {
 
 function rowToks(row: StreetRow): Tok[] {
   const d = ROW_DEF[row];
-  const out: Tok[] = [{ hero: true, t: d.first, flags: [] }];
+  // Hero's whole action on the street: his first action is `first`, his final one `last`
+  const out: Tok[] = [{ hero: true, t: d.first, flags: ['first'] }];
   if (d.then) out.push({ hero: false, t: d.first === 'X' ? 'B' : 'R', flags: [] }, { hero: true, t: d.then, flags: [] });
-  return out;
+  return withLast(out, true);
 }
 
 function tokToDsl(t: Tok): string {
@@ -106,7 +107,7 @@ function withLast(toks: Tok[], last: boolean): Tok[] {
   if (!last) return toks;
   let i = toks.length - 1;
   while (i >= 0 && !toks[i].hero) i--;
-  return toks.map((t, j) => (j === i ? { ...t, flags: [...t.flags, 'last'] } : t));
+  return toks.map((t, j) => (j === i && !t.flags.includes('last') ? { ...t, flags: [...t.flags, 'last'] } : t));
 }
 
 const v = (t: Letter, ...flags: string[]): Tok => ({ hero: false, t, flags });
@@ -148,27 +149,44 @@ function facedList(rows: ActionRows): FacedPreflop[] {
 /** Generic "hero's first preflop action" when only Faced Preflop is set. */
 const ANY_FIRST: Letter[] = ['F', 'X', 'C', 'R'];
 
-function preflopPart(rows: ActionRows): string[] {
-  const last = rows.last.preflop === true;
-  const chosen = streetRows(rows, 'preflop');
-  const faced = facedList(rows);
-  if (!faced.length) return chosen.map((r) => withLast(rowToks(r), last).map(tokToDsl).join(' > '));
-  const base: Tok[][] = chosen.length ? chosen.map(rowToks) : ANY_FIRST.map((t) => [{ hero: true, t, flags: [] }]);
+/** Notation rows of one Faced Preflop situation with the chosen preflop rows ([] = none expressible). */
+function facedRows(id: FacedPreflop, base: Tok[][]): string[] {
+  const def = FACED_PREFLOP.find((f) => f.id === id)!;
   const out: string[] = [];
-  for (const id of faced) {
-    const def = FACED_PREFLOP.find((f) => f.id === id)!;
-    for (const toks of base) {
-      let row = toks;
-      if (id === 'unopened') {
-        if (row[0].t !== 'R' && row[0].t !== 'C') continue;
-        row = [{ ...row[0], flags: [...row[0].flags, 'open'] }, ...row.slice(1)];
-      } else if (row[0].t === 'X' && !def.check) {
-        continue; // nobody can check after a raise
-      }
-      for (const prefix of def.prefixes) out.push([...prefix, ...withLast(row, last)].map(tokToDsl).join(' > '));
+  for (const toks of base) {
+    let row = toks;
+    if (id === 'unopened') {
+      if (row[0].t !== 'R' && row[0].t !== 'C') continue;
+      row = [{ ...row[0], flags: [...row[0].flags, 'open'] }, ...row.slice(1)];
+    } else if (row[0].t === 'X' && !def.check) {
+      continue; // nobody can check after a raise
     }
+    for (const prefix of def.prefixes) out.push([...prefix, ...row].map(tokToDsl).join(' > '));
   }
-  return [...new Set(out)];
+  return out;
+}
+
+function preflopBase(rows: ActionRows): Tok[][] {
+  const chosen = streetRows(rows, 'preflop');
+  return chosen.length ? chosen.map(rowToks) : ANY_FIRST.map((t): Tok[] => [{ hero: true, t, flags: ['first'] }]);
+}
+
+function preflopPart(rows: ActionRows): string[] {
+  const faced = facedList(rows);
+  if (!faced.length) return streetRows(rows, 'preflop').map((r) => withLast(rowToks(r), rows.last.preflop === true).map(tokToDsl).join(' > '));
+  const base = preflopBase(rows);
+  return [...new Set(faced.flatMap((id) => facedRows(id, base)))];
+}
+
+/** Selected Faced Preflop situations that no selected preflop row can be expressed in. */
+function emptyFaced(rows: ActionRows): FacedPreflop[] {
+  const base = preflopBase(rows);
+  return facedList(rows).filter((id) => facedRows(id, base).length === 0);
+}
+
+/** Why the Actions tab selection cannot be turned into a filter (empty = fine). */
+export function rowsIssues(rows: ActionRows): string[] {
+  return emptyFaced(rows).map((id) => `Faced ${FACED_LABEL[id]} cannot be combined with the selected preflop actions: nothing is left to match.`);
 }
 
 /** The rows of one street (preflop: with Faced Preflop) as notation rows; [] = no filter there. */
@@ -211,7 +229,8 @@ export function streetHasRows(rows: ActionRows, street: Street): boolean {
 /** Chip text: "Faced Open Raise · Preflop: Raise, Call Fold · Flop: Bet Call (last)". */
 export function describeRows(rows: ActionRows): string {
   const parts: string[] = [];
-  const faced = facedList(rows);
+  const empty = emptyFaced(rows);
+  const faced = facedList(rows).filter((f) => !empty.includes(f));
   if (faced.length) parts.push(`Faced ${faced.map((f) => FACED_LABEL[f]).join(', ')}`);
   for (const street of LINE_STREETS) {
     const r = streetRows(rows, street);
@@ -226,7 +245,7 @@ const VILLAIN_VERB: Record<LineActionType, string> = { fold: 'folds', check: 'ch
 const HERO_NOUN: Record<LineActionType, string> = { fold: 'Fold', check: 'Check', call: 'Call', bet: 'Bet', raise: 'Raise' };
 
 export function raiseKindLabel(kind: RaiseKind | undefined, street: Street): string {
-  if (kind === 'open') return street === 'preflop' ? 'Open Raise' : 'First Raise';
+  if (kind === 'open') return 'First Raise';
   if (kind === '3bet' && street === 'preflop') return '3-Bet';
   return 'Raise';
 }
@@ -236,29 +255,20 @@ export function actorLabel(who: LineActor, same: boolean | undefined): string {
   return who === 'hero' ? 'Hero' : same === false ? 'Any villain' : 'Villain';
 }
 
-/** Hero is the last listed preflop raiser and no villain bet / raised before on the flop. */
-function isCbet(line: Line, i: number): boolean {
-  const a = line.actions[i];
-  if (a.who !== 'hero' || a.a !== 'bet' || a.street !== 'flop') return false;
-  const preRaises = line.actions.filter((x) => x.street === 'preflop' && x.a === 'raise');
-  if (!preRaises.length || preRaises[preRaises.length - 1].who !== 'hero') return false;
-  return !line.actions.slice(0, i).some((x) => x.street === 'flop' && x.who === 'villain' && (x.a === 'bet' || x.a === 'raise'));
-}
-
 function describeAction(line: Line, i: number): string {
   const a = line.actions[i];
   const pos = normalisePositions(a.pos).join('/');
   const tail = a.last ? ' (last)' : '';
   if (a.who === 'hero') {
-    const noun = a.a === 'raise' ? raiseKindLabel(a.raise, a.street) : isCbet(line, i) ? 'C-Bet' : HERO_NOUN[a.a];
+    const noun = a.a === 'raise' ? raiseKindLabel(a.raise, a.street) : HERO_NOUN[a.a];
     return `${noun}${pos ? ` ${pos}` : ''}${tail}`;
   }
   return `${actorLabel('villain', a.same)}${pos ? ` ${pos}` : ''} ${actionVerb(a)}${tail}`;
 }
 
-/** "raises", "open-raises", "3-bets", "calls", ... */
+/** "raises", "raises first", "3-bets", "calls", ... */
 export function actionVerb(a: Pick<LineAction, 'a' | 'raise' | 'street'>): string {
-  if (a.a === 'raise' && a.raise === 'open') return a.street === 'preflop' ? 'open-raises' : 'raises first';
+  if (a.a === 'raise' && a.raise === 'open') return 'raises first';
   if (a.a === 'raise' && a.raise === '3bet' && a.street === 'preflop') return '3-bets';
   return VILLAIN_VERB[a.a];
 }
@@ -269,7 +279,7 @@ export function actionChipLabel(a: LineAction): string {
   return `${actorLabel(a.who, a.same)}${pos ? ` ${pos}` : ''} ${actionVerb(a)}${a.last ? ' (last)' : ''}`;
 }
 
-/** "3-Bet BTN → Villain calls → Flop: C-Bet → Villain raises"; '' for an empty line. */
+/** "3-Bet BTN → Villain calls → Flop: Bet → Villain raises"; '' for an empty line. */
 export function describeLine(line: Line): string {
   const ordered = sortByStreet(line);
   const out: string[] = [];
@@ -318,6 +328,17 @@ export function validateLine(line: Line): LineCheck {
   const norm = { actions: sortByStreet(line).actions.map(normaliseAction) };
   const errors: string[] = [];
   if (!norm.actions.length) errors.push('Add at least one action.');
+  // An actor that folded cannot act later (hero; the bound villain V1 across streets)
+  let heroFolded = false;
+  let villainFolded = false;
+  for (const a of norm.actions) {
+    const bound = a.who === 'hero' ? heroFolded : a.same !== false && villainFolded;
+    if (bound) errors.push(`${actorName(a)} folded earlier and cannot act again.`);
+    if (a.a === 'fold') {
+      if (a.who === 'hero') heroFolded = true;
+      else if (a.same !== false) villainFolded = true;
+    }
+  }
   for (const street of LINE_STREETS) {
     const acts = norm.actions.filter((a) => a.street === street);
     const title = STREET_TITLE[street];

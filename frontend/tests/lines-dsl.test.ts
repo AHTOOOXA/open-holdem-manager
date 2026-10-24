@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  actionToDsl, cleanRows, describeLine, describeRows, fromDsl, normalisePositions, rowAllowed, rowsToDsl,
+  actionToDsl, cleanRows, describeLine, describeRows, fromDsl, normalisePositions, rowAllowed, rowsIssues, rowsToDsl,
   streetHasRows, streetRowsDsl, toDsl, validateLine, ROW_ORDER,
 } from '../src/lib/lines/dsl.ts';
 import {
@@ -32,7 +32,7 @@ const GATE: Line = {
 
 test('gate line', () => {
   assert.equal(toDsl(GATE), 'pre: H:R[3b,pos=BTN] > V1:C; flop: H:B > V1:R');
-  assert.equal(describeLine(GATE), '3-Bet BTN → Villain calls → Flop: C-Bet → Villain raises');
+  assert.equal(describeLine(GATE), '3-Bet BTN → Villain calls → Flop: Bet → Villain raises');
   const check = validateLine(GATE);
   assert.deepEqual(check.errors, []);
   assert.equal(toDsl(check.line), 'pre: H:R[3b,pos=BTN] > V1:C; flop: H:B > V1:R');
@@ -96,16 +96,16 @@ test('three-street line with mixed villains', () => {
   );
   assert.equal(
     describeLine(line),
-    'Villain CO open-raises → Call BB (last) → Flop: Check → Villain bets → Call → Turn: Check → Any villain checks → River: Bet (last)',
+    'Villain CO raises first → Call BB (last) → Flop: Check → Villain bets → Call → Turn: Check → Any villain checks → River: Bet (last)',
   );
   assert.deepEqual(validateLine(line).errors, []);
 });
 
 // ── describeLine ────────────────────────────────────────────────────────────────────────────
 
-test('describeLine: raise kinds, C-Bet only for the preflop raiser, empty line', () => {
+test('describeLine: raise kinds, hero bets are always "Bet", empty line', () => {
   assert.equal(describeLine({ actions: [] }), '');
-  assert.equal(describeLine({ actions: [H('preflop', 'raise', { raise: 'open' })] }), 'Open Raise');
+  assert.equal(describeLine({ actions: [H('preflop', 'raise', { raise: 'open' })] }), 'First Raise');
   assert.equal(describeLine({ actions: [H('preflop', 'raise')] }), 'Raise');
   assert.equal(describeLine({ actions: [H('flop', 'raise', { raise: 'open' })] }), 'Flop: First Raise');
   assert.equal(describeLine({ actions: [V('preflop', 'raise', { raise: '3bet' })] }), 'Villain 3-bets');
@@ -160,7 +160,7 @@ test('validateLine errors', () => {
   assert.deepEqual(errs([V('preflop', 'raise'), H('preflop', 'check')]), ['Preflop: nobody can check after a raise.']);
   assert.deepEqual(errs([H('flop', 'bet'), V('flop', 'check')]), ['Flop: nobody can check after a bet.']);
   assert.deepEqual(errs([V('turn', 'bet'), H('turn', 'bet')]), ['Turn: a bet after a bet is a raise.']);
-  assert.deepEqual(errs([V('preflop', 'raise'), H('preflop', 'raise', { raise: 'open' })]), ['Preflop: Open Raise has to be the first raise.']);
+  assert.deepEqual(errs([V('preflop', 'raise'), H('preflop', 'raise', { raise: 'open' })]), ['Preflop: First Raise has to be the first raise.']);
   assert.deepEqual(errs([V('flop', 'bet'), V('flop', 'raise', { same: false }), H('flop', 'raise', { raise: 'open' })]), ['Flop: First Raise has to be the first raise.']);
   assert.deepEqual(
     errs([V('preflop', 'raise'), H('preflop', 'raise'), V('preflop', 'raise', { same: false }), H('preflop', 'raise', { raise: '3bet' })]),
@@ -185,29 +185,29 @@ const rows = (streets: ActionRows['streets'], last: ActionRows['last'] = {}, fac
 
 test('each row is hero\'s whole action on the street', () => {
   const expect: Record<StreetRow, string> = {
-    raise: 'H:R', raise_fold: 'H:R > V:R > H:F', raise_call: 'H:R > V:R > H:C', raise_raise: 'H:R > V:R > H:R',
-    fold: 'H:F',
-    call: 'H:C', call_fold: 'H:C > V:R > H:F', call_call: 'H:C > V:R > H:C', call_raise: 'H:C > V:R > H:R',
-    bet: 'H:B', bet_fold: 'H:B > V:R > H:F', bet_call: 'H:B > V:R > H:C', bet_raise: 'H:B > V:R > H:R',
-    check: 'H:X', check_fold: 'H:X > V:B > H:F', check_call: 'H:X > V:B > H:C', check_raise: 'H:X > V:B > H:R',
+    raise: 'H:R[first,last]', raise_fold: 'H:R[first] > V:R > H:F[last]', raise_call: 'H:R[first] > V:R > H:C[last]', raise_raise: 'H:R[first] > V:R > H:R[last]',
+    fold: 'H:F[first,last]',
+    call: 'H:C[first,last]', call_fold: 'H:C[first] > V:R > H:F[last]', call_call: 'H:C[first] > V:R > H:C[last]', call_raise: 'H:C[first] > V:R > H:R[last]',
+    bet: 'H:B[first,last]', bet_fold: 'H:B[first] > V:R > H:F[last]', bet_call: 'H:B[first] > V:R > H:C[last]', bet_raise: 'H:B[first] > V:R > H:R[last]',
+    check: 'H:X[first,last]', check_fold: 'H:X[first] > V:B > H:F[last]', check_call: 'H:X[first] > V:B > H:C[last]', check_raise: 'H:X[first] > V:B > H:R[last]',
   };
   for (const r of ROW_ORDER) assert.equal(rowsToDsl(rows({ flop: [r] })), `flop: ${expect[r]}`, r);
 });
 
-test('last goes on the row\'s last hero action', () => {
-  assert.equal(rowsToDsl(rows({ turn: ['bet_call'] }, { turn: true })), 'turn: H:B > V:R > H:C[last]');
-  assert.equal(rowsToDsl(rows({ turn: ['check'] }, { turn: true })), 'turn: H:X[last]');
-  assert.equal(rowsToDsl(rows({ preflop: ['raise'] }, { preflop: true })), 'pre: H:R[last]');
+test('a row is anchored: first on hero\'s first action, last on his final one (the last box adds nothing)', () => {
+  assert.equal(rowsToDsl(rows({ turn: ['bet_call'] }, { turn: true })), 'turn: H:B[first] > V:R > H:C[last]');
+  assert.equal(rowsToDsl(rows({ turn: ['check'] }, { turn: true })), 'turn: H:X[first,last]');
+  assert.equal(rowsToDsl(rows({ preflop: ['raise'] }, { preflop: true })), 'pre: H:R[first,last]');
   // last on a street without rows does nothing
-  assert.equal(rowsToDsl(rows({ flop: ['bet'] }, { turn: true })), 'flop: H:B');
+  assert.equal(rowsToDsl(rows({ flop: ['bet'] }, { turn: true })), 'flop: H:B[first,last]');
 });
 
 test('rows of a street OR\'d in canonical order, streets AND\'d in order', () => {
   assert.equal(
     rowsToDsl(rows({ river: ['check_fold'], flop: ['check_raise', 'bet_call'], preflop: ['call', 'raise'] })),
-    'pre: H:R | H:C; flop: H:B > V:R > H:C | H:X > V:B > H:R; river: H:X > V:B > H:F',
+    'pre: H:R[first,last] | H:C[first,last]; flop: H:B[first] > V:R > H:C[last] | H:X[first] > V:B > H:R[last]; river: H:X[first] > V:B > H:F[last]',
   );
-  assert.equal(rowsToDsl(rows({ flop: ['bet', 'bet'] })), 'flop: H:B');
+  assert.equal(rowsToDsl(rows({ flop: ['bet', 'bet'] })), 'flop: H:B[first,last]');
   assert.equal(rowsToDsl(rows({})), '');
   assert.equal(rowsToDsl(rows({ flop: [] })), '');
 });
@@ -218,12 +218,12 @@ test('preflop has no bet rows and no check_* rows; the BB check stays', () => {
   assert.equal(rowAllowed('preflop', 'check_raise'), false);
   assert.equal(rowAllowed('preflop', 'check'), true);
   assert.equal(rowAllowed('flop', 'check_raise'), true);
-  assert.equal(rowsToDsl(rows({ preflop: ['bet', 'check_fold', 'check', 'fold'] })), 'pre: H:F | H:X');
+  assert.equal(rowsToDsl(rows({ preflop: ['bet', 'check_fold', 'check', 'fold'] })), 'pre: H:F[first,last] | H:X[first,last]');
 });
 
 test('the Hand2Note example: Preflop Raise + Flop Bet Call + Turn Check Fold', () => {
   const r = rows({ preflop: ['raise'], flop: ['bet_call'], turn: ['check_fold'] });
-  assert.equal(rowsToDsl(r), 'pre: H:R; flop: H:B > V:R > H:C; turn: H:X > V:B > H:F');
+  assert.equal(rowsToDsl(r), 'pre: H:R[first,last]; flop: H:B[first] > V:R > H:C[last]; turn: H:X[first] > V:B > H:F[last]');
   assert.equal(describeRows(r), 'Preflop: Raise · Flop: Bet Call · Turn: Check Fold');
 });
 
@@ -240,32 +240,67 @@ test('describeRows lists rows per street, marks last, faced first', () => {
 test('faced preflop: villain actions in front of hero\'s first action', () => {
   const pre = (faced: ActionRows['faced'], streets: ActionRows['streets'] = {}, last = false) =>
     streetRowsDsl(rows(streets, { preflop: last }, faced), 'preflop');
-  assert.deepEqual(pre(['open_raise'], { preflop: ['call', 'raise_fold'] }), ['V:R[open] > H:R > V:R > H:F', 'V:R[open] > H:C']);
-  assert.deepEqual(pre(['one_limp'], { preflop: ['raise'] }), ['V:C[open] > H:R']);
-  assert.deepEqual(pre(['two_plus_limps'], { preflop: ['raise'] }), ['V:C[limp] > V:C > H:R']);
-  assert.deepEqual(pre(['limp_raise'], { preflop: ['fold'] }), ['V:C[open] > V:R > H:F']);
-  assert.deepEqual(pre(['open_3bet'], { preflop: ['call'] }), ['V:R[open] > V:R > H:C']);
-  assert.deepEqual(pre(['raise_call'], { preflop: ['raise'] }), ['V:R[open] > V:C > H:R']);
-  assert.deepEqual(pre(['raise_calls'], { preflop: ['raise'] }), ['V:R[open] > V:C > V:C > H:R', 'V:R[open] > V:C > V:C > V:C > H:R']);
-  // last goes on hero's last action, after the prefix
-  assert.deepEqual(pre(['open_raise'], { preflop: ['raise_call'] }, true), ['V:R[open] > H:R > V:R > H:C[last]']);
+  assert.deepEqual(pre(['open_raise'], { preflop: ['call', 'raise_fold'] }), ['V:R[open] > H:R[first] > V:R > H:F[last]', 'V:R[open] > H:C[first,last]']);
+  assert.deepEqual(pre(['one_limp'], { preflop: ['raise'] }), ['V:C[open] > H:R[first,last]']);
+  assert.deepEqual(pre(['two_plus_limps'], { preflop: ['raise'] }), ['V:C[limp] > V:C > H:R[first,last]']);
+  assert.deepEqual(pre(['limp_raise'], { preflop: ['fold'] }), ['V:C[open] > V:R > H:F[first,last]']);
+  assert.deepEqual(pre(['open_3bet'], { preflop: ['call'] }), ['V:R[open] > V:R > H:C[first,last]']);
+  assert.deepEqual(pre(['raise_call'], { preflop: ['raise'] }), ['V:R[open] > V:C > H:R[first,last]']);
+  assert.deepEqual(
+    pre(['raise_calls'], { preflop: ['raise'] }),
+    ['V:R[open] > V:C > V:C > H:R[first,last]', 'V:R[open] > V:C > V:C > V:C > H:R[first,last]'],
+  );
+  // the last box adds nothing: the row's final hero action is already last
+  assert.deepEqual(pre(['open_raise'], { preflop: ['raise_call'] }, true), ['V:R[open] > H:R[first] > V:R > H:C[last]']);
 });
 
 test('faced Unopened: `open` on hero\'s first raise / call; folds and checks cannot be expressed', () => {
   const pre = (streets: ActionRows['streets']) => streetRowsDsl(rows(streets, {}, ['unopened']), 'preflop');
-  assert.deepEqual(pre({ preflop: ['raise', 'raise_call', 'call', 'fold'] }), ['H:R[open]', 'H:R[open] > V:R > H:C', 'H:C[open]']);
+  assert.deepEqual(
+    pre({ preflop: ['raise', 'raise_call', 'call', 'fold'] }),
+    ['H:R[first,last,open]', 'H:R[first,open] > V:R > H:C[last]', 'H:C[first,last,open]'],
+  );
   assert.deepEqual(pre({ preflop: ['fold'] }), []);
-  assert.deepEqual(pre({}), ['H:C[open]', 'H:R[open]']);
+  assert.deepEqual(pre({}), ['H:C[first,open]', 'H:R[first,open]']);
 });
 
 test('faced alone: any first action (checks only behind limps); several faced OR\'d', () => {
-  assert.equal(rowsToDsl(rows({}, {}, ['open_raise'])), 'pre: V:R[open] > H:F | V:R[open] > H:C | V:R[open] > H:R');
-  assert.equal(rowsToDsl(rows({}, {}, ['one_limp'])), 'pre: V:C[open] > H:F | V:C[open] > H:X | V:C[open] > H:C | V:C[open] > H:R');
+  assert.equal(rowsToDsl(rows({}, {}, ['open_raise'])), 'pre: V:R[open] > H:F[first] | V:R[open] > H:C[first] | V:R[open] > H:R[first]');
+  assert.equal(
+    rowsToDsl(rows({}, {}, ['one_limp'])),
+    'pre: V:C[open] > H:F[first] | V:C[open] > H:X[first] | V:C[open] > H:C[first] | V:C[open] > H:R[first]',
+  );
   assert.equal(
     rowsToDsl(rows({ preflop: ['raise'], flop: ['bet'] }, {}, ['open_raise', 'unopened'])),
-    'pre: H:R[open] | V:R[open] > H:R; flop: H:B',
+    'pre: H:R[first,last,open] | V:R[open] > H:R[first,last]; flop: H:B[first,last]',
   );
   assert.equal(rowsToDsl(rows({ preflop: ['fold'] }, {}, ['unopened'])), '');
+});
+
+test('rowsIssues: a Faced Preflop pick with nothing to match is an error, not silently dropped', () => {
+  assert.deepEqual(rowsIssues(rows({ preflop: ['fold'] }, {}, ['unopened'])), [
+    'Faced Unopened cannot be combined with the selected preflop actions: nothing is left to match.',
+  ]);
+  assert.equal(rowsIssues(rows({ preflop: ['check'] }, {}, ['open_raise'])).length, 1);
+  assert.equal(rowsIssues(rows({ preflop: ['check'] }, {}, ['open_raise', 'one_limp'])).length, 1);
+  assert.deepEqual(rowsIssues(rows({ preflop: ['check', 'call'] }, {}, ['open_raise'])), []);
+  assert.deepEqual(rowsIssues(rows({}, {}, ['unopened'])), []);
+  assert.deepEqual(rowsIssues(rows({ flop: ['bet'] })), []);
+  assert.equal(actionsLineStep(rows({ preflop: ['fold'] }, {}, ['unopened'])), null);
+  // chip labels list only what is emitted
+  assert.equal(describeRows(rows({ preflop: ['check'] }, {}, ['open_raise', 'one_limp'])), 'Faced One Limp · Preflop: Check');
+});
+
+test('validateLine: an actor that folded cannot act later', () => {
+  const errs = (actions: LineAction[]) => validateLine({ actions }).errors;
+  assert.deepEqual(errs([H('preflop', 'call'), H('flop', 'fold'), H('turn', 'bet')]), ['Hero folded earlier and cannot act again.']);
+  assert.deepEqual(errs([V('flop', 'bet'), H('flop', 'fold'), H('turn', 'check')]), ['Hero folded earlier and cannot act again.']);
+  assert.deepEqual(
+    errs([V('flop', 'bet'), H('flop', 'call'), V('turn', 'fold'), H('turn', 'bet'), V('river', 'check')]),
+    ['The villain folded earlier and cannot act again.'],
+  );
+  // another villain (not bound) may still act
+  assert.deepEqual(errs([V('flop', 'fold'), H('flop', 'bet'), V('turn', 'check', { same: false })]), []);
 });
 
 test('cleanRows / streetHasRows', () => {
@@ -321,7 +356,7 @@ test('customLineStep: notation, label = name or description, model kept', () => 
   assert.ok(s);
   assert.equal(s.k, 'line');
   assert.equal(s.dsl, 'pre: H:R[3b,pos=BTN] > V1:C; flop: H:B > V1:R');
-  assert.equal(s.label, '3-Bet BTN → Villain calls → Flop: C-Bet → Villain raises');
+  assert.equal(s.label, '3-Bet BTN → Villain calls → Flop: Bet → Villain raises');
   assert.equal(s.name, undefined);
   assert.equal(s.line?.actions.length, 4);
   const named = customLineStep(GATE, '  3BP raised  ');
@@ -340,7 +375,7 @@ test('customLineStep: notation, label = name or description, model kept', () => 
 test('actionsLineStep: one step from the rows, null when empty', () => {
   const s = actionsLineStep(rows({ flop: ['bet_call'], turn: ['check_fold'] }));
   assert.ok(s);
-  assert.equal(s.dsl, 'flop: H:B > V:R > H:C; turn: H:X > V:B > H:F');
+  assert.equal(s.dsl, 'flop: H:B[first] > V:R > H:C[last]; turn: H:X[first] > V:B > H:F[last]');
   assert.equal(s.label, 'Flop: Bet Call · Turn: Check Fold');
   assert.deepEqual(s.rows, { streets: { flop: ['bet_call'], turn: ['check_fold'] }, last: {} });
   assert.equal(isActionsLineStep(s), true);
@@ -353,7 +388,7 @@ test('stripUiFields drops rows / line / name of line steps, keeps dsl and label'
   const a = actionsLineStep(rows({ flop: ['bet'] }))!;
   const c = customLineStep(GATE, 'Mine')!;
   assert.deepEqual(stripUiFields([a, c]), [
-    { k: 'line', dsl: 'flop: H:B', label: 'Flop: Bet' },
+    { k: 'line', dsl: 'flop: H:B[first,last]', label: 'Flop: Bet' },
     { k: 'line', dsl: 'pre: H:R[3b,pos=BTN] > V1:C; flop: H:B > V1:R', label: 'Mine' },
   ]);
   assert.deepEqual(stripUiFields([c], false), [{ k: 'line', dsl: 'pre: H:R[3b,pos=BTN] > V1:C; flop: H:B > V1:R' }]);
@@ -408,13 +443,13 @@ test('actionChipLabel', async () => {
   assert.equal(actionChipLabel(H('preflop', 'raise', { raise: '3bet', pos: ['BTN'] })), 'Hero BTN 3-bets');
   assert.equal(actionChipLabel(V('preflop', 'call')), 'Villain calls');
   assert.equal(actionChipLabel(V('flop', 'check', { same: false, last: true })), 'Any villain checks (last)');
-  assert.equal(actionChipLabel(H('preflop', 'raise', { raise: 'open' })), 'Hero open-raises');
+  assert.equal(actionChipLabel(H('preflop', 'raise', { raise: 'open' })), 'Hero raises first');
   assert.equal(actionChipLabel(H('turn', 'raise', { raise: 'open' })), 'Hero raises first');
 });
 
 test('lineStepDescription: the line, not its name', async () => {
   const { lineStepDescription } = await import('../src/lib/lines/step.ts');
-  assert.equal(lineStepDescription(customLineStep(GATE, 'Gate')!), '3-Bet BTN → Villain calls → Flop: C-Bet → Villain raises');
+  assert.equal(lineStepDescription(customLineStep(GATE, 'Gate')!), '3-Bet BTN → Villain calls → Flop: Bet → Villain raises');
   assert.equal(lineStepDescription(actionsLineStep(rows({ flop: ['bet'] }))!), 'Flop: Bet');
   assert.equal(lineStepDescription({ k: 'line', dsl: 'flop: H:B | H:X' }), 'flop: H:B | H:X');
 });
