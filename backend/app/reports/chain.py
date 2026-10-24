@@ -12,7 +12,7 @@ have no hit point and every matching hand is a case.
   together with `COALESCE(hp.h2n_valid, TRUE)` (the General screen leaves hands H2N would
   refuse out of every number). `pos`, `stack`, `cells`, `hv` and the spot steps are about
   the reporting player's own seat; the others are about the hand.
-- Spot steps (row, next, faced, betsize) are evaluated in chain order on the hand's stored
+- Spot steps (row, line, next, faced, betsize) are evaluated in chain order on the hand's stored
   action sequence (`hand_players.h2n_seq`, re-parsed from `raw_text` when missing) by
   `app.reports.spots`. Every spot step but the last must be a case; the last one decides
   case / opportunity. `row` steps also prefilter in SQL on their General bit (case bit, or
@@ -219,6 +219,22 @@ class RowStep(_Step):
         return v
 
 
+LINE_MAX_LEN = 2000
+
+
+class LineStep(_Step):
+    """A custom action line: H2N matcher row notation (`app.h2n.matcher` docstring)."""
+
+    k: Literal["line"]
+    dsl: str = Field(max_length=LINE_MAX_LEN)
+
+    @field_validator("dsl")
+    @classmethod
+    def _compiles(cls, v):
+        spots.compile_line(v)  # ValueError -> 422 with the bad token in the message
+        return v
+
+
 class NextStep(_Step):
     k: Literal["next"]
     street: StreetName
@@ -252,7 +268,7 @@ class BetsizeStep(_Step):
 
 Step = Annotated[
     Union[PosStep, StakesStep, ModeStep, TsizeStep, DateStep, HourStep, StackStep, GameStep,
-          CellsStep, HvStep, SessionStep, TableStep, WithStep, RowStep, NextStep, FacedStep,
+          CellsStep, HvStep, SessionStep, TableStep, WithStep, RowStep, LineStep, NextStep, FacedStep,
           BetsizeStep],
     Field(discriminator="k"),
 ]
@@ -260,7 +276,7 @@ CHAIN = TypeAdapter(list[Step])
 
 PLAIN_KINDS = frozenset(("pos", "stakes", "mode", "tsize", "date", "hour", "stack", "game",
                          "cells", "hv", "session", "table", "with"))
-SPOT_KINDS = frozenset(("row", "next", "faced", "betsize"))
+SPOT_KINDS = frozenset(("row", "line", "next", "faced", "betsize"))
 
 
 class ReportQuery(BaseModel):
@@ -403,7 +419,7 @@ def plain_sql(chain: list[_Step], day_start: int = 0) -> tuple[str, list]:
 
 def _row_bits_sql(chain: list[_Step]) -> str:
     """Bit prefilter of the row steps: case bit, or opp bit for the last spot step."""
-    moving = [i for i, st in enumerate(chain) if st.k in ("row", "next", "faced")]
+    moving = [i for i, st in enumerate(chain) if st.k in ("row", "line", "next", "faced")]
     out = []
     for i in moving:
         st = chain[i]
@@ -438,6 +454,8 @@ def evaluate_spot(seq, p: int, steps: list[_Step]) -> tuple[int, tuple[int, int]
             return 0, None
         if st.k == "row":
             code, hit = spots.eval_row(seq, p, st.key)
+        elif st.k == "line":
+            code, hit = spots.evaluate_code(spots.compile_line(st.dsl), seq, p)
         elif st.k == "next":
             code, hit = spots.eval_next(seq, p, hit, spots.STREET_INDEX[st.street], st.a)
         else:
@@ -453,6 +471,8 @@ def chain_ctx(chain: list[_Step]) -> SpotCtx:
     for st in chain:
         if st.k == "row":
             ctx = spots.row_ctx(st.key)
+        elif st.k == "line":
+            ctx = spots.line_ctx(st.dsl)
         elif st.k == "next":
             ctx = spots.next_spot(ctx, spots.STREET_INDEX[st.street], st.a)
         elif st.k == "faced":
