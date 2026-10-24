@@ -58,6 +58,9 @@ export function stepLabel(step: Step): string {
     case 'next': return `${step.street}: ${step.a}`;
     case 'faced': return `${step.street}: ${step.a}`;
     case 'betsize': return step.bucket;
+    case 'session': return `Session ${step.start.slice(0, 16).replace('T', ' ')}`;
+    case 'table': return step.v.join(', ');
+    case 'with': return `With player ${step.player_id}`;
   }
 }
 

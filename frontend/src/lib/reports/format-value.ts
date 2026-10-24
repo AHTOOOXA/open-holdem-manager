@@ -1,5 +1,5 @@
 /** Text of a split-report / spot value by its ValueFormat (all rounding via lib/format). */
-import { bb, bb100, count, formatPercent, trimmed, usd } from '@/lib/format';
+import { bb, bb100, count, duration, formatPercent, rate, trimmed, usd } from '@/lib/format';
 import type { ValueFormat } from './types';
 
 export const NO_VALUE = '--';
@@ -14,5 +14,7 @@ export function formatReportValue(v: number | null | undefined, format: ValueFor
     case 'bbh': return bb(v);
     case 'bb100': return bb100(v);
     case 'ratio': return trimmed(v, 2);
+    case 'duration': return duration(v);
+    case 'rate': return rate(v);
   }
 }

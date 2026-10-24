@@ -96,3 +96,15 @@ export function moneyClass(v: number, digits = 2): string {
 export function bbUnits(value: number, digits = 1): string {
   return `${fixed(value, digits)} BB`;
 }
+
+/** Duration in seconds as "2h 13m", "13m", "0m" (minutes rounded down). */
+export function duration(seconds: number): string {
+  const m = Math.max(0, Math.floor(seconds / 60));
+  const h = Math.floor(m / 60);
+  return h > 0 ? `${h}h ${m % 60}m` : `${m}m`;
+}
+
+/** A per-hour figure: 1 decimal under 100, whole above ("540", "61.4"). */
+export function rate(value: number): string {
+  return Math.abs(value) >= 100 ? fixed(value, 0) : fixed(value, 1);
+}

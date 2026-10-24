@@ -25,6 +25,11 @@ export type Step = { label?: string } & (
   | { k: 'game'; stakes: string; mode: string; tsize: number | null } // a Results row (mode: 'fast' | 'regular')
   | { k: 'cells'; v: string[] } // preflop hand classes, e.g. "AKs", "QQ", "T9o"
   | { k: 'hv'; street: Street; cats: string[] } // hand-value category keys ('other' too); flop/turn/river only
+  // M5 (Sessions): plain steps a Sessions page adds
+  | { k: 'session'; start: string; end: string } // played_at in [start, end], local naive ISO datetimes
+  //   ("2026-10-17T20:10:05"); end = the session's LAST hand start (not the +180 s estimate)
+  | { k: 'table'; v: string[] } // hands.table_name values
+  | { k: 'with'; player_id: number } // hands where this player was dealt in (Sessions: villain pages use the hero)
   // ── spot steps (order matters; each moves the hit point) ──
   | { k: 'row'; key: string } // a named quick filter (General row key, e.g. "P01" = Raise 1st In)
   | { k: 'next'; street: Street; a: NextAction } // a Next Actions row after the current hit point
@@ -56,9 +61,14 @@ export interface ReportQuery {
 
 export type SplitType =
   | 'results' | 'positions' | 'next_actions' | 'faced_next' | 'bet_sizing'
-  | 'stack_sizes' | 'hour_of_day' | 'table_size';
+  | 'stack_sizes' | 'hour_of_day' | 'table_size'
+  // M5 (Sessions lower tabs)
+  | 'tables' // one row per hands.table_name; row filter = { k: 'table', v: [name] }
+  | 'players'; // one row per opponent dealt in; values are the OPPONENT's (see SplitRow.player)
 
-export type ValueFormat = 'count' | 'pct' | 'money' | 'bb' | 'bb100' | 'bbh' | 'ratio';
+export type ValueFormat = 'count' | 'pct' | 'money' | 'bb' | 'bb100' | 'bbh' | 'ratio'
+  | 'duration' // seconds, shown "2h 13m" / "13m"
+  | 'rate'; // a per-hour figure (hands / h, $ / h): plain number, 1 decimal under 100
 
 export interface SplitColumn {
   id: string;
@@ -81,6 +91,12 @@ export interface SplitRow {
   values: Record<string, number | null>;
   /** Lower tab to select on the page this row opens (Hand2Note: Faced Next after a hero action). */
   open_tab?: 'next_actions' | 'faced_next';
+  /**
+   * `players` split only: the opponent of the row. The page this row opens reports on that
+   * player (`player_id` = this id) with the parent chain + `filter` ({ k: 'with', player_id:
+   * <the reporting player> }), so its numbers are the opponent's in hands against hero.
+   */
+  player?: { id: number; username: string };
 }
 
 export interface SplitResponse {
@@ -98,6 +114,20 @@ export interface SplitQuery extends ReportQuery {
 }
 
 // ── POST /api/reports/spot ─ page summary + Stats upper tab ("smart reports") ─────────────
+// Body: SpotQuery. Without `recipe` the stats follow the hit point's kind (M4). With a recipe the
+// fixed Sessions recipes are returned instead (sessions.md §5.2):
+//   session: anchors Hands, Duration, Hands / h | Won, Won EV, Win Rate EV;
+//            grid Avg. Tables, VPIP, PFR, Ag., 3Bet, WTSD, W%SD, WWSF%, Rake paid, Rake Paid bb/100, Won bb
+//   table:   as session without Avg. Tables
+//   villain: anchors Hands, VPIP, PFR | Won From Hero, EV diff.;
+//            grid Ag., Win Rate, Won Without Showdown, 3Bet, WTSD, W%SD, WWSF%, Rake paid, Rake Paid bb/100
+// Recipe stats are never clickable (no `filter`). `group` splits anchors from the grid.
+
+export type SpotRecipe = 'session' | 'table' | 'villain';
+
+export interface SpotQuery extends ReportQuery {
+  recipe?: SpotRecipe;
+}
 
 export type SpotKind = 'plain' | 'hero_raise' | 'hero_bet' | 'hero_call' | 'hero_check' | 'hero_fold' | 'villain';
 
@@ -110,6 +140,8 @@ export interface SpotStat {
   winnings?: boolean;
   /** A step that opens the next page for this stat (clickable stats); absent = not clickable. */
   filter?: Step;
+  /** Recipe responses only: 'anchor1' | 'anchor2' (the two anchor groups) or 'grid'. */
+  group?: 'anchor1' | 'anchor2' | 'grid';
 }
 
 export interface SpotResponse {

@@ -366,6 +366,9 @@ export function stepLabel(step: Step): string {
     case 'next':
     case 'faced': return `${step.a.replace(/_/g, ' ')}, ${step.street}`;
     case 'betsize': return step.bucket;
+    case 'session': return `Session ${step.start.slice(0, 16).replace('T', ' ')}`;
+    case 'table': return shortList(step.v);
+    case 'with': return `With player ${step.player_id}`;
   }
 }
 

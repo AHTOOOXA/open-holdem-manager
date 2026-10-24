@@ -1,5 +1,5 @@
 /** Display of Reports stat values by the contract's `ValueFormat`. */
-import { bb, bb100, formatBb100, formatHands, formatPercent, moneyTone, usd } from '@/lib/format';
+import { bb, bb100, duration, formatBb100, formatHands, formatPercent, moneyTone, rate, usd } from '@/lib/format';
 import type { MoneyTone } from '@/lib/format';
 import type { ValueFormat } from './types';
 
@@ -21,6 +21,10 @@ export function formatSpotValue(value: number | null | undefined, format: ValueF
       return bb(value, 2);
     case 'ratio':
       return bb100(value);
+    case 'duration':
+      return duration(value);
+    case 'rate':
+      return rate(value);
   }
 }
 

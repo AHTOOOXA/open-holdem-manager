@@ -8,6 +8,7 @@ import type {
   ReportQuery,
   SplitQuery,
   SplitResponse,
+  SpotQuery,
   SpotResponse,
   Step,
 } from './types';
@@ -38,7 +39,7 @@ export function getSplit(q: SplitQuery, signal?: AbortSignal): Promise<SplitResp
   return post('/split', q, signal);
 }
 
-export function getSpot(q: ReportQuery, signal?: AbortSignal): Promise<SpotResponse> {
+export function getSpot(q: SpotQuery, signal?: AbortSignal): Promise<SpotResponse> {
   return post('/spot', q, signal);
 }
 

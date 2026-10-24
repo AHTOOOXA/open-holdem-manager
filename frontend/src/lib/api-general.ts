@@ -15,6 +15,8 @@
  * Shapes mirror backend/app/api/general_popup.py.
  */
 
+import { chainParam } from './reports/api';
+import type { Step } from './reports/types';
 import type { H2NCellInput, WireNumber } from './h2n-format';
 import { GENERAL_CELL_IDS, SUMMARY_CELL_IDS } from './h2n-layout';
 
@@ -57,6 +59,9 @@ export interface GeneralFilterParams {
   workspace_id?: number;
   /** Defaults to the workspace hero on the backend. */
   player_id?: number;
+  /** Plain Reports steps (date / stakes / mode) used as the filter instead of the fields above
+   *  (Statistics dashboards). Sent as JSON. */
+  chain?: Step[];
 }
 
 function filterSearchParams(params: GeneralFilterParams): URLSearchParams {
@@ -69,6 +74,7 @@ function filterSearchParams(params: GeneralFilterParams): URLSearchParams {
   if (params.date_to) sp.set('date_to', params.date_to);
   if (params.workspace_id !== undefined) sp.set('workspace_id', String(params.workspace_id));
   if (params.player_id !== undefined) sp.set('player_id', String(params.player_id));
+  if (params.chain && params.chain.length > 0) sp.set('chain', chainParam(params.chain));
   return sp;
 }
 
@@ -180,6 +186,8 @@ export interface CellDetail {
   bet_sizes: SplitRow[];
   replayed: number;
   replay_failed: number;
+  /** The cell as a Reports chain (filters + pos + row), for the popup's Reports-backed tabs. */
+  chain: Step[];
 }
 
 export function cellDetailQueryKey(cellId: string, params: GeneralFilterParams) {

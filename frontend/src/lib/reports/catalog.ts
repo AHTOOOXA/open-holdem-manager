@@ -12,6 +12,8 @@ export const LOWER_TAB_CAPTION: Record<LowerTab, string> = {
   positions: 'Positions',
   stack_sizes: 'Stack Sizes',
   bet_sizing: 'Bet Sizing',
+  tables: 'Tables',
+  players: 'Players',
 };
 
 export interface ReportGroup {
