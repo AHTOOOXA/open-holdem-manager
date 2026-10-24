@@ -4,7 +4,8 @@ from typing import Optional
 import math
 import re
 
-from app.date_filters import DATE_TO_SQL
+from app.app_settings import get_app_settings
+from app.date_filters import bound_sql
 from app.db import get_db, db_lock, get_read_cursor, get_hero_player_id, get_hero_username
 from app.models import (
     HandSummary, HandListResponse, HandDetail, HandPlayerDetail,
@@ -109,12 +110,15 @@ def list_hands(
         if tag_or:
             where_clauses.append("(" + " OR ".join(tag_or) + ")")
 
+    day_start = int(get_app_settings(db)["day_start_hour"])
     if date_from:
-        where_clauses.append("h.played_at >= ?")
-        params.append(date_from)
+        frag, val = bound_sql("from", date_from, day_start)
+        where_clauses.append(frag)
+        params.append(val)
     if date_to:
-        where_clauses.append(DATE_TO_SQL)
-        params.append(date_to)
+        frag, val = bound_sql("to", date_to, day_start)
+        where_clauses.append(frag)
+        params.append(val)
 
     if player_id is not None:
         where_clauses.append(

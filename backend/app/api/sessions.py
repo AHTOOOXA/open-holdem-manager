@@ -47,7 +47,7 @@ def _row(s: sh.SessionRow, now: _dt.datetime, max_break_s: int, numeric: bool) -
         "last_hand_at": sh.iso(s.last_start),
         "end": sh.iso(s.end),
         "duration_s": s.duration_s,
-        "is_live": sh.is_live(s.end, now, max_break_s),
+        "is_live": sh.is_live(s.end, now, max_break_s, s.start),
         "hands": s.hands,
         "won": s.won,
         "won_ev": s.won_ev,
@@ -68,7 +68,8 @@ def list_sessions(db, workspace_id: int, player_id: int | None = None,
     player = _player(db, workspace_id, player_id)
     if player is None:
         return out
-    rows = sh.build_sessions(db, workspace_id, player["id"], max_break_s, date_from, date_to)
+    rows = sh.build_sessions(db, workspace_id, player["id"], max_break_s, date_from, date_to,
+                             int(settings["day_start_hour"]))
     if not rows:
         return out  # no hands: player null (contract)
     out["player"] = player
@@ -91,18 +92,45 @@ def list_sessions(db, workspace_id: int, player_id: int | None = None,
     return out
 
 
+_LIVE_BASE = ("FROM hand_players hp JOIN hands h ON hp.hand_id = h.id "
+              "AND hp.workspace_id = h.workspace_id "
+              "WHERE hp.player_id = ? AND h.workspace_id = ? "
+              "AND COALESCE(hp.h2n_valid, TRUE) AND h.played_at IS NOT NULL")
+_LIVE_WINDOW = _dt.timedelta(hours=24)
+
+
 def live_session(db, workspace_id: int, now: _dt.datetime | None = None) -> dict:
+    """Live session of the hero (same answer as the last row of the full sessions build),
+    reading only the recent hands: the latest hand decides liveness; the session start is
+    found by walking back over a 24 h window, doubled while the window's earliest hand
+    still belongs to the last session."""
     out = {"live": False, "session_id": None, "start": None}
     ref = resolve_hero(db, workspace_id)
     if ref is None:
         return out
     max_break_s = int(get_app_settings(db)["session_max_break_minutes"]) * 60
-    rows = sh.build_sessions(db, workspace_id, ref.player_id, max_break_s)
-    if not rows:
+    now = now or _dt.datetime.now()
+    args = [ref.player_id, workspace_id]
+    latest = db.execute(f"SELECT MAX(h.played_at) {_LIVE_BASE}", args).fetchone()[0]
+    if latest is None:
         return out
-    last = max(rows, key=lambda r: r.end)
-    if sh.is_live(last.end, now or _dt.datetime.now(), max_break_s):
-        out.update(live=True, session_id=last.id, start=sh.iso(last.start))
+    end = latest + _dt.timedelta(seconds=sh.HAND_SECONDS)
+    if not sh.is_live(end, now, max_break_s, latest):
+        return out
+    earliest = db.execute(f"SELECT MIN(h.played_at) {_LIVE_BASE}", args).fetchone()[0]
+    span = _LIVE_WINDOW
+    while True:
+        lo = latest - span
+        rows = db.execute(f"SELECT h.id, h.played_at {_LIVE_BASE} AND h.played_at >= ?",
+                          [*args, lo]).fetchall()
+        sessions = sh.split_sessions(rows, max_break_s)
+        last = sessions[-1]
+        first_start = min(r[1] for r in rows)
+        if last.start > first_start or lo <= earliest:
+            break
+        span *= 2
+    if sh.is_live(last.end, now, max_break_s, last.start):
+        out.update(live=True, session_id=sh.session_id(last.start), start=sh.iso(last.start))
     return out
 
 

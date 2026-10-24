@@ -38,7 +38,8 @@ from typing import Iterable, Literal, Optional
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.date_filters import DATE_TO_SQL
+from app.app_settings import get_app_settings
+from app.date_filters import bound_sql
 from app.db import get_hero_player_id, get_read_cursor
 from app.general_cells import GENERAL_CELLS, ActionCell
 from app.general_filters import cell_steps, resolve_filters
@@ -864,7 +865,7 @@ def _replay_missing(db, workspace_id: int, row: str, street: int,
 # ── SQL ───────────────────────────────────────────────────────────────────
 
 
-def _filters(stakes, game_mode, date_from, date_to) -> tuple[str, list]:
+def _filters(stakes, game_mode, date_from, date_to, day_start: int = 0) -> tuple[str, list]:
     """Same filters as GET /api/general."""
     sql = ""
     params: list = []
@@ -875,11 +876,13 @@ def _filters(stakes, game_mode, date_from, date_to) -> tuple[str, list]:
         sql += " AND h.game_mode = ?"
         params.append(game_mode)
     if date_from:
-        sql += " AND h.played_at >= ?"
-        params.append(date_from)
+        frag, val = bound_sql("from", date_from, day_start)
+        sql += " AND " + frag
+        params.append(val)
     if date_to:
-        sql += " AND " + DATE_TO_SQL
-        params.append(date_to)
+        frag, val = bound_sql("to", date_to, day_start)
+        sql += " AND " + frag
+        params.append(val)
     return sql, params
 
 
@@ -1297,8 +1300,9 @@ def get_cell_detail(
     player_id: int | None = Query(None, description="Defaults to the workspace hero"),
 ):
     stat = _resolve(cell_id)
-    fsql, fparams, fsteps = resolve_filters(chain, stakes, game_mode, date_from, date_to)
     db = get_read_cursor()
+    fsql, fparams, fsteps = resolve_filters(chain, stakes, game_mode, date_from, date_to,
+                                            int(get_app_settings(db)["day_start_hour"]))
     target = _target_player(db, workspace_id, player_id)
     if target is None:
         return CellDetail(cell_id=cell_id, row=stat.row,
@@ -1327,8 +1331,9 @@ def get_cell_hands(
     player_id: int | None = Query(None, description="Defaults to the workspace hero"),
 ):
     stat = _resolve(cell_id)
-    fsql, fparams, fsteps = resolve_filters(chain, stakes, game_mode, date_from, date_to)
     db = get_read_cursor()
+    fsql, fparams, fsteps = resolve_filters(chain, stakes, game_mode, date_from, date_to,
+                                            int(get_app_settings(db)["day_start_hour"]))
     target = _target_player(db, workspace_id, player_id)
     if target is None:
         return CellHands(cell_id=cell_id, offset=offset, limit=limit)

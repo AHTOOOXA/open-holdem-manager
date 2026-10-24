@@ -37,7 +37,7 @@ from typing import Annotated, Any, Literal, Optional, Union
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator, model_validator
 
 from app.api.general_popup import _BUCKET_BY_ID, _fetch_raw, _size_hits
-from app.date_filters import DATE_TO_SQL
+from app.date_filters import day_from_sql, day_to_sql
 from app.db import get_hero_player_id, get_rebuild_status
 from app.h2n.definitions import COMPILED
 from app.h2n.matcher import CASE, OPP
@@ -337,8 +337,9 @@ def _mode_sql(mode: str) -> str:
     return "h.game_mode = 'Fast Fold'" if mode == "fast" else "h.game_mode <> 'Fast Fold'"
 
 
-def plain_sql(chain: list[_Step]) -> tuple[str, list]:
-    """AND-ed SQL conditions (leading " AND ") and params of the chain's plain steps."""
+def plain_sql(chain: list[_Step], day_start: int = 0) -> tuple[str, list]:
+    """AND-ed SQL conditions (leading " AND ") and params of the chain's plain steps.
+    `day_start` = app setting day_start_hour: a date step's day D is [D h:00, D+1 h:00)."""
     sql: list[str] = []
     params: list = []
     for st in chain:
@@ -356,10 +357,10 @@ def plain_sql(chain: list[_Step]) -> tuple[str, list]:
             params += list(st.v)
         elif k == "date":
             if st.from_:
-                sql.append("h.played_at >= CAST(? AS DATE)")
+                sql.append(day_from_sql(day_start))
                 params.append(st.from_[:10])
             if st.to:
-                sql.append(DATE_TO_SQL)
+                sql.append(day_to_sql(day_start))
                 params.append(st.to[:10])
         elif k == "hour":
             sql.append(f"EXTRACT(hour FROM h.played_at) IN ({_marks(len(st.v))})")
@@ -643,7 +644,8 @@ def target_player(db, workspace_id: int, player_id: int | None) -> int | None:
     return get_hero_player_id(db, workspace_id)
 
 
-def _compute(db, workspace_id: int, player_id: int | None, chain: list[_Step]) -> Resolution:
+def _compute(db, workspace_id: int, player_id: int | None, chain: list[_Step],
+             day_start: int = 0) -> Resolution:
     ctx = chain_ctx(chain)
     steps = spot_steps(chain)
     res = Resolution(workspace_id, player_id, None, chain, ctx, bool(steps), 0)
@@ -655,7 +657,7 @@ def _compute(db, workspace_id: int, player_id: int | None, chain: list[_Step]) -
         "SELECT COUNT(*) FROM hand_players hp JOIN hands h ON hp.hand_id = h.id "
         f"AND hp.workspace_id = h.workspace_id WHERE {_BASE_WHERE}",
         [player_id, workspace_id]).fetchone()[0])
-    psql, pparams = plain_sql(chain)
+    psql, pparams = plain_sql(chain, day_start)
     where = _BASE_WHERE + psql + _row_bits_sql(chain)
     rows = db.execute(f"{_SELECT} WHERE {where}", [player_id, workspace_id, *pparams]).fetchall()
     if not steps:
@@ -758,9 +760,11 @@ def data_version(db, workspace_id: int) -> tuple:
 def resolve(db, workspace_id: int, player_id: int | None, chain: list[_Step]) -> Resolution:
     """Resolution of `chain` for the player (None = the workspace's active hero), cached."""
     target = target_player(db, workspace_id, player_id)
+    from app.app_settings import get_app_settings
+    day_start = int(get_app_settings(db)["day_start_hour"])
     if get_rebuild_status().get("active"):
-        return _compute(db, workspace_id, target, chain)
-    key = (workspace_id, target, canonical(chain), data_version(db, workspace_id))
+        return _compute(db, workspace_id, target, chain, day_start)
+    key = (workspace_id, target, canonical(chain), data_version(db, workspace_id), day_start)
     hit = _CACHE.get(key)
     if hit is not None:
         return hit
@@ -771,7 +775,7 @@ def resolve(db, workspace_id: int, player_id: int | None, chain: list[_Step]) ->
         with lock:
             hit = _CACHE.get(key)
             if hit is None:
-                hit = _compute(db, workspace_id, target, chain)
+                hit = _compute(db, workspace_id, target, chain, day_start)
                 _CACHE.put(key, hit)
     finally:
         with _inflight_lock:

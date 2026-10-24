@@ -93,3 +93,11 @@ def test_workspaces_are_separate_and_deleted_with_workspace(client, db):
     assert client.delete("/api/workspaces/2").status_code == 200
     assert db.execute("SELECT COUNT(*) FROM settings WHERE key = 'statistics_dashboards.2'"
                       ).fetchone()[0] == 0
+
+
+def test_dangling_ancestor_is_422(client):
+    # node 3's parent (2) exists and is a folder, but 2's own parent (9) does not
+    nodes = [folder(2, parent=9), dash(3, parent=2), dash(1)]
+    assert put(client, doc(nodes)).status_code == 422
+    # listed before its dangling ancestor: still 422, never a 500
+    assert put(client, doc([dash(3, parent=2), folder(2, parent=9), dash(1)])).status_code == 422

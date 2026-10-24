@@ -22,7 +22,8 @@ from collections import defaultdict
 
 from fastapi import APIRouter, HTTPException, Query
 
-from app.date_filters import DATE_TO_SQL
+from app.date_filters import bound_sql
+from app.app_settings import get_app_settings
 from app.db import get_hero_player_id, get_read_cursor
 from app.general_filters import resolve_filters
 from app.general_cells import (
@@ -62,7 +63,7 @@ _VS_USER_ROWS: tuple[str, ...] = tuple(sorted(
 _MASK_COLUMNS = ("h2n_pre_opp", "h2n_pre_case", "h2n_post_opp", "h2n_post_case")
 
 
-def _filters(stakes, game_mode, date_from, date_to) -> tuple[str, list]:
+def _filters(stakes, game_mode, date_from, date_to, day_start: int = 0) -> tuple[str, list]:
     sql = ""
     params: list = []
     if stakes:
@@ -72,11 +73,13 @@ def _filters(stakes, game_mode, date_from, date_to) -> tuple[str, list]:
         sql += " AND h.game_mode = ?"
         params.append(game_mode)
     if date_from:
-        sql += " AND h.played_at >= ?"
-        params.append(date_from)
+        frag, val = bound_sql("from", date_from, day_start)
+        sql += " AND " + frag
+        params.append(val)
     if date_to:
-        sql += " AND " + DATE_TO_SQL
-        params.append(date_to)
+        frag, val = bound_sql("to", date_to, day_start)
+        sql += " AND " + frag
+        params.append(val)
     return sql, params
 
 
@@ -307,8 +310,9 @@ def get_general(
     workspace_id: int = Query(1),
     player_id: int | None = Query(None, description="Defaults to the workspace hero"),
 ):
-    fsql, fparams, _steps = resolve_filters(chain, stakes, game_mode, date_from, date_to)
     db = get_read_cursor()
+    fsql, fparams, _steps = resolve_filters(chain, stakes, game_mode, date_from, date_to,
+                                            int(get_app_settings(db)["day_start_hour"]))
     hero_id = get_hero_player_id(db, workspace_id)
     target = player_id if player_id is not None else hero_id
     if target is None:

@@ -5,7 +5,7 @@ under the keys below; a missing or unreadable value falls back to its default.
 
 - ``session_max_break_minutes`` (int 1-240, default 10): a hand that starts less than this
   after the current session's end joins the session (app/sessions_h2n.py).
-- ``day_start_hour`` (int 0-23, default 0): date presets only, not session splitting.
+- ``day_start_hour`` (int 0-23, default 0): the calendar day of every date-by-day filter is [D h:00, D+1 h:00) (Reports date step, General date_from/to, hands list, sessions date filter); not session splitting.
 - ``numeric_date_format`` (bool, default False): session captions as "17-10-2026, 20:10".
 """
 

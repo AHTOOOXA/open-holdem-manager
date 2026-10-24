@@ -363,3 +363,128 @@ def test_bench_session_pages(bench_client, bench_db, hero_id):  # noqa: F811
     assert len(g["points"]) == big["hands"]
     h = c.get("/api/hands", params={"chain": json.dumps(chain), "per_page": 5}).json()
     assert h["total"] == big["hands"]
+
+
+# ── M5 fix round: live check, live cost, day start hour ──────────────────
+
+
+def test_is_live_rejects_future_ends():
+    now = dt.datetime(2026, 10, 24, 12, 0, 0)
+    # a session being played: end = last start + 180 s may be up to 180 s ahead
+    assert sh.is_live(now + 180 * SEC, now, 600, start=now - 5 * MIN)
+    assert sh.is_live(now + 100 * SEC, now, 600)
+    # a hand dated further in the future is not live
+    assert not sh.is_live(now + 181 * SEC, now, 600, start=now - 5 * MIN)
+    assert not sh.is_live(now + 2 * 3600 * SEC, now, 600)
+    # a session starting after now is not live
+    assert not sh.is_live(now + 200 * SEC, now, 600, start=now + SEC)
+    assert not sh.is_live(now + 100 * SEC, now, 600, start=now + SEC)
+    assert sh.is_live(now - 600 * SEC, now, 600)
+    assert not sh.is_live(now - 601 * SEC, now, 600)
+
+
+def test_live_ignores_future_hand(synth):
+    db, _c = synth
+    now = dt.datetime(2026, 10, 24, 12, 0, 0)
+    _seed(db, [("a", now - 5 * MIN, "T", 1.0, [2]), ("f", now + 3 * 3600 * SEC, "T", 1.0, [2])])
+    assert live_session(db, 1, now=now)["live"] is False
+    rows = list_sessions(db, 1, now=now)["sessions"]
+    assert [r["is_live"] for r in rows] == [False, True]  # future session (newest first), a
+
+
+def _full_live(db, now):
+    rows = sh.build_sessions(db, 1, 1, DEFAULT_BREAK)
+    last = max(rows, key=lambda r: r.end)
+    if sh.is_live(last.end, now, DEFAULT_BREAK, last.start):
+        return {"live": True, "session_id": last.id, "start": sh.iso(last.start)}
+    return {"live": False, "session_id": None, "start": None}
+
+
+def test_live_fast_path_equals_full_synthetic(synth):
+    db, _c = synth
+    now = dt.datetime(2026, 10, 24, 12, 0, 0)
+    # a 30 h session (hand every 10 min) ending now: forces the window to extend
+    hands = [(f"x{i}", now - 30 * 3600 * SEC + i * 10 * MIN, "T", 1.0, [2]) for i in range(181)]
+    hands += [("early", now - 80 * 3600 * SEC, "T", 1.0, [2])]
+    _seed(db, hands)
+    for shift in (0 * SEC, 2 * MIN, 12 * MIN, 14 * MIN, -3 * SEC):
+        t = now + shift
+        assert live_session(db, 1, now=t) == _full_live(db, t), shift
+    assert live_session(db, 1, now=now)["start"] == sh.iso(now - 30 * 3600 * SEC)
+
+
+def test_live_fast_path_equals_full_bench(bench_db, hero_id):  # noqa: F811
+    rows = sh.build_sessions(bench_db, 1, hero_id, DEFAULT_BREAK)
+    for r in (rows[-1], rows[len(rows) // 2], rows[10]):
+        for now in (r.end - 60 * SEC, r.end + 5 * MIN, r.end + 11 * MIN):
+            got = live_session(bench_db, 1, now=now)
+            if got["live"]:
+                want = [x for x in rows if x.start <= now and sh.is_live(x.end, now, DEFAULT_BREAK)]
+                assert got["start"] == sh.iso(want[-1].start)
+    assert live_session(bench_db, 1, now=rows[-1].end + 5 * MIN) == {
+        "live": True, "session_id": rows[-1].id, "start": sh.iso(rows[-1].start)}
+
+
+def _set_day_start(c, h):
+    assert c.patch("/api/app-settings", json={"day_start_hour": h}).status_code == 200
+
+
+def _day_start_hands(db):
+    _seed(db, [("late17", dt.datetime(2026, 10, 17, 23, 0), "T", 1.0, [2]),
+               ("early18", dt.datetime(2026, 10, 18, 2, 0), "T", 1.0, [2]),
+               ("morn18", dt.datetime(2026, 10, 18, 5, 0), "T", 1.0, [2])])
+
+
+def test_day_start_hour_sessions_date_filter(synth):
+    db, c = synth
+    _day_start_hands(db)
+
+    def counts(d):
+        j = c.get("/api/sessions", params={"date_from": d, "date_to": d}).json()
+        return sum(s["hands"] for s in j["sessions"])
+    assert (counts("2026-10-17"), counts("2026-10-18")) == (1, 2)  # default hour 0
+    _set_day_start(c, 4)
+    assert (counts("2026-10-17"), counts("2026-10-18")) == (2, 1)
+    assert counts("2026-10-19") == 0
+    _set_day_start(c, 0)
+
+
+def test_day_start_hour_general_and_reports_steps(synth):
+    db, c = synth
+    _day_start_hands(db)
+
+    def general(**p):
+        return c.get("/api/general", params=p).json()["hands"]
+    chain = lambda f, t: json.dumps([{"k": "date", "from": f, "to": t}])  # noqa: E731
+    assert general(date_from="2026-10-17", date_to="2026-10-17") == 1
+    _set_day_start(c, 4)
+    try:
+        assert general(date_from="2026-10-17", date_to="2026-10-17") == 2
+        assert general(date_from="2026-10-18", date_to="2026-10-18") == 1
+        assert general(chain=chain("2026-10-17", "2026-10-17")) == 2
+        assert general(chain=chain("2026-10-18", "2026-10-18")) == 1
+        # datetime bounds are used as-is
+        assert general(date_from="2026-10-18 01:00:00", date_to="2026-10-18 03:00:00") == 1
+        # popup and hands list follow the same rule
+        d = c.get("/api/general/cell/preflop.open_raise.EP/detail",
+                  params={"date_from": "2026-10-17", "date_to": "2026-10-17"})
+        assert d.status_code == 200
+        hl = c.get("/api/hands", params={"date_from": "2026-10-17", "date_to": "2026-10-17"}).json()
+        assert hl["total"] == 2
+        _set_day_start(c, 0)
+        assert general(chain=chain("2026-10-17", "2026-10-17")) == 1
+    finally:
+        _set_day_start(c, 0)
+
+
+def test_day_start_hour_reports_cache_key(synth):
+    db, c = synth
+    _day_start_hands(db)
+    from app.reports.chain import parse_chain, resolve
+    ch = parse_chain(json.dumps([{"k": "date", "from": "2026-10-17", "to": "2026-10-17"}]))
+    assert len(resolve(db, 1, None, ch).hands) == 1
+    _set_day_start(c, 4)
+    try:
+        assert len(resolve(db, 1, None, ch).hands) == 2
+    finally:
+        _set_day_start(c, 0)

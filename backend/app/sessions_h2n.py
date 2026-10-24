@@ -37,6 +37,8 @@ import datetime as _dt
 from dataclasses import dataclass, field
 from typing import Iterable, Sequence
 
+from app.date_filters import day_from_sql, day_to_sql
+
 HAND_SECONDS = 180
 SLOT_SECONDS = 90
 _EPOCH = _dt.datetime(1970, 1, 1)
@@ -93,8 +95,15 @@ def session_id(start: _dt.datetime) -> int:
     return epoch_s(start)
 
 
-def is_live(end: _dt.datetime, now: _dt.datetime, max_break_s: int) -> bool:
-    return (now - end).total_seconds() <= max_break_s
+def is_live(end: _dt.datetime, now: _dt.datetime, max_break_s: int,
+            start: _dt.datetime | None = None) -> bool:
+    """A session is live when it ended at most the max break ago. A session being played has
+    end = last start + 180 s, so `end` may be up to 180 s ahead of `now`; anything further
+    ahead (or a session starting after `now`) is not live (future-dated hands)."""
+    if start is not None and start > now:
+        return False
+    ahead = (end - now).total_seconds()
+    return ahead <= HAND_SECONDS and (now - end).total_seconds() <= max_break_s
 
 
 def iso(t: _dt.datetime) -> str:
@@ -215,17 +224,17 @@ class SessionRow:
 
 
 def build_sessions(db, workspace_id: int, player_id: int, max_break_s: int,
-                   date_from: _dt.date | None = None, date_to: _dt.date | None = None
-                   ) -> list[SessionRow]:
+                   date_from: _dt.date | None = None, date_to: _dt.date | None = None,
+                   day_start: int = 0) -> list[SessionRow]:
     """Every session of the player, chronological, with in-range sums (all hands without a
     date range). Sessions without in-range hands are kept (hands = 0); callers drop them."""
     cond: list[str] = []
     params: list = []
     if date_from is not None:
-        cond.append("h.played_at >= CAST(? AS DATE)")
+        cond.append(day_from_sql(day_start))
         params.append(date_from.isoformat())
     if date_to is not None:
-        cond.append("h.played_at < CAST(? AS DATE) + INTERVAL 1 DAY")
+        cond.append(day_to_sql(day_start))
         params.append(date_to.isoformat())
     sql = _HANDS_CTE.format(in_range=" AND ".join(cond) or "TRUE") + """
         SELECT sn, MIN(s), MAX(s), MAX(e), COUNT(*),

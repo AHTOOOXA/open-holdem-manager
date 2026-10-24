@@ -14,7 +14,7 @@ import re
 from fastapi import HTTPException
 from pydantic import ValidationError
 
-from app.date_filters import DATE_TO_SQL
+from app.date_filters import bound_sql
 from app.h2n.columns import H2N_POSITIONS
 
 DASHBOARD_KINDS = ("date", "stakes", "mode")
@@ -73,7 +73,7 @@ def params_to_steps(stakes, game_mode, date_from, date_to) -> list[dict]:
     return out
 
 
-def old_filters(stakes, game_mode, date_from, date_to) -> tuple[str, list]:
+def old_filters(stakes, game_mode, date_from, date_to, day_start: int = 0) -> tuple[str, list]:
     sql = ""
     params: list = []
     if stakes:
@@ -83,19 +83,21 @@ def old_filters(stakes, game_mode, date_from, date_to) -> tuple[str, list]:
         sql += " AND h.game_mode = ?"
         params.append(game_mode)
     if date_from:
-        sql += " AND h.played_at >= ?"
-        params.append(date_from)
+        frag, val = bound_sql("from", date_from, day_start)
+        sql += " AND " + frag
+        params.append(val)
     if date_to:
-        sql += " AND " + DATE_TO_SQL
-        params.append(date_to)
+        frag, val = bound_sql("to", date_to, day_start)
+        sql += " AND " + frag
+        params.append(val)
     return sql, params
 
 
-def resolve_filters(chain: str | None, stakes, game_mode, date_from, date_to
-                    ) -> tuple[str, list, list[dict]]:
+def resolve_filters(chain: str | None, stakes, game_mode, date_from, date_to,
+                    day_start: int = 0) -> tuple[str, list, list[dict]]:
     """(sql, params, steps) of the request's filters. 422 on a bad or conflicting request."""
     if chain is None:
-        return (*old_filters(stakes, game_mode, date_from, date_to),
+        return (*old_filters(stakes, game_mode, date_from, date_to, day_start),
                 params_to_steps(stakes, game_mode, date_from, date_to))
     if stakes or game_mode is not None or date_from or date_to:
         raise HTTPException(status_code=422,
@@ -104,7 +106,7 @@ def resolve_filters(chain: str | None, stakes, game_mode, date_from, date_to
         raw = json.loads(chain) if chain.strip() else []
         steps = validate_plain_steps(raw)
         from app.reports.chain import plain_sql
-        sql, params = plain_sql(_models(steps))
+        sql, params = plain_sql(_models(steps), day_start)
     except (ValueError, TypeError) as e:
         raise HTTPException(status_code=422, detail=f"invalid chain: {e}") from e
     return sql, params, steps

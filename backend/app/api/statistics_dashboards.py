@@ -106,13 +106,14 @@ def validate(doc: Doc) -> Doc:
         n.name = n.name.strip()
         if not n.name or len(n.name) > MAX_NAME:
             _fail(f"name must be 1-{MAX_NAME} characters")
-    for n in doc.nodes:
+    for n in doc.nodes:  # every parent first, so the ancestor walk below cannot dangle
         if n.parent_id is not None:
             p = by_id.get(n.parent_id)
             if p is None:
                 _fail(f"node {n.id}: parent {n.parent_id} does not exist")
             if p.kind != "folder":
                 _fail(f"node {n.id}: parent {n.parent_id} is not a folder")
+    for n in doc.nodes:
         seen = {n.id}
         cur = n.parent_id
         while cur is not None:
