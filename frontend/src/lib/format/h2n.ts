@@ -17,19 +17,78 @@
 /** Comparison tolerance used by every threshold check. */
 export const H2N_EPS = 1e-6;
 
-/** Appearance defaults (not user-editable on this screen). */
-export const H2N_APPEARANCE = {
+import type { StatAppearance } from '../config/types';
+
+export interface H2NAppearance {
   /** Show the small grey sample number when 0 < sample < this. */
-  showSampleThreshold: 15,
+  showSampleThreshold: number;
   /** Dim the value when sample < this (sample 0 included). */
-  transparentThreshold: 10,
+  transparentThreshold: number;
   /** Opacity applied to a small-sample value (the sample gets it twice). */
-  smallSampleOpacity: 0.5,
+  smallSampleOpacity: number;
   /** Show the vs-user value instead of the overall one when vsUserSample > this. 0 disables. */
-  substituteByVsUserThreshold: 50,
+  substituteByVsUserThreshold: number;
   /** One decimal is shown strictly inside (-this, this). */
+  oneDecimalThreshold: number;
+  /** An exact 100 prints as 99. */
+  show99For100: boolean;
+  /** Whole percents below 10 print with a leading zero ("05"). */
+  leadingZero: boolean;
+  /** Counts and big amounts print as 1.2k / 3m instead of in full. */
+  shortenAmounts: boolean;
+}
+
+export const H2N_APPEARANCE_DEFAULTS: Readonly<H2NAppearance> = {
+  showSampleThreshold: 15,
+  transparentThreshold: 10,
+  smallSampleOpacity: 0.5,
+  substituteByVsUserThreshold: 50,
   oneDecimalThreshold: 10,
-} as const;
+  show99For100: true,
+  leadingZero: false,
+  shortenAmounts: true,
+};
+
+/**
+ * Runtime appearance, mutable on purpose: Configuration > Stat Appearance writes it through
+ * `setStatAppearance`, every formatter below reads it at call time.
+ */
+export const H2N_APPEARANCE: H2NAppearance = { ...H2N_APPEARANCE_DEFAULTS };
+
+const appearanceListeners = new Set<() => void>();
+let appearanceVersion = 0;
+
+/** Map the stored config onto the runtime appearance. Returns true when something changed. */
+export function setStatAppearance(cfg: StatAppearance): boolean {
+  const next: Partial<H2NAppearance> = {
+    oneDecimalThreshold: cfg.one_decimal_below,
+    show99For100: cfg.show_99_for_100,
+    leadingZero: cfg.leading_zero,
+    shortenAmounts: cfg.shorten_amounts,
+    showSampleThreshold: cfg.show_sample_below,
+    transparentThreshold: cfg.dim_below,
+    substituteByVsUserThreshold: cfg.vs_user_substitute_above,
+  };
+  let changed = false;
+  for (const k of Object.keys(next) as (keyof H2NAppearance)[]) {
+    if (next[k] !== undefined && H2N_APPEARANCE[k] !== next[k]) {
+      (H2N_APPEARANCE as unknown as Record<string, unknown>)[k] = next[k];
+      changed = true;
+    }
+  }
+  if (changed) {
+    appearanceVersion += 1;
+    appearanceListeners.forEach((l) => l());
+  }
+  return changed;
+}
+
+/** useSyncExternalStore pair: the version bumps whenever the runtime appearance changes. */
+export const subscribeStatAppearance = (l: () => void) => {
+  appearanceListeners.add(l);
+  return () => void appearanceListeners.delete(l);
+};
+export const getStatAppearanceVersion = () => appearanceVersion;
 
 export type H2NUnits = 'percent' | 'bb100' | 'count';
 
@@ -86,6 +145,7 @@ export function invariantString(x: number): string {
 export function shortenCount(value: number): string {
   const v = Math.trunc(value);
   const abs = Math.abs(v);
+  if (!H2N_APPEARANCE.shortenAmounts) return invariantString(v === 0 ? 0 : v);
   if (abs < 1_000_000) {
     if (abs >= 1000) {
       if (abs < 10_000) return invariantString(roundHalfEven(v / 1000, 1)) + 'k';
@@ -110,6 +170,7 @@ function isMultipleOf(value: number, divider: number): boolean {
  */
 export function shortenAmount(amount: number): string {
   const abs = Math.abs(amount);
+  if (!H2N_APPEARANCE.shortenAmounts) return invariantString(amount);
   if (abs < 100) return invariantString(amount);
   if (abs < 1000) return invariantString(roundHalfEven(amount, 1));
   if (abs < 10_000) {
@@ -149,10 +210,16 @@ export function formatPercent(value: number | null | undefined, sample: number |
   if (value === null || value === undefined || Number.isNaN(value)) return '--';
   if (!Number.isFinite(value)) return infinityString(value);
   if (value < -100 || value > 100) return shortenCount(Math.trunc(value));
-  if (nearlyEqual(value, 100)) return '99';
+  if (H2N_APPEARANCE.show99For100 && nearlyEqual(value, 100)) return '99';
   const t = H2N_APPEARANCE.oneDecimalThreshold;
   if (greater(value, -t) && less(value, t)) return invariantString(roundHalfEven(value, 1));
-  return invariantString(roundHalfEven(value));
+  const r = roundHalfEven(value);
+  return H2N_APPEARANCE.leadingZero ? withLeadingZero(r) : invariantString(r);
+}
+
+/** 5 → "05"; anything outside 0..9 (and a negative zero) prints as usual. */
+export function withLeadingZero(r: number): string {
+  return r >= 0 && r < 10 && !Object.is(r, -0) ? `0${r}` : invariantString(r);
 }
 
 /** Format a win rate in bb/100. NaN/null (no hands) → "--". */

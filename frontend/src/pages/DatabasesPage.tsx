@@ -7,6 +7,7 @@ import WorkspaceList from '@/components/databases/WorkspaceList';
 import WorkspaceFormDialog from '@/components/databases/WorkspaceFormDialog';
 import DeleteWorkspaceDialog from '@/components/databases/DeleteWorkspaceDialog';
 import CheckpointsDialog from '@/components/databases/CheckpointsDialog';
+import DataFolderPanel from '@/components/databases/DataFolderPanel';
 import DatabaseFilePanel from '@/components/databases/DatabaseFilePanel';
 
 export default function DatabasesPage() {
@@ -38,6 +39,8 @@ export default function DatabasesPage() {
         onCheckpoints={setCheckpointsFor}
         onDelete={setDeleting}
       />
+
+      <DataFolderPanel />
 
       <DatabaseFilePanel />
 

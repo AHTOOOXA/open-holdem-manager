@@ -34,10 +34,7 @@ export default function ConfigurationPage() {
         ))}
       </nav>
       <div className="flex min-w-0 flex-1 flex-col overflow-y-auto">
-        <header className="border-b border-border px-6 py-3">
-          <h1 className="text-lg font-semibold">{current.title}</h1>
-        </header>
-        <div className="max-w-3xl p-6">{current.render()}</div>
+        <div className="max-w-3xl p-6" key={current.id}>{current.render()}</div>
       </div>
     </div>
   );
