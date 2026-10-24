@@ -5,7 +5,7 @@ import {
   IMPORT_FILTER_KEY, filterMode, importPresets, isAllTime, isValidFilter, loadFilter, resolveFilter, sanitizeFilter, saveFilter,
 } from '../src/lib/import/date-filter';
 import {
-  activeConnection, databaseOptionLabel, loadConnection, parsePort, saveConnection, searchMessage, trackerQuery,
+  activeConnection, databaseOptionLabel, loadConnection, parsePort, saveConnection, searchMessage, trackerBody,
 } from '../src/lib/import/tracker';
 import { addFolder, isAbsolutePath, refreshDelay, removeFolder, replaceFolder, statusText } from '../src/lib/import/auto-import';
 import { importCompletedMessage, progressLine, progressParts } from '../src/lib/import-ui';
@@ -59,12 +59,13 @@ test('filter storage: presets by id, junk ignored', () => {
   assert.deepEqual(loadFilter(null), {});
 });
 
-test('tracker query leaves blanks to backend defaults', () => {
-  assert.equal(trackerQuery('pt4', null), 'software=pt4');
-  assert.equal(
-    trackerQuery('hm3', { host: ' db ', port: 5433, user: '', password: 'p w' }),
-    'software=hm3&host=db&port=5433&password=p+w',
+test('tracker request body leaves blanks (an empty password too) to backend defaults', () => {
+  assert.deepEqual(trackerBody('pt4', null), { software: 'pt4' });
+  assert.deepEqual(
+    trackerBody('hm3', { host: ' db ', port: 5433, user: '', password: 'p w' }),
+    { software: 'hm3', host: 'db', port: 5433, password: 'p w' },
   );
+  assert.deepEqual(trackerBody('pt4', { host: '', user: ' ', password: '' }), { software: 'pt4' });
 });
 
 test('tracker connection persistence never stores the password', () => {

@@ -729,14 +729,16 @@ def _list_batches(all_hands: list[str], hand_parsers: list) -> "Iterator[list[tu
 def _chunks(batches, unsupported: list[str]):
     """(hand texts, parser, source items consumed) chunks of <= BATCH_SIZE hands of one parser.
 
-    One parser per chunk: a new chunk starts at BATCH_SIZE or when the site changes (several
-    files from different sites in one upload). Items whose parser is None (no parser knows
-    the site) are reported in `unsupported` and counted in the next chunk's consumed count.
+    One parser per chunk: a new chunk starts at BATCH_SIZE, when the site changes (several
+    files from different sites in one upload) and at the end of each source batch (a source
+    reading from a database: the import checks for cancel before reading the next one).
+    Items whose parser is None (no parser knows the site) are reported in `unsupported` and
+    counted in the chunk's consumed count.
     """
-    texts: list[str] = []
-    parser = None
-    consumed = 0
     for batch in batches:
+        texts: list[str] = []
+        parser = None
+        consumed = 0
         for text, p in batch:
             consumed += 1
             if p is None:
@@ -748,8 +750,8 @@ def _chunks(batches, unsupported: list[str]):
                 texts, consumed = [], 1
             parser = p
             texts.append(text)
-    if texts or consumed:
-        yield texts, parser, consumed
+        if texts or consumed:
+            yield texts, parser, consumed
 
 
 def _stream_import(

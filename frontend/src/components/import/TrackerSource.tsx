@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -12,9 +12,11 @@ import {
 import type { TrackerDatabases, TrackerSoftware } from '@/lib/import/types';
 
 const storage = () => (typeof localStorage === 'undefined' ? null : localStorage);
-const SEARCH_DEBOUNCE_MS = 400;
 
-/** PokerTracker 4 / Holdem Manager 3 branch: finds the databases on the server and imports the chosen one. */
+/**
+ * PokerTracker 4 / Holdem Manager 3 branch: finds the databases on the server and imports the chosen one.
+ * Searches when opened and when "Search" is pressed; editing the settings never sends a request by itself.
+ */
 export default function TrackerSource({ software, onImport }: {
   software: TrackerSoftware;
   onImport: (source: Extract<ImportSource, { kind: 'tracker' }>) => void;
@@ -25,36 +27,44 @@ export default function TrackerSource({ software, onImport }: {
   const [result, setResult] = useState<TrackerDatabases | null>(null);
   const [selected, setSelected] = useState('');
   const [searching, setSearching] = useState(true);
+  // Bumped by the Search button; the search effect runs on open, on a software change and on this
+  const [searchRun, setSearchRun] = useState(0);
+  // Settings edited since the last search: the listed databases may not match them
+  const [edited, setEdited] = useState(false);
+  // The connection the effect reads; set when a search starts, not on every keystroke
+  const connRef = useRef<{ conn: SavedConnection; password: string }>({ conn, password });
 
   useEffect(() => {
     const ctl = new AbortController();
-    const timer = window.setTimeout(() => {
-      setSearching(true);
-      getTrackerDatabases(software, activeConnection(conn, password), ctl.signal)
-        .then((r) => {
-          setResult(r);
-          setSelected(r.databases[0]?.name ?? '');
-        })
-        .catch((e: unknown) => {
-          if (ctl.signal.aborted) return;
-          setResult({ software, databases: [], error: e instanceof Error ? e.message : 'Search failed' });
-          setSelected('');
-        })
-        .finally(() => {
-          if (!ctl.signal.aborted) setSearching(false);
-        });
-    }, SEARCH_DEBOUNCE_MS);
-    return () => {
-      window.clearTimeout(timer);
-      ctl.abort();
-    };
-  }, [software, conn, password]);
+    const { conn: c, password: pw } = connRef.current;
+    getTrackerDatabases(software, activeConnection(c, pw), ctl.signal)
+      .then((r) => {
+        setResult(r);
+        setSelected(r.databases[0]?.name ?? '');
+      })
+      .catch((e: unknown) => {
+        if (ctl.signal.aborted) return;
+        setResult({ software, databases: [], error: e instanceof Error ? e.message : 'Search failed' });
+        setSelected('');
+      })
+      .finally(() => {
+        if (!ctl.signal.aborted) setSearching(false);
+      });
+    return () => ctl.abort();
+  }, [software, searchRun]);
+
+  const search = () => {
+    connRef.current = { conn, password };
+    setEdited(false);
+    setResult(null);
+    setSearching(true);
+    setSearchRun((n) => n + 1);
+  };
 
   const edit = (patch: Partial<SavedConnection>) => {
     const next = { ...conn, ...patch };
     setConn(next);
-    setResult(null);
-    setSearching(true);
+    setEdited(true);
     saveConnection(storage(), software, next);
   };
 
@@ -79,7 +89,8 @@ export default function TrackerSource({ software, onImport }: {
             id="trk-pass"
             type="password"
             value={password}
-            onChange={(e) => { setPassword(e.target.value); setResult(null); setSearching(true); }}
+            onChange={(e) => { setPassword(e.target.value); setEdited(true); }}
+            onKeyDown={(e) => { if (e.key === 'Enter') search(); }}
             autoComplete="off"
           />
         </div>
@@ -106,9 +117,13 @@ export default function TrackerSource({ software, onImport }: {
           </Select>
         </label>
       )}
-      <div className="flex justify-end">
+      <div className="flex justify-end gap-2">
+        <Button variant="outline" disabled={searching} onClick={search}>
+          Search
+        </Button>
         <Button
-          disabled={searching || !selected}
+          disabled={searching || edited || !selected}
+          title={edited ? 'Settings changed: press Search first' : undefined}
           onClick={() => onImport({ kind: 'tracker', software, database: selected, conn: activeConnection(conn, password) })}
         >
           Import

@@ -1,5 +1,7 @@
 import hmac
+import logging
 import os
+import re
 from pathlib import Path as _Path
 
 from fastapi import FastAPI, Header, HTTPException, Request
@@ -26,6 +28,24 @@ from app.api import auto_import as auto_import_api
 from app import auto_import
 
 MultiPartParser.max_part_size = 50 * 1024 * 1024  # 50MB
+
+_SECRET_PARAM = re.compile(r"((?:^|[?&])(?:password|pass|pwd)=)[^&#\s]*", re.IGNORECASE)
+
+
+class RedactSecretsFilter(logging.Filter):
+    """Access log lines never show a password query parameter (a stale client may still send
+    one: tracker connection settings travel in JSON bodies now, see api/import_tracker.py)."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        args = record.args
+        if isinstance(args, tuple) and args:
+            record.args = tuple(_SECRET_PARAM.sub(r"\1***", a) if isinstance(a, str) else a for a in args)
+        if isinstance(record.msg, str) and "=" in record.msg:
+            record.msg = _SECRET_PARAM.sub(r"\1***", record.msg)
+        return True
+
+
+logging.getLogger("uvicorn.access").addFilter(RedactSecretsFilter())
 
 app = FastAPI(title="Open Holdem Manager", version="0.1.0")
 

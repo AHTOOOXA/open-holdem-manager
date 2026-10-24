@@ -3,7 +3,7 @@ import { uploadFilesStream, importH2NStream, importTrackerStream, cancelImportJo
 import type { ImportResult, ImportProgress, Settings, HealthResponse } from '@/lib/api';
 import { queryClient } from '@/lib/query-client';
 import type { ImportRange } from '@/lib/import/date-filter';
-import { softwareLabel, type ImportSource } from '@/lib/import/tracker';
+import { softwareLabel, trackerBody, type ImportSource } from '@/lib/import/tracker';
 import { toast } from 'sonner';
 import { useWorkspace, type Workspace } from '@/contexts/WorkspaceContext';
 import { createWorkspace, getWorkspaces } from '@/lib/api';
@@ -328,7 +328,7 @@ function ImportProvider({ children }: { children: ReactNode }) {
     beginImport('tracker', ws, importStartedMessage('tracker', 0, label).description);
     try {
       const res = await importTrackerStream(
-        { software: source.software, database: source.database, ...(source.conn ?? {}) },
+        { ...trackerBody(source.software, source.conn), database: source.database },
         onStreamEvent,
         range,
       );

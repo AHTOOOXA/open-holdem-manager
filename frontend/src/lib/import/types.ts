@@ -89,13 +89,19 @@ export interface AutoImportStatus {
  * (Holdem Manager 3 — PostgreSQL like HM2/PT4 or a file; the backend decides from what it finds,
  * marked UNVERIFIED until tested on a real DB). Original hand texts are read and fed through
  * OHM's own parsers (cash games only).
- * GET  /api/import/tracker/databases?software=&host=&port=&user=&password=  → TrackerDatabases
+ * POST /api/import/tracker/databases  body TrackerDatabasesRequest → TrackerDatabases
  *      (PostgreSQL: lists databases on the server that contain the tracker's hand-history table,
  *      with a hand count; the `postgres`/template DBs are hidden; a probe reads one hand.)
- *      Defaults when params are omitted: host localhost, port 5432, user postgres, password =
- *      the tracker's stock password ('dbpass' for PT4; HM3: 'postgrespass'). Never logged/stored.
+ *      A POST with a JSON body so the password never appears in a URL / access log.
+ *      Defaults when a field is omitted, null or "" (the frontend omits blanks): host localhost,
+ *      port 5432, user postgres, password = the tracker's stock password ('dbpass' for PT4;
+ *      HM3: 'postgrespass'); the same rule applies to the import. Never logged/stored.
+ *      At most 2 listings run at once: another one gets 429 with a readable `detail`. The UI
+ *      searches when the dialog opens and on its "Search" button (not on every keystroke).
  * POST /api/import/tracker?workspace_id=&date_from=&date_to=  body TrackerImportRequest → NDJSON
- *      stream (ImportEvent). Errors before streaming: 400 with a readable `detail`.
+ *      stream (ImportEvent). Errors before streaming (connection, not a tracker DB, bad date):
+ *      400 with a readable `detail`. The hands are read in batches after the start line, so the
+ *      job can be cancelled while reading.
  */
 export type TrackerSoftware = 'pt4' | 'hm3';
 export interface TrackerConnection {
@@ -113,7 +119,9 @@ export interface TrackerDatabases {
   databases: TrackerDatabase[];
   error: string | null; // e.g. "Could not connect to localhost:5432" (then databases = [])
 }
-export interface TrackerImportRequest extends TrackerConnection {
+export interface TrackerDatabasesRequest extends TrackerConnection {
   software: TrackerSoftware;
+}
+export interface TrackerImportRequest extends TrackerDatabasesRequest {
   database: string;
 }

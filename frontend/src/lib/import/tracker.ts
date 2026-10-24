@@ -11,16 +11,20 @@ export const SOFTWARE_OPTIONS: { id: ImportSoftware; label: string }[] = [
 
 export const softwareLabel = (s: ImportSoftware) => SOFTWARE_OPTIONS.find((o) => o.id === s)?.label ?? s;
 
-/** Query string of GET /api/import/tracker/databases; blank fields are left out so the backend defaults apply. */
-export function trackerQuery(software: TrackerSoftware, conn: TrackerConnection | null): string {
-  const sp = new URLSearchParams({ software });
+/**
+ * JSON body for POST /api/import/tracker/databases (and the connection part of an import).
+ * Blank fields, an empty password included, are left out so the backend defaults apply.
+ * The password only ever travels in a request body, never in a URL.
+ */
+export function trackerBody(software: TrackerSoftware, conn: TrackerConnection | null): { software: TrackerSoftware } & TrackerConnection {
+  const body: { software: TrackerSoftware } & TrackerConnection = { software };
   if (conn) {
-    if (conn.host?.trim()) sp.set('host', conn.host.trim());
-    if (conn.port != null && Number.isFinite(conn.port)) sp.set('port', String(conn.port));
-    if (conn.user?.trim()) sp.set('user', conn.user.trim());
-    if (conn.password) sp.set('password', conn.password);
+    if (conn.host?.trim()) body.host = conn.host.trim();
+    if (conn.port != null && Number.isFinite(conn.port)) body.port = conn.port;
+    if (conn.user?.trim()) body.user = conn.user.trim();
+    if (conn.password) body.password = conn.password;
   }
-  return sp.toString();
+  return body;
 }
 
 export async function getTrackerDatabases(
@@ -28,8 +32,21 @@ export async function getTrackerDatabases(
   conn: TrackerConnection | null,
   signal?: AbortSignal,
 ): Promise<TrackerDatabases> {
-  const res = await fetch(`/api/import/tracker/databases?${trackerQuery(software, conn)}`, { signal });
-  if (!res.ok) throw new Error(`Looking for databases failed: ${res.status} ${res.statusText}`);
+  const res = await fetch('/api/import/tracker/databases', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(trackerBody(software, conn)),
+    signal,
+  });
+  if (!res.ok) {
+    let detail = '';
+    try {
+      detail = (await res.json()).detail ?? '';
+    } catch {
+      // not JSON
+    }
+    throw new Error(typeof detail === 'string' && detail ? detail : `Looking for databases failed: ${res.status} ${res.statusText}`);
+  }
   return res.json();
 }
 
