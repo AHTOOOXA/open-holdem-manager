@@ -118,6 +118,15 @@ def split_hands(content: str) -> list[str]:
     return [p.strip() for p in parts if p.strip()]
 
 
+def hand_complete(hand_text: str) -> bool:
+    """The hand is fully written: it ends with a 'wins $X USD' line (partypoker has no
+    summary section; join / leave messages may follow) or the closing header line."""
+    lines = [l.strip() for l in hand_text.splitlines() if l.strip()]
+    while lines and (lines[-1].endswith(" has left the table.") or lines[-1].endswith(" has joined the table.")):
+        lines.pop()  # table messages written after the result
+    return bool(lines) and bool(RE_WINS.match(lines[-1]) or RE_FOOTER.match(lines[-1]))
+
+
 def extract_hand_id(hand_text: str) -> str | None:
     """Extract hand ID from the header line."""
     m = RE_HEADER.search(hand_text)

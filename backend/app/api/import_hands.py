@@ -1340,6 +1340,9 @@ async def clear_hands(workspace_id: int = 1):
         from app.heroes import invalidate_hero_cache
         invalidate_hero_cache(workspace_id)
         reset_import_cache()
+        # Auto-import forgets how far it read the watched files: they are read again
+        from app import auto_import
+        auto_import.forget_workspace(db, workspace_id)
         from app import data_generation
         data_generation.bump()
     return {"status": "ok"}
@@ -1405,8 +1408,11 @@ async def import_database(file: UploadFile = File(...)):
             shutil.move(tmp_path, str(DB_PATH))
             tmp_path = None  # prevent cleanup
             # Re-open (triggers init_schema + sequence sync)
-            get_db()
+            db = get_db()
             reset_import_cache()
+            # The restored file positions don't describe the restored hands: start over
+            from app import auto_import
+            auto_import.forget_all(db)
             from app.heroes import invalidate_hero_cache
             invalidate_hero_cache()
             from app import data_generation

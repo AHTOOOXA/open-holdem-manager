@@ -114,6 +114,11 @@ def split_hands(content: str) -> list[str]:
     return result
 
 
+def hand_complete(text: str) -> bool:
+    """The XML document is fully written (closing </session>)."""
+    return text.rstrip().endswith("</session>")
+
+
 def extract_hand_id(hand_text: str) -> str | None:
     """Extract hand ID (gamecode) from iPoker XML."""
     try:

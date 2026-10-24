@@ -15,6 +15,7 @@ import hashlib
 import json
 import os
 import sys
+from pathlib import Path
 from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, TypeAdapter, field_validator
@@ -92,6 +93,17 @@ def _clean_dir(path: str) -> str:
     return os.path.normpath(path)
 
 
+def default_archive_dir() -> Path:
+    """Archive folder when auto_import.archive_dir is null."""
+    return Path.home() / "Documents" / "OHM Hand Archive"
+
+
+def _is_within(path: str, root: str) -> bool:
+    """path == root or path is inside root (case-insensitive on macOS / Windows)."""
+    p, r = _path_key(os.path.normpath(path)), _path_key(os.path.normpath(root))
+    return p == r or p.startswith(r.rstrip(os.sep) + os.sep)
+
+
 class AutoImportConfig(_Strict):
     enabled: Annotated[bool, Field(strict=True)] = False
     workspace_id: Annotated[int, Field(ge=1, strict=True)] | None = None
@@ -118,11 +130,20 @@ class AutoImportConfig(_Strict):
         return None if v is None or not v.strip() else _clean_dir(v)
 
 
-def _check_auto_import_workspace(db, value: AutoImportConfig) -> None:
+def _check_auto_import(db, value: AutoImportConfig) -> None:
+    """On PUT only (a stored value that fails this still loads; the watcher then skips the
+    offending folder and says so)."""
     if value.workspace_id is not None and db.execute(
         "SELECT 1 FROM workspaces WHERE id = ?", [value.workspace_id]
     ).fetchone() is None:
         raise ValueError(f"workspace {value.workspace_id} does not exist")
+    # Archived files must never be watched (they would be imported and archived again) and
+    # archiving must not hide a watched folder: the archive folder may sit inside a watched
+    # folder, but must not be one or contain one.
+    archive = value.archive_dir or str(default_archive_dir())
+    for folder in value.folders:
+        if _is_within(folder, archive):
+            raise ValueError(f"the archive folder {archive!r} must not be or contain the watched folder {folder!r}")
 
 
 class _Section:
@@ -151,7 +172,7 @@ SECTIONS: dict[str, _Section] = {
                               DEFAULT_MARKERS, post=_validate_markers),
     "auto_import": _Section("auto_import", TypeAdapter(AutoImportConfig),
                             AutoImportConfig().model_dump(mode="json"),
-                            db_check=_check_auto_import_workspace),
+                            db_check=_check_auto_import),
 }
 
 

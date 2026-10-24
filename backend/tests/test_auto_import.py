@@ -135,14 +135,51 @@ def test_header_cut_mid_line_keeps_previous_hand_back(db, folder):
     assert _ids(db) == {ggpoker.extract_hand_id(h) for h in HANDS[:2]}
 
 
-def test_truncated_hand_that_never_completes(db, folder):
+def test_truncated_hand_that_never_completes(db, folder, spy):
     _enable(db, folder)
     f = folder / "t.txt"
     f.write_text(_join(HANDS[:2]) + HANDS[2][:200])
-    ai.tick(now=_idle(f))  # imports what parses, never raises
+    assert ai.tick(now=_idle(f)) == 2  # quiet, but the last hand doesn't look finished: held back
+    assert _state(db, f)[1] == len(_join(HANDS[:2]).encode())
+    assert ai.tick(now=f.stat().st_mtime + 30) == 0
+    assert spy == [2]  # unchanged and judged incomplete: not even read again
+    # Quiet for a minute: taken as it is (imports what parses, never raises)
+    ai.tick(now=f.stat().st_mtime + ai.INCOMPLETE_ACCEPT_SECONDS + 1)
     assert {ggpoker.extract_hand_id(h) for h in HANDS[:2]} <= _ids(db)
     assert _state(db, f)[1] == f.stat().st_size
     assert ai.status()["last_error"] is None
+
+
+def test_quiet_last_hand_waits_until_it_looks_finished(db, folder):
+    """A hand cut after a complete line (e.g. mid-summary) is not imported at 1 s quiet."""
+    _enable(db, folder)
+    f = folder / "t.txt"
+    third = HANDS[2]
+    cut = third.index("*** SUMMARY ***") + len("*** SUMMARY ***\n")
+    f.write_text(_join(HANDS[:2]) + third[:cut])
+    assert ai.tick(now=_idle(f)) == 2
+    hid = ggpoker.extract_hand_id(third)
+    assert hid not in _ids(db)
+    with f.open("a") as fh:
+        fh.write(third[cut:] + "\n\n\n")
+    assert ai.tick(now=_idle(f)) == 1  # summary complete + final newline, quiet 1 s
+    seats = len(ggpoker.parse_hand_history(third).seats)
+    assert db.execute("SELECT COUNT(*) FROM hand_players WHERE hand_id = ?", [hid]).fetchone()[0] == seats
+
+
+def test_hand_complete_rules_per_site():
+    from app.parsers import partypoker, poker888, pokerstars, winamax, wpn
+    for mod, folder_name in [(ggpoker, "ggpoker"), (pokerstars, "pokerstars"), (winamax, "winamax"),
+                             (poker888, "poker888"), (wpn, "wpn"), (partypoker, "partypoker")]:
+        for path in sorted((FIXTURES / folder_name).glob("*.txt"))[:6]:
+            for hand in mod.split_hands(path.read_text(encoding="utf-8", errors="replace")):
+                hand = hand.strip()
+                if not hand:
+                    continue
+                assert ai.hand_complete(mod, hand), (folder_name, path.name)
+                assert not ai.hand_complete(mod, hand[: len(hand) // 3]), (folder_name, path.name)
+    xml = (FIXTURES / "ipoker" / "multi_hand.txt").read_text()
+    assert ai.hand_complete(ipoker, xml) and not ai.hand_complete(ipoker, xml[:-20])
 
 
 def test_shrunk_file_is_read_again(db, folder, spy):
@@ -472,3 +509,316 @@ def test_player_pass_is_deferred_until_quiet(db, folder, monkeypatch):
     assert calls == []
     ai.tick(now=t + ai.FINALIZE_QUIET_SECONDS + 1)
     assert calls == [1] or len(calls) == 1
+
+
+# ── review fixes (M7) ─────────────────────────────────────────────────
+
+
+def _hid(h: str) -> str:
+    return ggpoker.extract_hand_id(h)
+
+
+def _old(path: Path, seconds: float = 3 * 86400) -> float:
+    """Backdate a file's mtime; returns a `now` well past ARCHIVE_IDLE_SECONDS for it."""
+    t = time.time() - seconds
+    os.utime(path, (t, t))
+    return time.time()
+
+
+def _imported_then_old(path: Path) -> float:
+    """Import the file (the first archive pass finds it too recent), then backdate it.
+    Returns a `now` at which the next archive pass is due and the file is old."""
+    ai.tick(now=_idle(path))
+    _old(path)
+    return time.time() + ai.ARCHIVE_EVERY_SECONDS + 5
+
+
+def test_archive_never_takes_a_file_of_the_current_day(db, folder, tmp_path, monkeypatch):
+    root = tmp_path / "archive"
+    _enable(db, folder, archive_enabled=True, archive_dir=str(root))
+    f = folder / "t.txt"
+    f.write_text(_join(HANDS[:2]))
+    now = _imported_then_old(f)
+    # Pretend the newest hand was played right now: the poker client may still write the file
+    real = ggpoker.parse_hand_history
+    from datetime import datetime as _dt
+
+    def recent(text):
+        p = real(text)
+        p.played_at = _dt.fromtimestamp(now)
+        return p
+
+    monkeypatch.setattr(ggpoker, "parse_hand_history", recent)
+    ai.tick(now=now)
+    assert f.exists() and not root.exists()
+    monkeypatch.setattr(ggpoker, "parse_hand_history", real)
+    ai.tick(now=now + ai.ARCHIVE_EVERY_SECONDS)  # remembered until the day turns
+    assert f.exists()
+    ai.tick(now=now + 86400 + ai.ARCHIVE_EVERY_SECONDS)
+    assert not f.exists() and _archived(root, "t.txt").exists()
+
+
+def test_archive_keeps_a_source_that_changed_while_copying(db, folder, tmp_path, monkeypatch):
+    root = tmp_path / "archive"
+    _enable(db, folder, archive_enabled=True, archive_dir=str(root))
+    f = folder / "t.txt"
+    f.write_text(_join(HANDS[:2]))
+    now = _imported_then_old(f)
+    real = ai._write_to_archive
+
+    def and_client_writes(target, data, xml):
+        undo = real(target, data, xml)
+        with f.open("a") as fh:  # the poker client appends a hand meanwhile
+            fh.write(_join(HANDS[2:3]))
+        return undo
+
+    monkeypatch.setattr(ai, "_write_to_archive", and_client_writes)
+    ai.tick(now=now)
+    assert f.read_text() == _join(HANDS[:3])  # never removed
+    assert not _archived(root, "t.txt").exists()  # the copy was taken back
+    assert not list(folder.rglob(".*")) and not list(root.rglob(".*"))  # no hidden staging / temp files
+
+
+def test_archive_reads_files_outside_the_write_lock(db, folder, tmp_path, monkeypatch):
+    root = tmp_path / "archive"
+    _enable(db, folder, archive_enabled=True, archive_dir=str(root))
+    f = folder / "t.txt"
+    f.write_text(_join(HANDS[:2]))
+    now = _imported_then_old(f)
+    owned = []
+    real = ai._write_to_archive
+    monkeypatch.setattr(ai, "_write_to_archive",
+                        lambda *a, **k: (owned.append(app_db._lock._is_owned()), real(*a, **k))[1])
+    ai.tick(now=now)
+    assert owned == [False] and not f.exists()
+
+
+def test_non_archivable_file_is_not_read_again_until_it_changes(db, folder, tmp_path, monkeypatch):
+    root = tmp_path / "archive"
+    _enable(db, folder, archive_enabled=True, archive_dir=str(root))
+    f = folder / "t.txt"
+    f.write_text(_join(HANDS[:3]))
+    now = _imported_then_old(f)
+    hid = _hid(HANDS[1])
+    for table in ("hand_players", "board_cards"):
+        db.execute(f"DELETE FROM {table} WHERE hand_id = ?", [hid])
+    db.execute("DELETE FROM hands WHERE id = ?", [hid])
+    calls = []
+    real = ai.archive_file
+    monkeypatch.setattr(ai, "archive_file", lambda *a, **k: (calls.append(a[0]), real(*a, **k))[1])
+    ai.tick(now=now)
+    ai.tick(now=now + ai.ARCHIVE_EVERY_SECONDS)
+    assert calls == [str(f)] and f.exists()  # remembered: the second pass skipped it
+    with f.open("a") as fh:
+        fh.write(_join(HANDS[3:4]))
+    _old(f)
+    ai.tick(now=now + 2 * ai.ARCHIVE_EVERY_SECONDS)  # reads the new hand, then the archive pass
+    assert calls == [str(f), str(f)]  # changed: looked at again
+
+
+def test_leftover_staging_files_are_restored(db, folder):
+    _enable(db, folder)
+    # 1) original gone: renamed back
+    (folder / ".a.txt.ohm-archiving").write_text(_join(HANDS[:1]))
+    # 2) original exists without those bytes: appended
+    (folder / "b.txt").write_text(_join(HANDS[1:2]))
+    (folder / ".b.txt.ohm-archiving").write_text(_join(HANDS[2:3]))
+    # 3) original already has them: staged copy dropped, original untouched
+    (folder / "c.txt").write_text(_join(HANDS[3:5]))
+    (folder / ".c.txt.ohm-archiving").write_text(_join(HANDS[4:5]))
+    ai.tick(now=time.time() + 5)
+    assert not list(folder.glob(".*"))
+    assert (folder / "a.txt").read_text() == _join(HANDS[:1])
+    assert _hid(HANDS[2]) in (folder / "b.txt").read_text()
+    assert (folder / "c.txt").read_text() == _join(HANDS[3:5])
+    assert {_hid(h) for h in HANDS[:5]} <= _ids(db)
+
+
+def test_archive_append_crash_leaves_the_old_archive_file(tmp_path, monkeypatch):
+    target = tmp_path / "t.txt"
+    target.write_bytes(b"old hands\n")
+
+    def crash(src, dst):
+        raise OSError("power cut")
+
+    monkeypatch.setattr(ai.os, "replace", crash)
+    with pytest.raises(OSError):
+        ai._write_to_archive(target, b"new hands\n", xml=False)
+    assert target.read_bytes() == b"old hands\n"  # never a partial append
+    assert [p.name for p in tmp_path.iterdir()] == ["t.txt"]
+
+
+def test_file_positions_are_per_workspace_and_reset(db, folder):
+    client = TestClient(app)
+    db.execute("INSERT INTO workspaces (id, name) VALUES (2, 'Second')")
+    _enable(db, folder)
+    f = folder / "t.txt"
+    f.write_text(_join(HANDS[:3]))
+    assert ai.tick(now=_idle(f)) == 3
+    # Another target workspace reads the files from the start (its own positions)
+    _enable(db, folder, workspace_id=2)
+    assert ai.tick(now=_idle(f) + 1) == 3
+    rows = db.execute("SELECT workspace_id, \"offset\" FROM auto_import_files ORDER BY 1").fetchall()
+    assert rows == [(1, f.stat().st_size), (2, f.stat().st_size)]
+    # Clearing the hands forgets the positions: the files come back
+    assert client.post("/api/import/clear", params={"workspace_id": 2}).status_code == 200
+    assert db.execute("SELECT COUNT(*) FROM auto_import_files WHERE workspace_id = 2").fetchone()[0] == 0
+    assert ai.tick(now=_idle(f) + 2) == 3
+    # Deleting a workspace drops its rows
+    _enable(db, folder)
+    ai.tick(now=_idle(f) + 3)
+    assert client.delete("/api/workspaces/2").status_code == 200
+    assert db.execute("SELECT DISTINCT workspace_id FROM auto_import_files").fetchall() == [(1,)]
+    # A restored DB starts over
+    ai.forget_all(db)
+    assert db.execute("SELECT COUNT(*) FROM auto_import_files").fetchone()[0] == 0
+    assert ai.tick(now=_idle(f) + 4) == 0  # all duplicates now, but read again
+    assert _state(db, f) is not None
+
+
+def test_one_bad_hand_does_not_stall_the_rest(db, folder, monkeypatch):
+    _enable(db, folder)
+    f = folder / "t.txt"
+    g = folder / "u.txt"
+    f.write_text(_join(HANDS[:3]))
+    g.write_text(_join(HANDS[3:5]))
+    bad = _hid(HANDS[1])
+    real = ih.import_hand_texts
+
+    def flaky(db_, hands, ws, **kw):
+        if any(_hid(t) == bad for t, _ in hands):
+            raise RuntimeError("constraint violated")
+        return real(db_, hands, ws, **kw)
+
+    monkeypatch.setattr(ih, "import_hand_texts", flaky)
+    assert ai.tick(now=max(_idle(f), _idle(g))) == 4
+    assert _ids(db) == {_hid(h) for h in HANDS[:5]} - {bad}
+    err = ai.status()["last_error"]
+    assert bad in err and str(f) in err
+    assert _state(db, f)[1] == f.stat().st_size  # advanced past it
+    assert ai.tick(now=max(_idle(f), _idle(g)) + 1) == 0
+
+
+def test_systemic_insert_failure_keeps_positions(db, folder, monkeypatch):
+    _enable(db, folder)
+    f = folder / "t.txt"
+    f.write_text(_join(HANDS[:3]))
+
+    def broken(*a, **k):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(ih, "import_hand_texts", broken)
+    assert ai.tick(now=_idle(f)) == 0
+    assert "disk full" in ai.status()["last_error"]
+    assert _state(db, f) is None  # nothing advanced: retried next tick
+    monkeypatch.undo()
+
+
+def test_workspace_deleted_during_the_tick_gets_nothing(db, folder, monkeypatch):
+    db.execute("INSERT INTO workspaces (id, name) VALUES (2, 'Second')")
+    _enable(db, folder, workspace_id=2)
+    f = folder / "t.txt"
+    f.write_text(_join(HANDS[:2]))
+    real = ai._resolve_workspace
+    calls = []
+
+    def resolve(cur, ws):
+        calls.append(ws)
+        if len(calls) == 2:  # the check inside the lock: the workspace is gone now
+            db.execute("DELETE FROM workspaces WHERE id = 2")
+        return real(cur, ws)
+
+    monkeypatch.setattr(ai, "_resolve_workspace", resolve)
+    assert ai.tick(now=_idle(f)) == 0
+    assert _ids(db) == set()
+
+
+def test_config_rejects_archive_that_is_or_contains_a_watched_folder(db, folder, tmp_path):
+    client = TestClient(app)
+    base = {"enabled": True, "workspace_id": None, "archive_enabled": True}
+    put = lambda **kw: client.put("/api/config/auto_import", json={**base, **kw}).status_code
+    assert put(folders=[str(folder)], archive_dir=str(folder)) == 422
+    assert put(folders=[str(folder)], archive_dir=str(folder.parent)) == 422
+    assert put(folders=[str(folder / "a" / "b")], archive_dir=str(folder)) == 422
+    assert put(folders=[str(folder)], archive_dir=str(folder / "Archive")) == 200  # inside is fine
+
+
+def test_scan_skips_only_the_archive_tree(db, folder, tmp_path):
+    (folder / "sub").mkdir()
+    (folder / "sub" / "a.txt").write_text(_join(HANDS[:1]))
+    (folder / "Archive" / "x").mkdir(parents=True)
+    (folder / "Archive" / "x" / "b.txt").write_text(_join(HANDS[1:2]))
+    files, _ = ai.scan([str(folder)], [str(folder / "Archive")])
+    assert [Path(p).name for p, _, _ in files] == ["a.txt"]
+    # A (legacy, stored before this was rejected) watched folder inside the archive is not
+    # watched at all, and says so
+    import json
+    db.execute("INSERT OR REPLACE INTO settings VALUES ('config.auto_import', ?)", [json.dumps({
+        "enabled": True, "workspace_id": None, "folders": [str(folder / "Archive")],
+        "archive_enabled": True, "archive_dir": str(folder)})])
+    ai.tick(now=time.time() + 5)
+    assert ai.status()["watched_files"] == 0 and "inside the archive" in ai.status()["last_error"]
+
+
+def test_pending_player_pass_survives_a_crash(db, folder, monkeypatch):
+    calls = []
+    real = ih.finalize_import
+    monkeypatch.setattr(ih, "finalize_import", lambda d, workspace_id=None: (calls.append(workspace_id), real(d, workspace_id=workspace_id)))
+    _enable(db, folder)
+    f = folder / "t.txt"
+    f.write_text(_join(HANDS[:2]))
+    t = _idle(f)
+    assert ai.tick(now=t) == 2
+    key = ai.PENDING_KEY + "1"
+    assert db.execute("SELECT 1 FROM settings WHERE key = ?", [key]).fetchone()
+    ai.reset_state()  # the app crashed: memory is gone
+    _enable(db, folder, enabled=False)  # even with auto-import switched off since
+    ai.tick(now=t + 1)
+    assert calls == [1]
+    assert db.execute("SELECT 1 FROM settings WHERE key = ?", [key]).fetchone() is None
+
+
+def test_stop_waits_for_the_lock_to_run_the_pending_pass(db, folder, monkeypatch):
+    calls = []
+    real = ih.finalize_import
+    monkeypatch.setattr(ih, "finalize_import", lambda d, workspace_id=None: (calls.append(workspace_id), real(d, workspace_id=workspace_id)))
+    _enable(db, folder)
+    f = folder / "t.txt"
+    f.write_text(_join(HANDS[:2]))
+    ai.tick(now=_idle(f))
+    held = threading.Event()
+
+    def hold():
+        with app_db.db_lock():
+            held.set()
+            time.sleep(0.5)
+
+    t = threading.Thread(target=hold)
+    t.start()
+    held.wait(2)
+    ai.stop()
+    t.join()
+    assert calls == [1]
+
+
+def test_unchanged_folders_are_not_walked_every_tick(db, folder, monkeypatch):
+    _enable(db, folder)
+    (folder / "2026").mkdir()
+    f = folder / "2026" / "t.txt"
+    f.write_text(_join(HANDS[:2]))
+    _old(f, 10)
+    for d in (folder, folder / "2026"):
+        os.utime(d, (time.time() - 10, time.time() - 10))
+    walks = []
+    real = ai._walk
+    monkeypatch.setattr(ai, "_walk", lambda *a: (walks.append(1), real(*a))[1])
+    for i in range(5):
+        ai.tick(now=time.time() + i)
+    assert len(walks) == 1
+    with f.open("a") as fh:  # appending: no walk, the known file is stat'ed
+        fh.write(_join(HANDS[2:3]))
+    ai.tick(now=time.time() + 10)
+    assert len(walks) == 1 and _hid(HANDS[2]) in _ids(db)
+    (folder / "2026" / "new.txt").write_text(_join(HANDS[3:4]))  # a new file: its folder changed
+    ai.tick(now=time.time() + 12)
+    assert len(walks) == 2 and _hid(HANDS[3]) in _ids(db)

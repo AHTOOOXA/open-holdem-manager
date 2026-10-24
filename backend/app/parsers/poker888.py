@@ -106,6 +106,15 @@ def split_hands(content: str) -> list[str]:
     return result
 
 
+def hand_complete(hand_text: str) -> bool:
+    """The hand is fully written: an '** Summary **' section with a collected line, or the
+    '***** End of hand' marker."""
+    idx = hand_text.find("** Summary **")
+    if idx >= 0 and any(RE_COLLECTED.match(l) for l in hand_text[idx:].splitlines()):
+        return True
+    return any(RE_END_OF_HAND.match(l) for l in hand_text.splitlines())
+
+
 def extract_hand_id(hand_text: str) -> str | None:
     """Extract hand ID from the header line."""
     m = RE_HEADER.search(hand_text)

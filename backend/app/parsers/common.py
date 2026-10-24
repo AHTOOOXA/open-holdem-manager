@@ -3,6 +3,7 @@
 Contains ParsedHand dataclass, position logic, and constants used by all site parsers.
 """
 
+import re
 from dataclasses import dataclass, field
 from decimal import Decimal
 from datetime import datetime
@@ -201,3 +202,23 @@ def _assign_positions(seats: list[dict], button_seat: int, table_size: int) -> N
     for s in seats:
         s["position"] = seat_to_pos[s["seat"]]
         s["action_order"] = seat_to_order[s["seat"]]
+
+
+# ── Is a hand fully written? (auto-import: the last hand of a file still being written) ──
+
+_RE_SEAT_LINE = re.compile(r"^Seat \d+:", re.MULTILINE)
+
+
+def summary_seats_complete(text: str, summary_marker: str, all_seats: bool) -> bool:
+    """True when the hand has its summary section (a line starting with `summary_marker`)
+    followed by seat lines: one per seat listed before it when `all_seats` (GGPoker /
+    PokerStars list every seat there), else at least one (Winamax lists only some)."""
+    idx = text.find("\n" + summary_marker)
+    if idx < 0:
+        return False
+    after = len(_RE_SEAT_LINE.findall(text, idx))
+    if after == 0:
+        return False
+    if not all_seats:
+        return True
+    return after >= len(_RE_SEAT_LINE.findall(text, 0, idx))

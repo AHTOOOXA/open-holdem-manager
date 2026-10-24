@@ -153,7 +153,7 @@ export default function AutoImportSection() {
       <OptionRow
         id="auto-import-archive"
         label="Archive hand histories"
-        help="Moves files you have not touched for 5 minutes, once all their hands are stored, into the archive folder, sorted by site and date. Your original files are moved, not copied."
+        help="Moves files of earlier days (today's files stay put), once untouched for 5 minutes and all their hands are stored, into the archive folder, sorted by site and date. Your original files are moved, not copied. The archive folder must not be (or contain) a watched folder."
         changed={cfg.archive_enabled !== d.archive_enabled}
       >
         <Switch id="auto-import-archive" checked={cfg.archive_enabled} onCheckedChange={(v) => update((c) => ({ ...c, archive_enabled: v }))} />

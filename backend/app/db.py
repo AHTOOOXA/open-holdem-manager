@@ -391,14 +391,17 @@ def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
             value VARCHAR NOT NULL
         )
     """)
-    # Auto-import per-file read state (app/auto_import.py): bytes consumed so far
+    # Auto-import per-file read state (app/auto_import.py): bytes consumed so far, per
+    # target workspace (pre-workspace-key tables are migrated in _migrate_auto_import_files)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS auto_import_files (
-            path VARCHAR PRIMARY KEY,
+            workspace_id INTEGER NOT NULL,
+            path VARCHAR NOT NULL,
             size BIGINT NOT NULL,
             mtime DOUBLE NOT NULL,
             "offset" BIGINT NOT NULL,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (workspace_id, path)
         )
     """)
     conn.execute("""
@@ -569,6 +572,8 @@ def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
 
     # Configuration sections: reg classification, alias flags, rebuild fingerprint
     _migrate_config_sections(conn)
+    # Auto-import file states keyed by (workspace, path)
+    _migrate_auto_import_files(conn)
     # Tag catalogue + marked hands; one-time migration from hand_tags (needs heroes)
     from app.marked_hands import ensure_schema as _ensure_marked_hands
     _ensure_marked_hands(conn)
@@ -1183,6 +1188,50 @@ def _migrate_config_sections(conn: duckdb.DuckDBPyConnection) -> None:
         conn.execute(f"ALTER TABLE player_identities ADD COLUMN IF NOT EXISTS {col} BOOLEAN DEFAULT FALSE")
     from app.config_sections import ensure_rebuild_fingerprint
     ensure_rebuild_fingerprint(conn)
+
+
+def _migrate_auto_import_files(conn: duckdb.DuckDBPyConnection) -> None:
+    """auto_import_files was keyed by path alone (M7 first cut): re-key by (workspace, path).
+    The old rows belonged to the then configured target workspace (null = the first one)."""
+    cols = {r[0] for r in conn.execute(
+        "SELECT column_name FROM duckdb_columns() WHERE database_name = current_database() "
+        "AND schema_name = current_schema() AND table_name = 'auto_import_files'"
+    ).fetchall()}
+    if "workspace_id" in cols or not cols:
+        return
+    import json
+    ws = None
+    row = conn.execute("SELECT value FROM settings WHERE key = 'config.auto_import'").fetchone()
+    if row:
+        try:
+            ws = json.loads(row[0]).get("workspace_id")
+        except (ValueError, AttributeError):
+            ws = None
+    if ws is None or not conn.execute("SELECT 1 FROM workspaces WHERE id = ?", [ws]).fetchone():
+        ws = conn.execute("SELECT MIN(id) FROM workspaces").fetchone()[0] or 1
+    conn.execute("BEGIN TRANSACTION")
+    try:
+        conn.execute("ALTER TABLE auto_import_files RENAME TO auto_import_files_old")
+        conn.execute("""
+            CREATE TABLE auto_import_files (
+                workspace_id INTEGER NOT NULL,
+                path VARCHAR NOT NULL,
+                size BIGINT NOT NULL,
+                mtime DOUBLE NOT NULL,
+                "offset" BIGINT NOT NULL,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (workspace_id, path)
+            )
+        """)
+        conn.execute(
+            'INSERT INTO auto_import_files SELECT ?, path, size, mtime, "offset", updated_at '
+            "FROM auto_import_files_old", [ws],
+        )
+        conn.execute("DROP TABLE auto_import_files_old")
+        conn.execute("COMMIT")
+    except BaseException:
+        conn.execute("ROLLBACK")
+        raise
 
 
 def _check_stat_version(conn: duckdb.DuckDBPyConnection) -> None:

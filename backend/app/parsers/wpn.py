@@ -103,6 +103,11 @@ def split_hands(content: str) -> list[str]:
     return [p.strip() for p in parts if p.strip()]
 
 
+def hand_complete(hand_text: str) -> bool:
+    """The hand is fully written: it ends with 'Game ended at: ...'."""
+    return any(l.startswith("Game ended at:") for l in hand_text.splitlines()[-3:])
+
+
 def extract_hand_id(hand_text: str) -> str | None:
     """Extract hand ID from the Game ID line."""
     m = re.search(r'Game ID:\s*(\d+)', hand_text)

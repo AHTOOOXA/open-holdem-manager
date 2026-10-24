@@ -51,14 +51,20 @@ export interface ImportDateFilter {
 /**
  * ── 2. Auto-import (backend watcher; works in Electron and the browser dev setup) ───────────
  * Config: the generic config store, section 'auto_import' (GET/PUT/DELETE /api/config/auto_import).
- * The watcher (backend/app/auto_import.py) ticks every 1 s while enabled with ≥ 1 folder and no
+ * The watcher (backend/app/auto_import.py) ticks every 0.5 s while enabled with ≥ 1 folder and no
  * other import/rebuild runs: it scans each folder recursively for hand-history files (.txt, .xml),
- * reads only what was appended since the last tick (per-file size / mtime / byte offset, persisted
- * so a restart does not re-read everything; a file that shrank is re-read from 0), imports new
+ * reads only what was appended since the last tick (per-file size / mtime / byte offset per target
+ * workspace, persisted so a restart does not re-read everything; a file that shrank is re-read
+ * from 0; clearing a workspace's hands, deleting it or restoring a DB starts over), imports new
  * hands into `workspace_id` (duplicates skipped), and bumps the data generation. A new file is
- * picked up within 2 s. Archiving (off by default in OHM — it moves the user's files): every
- * 150 s, files untouched for 5+ minutes whose hands are all in the DB move to
- * `<archive_dir>/<Site>/<YYYY>/<MM>/<DD>/<file name>` (appended if it exists).
+ * picked up within 2 s. The last hand of a file is imported once the file is quiet for 1 s AND
+ * the hand looks finished for its site (summary section etc.), or after 60 s quiet regardless.
+ * A hand that fails to import is skipped and named in `last_error` (the rest go on).
+ * Archiving (off by default in OHM — it moves the user's files): every 150 s, files of EARLIER
+ * days (newest hand before today's day start), untouched for 5+ minutes, whose hands are all in
+ * the DB are copied to `<archive_dir>/<Site>/<YYYY>/<MM>/<DD>/<file name>` (appended if it
+ * exists), verified, and removed. PUT rejects (422) an archive folder that is or contains a
+ * watched folder.
  */
 export interface AutoImportConfig {
   enabled: boolean; // default false

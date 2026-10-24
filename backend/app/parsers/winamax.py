@@ -83,6 +83,12 @@ def split_hands(content: str) -> list[str]:
     return [p.strip() for p in parts if p.strip()]
 
 
+def hand_complete(hand_text: str) -> bool:
+    """The hand is fully written: its summary has seat lines (only some seats are listed)."""
+    from app.parsers.common import summary_seats_complete
+    return summary_seats_complete(hand_text, "*** SUMMARY ***", all_seats=False)
+
+
 def extract_hand_id(hand_text: str) -> str | None:
     """Extract hand ID from the header line."""
     m = re.search(r'HandId: #([0-9-]+)', hand_text)

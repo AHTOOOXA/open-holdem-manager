@@ -126,6 +126,12 @@ def split_hands(content: str) -> list[str]:
     return re.split(r'\n(?=PokerStars (?:Zoom )?(?:Hand|Game) #)', content)
 
 
+def hand_complete(hand_text: str) -> bool:
+    """The hand is fully written: its summary lists every seat."""
+    from app.parsers.common import summary_seats_complete
+    return summary_seats_complete(hand_text, "*** SUMMARY ***", all_seats=True)
+
+
 def extract_hand_id(hand_text: str) -> str | None:
     """Extract hand ID from the first line."""
     m = re.search(r'PokerStars (?:Zoom )?(?:Hand|Game) #(\w+):', hand_text)
