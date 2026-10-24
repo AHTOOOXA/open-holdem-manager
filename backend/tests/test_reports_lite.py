@@ -265,7 +265,14 @@ def test_date_step_is_inclusive(client, bench_db, hero_id):
 def test_bad_chains_are_422(client):
     for chain in ([{"k": "nope"}], [{"k": "row", "key": "XX"}], [{"k": "pos", "v": ["UTG"]}],
                   [{"k": "faced", "street": "flop", "a": "villain_open_call"}],
-                  [{"k": "hv", "street": "flop", "cats": ["nope"]}]):
+                  [{"k": "hv", "street": "flop", "cats": ["nope"]}],
+                  [{"k": "session", "start": "2026-01-02T10:00:00", "end": "2026-01-01T10:00:00"}],
+                  [{"k": "session", "start": "yesterday", "end": "2026-01-01T10:00:00"}],
+                  [{"k": "session", "start": "2026-01-01T10:00:00+02:00",
+                    "end": "2026-01-01T11:00:00+02:00"}],
+                  [{"k": "session", "start": "2026-01-01T10:00:00"}],
+                  [{"k": "table", "v": []}], [{"k": "with", "player_id": "x"}],
+                  [{"k": "with"}]):
         r = client.post("/api/reports/spot", json={"workspace_id": 1, "chain": chain})
         assert r.status_code == 422, chain
 
@@ -512,9 +519,19 @@ def test_chain_fuzz_no_500(client):
     nexts, faceds = list(get_args(NextAction)), list(get_args(FacedAction))
     rows = ["P01", "C01", "P02"]
 
+    tables = [t for (t,) in client_tables(client)]
+    starts = ["2026-01-01T18:25:11", "2026-01-15T00:00:00", "2026-02-08T10:00:00"]
+
     def step():
         k = rng.choice(["pos", "stakes", "mode", "tsize", "hour", "stack", "game", "cells",
-                        "hv", "row", "next", "faced", "betsize"])
+                        "hv", "row", "next", "faced", "betsize", "session", "table", "with"])
+        if k == "session":
+            a, b = sorted(rng.sample(starts, 2))
+            return {"k": k, "start": a, "end": rng.choice([b, a, "2025-01-01T00:00:00"])}
+        if k == "table":
+            return {"k": k, "v": rng.sample(tables, 2) + rng.choice([[], ["nope"]])}
+        if k == "with":
+            return {"k": k, "player_id": rng.choice([1, 2, 3, 10**6])}
         if k == "pos":
             return {"k": k, "v": [rng.choice(["EP", "MP", "CO", "BTN", "SB", "BB"])]}
         if k == "stakes":
@@ -543,8 +560,8 @@ def test_chain_fuzz_no_500(client):
         return {"k": k, "bucket": "nope"}
 
     types = ["results", "positions", "next_actions", "faced_next", "bet_sizing", "stack_sizes",
-             "hour_of_day", "table_size"]
-    for _ in range(60):
+             "hour_of_day", "table_size", "tables", "players"]
+    for _ in range(80):
         chain = [step() for _ in range(rng.randint(1, 3))]
         r = client.post("/api/reports/split", json={"workspace_id": 1, "chain": chain,
                                                     "type": rng.choice(types)})
@@ -553,6 +570,15 @@ def test_chain_fuzz_no_500(client):
         assert r.status_code in (200, 422), (chain, r.text)
         r = client.get("/api/reports/graph", params={"chain": json.dumps(chain)})
         assert r.status_code in (200, 422), (chain, r.text)
+        r = client.post("/api/reports/spot", json={
+            "workspace_id": 1, "chain": chain,
+            "recipe": rng.choice(["session", "table", "villain"])})
+        assert r.status_code in (200, 422), (chain, r.text)
+
+
+def client_tables(client):
+    return app_db._conn.execute(
+        "SELECT table_name FROM hands GROUP BY 1 ORDER BY COUNT(*) DESC, 1 LIMIT 20").fetchall()
 
 
 def test_game_row_with_unknown_table_size(client, bench_db):
@@ -580,3 +606,127 @@ def test_empty_chain_param_applies_h2n_valid(client, bench_db, hero_id):
     assert client.get("/api/hands", params={"chain": "[]", "per_page": 1}).json()["total"] == n
     g = client.get("/api/reports/graph", params={"chain": "[]"}).json()
     assert len(g["points"]) == n
+
+
+# ── M5: Sessions steps, splits and recipes ───────────────────────────────
+
+
+def _busy_window(bench_db, hero_id):
+    """A ~2 h window of hero's hands with its busiest tables."""
+    first = bench_db.execute(
+        "SELECT MIN(played_at) FROM hand_players hp JOIN hands h ON h.id = hp.hand_id "
+        "WHERE hp.player_id = ?", [hero_id]).fetchone()[0]
+    import datetime as dt
+    end = first + dt.timedelta(hours=2)
+    return first.isoformat(), end.isoformat()
+
+
+@pytest.mark.parametrize("make, where", [
+    (lambda w, t, v: {"k": "session", "start": w[0], "end": w[1]},
+     lambda w, t, v: ("h.played_at BETWEEN CAST(? AS TIMESTAMP) AND CAST(? AS TIMESTAMP)", w)),
+    (lambda w, t, v: {"k": "table", "v": t},
+     lambda w, t, v: ("h.table_name IN (?, ?, ?)", t)),
+    (lambda w, t, v: {"k": "with", "player_id": v},
+     lambda w, t, v: ("EXISTS (SELECT 1 FROM hand_players o WHERE o.hand_id = h.id "
+                      "AND o.player_id = ?)", [v])),
+])
+def test_session_steps_narrow(client, bench_db, hero_id, make, where):
+    w = _busy_window(bench_db, hero_id)
+    t = [r[0] for r in bench_db.execute(
+        "SELECT table_name FROM hands GROUP BY 1 ORDER BY COUNT(*) DESC, 1 LIMIT 3").fetchall()]
+    v = bench_db.execute(
+        "SELECT hp.player_id FROM hand_players hp JOIN players p ON p.id = hp.player_id "
+        "WHERE p.username <> 'Hero' GROUP BY 1 ORDER BY COUNT(*) DESC LIMIT 1").fetchone()[0]
+    sql, params = where(w, t, v)
+    expected = _count(bench_db, hero_id, sql, params)
+    assert expected > 0
+    chain = [make(w, t, v)]
+    assert _post(client, "spot", chain)["hands"] == expected
+    assert client.get("/api/hands", params={"chain": json.dumps(chain)}).json()["total"] == expected
+    g = client.get("/api/reports/graph", params={"chain": json.dumps(chain)}).json()
+    assert len(g["points"]) == expected
+
+
+def test_tables_split(client, bench_db, hero_id):
+    w = _busy_window(bench_db, hero_id)
+    chain = [{"k": "session", "start": w[0], "end": w[1]}]
+    hands = _post(client, "spot", chain)["hands"]
+    s = _split(client, chain, "tables")
+    assert s["entry_header"] == "Tables"
+    assert [c["id"] for c in s["columns"]] == [
+        "hands", "duration", "hands_h", "won", "won_ev", "ev_bb100", "vpip", "pfr", "ag",
+        "threebet", "wtsd", "wsd", "wwsf", "rake", "rake_bb100", "won_bb"]
+    assert sum(r["values"]["hands"] for r in s["rows"]) == hands == s["summary"]["hands"]
+    assert [r["caption"] for r in s["rows"]] == sorted(r["caption"] for r in s["rows"])
+    row = max(s["rows"], key=lambda r: r["values"]["hands"])
+    assert row["filter"] == {"k": "table", "v": [row["caption"]], "label": row["caption"]}
+    page = _post(client, "spot", chain + [row["filter"]], recipe="table")
+    stats = {x["id"]: x for x in page["stats"]}
+    assert page["hands"] == row["values"]["hands"]
+    for k in ("duration", "hands_h", "won", "won_ev", "ev_bb100", "vpip", "pfr", "rake",
+              "rake_bb100", "won_bb"):
+        assert stats[k]["value"] == pytest.approx(row["values"][k]), k
+    assert "avg_tables" not in stats
+    for c in s["columns"]:
+        if "sample" in c:
+            assert c["sample"] in row["values"]
+
+
+def test_players_split_and_villain_page(client, bench_db, hero_id):
+    w = _busy_window(bench_db, hero_id)
+    chain = [{"k": "session", "start": w[0], "end": w[1]}]
+    s = _split(client, chain, "players")
+    assert s["entry_header"] == "Players"
+    rows = s["rows"]
+    assert rows and all(r["player"]["username"] != "Hero" for r in rows)
+    hs = [r["values"]["hands"] for r in rows]
+    assert hs == sorted(hs, reverse=True)
+    top = rows[0]
+    assert top["filter"] == {"k": "with", "player_id": hero_id,
+                             "label": top["player"]["username"]}
+    assert top["caption"] == top["player"]["username"]
+    vid = top["player"]["id"]
+    # the opened page = the opponent's numbers in hands with hero, same as the row
+    vchain = chain + [top["filter"]]
+    plain = client.post("/api/reports/spot", json={"workspace_id": 1, "player_id": vid,
+                                                   "chain": vchain}).json()
+    pstats = {x["id"]: x["value"] for x in plain["stats"]}
+    assert plain["hands"] == top["values"]["hands"]
+    for k in ("vpip", "pfr", "threebet", "ag", "wtsd", "wsd", "won"):
+        assert pstats[k] == pytest.approx(top["values"][k]) if pstats[k] is not None \
+            else top["values"][k] is None, k
+    # sum of opponent hands = sum of other seats in hero's hands of the chain
+    n_opp = bench_db.execute(
+        "SELECT COUNT(*) FROM hand_players o JOIN hands h ON h.id = o.hand_id "
+        "WHERE o.player_id <> ? AND COALESCE(o.h2n_valid, TRUE) AND h.played_at BETWEEN "
+        "CAST(? AS TIMESTAMP) AND CAST(? AS TIMESTAMP) AND EXISTS (SELECT 1 FROM hand_players "
+        "x WHERE x.hand_id = h.id AND x.player_id = ? AND COALESCE(x.h2n_valid, TRUE))",
+        [hero_id, w[0], w[1], hero_id]).fetchone()[0]
+    assert sum(hs) == n_opp == s["summary"]["hands"]
+    vill = client.post("/api/reports/spot", json={"workspace_id": 1, "player_id": vid,
+                                                  "chain": vchain, "recipe": "villain"}).json()
+    ids = [x["id"] for x in vill["stats"]]
+    assert ids == ["hands", "vpip", "pfr", "ev_diff", "ag", "bb100", "won_nsd", "threebet",
+                   "wtsd", "wsd", "wwsf", "rake", "rake_bb100"]
+    assert vill["hands"] == top["values"]["hands"]
+
+
+def test_recipe_shapes(client):
+    d = _post(client, "spot", [], recipe="session")
+    ids = [x["id"] for x in d["stats"]]
+    assert ids == ["hands", "duration", "hands_h", "won", "won_ev", "ev_bb100", "avg_tables",
+                   "vpip", "pfr", "ag", "threebet", "wtsd", "wsd", "wwsf", "rake", "rake_bb100",
+                   "won_bb"]
+    groups = [x["group"] for x in d["stats"]]
+    assert groups == ["anchor1"] * 3 + ["anchor2"] * 3 + ["grid"] * 11
+    assert all("filter" not in x for x in d["stats"])
+    fmt = {x["id"]: x["format"] for x in d["stats"]}
+    assert (fmt["duration"], fmt["hands_h"], fmt["avg_tables"]) == ("duration", "rate", "ratio")
+    plain = {x["id"]: x["value"] for x in _post(client, "spot", [])["stats"]}
+    vals = {x["id"]: x["value"] for x in d["stats"]}
+    assert vals["ev_bb100"] == pytest.approx(plain["ev_bb100"])
+    assert d["hands"] == vals["hands"] == plain["hands"]
+    t = _post(client, "spot", [], recipe="table")
+    assert [x["id"] for x in t["stats"]] == [i for i in ids if i != "avg_tables"]
+    r = client.post("/api/reports/spot", json={"workspace_id": 1, "chain": [], "recipe": "x"})
+    assert r.status_code == 422

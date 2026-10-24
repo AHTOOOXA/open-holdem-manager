@@ -26,22 +26,34 @@ chips hero had put in before the decision, a fold scores 0), Action Profit bb/ha
 Won bb, Win Rate bb/100, WTSD (showdowns / cases, like the stat popup), W%SD and
 Dispersion bbs. Faced Next rows are villain actions and have no Action Profit columns.
 
+Sessions types (sessions.md §5.3): ``tables`` (one row per hands.table_name of the case
+hands, by name; hands without a table name are left out) with the Table recipe columns:
+Hands, Duration, Hands / h (time rules in app/sessions_h2n.py), Won, Won EV, Win Rate EV,
+VPIP, PFR, Ag., 3Bet, WTSD, W%SD, WWSF%, Rake paid, Rake Paid bb/100, Won bb; ``players``
+(one row per opponent dealt in to the case hands, Hands descending) with the OPPONENT's own
+Hands, VPIP, PFR, 3Bet, Ag., WTSD, W%SD, Won, Won bb in those hands ("Won From Hero" is left
+out: no exact per-opponent split of multiway pots).
+
 Rows with no case are dropped (Bet Sizing call / fold buckets stay with any sample, like the
 stat popup). `summary` (only with more than one row): counts and money add up, percentages
 are recomputed from the summed cases and samples, per-hand averages are sample-weighted
-(Bet Sizing's Stat Value sample = max(summed cases, largest single sample)).
+(Bet Sizing's Stat Value sample = max(summed cases, largest single sample)); Tables:
+Duration and played time add up, Hands / h = summed hands / summed played time.
 """
 
 from __future__ import annotations
 
 import math
 
+from app.app_settings import max_break_seconds
 from app.h2n.rows import ROWS
 from app.h2n.sequence import BET, CHECK, FOLD, RAISE
 from app.reports import spots
 from app.reports.chain import (
-    POS_NAMES, HandRec, Resolution, SeqSource, fetch_seqs, stack_caption, stakes_caption,
+    POS_NAMES, HandRec, Resolution, SeqSource, fetch_seqs, opponent_recs, stack_caption,
+    stakes_caption,
 )
+from app.sessions_h2n import TimeStats, time_stats
 
 POSITION_ORDER = ("BB", "SB", "BTN", "CO", "MP", "EP")
 STACK_RANGES: tuple[tuple[float, float | None], ...] = (
@@ -50,7 +62,8 @@ STACK_RANGES: tuple[tuple[float, float | None], ...] = (
 ENTRY_HEADERS = {
     "results": "Game Type", "positions": "Position", "stack_sizes": "Stack Size",
     "hour_of_day": "Hour of Day", "table_size": "Table Size", "next_actions": "Next Actions",
-    "faced_next": "Faced Next", "bet_sizing": "Bet Sizing",
+    "faced_next": "Faced Next", "bet_sizing": "Bet Sizing", "tables": "Tables",
+    "players": "Players",
 }
 
 
@@ -90,6 +103,41 @@ PLAIN_COLUMNS = [
     _col("dispersion", "Dispersion, bbs", "bb", abbrev="Dispersion", sample="hands"),
 ]
 
+# Sessions lower tabs (sessions.md §5.3): Tables = the Table recipe; Players = the
+# opponent's own numbers in the chain's hands.
+TABLE_COLUMNS = [
+    _col("hands", "Hands", "count"),
+    _col("duration", "Duration", "duration"),
+    _col("hands_h", "Hands / h", "rate"),
+    _col("won", "Won", "money", winnings=True),
+    _col("won_ev", "Won EV", "money", winnings=True),
+    _col("ev_bb100", "Win Rate EV, bb/100", "bb100", abbrev="Win Rate EV", winnings=True,
+         sample="hands"),
+    _col("vpip", "VPIP", "pct", sample="vpip_opps"),
+    _col("pfr", "PFR", "pct", sample="pfr_opps"),
+    _col("ag", "Aggression", "ratio", abbrev="Ag.", sample="ag_opps"),
+    _col("threebet", "3Bet", "pct", sample="threebet_opps"),
+    _col("wtsd", "Went to Showdown", "pct", abbrev="WTSD", sample="wtsd_opps"),
+    _col("wsd", "Won at Showdown", "pct", abbrev="W%SD", sample="wsd_opps"),
+    _col("wwsf", "Won When Saw Flop", "pct", abbrev="WWSF%", sample="wwsf_opps"),
+    _col("rake", "Rake paid", "money"),
+    _col("rake_bb100", "Rake Paid, bb/100", "bb100", abbrev="Rake Paid bb/100",
+         sample="hands"),
+    _col("won_bb", "Won, bb", "bb", abbrev="Won bb", winnings=True),
+]
+
+PLAYER_COLUMNS = [
+    _col("hands", "Hands", "count"),
+    _col("vpip", "VPIP", "pct", sample="vpip_opps"),
+    _col("pfr", "PFR", "pct", sample="pfr_opps"),
+    _col("threebet", "3Bet", "pct", sample="threebet_opps"),
+    _col("ag", "Aggression", "ratio", abbrev="Ag.", sample="ag_opps"),
+    _col("wtsd", "Went to Showdown", "pct", abbrev="WTSD", sample="wtsd_opps"),
+    _col("wsd", "Won at Showdown", "pct", abbrev="W%SD", sample="wsd_opps"),
+    _col("won", "Won", "money", winnings=True),
+    _col("won_bb", "Won, bb", "bb", abbrev="Won bb", winnings=True),
+]
+
 _ACTION_HEAD = [
     _col("hands", "Hands", "count"),
     _col("opps", "Opportunities To Hit", "count", abbrev="Opp-s to hit"),
@@ -118,7 +166,8 @@ FACED_COLUMNS = _ACTION_HEAD + _ACTION_TAIL
 class Acc:
     """Raw sums of one row (cases only, plus the opportunity count)."""
 
-    __slots__ = ("hands", "opps", "won", "won_bb", "ev", "ev_bb", "rake", "sq", "sd", "win_sd",
+    __slots__ = ("hands", "opps", "won", "won_bb", "ev", "ev_bb", "rake", "rake_bb", "won_nsd",
+                 "sq", "sd", "win_sd",
                  "ap", "ap_n", "vpip_c", "vpip_o", "pfr_c", "pfr_o", "tb_c", "tb_o",
                  "ag_br", "ag_c", "ag_o", "flop", "flop_sd", "flop_win", "v03", "v03_sd",
                  "v03_won_sd", "max_opps")
@@ -134,11 +183,14 @@ class Acc:
         self.ev += h.ev
         self.ev_bb += h.ev_bb
         self.rake += h.rake
+        self.rake_bb += h.rake_bb
         self.sq += h.won_bb * h.won_bb
         if h.sd:
             self.sd += 1
             if h.win:
                 self.win_sd += 1
+        else:
+            self.won_nsd += h.won
         if ap is not None:
             self.ap += ap
             self.ap_n += 1
@@ -200,6 +252,23 @@ def plain_values(acc: Acc) -> dict:
         "won_ev": acc.ev, "ev_bb100": acc.ev_bb / n * 100.0 if n else None,
         "rake": acc.rake, "dispersion": _dispersion(acc),
     }
+
+
+def session_values(acc: Acc, ts: TimeStats) -> dict:
+    """plain_values plus the Sessions stats (time stats of the same hands, rake bb/100,
+    won without showdown, EV diff. = Won EV - Won)."""
+    v = plain_values(acc)
+    n = acc.hands
+    v.update(
+        duration=ts.duration_s if n else None, hands_h=ts.hands_per_hour,
+        avg_tables=ts.avg_tables, rake_bb100=acc.rake_bb / n * 100.0 if n else None,
+        won_nsd=acc.won_nsd, ev_diff=acc.ev - acc.won,
+    )
+    return v
+
+
+def hand_time(hands, max_break_s: int) -> TimeStats:
+    return time_stats([h.played_at for h in hands], [h.table for h in hands], max_break_s)
 
 
 def action_values(acc: Acc, total: int, with_ap: bool = True, sizing_sample: bool = False
@@ -303,6 +372,67 @@ def plain_split(res: Resolution, typ: str) -> tuple[list[dict], dict | None]:
             total.merge(acc)
         summary = plain_values(total)
     return rows, summary
+
+
+# ── Sessions splits ──────────────────────────────────────────────────────
+
+
+def tables_split(db, res: Resolution) -> tuple[list[dict], dict | None]:
+    """One row per hands.table_name of the case hands (hands without a name are left out),
+    by name; time stats per table (Duration, Hands / h). Summary: raw values add up."""
+    max_break_s = max_break_seconds(db)
+    groups: dict[str, list[HandRec]] = {}
+    for h in res.cases:
+        if h.table is not None:
+            groups.setdefault(h.table, []).append(h)
+    rows: list[dict] = []
+    total, total_ts = Acc(), TimeStats(0, 0, 0, 0, 0)
+    for name in sorted(groups):
+        acc = Acc()
+        for h in groups[name]:
+            acc.add(h)
+        ts = hand_time(groups[name], max_break_s)
+        rows.append(_row(name, name, {"k": "table", "v": [name]}, session_values(acc, ts)))
+        total.merge(acc)
+        total_ts = total_ts.merge(ts)
+    summary = session_values(total, total_ts) if len(rows) > 1 else None
+    return rows, summary
+
+
+def players_table(db, res: Resolution) -> list[tuple[int, str, Acc]]:
+    """(player id, username, Acc of the opponent's own rows) per opponent dealt in to the
+    chain's case hands; cached on the resolution."""
+    with res.lock:
+        if ("players",) in res.tables:
+            return res.tables[("players",)]
+    out: list[tuple[int, str, Acc]] = []
+    if res.player_id is not None and res.hands:
+        accs: dict[int, tuple[str, Acc]] = {}
+        for pid, name, rec in opponent_recs(db, res.workspace_id, res.case_ids, res.player_id):
+            ent = accs.get(pid)
+            if ent is None:
+                ent = accs[pid] = (name, Acc())
+            ent[1].add(rec)
+        out = sorted(((pid, name, acc) for pid, (name, acc) in accs.items()),
+                     key=lambda t: (-t[2].hands, t[1], t[0]))
+    with res.lock:
+        res.tables[("players",)] = out
+    return out
+
+
+def players_split(db, res: Resolution) -> tuple[list[dict], dict | None]:
+    """One row per opponent, Hands descending. Row filter = {k: 'with', player_id: <the
+    reporting player>}: the page it opens reports on the opponent (row.player) in hands
+    with the reporting player, so it shows the row's numbers when the parent chain has only
+    hand-level steps (session, table, date, stakes, ...)."""
+    rows: list[dict] = []
+    total = Acc()
+    for pid, name, acc in players_table(db, res):
+        r = _row(str(pid), name, {"k": "with", "player_id": res.player_id}, plain_values(acc))
+        r["player"] = {"id": pid, "username": name}
+        rows.append(r)
+        total.merge(acc)
+    return rows, (plain_values(total) if len(rows) > 1 else None)
 
 
 # ── action tables (computed once per resolution, cached on it) ──────────
@@ -458,6 +588,12 @@ def action_split(db, res: Resolution, typ: str) -> tuple[list[dict], list[dict],
 def split(db, res: Resolution, typ: str) -> dict:
     if typ in ("next_actions", "faced_next", "bet_sizing"):
         columns, rows, summary = action_split(db, res, typ)
+    elif typ == "tables":
+        columns = TABLE_COLUMNS
+        rows, summary = tables_split(db, res)
+    elif typ == "players":
+        columns = PLAYER_COLUMNS
+        rows, summary = players_split(db, res)
     else:
         columns = PLAIN_COLUMNS
         rows, summary = plain_split(res, typ)
@@ -465,5 +601,6 @@ def split(db, res: Resolution, typ: str) -> dict:
             "summary": summary, "total_hands": res.total_hands}
 
 
-__all__ = ["split", "action_table", "Acc", "plain_values", "action_values", "PLAIN_COLUMNS",
-           "ACTION_COLUMNS", "FACED_COLUMNS"]
+__all__ = ["split", "action_table", "Acc", "plain_values", "action_values", "session_values",
+           "hand_time", "PLAIN_COLUMNS", "ACTION_COLUMNS", "FACED_COLUMNS", "TABLE_COLUMNS",
+           "PLAYER_COLUMNS"]

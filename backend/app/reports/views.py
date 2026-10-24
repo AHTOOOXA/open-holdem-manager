@@ -29,7 +29,8 @@ from app.h2n.sequence import BET, CALL, CHECK, FOLD, RAISE
 from app.hand_value import OTHER, STREET_CATEGORIES, category_info
 from app.reports import spots
 from app.reports.chain import CLASSES, Resolution, card_class
-from app.reports.split import Acc, action_table, action_values, plain_values
+from app.app_settings import max_break_seconds
+from app.reports.split import Acc, action_table, action_values, hand_time, plain_values, session_values
 
 def _stat(id_, caption, value, fmt, sample=None, winnings=False, filter_=None) -> dict:
     d = {"id": id_, "caption": caption, "value": value, "sample": sample, "format": fmt}
@@ -151,6 +152,64 @@ def spot(db, res: Resolution) -> dict:
     return {"hands": len(cases), "kind": kind, "hit_label": hit_label, "stats": stats}
 
 
+def recipe(db, res: Resolution, name: str) -> dict:
+    """Fixed Sessions recipes (sessions.md §5.2) over the chain's case hands; never
+    clickable. `group`: anchor1 / anchor2 / grid.
+
+    - session: Hands, Duration, Hands / h | Won, Won EV, Win Rate EV | Avg. Tables, VPIP,
+      PFR, Ag., 3Bet, WTSD, W%SD, WWSF%, Rake paid, Rake Paid bb/100, Won bb
+    - table: the same without Avg. Tables
+    - villain (player_id = the villain, chain ends with {k: 'with', player_id: hero}):
+      Hands, VPIP, PFR | EV diff. | Ag., Win Rate, Won Without Showdown, 3Bet, WTSD, W%SD,
+      WWSF%, Rake paid, Rake Paid bb/100. "Won From Hero" is left out: splitting a multiway
+      pot into "won from one opponent" has no exact definition here.
+    """
+    cases = res.cases
+    acc = Acc()
+    for h in cases:
+        acc.add(h)
+    v = session_values(acc, hand_time(cases, max_break_seconds(db)))
+
+    def st(id_, caption, fmt, group, sample=None, winnings=False):
+        d = _stat(id_, caption, v[id_], fmt, v[sample] if sample else None, winnings)
+        d["group"] = group
+        return d
+
+    pct = {"vpip": ("VPIP", "vpip_opps"), "pfr": ("PFR", "pfr_opps"),
+           "threebet": ("3Bet", "threebet_opps"), "wtsd": ("WTSD", "wtsd_opps"),
+           "wsd": ("W%SD", "wsd_opps"), "wwsf": ("WWSF%", "wwsf_opps")}
+
+    def p(id_, group="grid"):
+        return st(id_, pct[id_][0], "pct", group, pct[id_][1])
+
+    ag = st("ag", "Ag.", "ratio", "grid", "ag_opps")
+    rake = [st("rake", "Rake paid", "money", "grid"),
+            st("rake_bb100", "Rake Paid bb/100", "bb100", "grid", "hands")]
+    if name == "villain":
+        stats = [
+            st("hands", "Hands", "count", "anchor1"), p("vpip", "anchor1"), p("pfr", "anchor1"),
+            st("ev_diff", "EV diff.", "money", "anchor2", winnings=True),
+            ag, st("bb100", "Win Rate", "bb100", "grid", "hands", winnings=True),
+            st("won_nsd", "Won Without Showdown", "money", "grid", winnings=True),
+            p("threebet"), p("wtsd"), p("wsd"), p("wwsf"), *rake,
+        ]
+    else:
+        stats = [
+            st("hands", "Hands", "count", "anchor1"),
+            st("duration", "Duration", "duration", "anchor1"),
+            st("hands_h", "Hands / h", "rate", "anchor1"),
+            st("won", "Won", "money", "anchor2", winnings=True),
+            st("won_ev", "Won EV", "money", "anchor2", winnings=True),
+            st("ev_bb100", "Win Rate EV", "bb100", "anchor2", "hands", winnings=True),
+        ]
+        if name == "session":
+            stats.append(st("avg_tables", "Avg. Tables", "ratio", "grid"))
+        stats += [p("vpip"), p("pfr"), ag, p("threebet"), p("wtsd"), p("wsd"), p("wwsf"),
+                  *rake, st("won_bb", "Won bb", "bb", "grid", winnings=True)]
+    return {"hands": len(cases), "kind": _kind(res),
+            "hit_label": res.ctx.name if res.has_spot else None, "stats": stats}
+
+
 def _combos(cls: str) -> int:
     return 6 if len(cls) == 2 else 4 if cls.endswith("s") else 12
 
@@ -215,4 +274,4 @@ def quick_filters() -> list[dict]:
             for k in QUICK_FILTER_KEYS]
 
 
-__all__ = ["spot", "preflop_range", "hand_strength", "quick_filters"]
+__all__ = ["spot", "recipe", "preflop_range", "hand_strength", "quick_filters"]
