@@ -18,6 +18,7 @@ from app.api import general
 from app.api import general_popup
 from app.api import reports_lite
 from app.api import heroes as heroes_api
+from app.api import app_settings as app_settings_api
 
 MultiPartParser.max_part_size = 50 * 1024 * 1024  # 50MB
 
@@ -63,6 +64,7 @@ app.include_router(general.router, prefix="/api", tags=["general"])
 app.include_router(general_popup.router, prefix="/api", tags=["general"])
 app.include_router(reports_lite.router, prefix="/api", tags=["reports"])
 app.include_router(heroes_api.router, prefix="/api", tags=["heroes"])
+app.include_router(app_settings_api.router, prefix="/api", tags=["settings"])
 
 
 @app.on_event("startup")
