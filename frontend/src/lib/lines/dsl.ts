@@ -93,9 +93,11 @@ export function rowAllowed(street: Street, row: StreetRow): boolean {
 
 function rowToks(row: StreetRow): Tok[] {
   const d = ROW_DEF[row];
-  // Hero's whole action on the street: his first action is `first`, his final one `last`
+  // Hero's whole action on the street: his first action is `first`, his final one `last`. The
+  // villain's bet/raise may come after other players' calls (`skipc`), and hero's answer after
+  // any other players' actions (`skipa`), so multiway spots match too (matcher.py docstring).
   const out: Tok[] = [{ hero: true, t: d.first, flags: ['first'] }];
-  if (d.then) out.push({ hero: false, t: d.first === 'X' ? 'B' : 'R', flags: [] }, { hero: true, t: d.then, flags: [] });
+  if (d.then) out.push({ hero: false, t: d.first === 'X' ? 'B' : 'R', flags: ['skipc'] }, { hero: true, t: d.then, flags: ['skipa'] });
   return withLast(out, true);
 }
 
