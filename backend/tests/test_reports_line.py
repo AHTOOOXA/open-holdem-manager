@@ -309,3 +309,56 @@ def test_villain_fold_line_has_no_next_stats(client):
     d = _post(client, "spot", _line("pre: H:R[fr] > V:F"))
     if d["hands"]:
         assert not any(s["id"].startswith("next:") for s in d["stats"])
+
+
+# ── Actions-tab whole-street rows (`first` / `last` / `skipc` / `skipa`) ──
+
+_L = {"raise": "R", "fold": "F", "call": "C", "bet": "B", "check": "X"}
+ROW_NAMES = ("raise raise_fold raise_call raise_raise fold call call_fold call_call call_raise "
+             "bet bet_fold bet_call bet_raise check check_fold check_call check_raise").split()
+
+
+def row_notation(name: str, street: str) -> tuple[str, str]:
+    """(line DSL, hero's action letters) of an H2N row as hero's whole action on a street."""
+    a, _, b = name.partition("_")
+    if not b:
+        return f"{street}: H:{_L[a]}[first,last]", _L[a]
+    v = "V:B" if a == "check" else "V:R"   # what hero's second action answers
+    return (f"{street}: H:{_L[a]}[first] > {v}[skipc] > H:{_L[b]}[last,skipa]",
+            _L[a] + _L[b])
+
+
+@pytest.mark.parametrize("street", ["flop", "turn", "river"])
+def test_whole_street_rows_match_direct_check(client, bench_db, hero_id, street):
+    sidx = {"flop": 1, "turn": 2, "river": 3}[street]
+    hands = _hero_seqs(bench_db, hero_id)
+    total = 0
+    for name in ROW_NAMES:
+        dsl, pat = row_notation(name, street)
+        got = set(_case_ids(client, _line(dsl)))
+        exp = {hid for hid, seq, p in hands
+               if "".join("FXCBR"[t] for t in _street_types(seq, p, sidx)) == pat}
+        assert got == exp, (name, dsl, len(got), len(exp))
+        total += len(got)
+    assert total > 100
+
+
+def test_skipc_catches_multiway_calls(client, bench_db, hero_id):
+    # hero raises, a villain calls, another raises, hero calls: plain `V:R` is not adjacent
+    plain = set(_case_ids(client, _line("flop: H:R[first] > V:R > H:C[last]")))
+    skip = set(_case_ids(client, _line("flop: H:R[first] > V:R[skipc] > H:C[last]")))
+    assert plain <= skip
+    plain = set(_case_ids(client, _line("flop: H:X[first] > V:B > H:F[last]")))
+    skip = set(_case_ids(client, _line("flop: H:X[first] > V:B[skipc] > H:F[last,skipc]")))
+    assert plain < skip
+    skipa = set(_case_ids(client, _line("flop: H:X[first] > V:B[skipc] > H:F[last,skipa]")))
+    assert skip < skipa
+
+
+def test_first_last_are_per_street_hero_flags(client, bench_db, hero_id):
+    hands = _hero_seqs(bench_db, hero_id)
+    for flags, ok in (("first", lambda t: True), ("first,last", lambda t: len(t) == 1)):
+        got = set(_case_ids(client, _line(f"flop: H:X[{flags}]")))
+        exp = {hid for hid, seq, p in hands
+               if (t := _street_types(seq, p, 1)) and t[0] == CHECK and ok(t)}
+        assert got == exp
