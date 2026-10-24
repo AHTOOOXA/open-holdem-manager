@@ -1,876 +1,204 @@
-import { useState, useMemo } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+/**
+ * Sessions screen (/sessions, /sessions/:sessionIndex): Hand2Note-style dashboard in one card,
+ * [session list][page 0][page 1…]. The route param is the id of the session to preselect (an id
+ * that matches nothing, e.g. an old numeric index, selects the newest session).
+ */
+import { useCallback, useMemo, useState } from 'react';
+import { useParams } from 'react-router-dom';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Loader2 } from 'lucide-react';
+import { useWorkspace } from '@/contexts/WorkspaceContext';
+import { useSessionsLive } from '@/hooks/useSessionsLive';
+import PlayerDialog, { type PickedPlayer } from '@/components/reports/PlayerDialog';
+import SessionNav from '@/components/sessions/SessionNav';
+import SessionPages, { Page0Header } from '@/components/sessions/SessionPages';
+import { getHeroes } from '@/lib/api';
+import { APP_SETTINGS_DEFAULTS, appSettingsQueryKey, getAppSettings, patchAppSettings, type AppSettings } from '@/lib/app-settings';
+import { reportKeys } from '@/lib/reports/query-keys';
+import { getSessions, sessionsQueryKey } from '@/lib/sessions/api';
 import {
-  ComposedChart,
-  Area,
-  Line,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-  ReferenceLine,
-} from 'recharts';
-import {
-  getSessions,
-  getSessionDetail,
-  getHands,
-} from '@/lib/api';
-import type {
-  SessionDetailResponse,
-  SessionGraphPoint,
-  SessionBigHand,
-} from '@/lib/api';
-import { queryKeys } from '@/lib/query-keys';
-import { formatStakes, formatRelativeDate } from '@/lib/utils';
-import EmptyState from '@/components/EmptyState';
-import { CardBoxPair, CardBoxRow, CardBox } from '@/components/hands/CardDisplay';
-import Actions, { formatBb } from '@/components/hands/Actions';
-import Pagination from '@/components/hands/Pagination';
-import HandDrawer from '@/components/hands/HandDrawer';
-import { Card, CardContent, CardHeader } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
-import { Skeleton } from '@/components/ui/skeleton';
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { Button } from '@/components/ui/button';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
-import { queryClient } from '@/lib/query-client';
-import { fixed, usd, moneyClass, bbUnits, formatClockTime, formatSessionDate } from '@/lib/format';
-import { chartColors, axisTick } from '@/lib/chart-theme';
-import { ChartTooltipBox } from '@/components/ChartTooltipBox';
+  dateStorageKey, parseDateFilter, resolveDateFilter, serializeDateFilter, type StoredDateFilter,
+} from '@/lib/sessions/date-filter';
+import { parseSessionParam, pickSession } from '@/lib/sessions/pages';
+import type { SessionsQuery } from '@/lib/sessions/types';
 
-// ── Helpers ──────────────────────────────────────────────────────────
+const COLLAPSED_KEY = 'ohm.sessions.collapsed';
+const playerStorageKey = (workspaceId: number) => `ohm.sessions.player.${workspaceId}`;
 
-function formatDuration(mins: number): string {
-  if (mins < 60) return `${Math.round(mins)}m`;
-  const h = Math.floor(mins / 60);
-  const m = Math.round(mins % 60);
-  return m > 0 ? `${h}h ${m}m` : `${h}h`;
+function readStorage(key: string): string | null {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
 }
 
-// ── Main Component ───────────────────────────────────────────────────
+function writeStorage(key: string, value: string | null) {
+  try {
+    if (value === null) localStorage.removeItem(key);
+    else localStorage.setItem(key, value);
+  } catch {
+    // storage unavailable: the screen still works, it just won't be restored
+  }
+}
+
+function readPlayer(workspaceId: number): PickedPlayer | null {
+  try {
+    const v = JSON.parse(readStorage(playerStorageKey(workspaceId)) ?? 'null') as Partial<PickedPlayer> | null;
+    return v && typeof v.id === 'number' && typeof v.username === 'string' && typeof v.site === 'string'
+      ? { id: v.id, username: v.username, site: v.site }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function SessionsDashboard({ workspaceId, paramId }: { workspaceId: number; paramId: number | null }) {
+  const queryClient = useQueryClient();
+  const settingsQuery = useQuery({ queryKey: appSettingsQueryKey, queryFn: getAppSettings });
+  const settings: AppSettings = settingsQuery.data ?? APP_SETTINGS_DEFAULTS;
+
+  const [player, setPlayer] = useState<PickedPlayer | null>(() => readPlayer(workspaceId));
+  const [playerOpen, setPlayerOpen] = useState(false);
+  const [dateFilter, setDateFilter] = useState<StoredDateFilter>(() => parseDateFilter(readStorage(dateStorageKey(workspaceId))));
+  const [collapsed, setCollapsed] = useState(() => readStorage(COLLAPSED_KEY) === '1');
+
+  // Preselection: the route param, then whatever the user clicked; null = the newest session
+  const [selectedId, setSelectedId] = useState<number | null>(paramId);
+  const [seenParam, setSeenParam] = useState(paramId);
+  if (paramId !== seenParam) {
+    setSeenParam(paramId);
+    setSelectedId(paramId);
+  }
+
+  const heroes = useQuery({ queryKey: ['heroes', workspaceId], queryFn: () => getHeroes(workspaceId) });
+  const hero = heroes.data?.active ?? null;
+
+  const bounds = resolveDateFilter(dateFilter, new Date(), settings.day_start_hour);
+  const query: SessionsQuery = {
+    workspace_id: workspaceId,
+    ...(player ? { player_id: player.id } : {}),
+    ...(bounds.date_from ? { date_from: bounds.date_from } : {}),
+    ...(bounds.date_to ? { date_to: bounds.date_to } : {}),
+  };
+  const list = useQuery({
+    queryKey: sessionsQueryKey(query),
+    queryFn: ({ signal }) => getSessions(query, signal),
+  });
+  useSessionsLive(workspaceId, true);
+
+  const rows = list.data?.sessions;
+  const session = useMemo(() => pickSession(rows ?? [], selectedId), [rows, selectedId]);
+
+  const numeric = useMutation({
+    mutationFn: (v: boolean) => patchAppSettings({ numeric_date_format: v }),
+    onSuccess: (next) => queryClient.setQueryData(appSettingsQueryKey, next),
+  });
+
+  const refresh = useCallback(() => {
+    setSelectedId(null); // the newest session is re-selected
+    void queryClient.invalidateQueries({ queryKey: ['sessions'] });
+    void queryClient.invalidateQueries({ queryKey: reportKeys.all });
+    void queryClient.invalidateQueries({ queryKey: ['hands', 'list'] });
+    void queryClient.invalidateQueries({ queryKey: ['graph'] });
+  }, [queryClient]);
+  const refreshing = list.isFetching && !list.isPending;
+
+  const changeDate = (next: StoredDateFilter) => {
+    setDateFilter(next);
+    writeStorage(dateStorageKey(workspaceId), serializeDateFilter(next));
+    setSelectedId(null);
+  };
+
+  const toggleCollapsed = () => {
+    const next = !collapsed;
+    setCollapsed(next);
+    writeStorage(COLLAPSED_KEY, next ? '1' : '0');
+  };
+
+  const pickPlayer = (p: PickedPlayer) => {
+    setPlayerOpen(false);
+    // The active hero again: report on "the hero" (no player id), like a fresh dashboard
+    const isHero = !!hero && hero.username === p.username && (hero.site === p.site || hero.site_name === p.site);
+    const next = isHero ? null : p;
+    if ((next?.id ?? null) === (player?.id ?? null)) return;
+    setPlayer(next);
+    writeStorage(playerStorageKey(workspaceId), next ? JSON.stringify(next) : null);
+    setSelectedId(null);
+  };
+
+  const playerName = list.data?.player?.username ?? player?.username ?? hero?.username ?? null;
+  const numericDate = settings.numeric_date_format;
+
+  return (
+    <div className="flex h-full min-h-0 flex-col pb-4">
+      <div className="flex min-h-0 flex-1 overflow-hidden rounded-card border border-border bg-card">
+        {!collapsed && (
+          <SessionNav
+            rows={rows}
+            summary={list.data?.summary}
+            loading={list.isFetching}
+            error={list.isError ? list.error.message : null}
+            selectedId={session?.id ?? null}
+            onSelect={setSelectedId}
+            onRefresh={refresh}
+            refreshing={refreshing}
+            playerName={playerName}
+            onSwitchPlayer={() => setPlayerOpen(true)}
+            dateFilter={dateFilter}
+            onDateFilter={changeDate}
+            dayStartHour={settings.day_start_hour}
+            numericDate={numericDate}
+            onNumericDate={(v) => numeric.mutate(v)}
+          />
+        )}
+        <div className="flex min-w-0 flex-1 flex-col">
+          {list.isPending ? (
+            <div role="status" aria-label="Loading sessions" className="flex flex-1 items-center justify-center">
+              <Loader2 className="size-6 animate-spin text-muted-foreground" aria-hidden />
+            </div>
+          ) : session ? (
+            <SessionPages
+              key={`${session.id}:${player?.id ?? 0}`}
+              workspaceId={workspaceId}
+              playerId={player?.id}
+              session={session}
+              collapsed={collapsed}
+              onToggleCollapsed={toggleCollapsed}
+              onRefresh={refresh}
+              refreshing={refreshing}
+              numericDate={numericDate}
+            />
+          ) : (
+            <>
+              <Page0Header
+                session={null}
+                collapsed={collapsed}
+                onToggleCollapsed={toggleCollapsed}
+                onRefresh={refresh}
+                refreshing={refreshing}
+                numericDate={numericDate}
+              />
+              <p className="p-6 text-sm text-muted-foreground">
+                {list.isError ? 'Sessions could not be loaded.' : 'No results yet'}
+              </p>
+            </>
+          )}
+        </div>
+      </div>
+      <PlayerDialog open={playerOpen} onOpenChange={setPlayerOpen} onSelect={pickPlayer} />
+    </div>
+  );
+}
 
 export default function SessionsPage() {
+  const { activeWorkspaceId } = useWorkspace();
   const { sessionIndex } = useParams<{ sessionIndex?: string }>();
-
-  if (sessionIndex !== undefined) {
-    if (!/^\d+$/.test(sessionIndex)) return <SessionNotFound />;
-    return <SessionDetail index={Number(sessionIndex)} />;
-  }
-  return <SessionList />;
-}
-
-function SessionNotFound({ error }: { error?: string }) {
-  const navigate = useNavigate();
   return (
-    <div className="max-w-6xl mx-auto">
-      <Alert variant="destructive">
-        <AlertTitle>{error ? 'Could not load session' : 'Session not found'}</AlertTitle>
-        <AlertDescription>
-          {error ?? "This session doesn't exist. Session numbers change after an import, so an old link may point nowhere."}
-        </AlertDescription>
-      </Alert>
-      <Button variant="outline" size="sm" className="mt-3" onClick={() => navigate('/sessions')}>
-        Back to sessions
-      </Button>
-    </div>
-  );
-}
-
-// ── Session List View ────────────────────────────────────────────────
-
-function SessionList() {
-  const navigate = useNavigate();
-  const { data, isPending } = useQuery({
-    queryKey: queryKeys.sessions.list,
-    queryFn: getSessions,
-  });
-
-  const sessions = data?.sessions ?? [];
-  const latestIndex = sessions.length > 0 ? sessions[0].session_index : undefined;
-
-  // Fetch latest session detail for hero card
-  const { data: latestDetail } = useQuery({
-    queryKey: queryKeys.sessions.detail(latestIndex!),
-    queryFn: () => getSessionDetail(latestIndex!),
-    enabled: latestIndex !== undefined,
-  });
-
-  if (!isPending && sessions.length === 0) {
-    return (
-      <div className="max-w-6xl mx-auto">
-        <EmptyState variant="no-data" />
-      </div>
-    );
-  }
-
-  return (
-    <div className="max-w-6xl mx-auto space-y-1.5">
-
-      {isPending ? (
-        <Card className="gap-0 py-0">
-          <CardContent className="px-3 py-3 space-y-2">
-            <Skeleton className="h-4 w-48" />
-            <Skeleton className="h-64 w-full" />
-          </CardContent>
-        </Card>
-      ) : (
-        <Card className="overflow-hidden gap-0 py-0">
-          <div className="overflow-x-auto">
-            <Table style={{ tableLayout: 'fixed', width: '100%' }}>
-              <colgroup>
-                <col style={{ width: '20%' }} />
-                <col style={{ width: '12%' }} />
-                <col style={{ width: '10%' }} />
-                <col style={{ width: '16%' }} />
-                <col style={{ width: '14%' }} />
-                <col style={{ width: '14%' }} />
-                <col style={{ width: '14%' }} />
-              </colgroup>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="px-3 py-1.5 h-auto text-[11px] uppercase tracking-wide">Date</TableHead>
-                  <TableHead className="px-3 py-1.5 h-auto text-[11px] uppercase tracking-wide text-right">Duration</TableHead>
-                  <TableHead className="px-3 py-1.5 h-auto text-[11px] uppercase tracking-wide text-right">Hands</TableHead>
-                  <TableHead className="px-3 py-1.5 h-auto text-[11px] uppercase tracking-wide">Stakes</TableHead>
-                  <TableHead className="px-3 py-1.5 h-auto text-[11px] uppercase tracking-wide text-right">Won</TableHead>
-                  <TableHead className="px-3 py-1.5 h-auto text-[11px] uppercase tracking-wide text-right">bb/100</TableHead>
-                  <TableHead className="px-3 py-1.5 h-auto text-[11px] uppercase tracking-wide text-right">EV bb/100</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {sessions.map((s, i) => (
-                  i === 0 ? (
-                    <LatestSessionRow
-                      key={s.session_index}
-                      summary={s}
-                      detail={latestDetail ?? null}
-                      onClick={() => navigate(`/sessions/${s.session_index}`)}
-                    />
-                  ) : (
-                    <SessionRow
-                      key={s.session_index}
-                      session={s}
-                      onClick={() => navigate(`/sessions/${s.session_index}`)}
-                    />
-                  )
-                ))}
-              </TableBody>
-            </Table>
-          </div>
-        </Card>
-      )}
-    </div>
-  );
-}
-
-// ── Session Detail View ──────────────────────────────────────────────
-
-function SessionDetail({ index }: { index: number }) {
-  const [unit, setUnit] = useState<'bb' | 'usd'>('bb');
-  const [selectedHandId, setSelectedHandId] = useState<string | null>(null);
-  const [handsPage, setHandsPage] = useState(1);
-  const [handsPerPage, setHandsPerPage] = useState(50);
-
-  const { data, isPending, error } = useQuery({
-    queryKey: queryKeys.sessions.detail(index),
-    queryFn: () => getSessionDetail(index),
-  });
-
-  const stats = data?.stats;
-  const graph = useMemo(() => data?.graph ?? [], [data]);
-
-  // Compute date_from/date_to from session boundaries for hands query
-  // Use raw ISO strings directly — avoid Date→toISOString() which shifts to UTC
-  const dateFrom = stats?.start_time?.slice(0, 19);
-  const dateTo = stats?.end_time?.slice(0, 19);
-
-  const handsQueryParams = useMemo(() => ({
-    page: handsPage,
-    per_page: handsPerPage,
-    date_from: dateFrom,
-    date_to: dateTo,
-    sort: 'played_at',
-    order: 'desc' as const,
-  }), [handsPage, handsPerPage, dateFrom, dateTo]);
-
-  const { data: handsData, isPending: handsLoading } = useQuery({
-    queryKey: queryKeys.hands.list(handsQueryParams),
-    queryFn: () => getHands(handsQueryParams),
-    enabled: !!dateFrom && !!dateTo,
-  });
-
-  const hands = handsData?.hands ?? [];
-  const selectedIdx = selectedHandId ? hands.findIndex(h => h.id === selectedHandId) : -1;
-
-  const hasEVData = useMemo(() => graph.some(d => d.cumulative_ev_bb !== d.cumulative_bb), [graph]);
-
-  const mainKey = unit === 'bb' ? 'cumulative_bb' : 'cumulative_usd';
-  const evKey = unit === 'bb' ? 'cumulative_ev_bb' : 'cumulative_ev_usd';
-  const sdKey = unit === 'bb' ? 'cumulative_showdown_bb' : 'cumulative_showdown_usd';
-  const nsdKey = unit === 'bb' ? 'cumulative_nonshowdown_bb' : 'cumulative_nonshowdown_usd';
-
-  const last = graph[graph.length - 1];
-  const sdBB = last?.cumulative_showdown_bb ?? 0;
-  const sdUSD = last?.cumulative_showdown_usd ?? 0;
-  const nsdBB = last?.cumulative_nonshowdown_bb ?? 0;
-  const nsdUSD = last?.cumulative_nonshowdown_usd ?? 0;
-  const n0 = graph.length;
-  const sdRateBB = n0 > 0 ? (sdBB / n0) * 100 : 0;
-  const nsdRateBB = n0 > 0 ? (nsdBB / n0) * 100 : 0;
-
-  if (isPending) {
-    return (
-      <div className="max-w-6xl mx-auto space-y-1.5">
-        <Skeleton className="h-8 w-64 mb-3" />
-        <Card className="gap-0 py-0 p-2"><Skeleton className="h-[300px] w-full rounded" /></Card>
-        <Card className="gap-0 py-0"><Skeleton className="h-32 w-full" /></Card>
-      </div>
-    );
-  }
-
-  if (!stats) {
-    // 404 = no such session; anything else (backend down, 500) shows the real error
-    const loadError = error && !error.message.includes(' 404 ') ? error.message : undefined;
-    return <SessionNotFound error={loadError} />;
-  }
-
-  const n = stats.hands;
-  const durationHrs = stats.duration_minutes / 60;
-
-  return (
-    <div className="max-w-6xl mx-auto space-y-1.5">
-      {/* Header info strip */}
-      <div className="flex items-center gap-2 mb-1">
-        <h1 className="text-[18px] font-bold text-text">
-          {formatSessionDate(stats.start_time)}
-        </h1>
-        <span className="text-sm text-text-muted">
-          {formatClockTime(stats.start_time)} – {formatClockTime(stats.end_time)}
-        </span>
-        <Badge variant="secondary">{formatDuration(stats.duration_minutes)}</Badge>
-        {stats.stakes.map(st => (
-          <Badge key={st} variant="secondary">{formatStakes(st)}</Badge>
-        ))}
-      </div>
-
-      {/* Section 1: Graph */}
-      {graph.length > 0 && (
-        <Card className="gap-0 py-0 p-2">
-          <div className="flex items-center gap-2.5 px-2 py-1">
-            <ToggleGroup type="single" value={unit} onValueChange={(v) => { if (v) setUnit(v as 'bb' | 'usd'); }}>
-              <ToggleGroupItem value="bb" className="h-7 text-xs px-3">BB</ToggleGroupItem>
-              <ToggleGroupItem value="usd" className="h-7 text-xs px-3">$</ToggleGroupItem>
-            </ToggleGroup>
-          </div>
-          <div className="flex justify-center gap-4 mt-1.5 mb-1 text-xs text-text-muted">
-            <span className="flex items-center gap-1.5">
-              <span className="inline-block w-4 h-0.5 rounded" style={{ background: chartColors.main }} />
-              Actual
-            </span>
-            {hasEVData && (
-              <span className="flex items-center gap-1.5">
-                <span className="inline-block w-4 h-0.5 rounded" style={{ background: chartColors.ev, opacity: 0.8 }} />
-                All-in EV
-              </span>
-            )}
-            <span className="flex items-center gap-1.5">
-              <span className="inline-block w-4 h-0.5 rounded" style={{ background: chartColors.showdown }} />
-              Showdown
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span className="inline-block w-4 h-0.5 rounded" style={{ background: chartColors.nonshowdown }} />
-              Non-Showdown
-            </span>
-          </div>
-          <ResponsiveContainer width="100%" height={300}>
-            <ComposedChart data={graph} margin={{ top: 4, right: 16, bottom: 4, left: 8 }}>
-              <defs>
-                <linearGradient id="sessionGradient" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor={chartColors.main} stopOpacity={0.25} />
-                  <stop offset="100%" stopColor={chartColors.main} stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid vertical={false} stroke={chartColors.grid} />
-              <XAxis
-                dataKey="hand_number"
-                type="number"
-                domain={[0, 'dataMax']}
-                stroke={chartColors.axis}
-                tick={axisTick(11)}
-                axisLine={false}
-                tickLine={false}
-              />
-              <YAxis
-                stroke={chartColors.axis}
-                tick={axisTick(11)}
-                axisLine={false}
-                tickLine={false}
-                width={50}
-                tickFormatter={(v: number) => unit === 'usd' ? `$${v}` : String(v)}
-              />
-              <Tooltip
-                content={<SessionTooltip unit={unit} />}
-              />
-              <ReferenceLine y={0} stroke={chartColors.zeroLine} strokeDasharray="4 4" />
-              <Area
-                type="monotone"
-                dataKey={mainKey}
-                name={mainKey}
-                fill="url(#sessionGradient)"
-                stroke={chartColors.main}
-                strokeWidth={2}
-                dot={false}
-                connectNulls
-                isAnimationActive={false}
-                baseValue={0}
-              />
-              {hasEVData && (
-                <Line
-                  type="monotone"
-                  dataKey={evKey}
-                  name={evKey}
-                  stroke={chartColors.ev}
-                  strokeWidth={1.5}
-                  dot={false}
-                  connectNulls
-                  strokeDasharray="6 3"
-                  opacity={0.8}
-                  isAnimationActive={false}
-                />
-              )}
-              <Line
-                type="monotone"
-                dataKey={sdKey}
-                name={sdKey}
-                stroke={chartColors.showdown}
-                strokeWidth={1.5}
-                dot={false}
-                connectNulls
-                isAnimationActive={false}
-              />
-              <Line
-                type="monotone"
-                dataKey={nsdKey}
-                name={nsdKey}
-                stroke={chartColors.nonshowdown}
-                strokeWidth={1.5}
-                dot={false}
-                connectNulls
-                isAnimationActive={false}
-              />
-            </ComposedChart>
-          </ResponsiveContainer>
-        </Card>
-      )}
-
-      {/* Section 2: Results summary */}
-      <Card className="gap-0 py-0 overflow-hidden">
-        <div className="px-4 py-2 text-xs text-text-muted">
-          {n} hands · {stats.hands_per_hour > 0 ? `${stats.hands_per_hour}/hr · ` : ''}{formatDuration(stats.duration_minutes)}
-        </div>
-        <div className="grid grid-cols-2 border-t border-border">
-          <div className="px-4 py-3 grid grid-cols-2 gap-x-4">
-            <div className={`text-xl font-bold ${moneyClass(stats.won_usd)}`}>{usd(stats.won_usd)}</div>
-            <div className={`text-xl font-bold ${moneyClass(stats.bb_per_100)}`}>{fixed(stats.bb_per_100, 2)}</div>
-            <div className={`text-sm ${moneyClass(stats.won_bb, 1)}`}>{bbUnits(stats.won_bb)}</div>
-            <div className="text-sm text-text-muted">bb/100</div>
-            <div className="text-[10px] text-text-muted uppercase tracking-wide">Won</div>
-            <div className="text-[10px] text-text-muted uppercase tracking-wide">Rate</div>
-          </div>
-          <div className="px-4 py-3 border-l border-border grid grid-cols-2 gap-x-4">
-            {hasEVData ? (
-              <>
-                <div className={`text-xl font-bold ${moneyClass(stats.ev_usd)}`}>{usd(stats.ev_usd)}</div>
-                <div className={`text-xl font-bold ${moneyClass(stats.ev_bb_per_100)}`}>{fixed(stats.ev_bb_per_100, 2)}</div>
-                <div className={`text-sm ${moneyClass(stats.ev_bb, 1)}`}>{bbUnits(stats.ev_bb)}</div>
-                <div className="text-sm text-text-muted">EV bb/100</div>
-                <div className="text-[10px] text-text-muted uppercase tracking-wide">Won EV</div>
-                <div className="text-[10px] text-text-muted uppercase tracking-wide">EV Rate</div>
-              </>
-            ) : (
-              <>
-                <div className="text-xl font-bold text-text-muted">&mdash;</div>
-                <div className="text-xl font-bold text-text-muted">&mdash;</div>
-                <div className="text-sm text-text-muted">&nbsp;</div>
-                <div className="text-sm text-text-muted">&nbsp;</div>
-                <div className="text-[10px] text-text-muted uppercase tracking-wide">Won EV</div>
-                <div className="text-[10px] text-text-muted uppercase tracking-wide">EV Rate</div>
-              </>
-            )}
-          </div>
-        </div>
-        <div className="grid grid-cols-5 gap-x-6 px-4 py-2.5 border-t border-border">
-          <div>
-            <div className={`text-sm font-bold ${durationHrs > 0 ? moneyClass(stats.usd_per_hour) : 'text-text-muted'}`}>
-              {durationHrs > 0 ? `${usd(stats.usd_per_hour)}/hr` : '\u2014'}
-            </div>
-            <div className="text-xs text-text-muted">
-              $/hr {durationHrs > 0 && <span className={`${moneyClass(stats.bb_per_hour, 1)}`}>{fixed(stats.bb_per_hour, 1)} BB</span>}
-            </div>
-          </div>
-          <div>
-            <div className={`text-sm font-bold ${moneyClass(sdUSD)}`}>{usd(sdUSD)}</div>
-            <div className="text-xs text-text-muted">Showdown <span className={`${moneyClass(sdRateBB, 1)}`}>{fixed(sdRateBB, 1)}/100</span></div>
-          </div>
-          <div>
-            <div className={`text-sm font-bold ${moneyClass(nsdUSD)}`}>{usd(nsdUSD)}</div>
-            <div className="text-xs text-text-muted">Non-SD <span className={`${moneyClass(nsdRateBB, 1)}`}>{fixed(nsdRateBB, 1)}/100</span></div>
-          </div>
-          <div>
-            <div className="text-sm font-bold text-text-muted">{usd(stats.rake_usd)}</div>
-            <div className="text-xs text-text-muted">Rake {bbUnits(stats.rake_bb)}</div>
-          </div>
-          <div>
-            <div className="text-sm font-bold text-text">{stats.hands_per_hour > 0 ? Math.round(stats.hands_per_hour) : '\u2014'}</div>
-            <div className="text-xs text-text-muted">Hands/hr</div>
-          </div>
-        </div>
-      </Card>
-
-      {/* Section 3: Play stats */}
-      <Card className="gap-0 py-0 overflow-hidden">
-        <CardHeader className="px-3 py-1.5">
-          <h2 className="text-xs font-semibold text-text">Play Stats</h2>
-        </CardHeader>
-        <div className="grid grid-cols-3 sm:grid-cols-5 lg:grid-cols-9 gap-px bg-border border-t border-border">
-          <PlayStatBox label="VPIP" value={stats.vpip_pct} />
-          <PlayStatBox label="PFR" value={stats.pfr_pct} />
-          <PlayStatBox label="3-Bet" value={stats.three_bet_pct} />
-          <PlayStatBox label="CBet Flop" value={stats.cbet_flop_pct} />
-          <PlayStatBox label="WTSD" value={stats.wtsd_pct} />
-          <PlayStatBox label="W$SD" value={stats.wsd_pct} />
-          <PlayStatBox label="WWSF" value={stats.wwsf_pct} />
-          <PlayStatBox label="Steal" value={stats.steal_pct} />
-          <PlayStatBox label="AFq Flop" value={stats.afq_flop_pct} />
-        </div>
-      </Card>
-
-      {/* Section 4: Biggest hands */}
-      {(data!.biggest_wins.length > 0 || data!.biggest_losses.length > 0) && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-1.5">
-          <BigHandsCard
-            title="Biggest Wins"
-            hands={data!.biggest_wins}
-            onHandClick={setSelectedHandId}
-          />
-          <BigHandsCard
-            title="Biggest Losses"
-            hands={data!.biggest_losses}
-            onHandClick={setSelectedHandId}
-          />
-        </div>
-      )}
-
-      {/* Section 5: Hand Explorer */}
-      <Card className="overflow-hidden gap-0 py-0">
-        <CardHeader className="px-3 py-1.5">
-          <h2 className="text-xs font-semibold text-text">Hands</h2>
-        </CardHeader>
-        {handsLoading ? (
-          <CardContent className="px-3 py-3">
-            <Skeleton className="h-48 w-full" />
-          </CardContent>
-        ) : hands.length === 0 ? (
-          <CardContent className="px-3 py-6 text-center text-sm text-text-muted">
-            No hands in this session
-          </CardContent>
-        ) : (
-          <>
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow className="text-[13px] uppercase tracking-wide">
-                    <TableHead className="py-2 px-2 h-auto">Preflop</TableHead>
-                    <TableHead className="py-2 px-2 h-auto">Actions</TableHead>
-                    <TableHead className="py-2 pl-4 pr-2 h-auto">Flop</TableHead>
-                    <TableHead className="py-2 px-1 h-auto text-center">Pot</TableHead>
-                    <TableHead className="py-2 px-2 h-auto">Actions</TableHead>
-                    <TableHead className="py-2 pl-4 pr-2 h-auto">Turn</TableHead>
-                    <TableHead className="py-2 px-1 h-auto text-center">Pot</TableHead>
-                    <TableHead className="py-2 px-2 h-auto">Actions</TableHead>
-                    <TableHead className="py-2 pl-4 pr-2 h-auto">River</TableHead>
-                    <TableHead className="py-2 px-1 h-auto text-center">Pot</TableHead>
-                    <TableHead className="py-2 px-2 h-auto">Actions</TableHead>
-                    <TableHead className="py-2 pl-4 pr-2 h-auto">Stakes</TableHead>
-                    <TableHead className="py-2 px-2 h-auto text-right">Won</TableHead>
-                    <TableHead className="py-2 px-2 h-auto text-right">Date</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {hands.map((h) => {
-                    const wonUsd = h.won_bb * h.bb_amount;
-                    return (
-                      <TableRow
-                        key={h.id}
-                        onClick={() => setSelectedHandId(h.id)}
-                        className={`cursor-pointer transition-colors text-[15px] ${
-                          selectedHandId === h.id ? 'bg-primary/10' : 'hover:bg-surface-hover'
-                        }`}
-                      >
-                        <TableCell className="py-1.5 px-2">
-                          <CardBoxPair card1={h.card1} card2={h.card2} />
-                        </TableCell>
-                        <TableCell className="py-1.5 px-2">
-                          <Actions items={h.preflop_actions} trimFolds />
-                        </TableCell>
-                        <TableCell className="py-1.5 pl-4 pr-2">
-                          <CardBoxRow cards={h.flop_cards} />
-                        </TableCell>
-                        <TableCell className="py-1.5 px-1 text-center text-[14px] text-text-muted">
-                          {h.flop_cards.length > 0 ? formatBb(h.flop_pot, 1) : ''}
-                        </TableCell>
-                        <TableCell className="py-1.5 px-2">
-                          <Actions items={h.flop_actions} />
-                        </TableCell>
-                        <TableCell className="py-1.5 pl-4 pr-2">
-                          {h.turn_card && <CardBox card={h.turn_card} />}
-                        </TableCell>
-                        <TableCell className="py-1.5 px-1 text-center text-[14px] text-text-muted">
-                          {h.turn_card ? formatBb(h.turn_pot, 1) : ''}
-                        </TableCell>
-                        <TableCell className="py-1.5 px-2">
-                          <Actions items={h.turn_actions} />
-                        </TableCell>
-                        <TableCell className="py-1.5 pl-4 pr-2">
-                          {h.river_card && <CardBox card={h.river_card} />}
-                        </TableCell>
-                        <TableCell className="py-1.5 px-1 text-center text-[14px] text-text-muted">
-                          {h.river_card ? formatBb(h.river_pot, 1) : ''}
-                        </TableCell>
-                        <TableCell className="py-1.5 px-2">
-                          <Actions items={h.river_actions} />
-                        </TableCell>
-                        <TableCell className="py-1.5 pl-4 pr-2 text-[15px] text-text-muted">
-                          {formatStakes(h.stakes)}
-                        </TableCell>
-                        <TableCell className={`py-1.5 px-2 text-right text-[15px] font-semibold ${
-                          wonUsd > 0.005 ? 'text-green' : wonUsd < -0.005 ? 'text-red' : 'text-text-muted'
-                        }`}>
-                          {Math.abs(wonUsd) < 0.005
-                            ? '\u2014'
-                            : `${wonUsd < 0 ? '-' : ''}${fixed(Math.abs(wonUsd), 2)}$`}
-                        </TableCell>
-                        <TableCell className="py-1.5 px-2 text-right text-[14px] text-text-muted whitespace-nowrap">
-                          {formatRelativeDate(h.played_at)}
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })}
-                </TableBody>
-              </Table>
-            </div>
-            {handsData && handsData.total_pages > 1 && (
-              <Pagination
-                page={handsData.page}
-                totalPages={handsData.total_pages}
-                perPage={handsPerPage}
-                onPageChange={setHandsPage}
-                onPerPageChange={(pp) => { setHandsPerPage(pp); setHandsPage(1); }}
-              />
-            )}
-          </>
-        )}
-      </Card>
-
-      {/* Hand Drawer */}
-      {selectedHandId && (
-        <HandDrawer
-          handId={selectedHandId}
-          onClose={() => setSelectedHandId(null)}
-          onPrev={() => { if (selectedIdx > 0) setSelectedHandId(hands[selectedIdx - 1].id); }}
-          onNext={() => { if (selectedIdx >= 0 && selectedIdx < hands.length - 1) setSelectedHandId(hands[selectedIdx + 1].id); }}
-          onTagsChanged={() => { queryClient.invalidateQueries({ queryKey: ['hands'] }); }}
-        />
-      )}
-    </div>
-  );
-}
-
-// ── Session Table Rows ──────────────────────────────────────────────
-
-function SessionRow({
-  session: s,
-  onClick,
-}: {
-  session: { session_index: number; start_time: string; duration_minutes: number; hands: number; stakes: string[]; won_usd: number; bb_per_100: number; ev_bb_per_100: number };
-  onClick: () => void;
-}) {
-  return (
-    <TableRow
-      className="cursor-pointer hover:bg-surface-hover transition-colors"
-      onClick={onClick}
-    >
-      <TableCell className="px-3 py-1.5 text-text">
-        {formatSessionDate(s.start_time)}
-        <span className="text-text-muted ml-1.5 text-xs">{formatClockTime(s.start_time)}</span>
-      </TableCell>
-      <TableCell className="px-3 py-1.5 text-text-muted text-right">
-        {formatDuration(s.duration_minutes)}
-      </TableCell>
-      <TableCell className="px-3 py-1.5 text-text text-right">{s.hands}</TableCell>
-      <TableCell className="px-3 py-1.5">
-        <div className="flex flex-wrap gap-1">
-          {s.stakes.map(st => (
-            <Badge key={st} variant="secondary" className="text-[11px] px-1.5 py-0">{formatStakes(st)}</Badge>
-          ))}
-        </div>
-      </TableCell>
-      <TableCell className={`px-3 py-1.5 text-right ${moneyClass(s.won_usd)}`}>{usd(s.won_usd)}</TableCell>
-      <TableCell className={`px-3 py-1.5 text-right ${moneyClass(s.bb_per_100)}`}>{fixed(s.bb_per_100, 2)}</TableCell>
-      <TableCell className={`px-3 py-1.5 text-right ${moneyClass(s.ev_bb_per_100)}`}>{fixed(s.ev_bb_per_100, 2)}</TableCell>
-    </TableRow>
-  );
-}
-
-function LatestSessionRow({
-  summary: s,
-  detail,
-  onClick,
-}: {
-  summary: { session_index: number; start_time: string; end_time: string; duration_minutes: number; hands: number; stakes: string[]; won_usd: number; won_bb: number; ev_usd: number; ev_bb: number; bb_per_100: number; ev_bb_per_100: number; rake_usd: number; rake_bb: number };
-  detail: SessionDetailResponse | null;
-  onClick: () => void;
-}) {
-  const graph = useMemo(() => detail?.graph ?? [], [detail]);
-  const stats = detail?.stats;
-  const hasEVData = useMemo(() => graph.some(d => d.cumulative_ev_bb !== d.cumulative_bb), [graph]);
-  const durationHrs = s.duration_minutes / 60;
-
-  return (
-    <>
-      {/* Normal row cells */}
-      <TableRow
-        className="cursor-pointer hover:bg-surface-hover transition-colors border-b-0"
-        onClick={onClick}
-      >
-        <TableCell className="px-3 py-1.5 text-text">
-          {formatSessionDate(s.start_time)}
-          <span className="text-text-muted ml-1.5 text-xs">{formatClockTime(s.start_time)}</span>
-        </TableCell>
-        <TableCell className="px-3 py-1.5 text-text-muted text-right">
-          {formatDuration(s.duration_minutes)}
-        </TableCell>
-        <TableCell className="px-3 py-1.5 text-text text-right">{s.hands}</TableCell>
-        <TableCell className="px-3 py-1.5">
-          <div className="flex flex-wrap gap-1">
-            {s.stakes.map(st => (
-              <Badge key={st} variant="secondary" className="text-[11px] px-1.5 py-0">{formatStakes(st)}</Badge>
-            ))}
-          </div>
-        </TableCell>
-        <TableCell className={`px-3 py-1.5 text-right ${moneyClass(s.won_usd)}`}>{usd(s.won_usd)}</TableCell>
-        <TableCell className={`px-3 py-1.5 text-right ${moneyClass(s.bb_per_100)}`}>{fixed(s.bb_per_100, 2)}</TableCell>
-        <TableCell className={`px-3 py-1.5 text-right ${moneyClass(s.ev_bb_per_100)}`}>{fixed(s.ev_bb_per_100, 2)}</TableCell>
-      </TableRow>
-
-      {/* Expanded detail row */}
-      <TableRow className="hover:bg-transparent cursor-pointer" onClick={onClick}>
-        <TableCell colSpan={7} className="p-0">
-          <div className="grid grid-cols-[1fr_260px] border-t border-border/50">
-            {/* Mini graph */}
-            <div className="py-1 pl-2 pr-0">
-              {graph.length > 0 ? (
-                <ResponsiveContainer width="100%" height={140}>
-                  <ComposedChart data={graph} margin={{ top: 4, right: 8, bottom: 4, left: 0 }}>
-                    <defs>
-                      <linearGradient id="latestGradient" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor={chartColors.main} stopOpacity={0.25} />
-                        <stop offset="100%" stopColor={chartColors.main} stopOpacity={0} />
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid vertical={false} stroke={chartColors.grid} />
-                    <XAxis dataKey="hand_number" type="number" domain={[0, 'dataMax']} hide />
-                    <YAxis
-                      stroke={chartColors.axis}
-                      tick={axisTick(10)}
-                      axisLine={false} tickLine={false} width={40}
-                    />
-                    <ReferenceLine y={0} stroke={chartColors.zeroLine} strokeDasharray="4 4" />
-                    <Area
-                      type="monotone" dataKey="cumulative_bb" name="cumulative_bb"
-                      fill="url(#latestGradient)" stroke={chartColors.main} strokeWidth={2}
-                      dot={false} connectNulls isAnimationActive={false} baseValue={0}
-                    />
-                    {hasEVData && (
-                      <Line
-                        type="monotone" dataKey="cumulative_ev_bb" name="cumulative_ev_bb"
-                        stroke={chartColors.ev} strokeWidth={1.5} dot={false} connectNulls
-                        strokeDasharray="6 3" opacity={0.8} isAnimationActive={false}
-                      />
-                    )}
-                    <Line
-                      type="monotone" dataKey="cumulative_showdown_bb" name="cumulative_showdown_bb"
-                      stroke={chartColors.showdown} strokeWidth={1.5} dot={false} connectNulls
-                      isAnimationActive={false}
-                    />
-                    <Line
-                      type="monotone" dataKey="cumulative_nonshowdown_bb" name="cumulative_nonshowdown_bb"
-                      stroke={chartColors.nonshowdown} strokeWidth={1.5} dot={false} connectNulls
-                      isAnimationActive={false}
-                    />
-                  </ComposedChart>
-                </ResponsiveContainer>
-              ) : (
-                <div className="h-[140px] flex items-center justify-center">
-                  <Skeleton className="h-[120px] w-full rounded" />
-                </div>
-              )}
-            </div>
-
-            {/* Key stats */}
-            <div className="border-l border-border/50 px-4 py-2 flex flex-col justify-center gap-1">
-              <div className="grid grid-cols-2 gap-x-3">
-                <div className={`text-lg font-bold ${moneyClass(s.won_usd)}`}>{usd(s.won_usd)}</div>
-                <div className={`text-lg font-bold ${moneyClass(s.bb_per_100)}`}>{fixed(s.bb_per_100, 2)}</div>
-                <div className={`text-xs ${moneyClass(s.won_bb, 1)}`}>{bbUnits(s.won_bb)}</div>
-                <div className="text-xs text-text-muted">bb/100</div>
-              </div>
-              {hasEVData && (
-                <div className="grid grid-cols-2 gap-x-3 pt-1 border-t border-border/50">
-                  <div className={`text-sm font-bold ${moneyClass(s.ev_usd)}`}>{usd(s.ev_usd)}</div>
-                  <div className={`text-sm font-bold ${moneyClass(s.ev_bb_per_100)}`}>{fixed(s.ev_bb_per_100, 2)}</div>
-                  <div className="text-[10px] text-text-muted">EV Won</div>
-                  <div className="text-[10px] text-text-muted">EV bb/100</div>
-                </div>
-              )}
-              <div className="flex items-center gap-3 pt-1 border-t border-border/50 text-xs text-text-muted">
-                <span className={durationHrs > 0 ? moneyClass(stats?.usd_per_hour ?? 0) : ''}>
-                  {durationHrs > 0 && stats ? `${usd(stats.usd_per_hour)}/hr` : '\u2014'}
-                </span>
-                <span>{s.hands} hands</span>
-                <span>{stats?.hands_per_hour ? `${Math.round(stats.hands_per_hour)}/hr` : ''}</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Play stats strip */}
-          {stats && (
-            <div className="grid grid-cols-9 gap-px bg-border border-t border-border/50">
-              <MiniStatBox label="VPIP" value={stats.vpip_pct} />
-              <MiniStatBox label="PFR" value={stats.pfr_pct} />
-              <MiniStatBox label="3-Bet" value={stats.three_bet_pct} />
-              <MiniStatBox label="CBet" value={stats.cbet_flop_pct} />
-              <MiniStatBox label="WTSD" value={stats.wtsd_pct} />
-              <MiniStatBox label="W$SD" value={stats.wsd_pct} />
-              <MiniStatBox label="WWSF" value={stats.wwsf_pct} />
-              <MiniStatBox label="Steal" value={stats.steal_pct} />
-              <MiniStatBox label="AFq" value={stats.afq_flop_pct} />
-            </div>
-          )}
-        </TableCell>
-      </TableRow>
-    </>
-  );
-}
-
-function MiniStatBox({ label, value }: { label: string; value: number | null }) {
-  return (
-    <div className="bg-background px-2 py-1.5 text-center">
-      <div className="text-sm font-bold text-text">
-        {value !== null ? `${fixed(value, 1)}` : '\u2014'}
-      </div>
-      <div className="text-[9px] text-text-muted uppercase tracking-wide">{label}</div>
-    </div>
-  );
-}
-
-// ── Subcomponents ────────────────────────────────────────────────────
-
-function PlayStatBox({ label, value }: { label: string; value: number | null }) {
-  return (
-    <div className="bg-background px-3 py-2.5 text-center">
-      <div className="text-lg font-bold text-text">
-        {value !== null ? `${fixed(value, 1)}%` : '\u2014'}
-      </div>
-      <div className="text-[10px] text-text-muted uppercase tracking-wide">{label}</div>
-    </div>
-  );
-}
-
-function BigHandsCard({
-  title,
-  hands,
-  onHandClick,
-}: {
-  title: string;
-  hands: SessionBigHand[];
-  onHandClick: (id: string) => void;
-}) {
-  if (hands.length === 0) return null;
-  return (
-    <Card className="gap-0 py-0 overflow-hidden">
-      <CardHeader className="px-3 py-1.5">
-        <h2 className="text-xs font-semibold text-text">{title}</h2>
-      </CardHeader>
-      <div className="divide-y divide-border">
-        {hands.map((h) => (
-          <div
-            key={h.hand_id}
-            className="flex items-center gap-3 px-3 py-1.5 cursor-pointer hover:bg-surface-hover transition-colors"
-            onClick={() => onHandClick(h.hand_id)}
-          >
-            <CardBoxPair card1={h.card1} card2={h.card2} />
-            <Badge variant="secondary" className="text-[11px] px-1.5 py-0">{h.position}</Badge>
-            <span className={`font-semibold ${moneyClass(h.won_bb, 1)}`}>
-              {h.won_bb > 0 ? '+' : ''}{fixed(h.won_bb, 1)} BB
-            </span>
-            <span className={`text-sm ${moneyClass(h.won_usd)}`}>
-              {usd(h.won_usd)}
-            </span>
-            <span className="text-xs text-text-muted ml-auto">{formatStakes(h.stakes)}</span>
-          </div>
-        ))}
-      </div>
-    </Card>
-  );
-}
-
-interface SessionTooltipProps {
-  active?: boolean;
-  payload?: Array<{ name: string; value: number; color: string; payload?: Record<string, unknown> }>;
-  label?: number;
-  unit: 'bb' | 'usd';
-}
-
-function SessionTooltip({ active, payload, label, unit }: SessionTooltipProps) {
-  if (!active || !payload?.length) return null;
-  const point = payload[0]?.payload as SessionGraphPoint | undefined;
-  const prefix = unit === 'usd' ? '$' : '';
-  const suffix = unit === 'bb' ? ' BB' : '';
-  const names: Record<string, string> = {
-    cumulative_bb: 'Actual',
-    cumulative_ev_bb: 'All-in EV',
-    cumulative_showdown_bb: 'Showdown',
-    cumulative_nonshowdown_bb: 'Non-Showdown',
-    cumulative_usd: 'Actual',
-    cumulative_ev_usd: 'All-in EV',
-    cumulative_showdown_usd: 'Showdown',
-    cumulative_nonshowdown_usd: 'Non-Showdown',
-  };
-  return (
-    <ChartTooltipBox>
-      {point?.played_at && (
-        <div style={{ marginBottom: 4, color: chartColors.tooltipMuted }}>
-          {formatClockTime(point.played_at)}
-        </div>
-      )}
-      <div style={{ marginBottom: 6, fontWeight: 600 }}>Hand #{Number(label)}</div>
-      {payload.map((entry, i) => (
-        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
-          <span style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: entry.color, display: 'inline-block', flexShrink: 0 }} />
-          <span>{names[entry.name] ?? entry.name}: {prefix}{fixed(entry.value, 2)}{suffix}</span>
-        </div>
-      ))}
-    </ChartTooltipBox>
+    <SessionsDashboard
+      key={activeWorkspaceId}
+      workspaceId={activeWorkspaceId}
+      paramId={parseSessionParam(sessionIndex)}
+    />
   );
 }

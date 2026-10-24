@@ -19,7 +19,7 @@ const STAT_VALUE_FORMAT: Partial<Record<SpotStat['format'], StatValueFormat>> = 
   bb100: 'bb100',
 };
 
-function StatNumber({ stat }: { stat: SpotStat }) {
+export function StatNumber({ stat }: { stat: SpotStat }) {
   const tone = spotTone(stat.value, stat.winnings, stat.format);
   const svFormat = STAT_VALUE_FORMAT[stat.format];
   if (svFormat && !tone) return <StatValue value={stat.value} sample={stat.sample} format={svFormat} />;
