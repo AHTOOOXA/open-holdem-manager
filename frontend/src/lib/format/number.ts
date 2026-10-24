@@ -115,3 +115,16 @@ export function duration(seconds: number): string {
 export function rate(value: number): string {
   return Math.abs(value) >= 100 ? fixed(value, 0) : fixed(value, 1);
 }
+
+/** File size: bytes(512) -> "512 B", bytes(1536) -> "1.5 KB", bytes(5e9) -> "4.7 GB" (1024-based). */
+export function bytes(n: number): string {
+  if (!Number.isFinite(n) || n < 0) return '--';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let v = n;
+  let i = 0;
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i += 1;
+  }
+  return i === 0 ? `${Math.round(v)} B` : `${fixed(v, 1)} ${units[i]}`;
+}

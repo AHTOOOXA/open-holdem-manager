@@ -378,6 +378,8 @@ export interface HealthResponse {
   status: string;
   hands: number;
   rebuilding: boolean;
+  /** Stored stats depend on settings (e.g. the regular rule) that changed since the last rebuild. */
+  rebuild_required?: boolean;
   rebuild_progress?: { processed: number; total: number };
   /** Set when startup had to move a corrupt write-ahead log aside */
   wal_recovery?: { quarantined_wal: string; error: string };
@@ -1685,6 +1687,10 @@ export interface Identity {
   aliases: Alias[];
   total_hands: number;
   created_at: string;
+  /** Aliases screen: every member is the same human (not a shared account). */
+  is_single_person: boolean;
+  pinned: boolean;
+  player_count: number;
 }
 
 // ── Identity CRUD ───────────────────────────────────────────────────
@@ -1711,7 +1717,7 @@ export async function getIdentity(id: number): Promise<Identity> {
   return res.json();
 }
 
-export async function updateIdentity(id: number, data: Partial<{ display_name: string; notes: string; color: string; tags: string[] }>): Promise<Identity> {
+export async function updateIdentity(id: number, data: Partial<{ display_name: string; notes: string; color: string; tags: string[]; is_single_person: boolean; pinned: boolean }>): Promise<Identity> {
   const res = await fetch(`${BASE}/identities/${id}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
@@ -1733,6 +1739,22 @@ export async function addAlias(identityId: number, data: { workspace_id: number;
     body: JSON.stringify(data),
   });
   if (!res.ok) throw new Error('Failed to add alias');
+  return res.json();
+}
+
+export const IDENTITIES_EXPORT_URL = `${BASE}/identities/export.csv`;
+
+export interface IdentityCsvResult {
+  aliases: number;
+  players: number;
+  skipped_lines: number;
+}
+
+export async function importIdentitiesCsv(workspaceId: number, file: File): Promise<IdentityCsvResult> {
+  const fd = new FormData();
+  fd.append('file', file);
+  const res = await fetch(`${BASE}/identities/import-csv?workspace_id=${workspaceId}`, { method: 'POST', body: fd });
+  if (!res.ok) throw new Error(`Import failed: ${res.statusText}`);
   return res.json();
 }
 

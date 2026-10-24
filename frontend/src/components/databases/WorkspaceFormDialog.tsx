@@ -17,6 +17,8 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
+import { uniqueName } from '@/lib/config/logic';
+import { useWorkspace } from '@/contexts/WorkspaceContext';
 import { PRESET_COLORS } from './workspace-colors';
 
 interface Props {
@@ -29,7 +31,8 @@ interface Props {
 /** Create / edit dialog. Mount it only while open (`key` per workspace) so its fields start fresh. */
 export default function WorkspaceFormDialog({ workspace, onClose, onSaved }: Props) {
   const isCreating = workspace === null;
-  const [name, setName] = useState(workspace?.name ?? '');
+  const { workspaces } = useWorkspace();
+  const [name, setName] = useState(() => workspace?.name ?? uniqueName('New Workspace', workspaces.map((w) => w.name)));
   const [hero, setHero] = useState('');
   const [heroSite, setHeroSite] = useState('');
   const [desc, setDesc] = useState(workspace?.description ?? '');
@@ -85,11 +88,13 @@ export default function WorkspaceFormDialog({ workspace, onClose, onSaved }: Pro
         </DialogHeader>
         <div className="flex flex-col gap-4">
           <div className="flex flex-col gap-1.5">
-            <label className="text-sm font-medium">Name</label>
+            <label htmlFor="ws-name" className="text-sm font-medium">Name</label>
             <Input
+              id="ws-name"
               value={name}
               onChange={(e) => setName(e.target.value)}
               autoFocus
+              onFocus={(e) => { if (isCreating) e.currentTarget.select(); }}
               onKeyDown={(e) => { if (e.key === 'Enter') void save(); }}
             />
           </div>
