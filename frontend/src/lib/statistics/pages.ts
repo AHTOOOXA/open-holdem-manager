@@ -43,7 +43,7 @@ const EMPTY: PageState = { selection: null };
 
 /** A chain with page 0 only; `rootWidth` = its width while pages are open to its right. */
 export function freshStatChain(rootWidth = ROOT_PAGE_WIDTH): StatChain {
-  return createChain<StatPage, PageState>({ title: '', inherited: { kind: 'root' }, state: EMPTY, width: rootWidth });
+  return createChain<StatPage, PageState>({ title: 'Dashboard', inherited: { kind: 'root' }, state: EMPTY, width: rootWidth });
 }
 
 /** Select something on page `index` and open `page` right of it (everything after `index` closes). */

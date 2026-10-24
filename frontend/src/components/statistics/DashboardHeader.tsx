@@ -4,7 +4,7 @@
  * (only when stale) · gear. Every control edits the dashboard definition; the parent ignores a
  * change that leaves the definition as it is.
  */
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Check, ChevronDown, ChevronsRight, CalendarRange, RefreshCw, Settings, UserRound } from 'lucide-react';
 import PlayerDialog, { type PickedPlayer } from '@/components/reports/PlayerDialog';
@@ -54,6 +54,8 @@ export default function DashboardHeader({
   onRefresh, onExport, canDelete, onDelete, onClone,
 }: DashboardHeaderProps) {
   const [playerOpen, setPlayerOpen] = useState(false);
+  // Clone starts an inline rename in the tree: the gear menu must not take the focus back
+  const keepFocus = useRef(false);
   const heroes = useQuery({ queryKey: ['heroes', workspaceId], queryFn: () => getHeroes(workspaceId), staleTime: 60_000 });
   const { data: filterOpts } = useFilterOptions();
 
@@ -169,13 +171,19 @@ export default function DashboardHeader({
               <Settings />
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
+          <DropdownMenuContent
+            align="end"
+            onCloseAutoFocus={(e) => {
+              if (keepFocus.current) e.preventDefault();
+              keepFocus.current = false;
+            }}
+          >
             <DropdownMenuItem onSelect={onRefresh}>Refresh</DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem disabled={!onExport} onSelect={() => onExport?.()}>Export As Json…</DropdownMenuItem>
             <DropdownMenuSeparator />
             {canDelete && <DropdownMenuItem onSelect={onDelete}>Delete Dashboard</DropdownMenuItem>}
-            <DropdownMenuItem onSelect={onClone}>Clone Dashboard</DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => { keepFocus.current = true; onClone(); }}>Clone Dashboard</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </div>

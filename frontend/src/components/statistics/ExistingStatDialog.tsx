@@ -24,7 +24,7 @@ interface ExistingStatDialogProps {
 export default function ExistingStatDialog({ open, onOpenChange, currentId, onPick }: ExistingStatDialogProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-2xl">
+      <DialogContent className="sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle>Existing Stat</DialogTitle>
           <DialogDescription className="sr-only">Pick the stat this dashboard shows.</DialogDescription>

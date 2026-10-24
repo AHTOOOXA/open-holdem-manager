@@ -8,7 +8,7 @@
  * shows it, clicking a folder only selects and opens / closes it, clicking empty space clears the
  * row selection. Folder expansion lives in memory per workspace.
  */
-import { useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent } from 'react';
 import { ChevronRight, ChevronsLeft, Folder, FolderOpen, FolderPlus, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -280,7 +280,7 @@ export default function DashboardTree({
                 tabIndex={0}
                 onKeyDown={onKeyDown}
                 onClick={(e: MouseEvent) => { if (e.target === e.currentTarget) setTreeSel(null); }}
-                className="flex min-h-40 flex-col px-1 pb-4 outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset"
+                className="group/tree flex min-h-40 flex-col px-1 pb-4 outline-none"
               >
                 {rows.length === 0 && (
                   <p className="px-3 py-2 text-sm text-subtle-foreground">{search ? 'Nothing matches' : 'No dashboards'}</p>
@@ -302,7 +302,9 @@ export default function DashboardTree({
                       onContextMenu={() => { setMenuTarget(node.id); setTreeSel(node.id); }}
                       className={cn(
                         'flex h-row-tree shrink-0 cursor-pointer items-center gap-1.5 rounded-control pr-2 text-sm select-none',
-                        selected ? 'bg-overlay-selected' : 'hover:bg-overlay-hover',
+                        selected
+                          ? 'bg-overlay-selected group-focus-visible/tree:ring-1 group-focus-visible/tree:ring-ring group-focus-visible/tree:ring-inset'
+                          : 'hover:bg-overlay-hover',
                         shown && 'text-primary',
                         node.id === cutId && 'opacity-50',
                       )}
@@ -337,7 +339,9 @@ export default function DashboardTree({
           className="min-w-52"
           onCloseAutoFocus={(e) => {
             e.preventDefault();
+            // A rename started from the menu: its input mounted while the menu held focus
             if (renamingRef.current == null) treeRef.current?.focus();
+            else treeRef.current?.querySelector<HTMLInputElement>('input')?.focus();
           }}
         >
           <ContextMenuItem onSelect={() => createFold(menuTarget)}>Create Folder</ContextMenuItem>
@@ -410,6 +414,14 @@ export default function DashboardTree({
 
 function RenameInput({ name, onDone }: { name: string; onDone: (name: string | null) => void }) {
   const done = useRef(false);
+  const ref = useRef<HTMLInputElement>(null);
+  // Started from a menu: take the focus once the menu has let it go
+  useEffect(() => {
+    const t = setTimeout(() => {
+      if (!done.current && document.activeElement !== ref.current) ref.current?.focus();
+    }, 200);
+    return () => clearTimeout(t);
+  }, []);
   const finish = (v: string | null) => {
     if (done.current) return;
     done.current = true;
@@ -417,6 +429,7 @@ function RenameInput({ name, onDone }: { name: string; onDone: (name: string | n
   };
   return (
     <Input
+      ref={ref}
       autoFocus
       aria-label="Name"
       defaultValue={name}
