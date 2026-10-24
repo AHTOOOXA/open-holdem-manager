@@ -17,6 +17,7 @@ then left alone.
 
 from __future__ import annotations
 
+import json
 import logging
 from contextlib import contextmanager
 
@@ -40,6 +41,7 @@ DEFAULT_TAGS: tuple[tuple[str, str], ...] = (
 _PRESET_COLOR = {name: color for name, color in DEFAULT_TAGS}
 
 MIGRATION_KEY = "marked_hands_v1"
+UNMIGRATED_KEY = "marked_hands_v1_unmigrated"  # JSON list of tagged hand ids with no player rows
 _NEXT_ID_KEY = "tag_defs_next_id"
 
 
@@ -124,27 +126,40 @@ def migrate_hand_tags(conn) -> None:
         tid = tag_id_by_key[tag[:MAX_NAME].lower()]
         if all(t != tid for t, _ in lst):
             lst.append((tid, created))
-    for ws in sorted({ws for ws, _ in by_hand}):
-        hids = [hid for w, hid in by_hand if w == ws]
-        players = pick_players(conn, ws, hids, fallback=True, use_cache=False)
-        for hid in hids:
-            pid = players.get(hid)
-            if pid is None:
-                continue
-            tags = by_hand[(ws, hid)]
-            stamps = [c for _, c in tags if c is not None]
-            conn.execute(
-                "INSERT OR IGNORE INTO marked_hands (workspace_id, hand_id, player_id, marked_at) "
-                "VALUES (?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))",
-                [ws, hid, pid, min(stamps) if stamps else None],
-            )
-            for pos, (tid, _) in enumerate(tags):
+    unmigrated: list[str] = []
+    conn.execute("BEGIN")
+    try:
+        for ws in sorted({ws for ws, _ in by_hand}):
+            hids = [hid for w, hid in by_hand if w == ws]
+            players = pick_players(conn, ws, hids, fallback=True, use_cache=False)
+            for hid in hids:
+                pid = players.get(hid)
+                if pid is None:
+                    unmigrated.append(hid)
+                    continue
+                tags = by_hand[(ws, hid)]
+                stamps = [c for _, c in tags if c is not None]
                 conn.execute(
-                    "INSERT OR IGNORE INTO marked_hand_tags "
-                    "(workspace_id, hand_id, player_id, tag_id, position) VALUES (?, ?, ?, ?, ?)",
-                    [ws, hid, pid, tid, pos],
+                    "INSERT OR IGNORE INTO marked_hands (workspace_id, hand_id, player_id, marked_at) "
+                    "VALUES (?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))",
+                    [ws, hid, pid, min(stamps) if stamps else None],
                 )
-    conn.execute("INSERT OR REPLACE INTO settings VALUES (?, '1')", [MIGRATION_KEY])
+                for pos, (tid, _) in enumerate(tags):
+                    conn.execute(
+                        "INSERT OR IGNORE INTO marked_hand_tags "
+                        "(workspace_id, hand_id, player_id, tag_id, position) VALUES (?, ?, ?, ?, ?)",
+                        [ws, hid, pid, tid, pos],
+                    )
+        if unmigrated:
+            logger.warning("%d tagged hands have no player rows and were not migrated: %s",
+                           len(unmigrated), ", ".join(unmigrated[:20]))
+            conn.execute("INSERT OR REPLACE INTO settings VALUES (?, ?)",
+                         [UNMIGRATED_KEY, json.dumps(unmigrated)])
+        conn.execute("INSERT OR REPLACE INTO settings VALUES (?, '1')", [MIGRATION_KEY])
+        conn.execute("COMMIT")
+    except BaseException:
+        conn.execute("ROLLBACK")
+        raise
     logger.info("Hand tag migration complete: %d marked hands.", len(by_hand))
 
 

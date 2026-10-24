@@ -10,6 +10,10 @@
  *   PUT    /api/config/{section}  T      → ConfigEnvelope<T> (full value; validated → 422)
  *   DELETE /api/config/{section}         → ConfigEnvelope<T> (reset to default)
  *
+ *   GET    /api/config/color_markers/next-id → { id: number }  reserves a never-used marker id
+ *          (counter = max(stored counter, max id in value) + 1); ids are never reused after deletion.
+ *          PATCH /api/players/{id}/notes validates color_tag = '' | null | an existing marker id (422).
+ *
  * Sections served by this store: 'stat_appearance' | 'game_types' | 'color_markers'.
  * Other sections keep their own APIs:
  *   hero nicknames → /api/sites + /api/workspaces/{id}/heroes (M0)

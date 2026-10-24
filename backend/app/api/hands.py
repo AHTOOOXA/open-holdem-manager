@@ -45,7 +45,10 @@ def list_hands(
     db = get_read_cursor()
     # The listed rows are the subject's: player_id when given, else the hero.
     hero_id = player_id if player_id is not None else get_hero_player_id(db, workspace_id)
-    if hero_id is None:
+    # Marked view without a subject: every marked (hand, player) pair of the workspace, each row
+    # from the marked player's point of view.
+    all_marked = player_id is None and (bool(marked) or bool(marked_hands.parse_id_list(tag_ids)))
+    if hero_id is None and not all_marked:
         return HandListResponse(hands=[], total=0, page=1, per_page=per_page, total_pages=0)
 
     from app.api.reports_lite import chain_hand_ids
@@ -58,7 +61,13 @@ def list_hands(
         hero_username = urow[0] if urow else None
     else:
         hero_username = get_hero_username(db, workspace_id)
-    params: list = [hero_id]
+    if all_marked:
+        join_player = ("EXISTS (SELECT 1 FROM marked_hands mh0 WHERE mh0.workspace_id = hp.workspace_id "
+                       "AND mh0.hand_id = hp.hand_id AND mh0.player_id = hp.player_id)")
+        params: list = []
+    else:
+        join_player = "hp.player_id = ?"
+        params = [hero_id]
     where_clauses: list[str] = ["h.workspace_id = ?"]
     params.append(workspace_id)
 
@@ -150,7 +159,7 @@ def list_hands(
     count_sql = f"""
         SELECT COUNT(*)
         FROM hands h
-        JOIN hand_players hp ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id AND hp.player_id = ?
+        JOIN hand_players hp ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id AND {join_player}
         WHERE 1=1 {where_sql}
     """
     total = db.execute(count_sql, params).fetchone()[0]
@@ -173,9 +182,9 @@ def list_hands(
     main_sql = f"""
         SELECT h.id, h.played_at, h.stakes, h.bb_amount,
                hp.position, hp.card1, hp.card2, hp.won_bb,
-               hp.all_in_ev_bb, h.rit_boards, h.is_cashout
+               hp.all_in_ev_bb, h.rit_boards, h.is_cashout, hp.player_id
         FROM hands h
-        JOIN hand_players hp ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id AND hp.player_id = ?
+        JOIN hand_players hp ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id AND {join_player}
         WHERE 1=1 {where_sql}
         ORDER BY {sort_col} {sort_dir}, h.played_at DESC
         LIMIT ? OFFSET ?
@@ -190,7 +199,13 @@ def list_hands(
     ph = ",".join("?" for _ in hand_ids)
 
     # Marks + tags of the row player
-    marked_set, tags_map = marked_hands.marks_for(db, workspace_id, hero_id, hand_ids)
+    pids_by_row = {(r[0], r[11]) for r in rows}
+    marked_set: set = set()
+    tags_map: dict = {}
+    for pid_ in {pid for _, pid in pids_by_row}:
+        ms, tm = marked_hands.marks_for(db, workspace_id, pid_, [h for h, p in pids_by_row if p == pid_])
+        marked_set |= {(h, pid_) for h in ms}
+        tags_map.update({(h, pid_): t for h, t in tm.items()})
 
     # Batch fetch board cards by street (Board 1 only for list view)
     board_rows = db.execute(
@@ -212,6 +227,7 @@ def list_hands(
     ).fetchall()
 
     actions_map: dict[str, dict[str, dict]] = {}
+    action_pid: dict[int, int] = {}
     _ACT_MAP = {"raise": "R", "bet": "B", "call": "C", "check": "X", "fold": "F"}
     _BLIND_TYPES = {"sb", "bb", "ante", "straddle"}
 
@@ -227,7 +243,9 @@ def list_hands(
         if not abbr or street not in hand_acts:
             continue
         v = round(amt_bb_f, 1) if amt_bb_f else None
-        hand_acts[street]["actions"].append(ActionItem(a=abbr, v=v, h=(pid == hero_id)))
+        item = ActionItem(a=abbr, v=v, h=(pid == hero_id))
+        action_pid[id(item)] = pid
+        hand_acts[street]["actions"].append(item)
 
     # Propagate pot sizes for hands that had DB actions
     for hid, hand_acts in actions_map.items():
@@ -241,6 +259,7 @@ def list_hands(
             running = sa["pot"] + round(street_total)
 
     # Fallback: parse from raw_text for any hands missing from actions table
+    raw_by_hand: dict[str, tuple[str, float]] = {}
     missing_ids = [hid for hid in hand_ids if hid not in actions_map]
     if missing_ids:
         mph = ",".join("?" for _ in missing_ids)
@@ -254,6 +273,13 @@ def list_hands(
             bb = float(bb_amt) if bb_amt else 0
             ss = parse_actions_from_raw(raw_text, hero_username, bb)
             actions_map[hid] = ss
+            raw_by_hand[hid] = (raw_text, bb)
+
+    usernames: dict[int, str] = {}
+    if all_marked:
+        row_pids = sorted({int(r[11]) for r in rows})
+        usernames = {int(i): u for i, u in db.execute(
+            "SELECT id, username FROM players WHERE id IN (SELECT UNNEST(?::INTEGER[]))", [row_pids]).fetchall()}
 
     hands = []
     for r in rows:
@@ -261,10 +287,22 @@ def list_hands(
         bb_amount = float(r[3])
 
         board = board_map.get(hid, {"flop": [], "turn": [], "river": []})
+        row_pid = int(r[11])
         hand_acts = actions_map.get(hid, {s: {"actions": [], "pot": 0} for s in _STREETS})
+        if all_marked:
+            # Re-express the actions from this row's player (a hand can be marked for several)
+            if hid in raw_by_hand:
+                raw_text, bb = raw_by_hand[hid]
+                uname = usernames.get(row_pid)
+                hand_acts = parse_actions_from_raw(raw_text, uname, bb)
+            else:
+                hand_acts = {s: {"pot": v["pot"], "actions": [
+                    ActionItem(a=a.a, v=a.v, h=(action_pid.get(id(a)) == row_pid)) for a in v["actions"]]}
+                    for s, v in hand_acts.items()}
 
         hands.append(HandSummary(
             id=hid,
+            player_id=row_pid,
             played_at=r[1],
             stakes=r[2],
             bb_amount=bb_amount,
@@ -275,8 +313,8 @@ def list_hands(
             all_in_ev_bb=float(r[8]) if r[8] is not None else float(r[7]),
             rit_boards=int(r[9]) if r[9] is not None else 1,
             is_cashout=bool(r[10]) if r[10] is not None else False,
-            marked=hid in marked_set,
-            tags=[TagRef(**t) for t in tags_map.get(hid, [])],
+            marked=(hid, row_pid) in marked_set,
+            tags=[TagRef(**t) for t in tags_map.get((hid, row_pid), [])],
             preflop_actions=hand_acts["preflop"]["actions"],
             flop_cards=board["flop"],
             flop_pot=hand_acts["flop"]["pot"],

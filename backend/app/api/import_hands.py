@@ -476,21 +476,43 @@ def insert_parsed_hand(db: duckdb.DuckDBPyConnection, parsed: ParsedHand, worksp
     return parsed.hand_id
 
 
+MAX_UPLOAD_BYTES = 500 * 1024 * 1024  # total uncompressed text per request
+MAX_ZIP_RATIO = 200  # per zip entry, uncompressed / compressed
+
+
 def _read_uploads(files_data: list[tuple[str, bytes]]) -> list[str]:
-    """Extract text contents from uploaded file data (handles .txt and .zip)."""
+    """Extract text contents from uploaded file data (handles .txt and .zip).
+
+    Raises HTTPException 413 when the total uncompressed size exceeds MAX_UPLOAD_BYTES or a
+    zip entry's compression ratio is implausible (zip bomb)."""
+    from fastapi import HTTPException
     text_contents: list[str] = []
+    total = 0
+
+    def too_large():
+        return HTTPException(status_code=413, detail="Upload too large (limit 500 MB uncompressed)")
+
     for fname, raw in files_data:
-        if fname.endswith(".zip"):
+        lname = fname.lower()
+        if lname.endswith(".zip"):
             try:
                 with zipfile.ZipFile(io.BytesIO(raw)) as zf:
-                    for name in zf.namelist():
+                    for info in zf.infolist():
+                        name = info.filename
                         if name.lower().endswith(".txt") and not name.startswith("__MACOSX"):
-                            text_contents.append(
-                                zf.read(name).decode("utf-8", errors="replace")
-                            )
+                            total += info.file_size
+                            if total > MAX_UPLOAD_BYTES:
+                                raise too_large()
+                            if info.file_size > 1024 * 1024 and \
+                                    info.file_size > MAX_ZIP_RATIO * max(info.compress_size, 1):
+                                raise too_large()
+                            text_contents.append(zf.read(info).decode("utf-8", errors="replace"))
             except zipfile.BadZipFile:
                 pass
-        elif fname.endswith(".txt"):
+        elif lname.endswith(".txt"):
+            total += len(raw)
+            if total > MAX_UPLOAD_BYTES:
+                raise too_large()
             text_contents.append(raw.decode("utf-8", errors="replace"))
     return text_contents
 

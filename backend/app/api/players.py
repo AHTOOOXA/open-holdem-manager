@@ -280,6 +280,11 @@ def update_player_notes(player_id: int, body: PlayerNotesBody):
         if not db.execute("SELECT 1 FROM players WHERE id = ?", [player_id]).fetchone():
             raise HTTPException(status_code=404, detail="Player not found")
 
+        if body.color_tag is not None and body.color_tag.strip() != "":
+            from app import config_sections as cs
+            if body.color_tag.strip() not in {str(m["id"]) for m in cs.get_markers(db)}:
+                raise HTTPException(status_code=422, detail="color_tag must be empty or a colour marker id")
+
         updates = []
         params = []
         if body.notes is not None:
@@ -287,7 +292,7 @@ def update_player_notes(player_id: int, body: PlayerNotesBody):
             params.append(body.notes)
         if body.color_tag is not None:
             updates.append("color_tag = ?")
-            params.append(body.color_tag)
+            params.append(body.color_tag.strip())
 
         if updates:
             params.append(player_id)
