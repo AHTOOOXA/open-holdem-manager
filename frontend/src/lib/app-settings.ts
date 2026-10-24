@@ -37,3 +37,10 @@ export async function patchAppSettings(patch: Partial<AppSettings>): Promise<App
   if (!res.ok) throw new Error(`Saving settings failed: ${res.statusText}`);
   return res.json();
 }
+
+/** Configuration › Other "Reset to default": restores max break + day start (keeps numeric_date_format). */
+export async function resetAppSettings(): Promise<AppSettings> {
+  const res = await fetch('/api/app-settings', { method: 'DELETE' });
+  if (!res.ok) throw new Error(`Resetting settings failed: ${res.statusText}`);
+  return res.json();
+}
