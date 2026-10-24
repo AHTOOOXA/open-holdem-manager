@@ -5,7 +5,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from app.api.import_hands import _stream_import
+from app.api.import_hands import _stream_import, import_date_filter
 from app.parsers import detect_parser
 from app.parsers import h2n_db
 
@@ -39,9 +39,15 @@ def list_h2n_databases(root: str | None = None):
 
 
 @router.post("/import/h2n")
-def import_h2n_database(req: H2NImportRequest, workspace_id: int = 1):
+def import_h2n_database(
+    req: H2NImportRequest,
+    workspace_id: int = 1,
+    date_from: str | None = None,
+    date_to: str | None = None,
+):
     """Import every hand of a Hand2Note database folder. Streams NDJSON like file import."""
     db_dir = Path(req.path).expanduser()
+    import_date_filter(date_from, date_to)  # 400 on a bad range before reading the DB
     try:
         texts = [t.strip() for t in h2n_db.iter_hand_texts(db_dir)]
     except (h2n_db.H2NFormatError, OSError) as e:
@@ -61,4 +67,7 @@ def import_h2n_database(req: H2NImportRequest, workspace_id: int = 1):
 
     all_hands = [t for hands in by_parser.values() for t in hands]
     hand_parsers = [p for p, hands in by_parser.items() for _ in hands]
-    return _stream_import(all_hands, hand_parsers, 1, workspace_id, pre_errors=unsupported)
+    return _stream_import(
+        all_hands, hand_parsers, 1, workspace_id, pre_errors=unsupported,
+        date_from=date_from, date_to=date_to,
+    )
