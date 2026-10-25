@@ -359,7 +359,7 @@ export async function getHeroStats(params?: {
   date_from?: string;
   date_to?: string;
   last_n?: number;
-}): Promise<HeroStats> {
+}, signal?: AbortSignal): Promise<HeroStats> {
   const sp = new URLSearchParams();
   setPositionParam(sp, params?.position);
   if (params?.stakes) sp.set('stakes', params.stakes);
@@ -368,7 +368,7 @@ export async function getHeroStats(params?: {
   if (params?.date_to) sp.set('date_to', params.date_to);
   if (params?.last_n) sp.set('last_n', String(params.last_n));
   _addWorkspaceParam(sp);
-  const res = await fetch(`${BASE}/stats/hero?${sp}`);
+  const res = await fetch(`${BASE}/stats/hero?${sp}`, { signal });
   if (!res.ok) throw new Error(`Stats failed: ${res.statusText}`);
   return res.json();
 }
@@ -822,13 +822,13 @@ export async function getCashDropStats(params?: {
   stakes?: string;
   date_from?: string;
   date_to?: string;
-}): Promise<CashDropResponse> {
+}, signal?: AbortSignal): Promise<CashDropResponse> {
   const sp = new URLSearchParams();
   if (params?.stakes) sp.set('stakes', params.stakes);
   if (params?.date_from) sp.set('date_from', params.date_from);
   if (params?.date_to) sp.set('date_to', params.date_to);
   _addWorkspaceParam(sp);
-  const res = await fetch(`${BASE}/reports/cash-drop?${sp}`);
+  const res = await fetch(`${BASE}/reports/cash-drop?${sp}`, { signal });
   if (!res.ok) throw new Error(`Cash drop stats failed: ${res.statusText}`);
   return res.json();
 }
@@ -1002,14 +1002,14 @@ export async function getDrift(params?: {
   game_mode?: string;
   date_from?: string;
   date_to?: string;
-}): Promise<DriftResponse> {
+}, signal?: AbortSignal): Promise<DriftResponse> {
   const sp = new URLSearchParams();
   if (params?.stakes) sp.set('stakes', params.stakes);
   setGameModeParam(sp, params?.game_mode);
   if (params?.date_from) sp.set('date_from', params.date_from);
   if (params?.date_to) sp.set('date_to', params.date_to);
   _addWorkspaceParam(sp);
-  const res = await fetch(`${BASE}/reports/drift?${sp}`);
+  const res = await fetch(`${BASE}/reports/drift?${sp}`, { signal });
   if (!res.ok) throw new Error(`Drift failed: ${res.statusText}`);
   return res.json();
 }
@@ -1074,7 +1074,7 @@ export interface HeadToHeadResponse {
   overall_bb_per_100: number;
 }
 
-export async function getPlayers(params?: PlayerListParams): Promise<PlayerListResponse> {
+export async function getPlayers(params?: PlayerListParams, signal?: AbortSignal): Promise<PlayerListResponse> {
   const sp = new URLSearchParams();
   if (params?.search) sp.set('search', params.search);
   if (params?.player_type) sp.set('player_type', params.player_type);
@@ -1084,7 +1084,7 @@ export async function getPlayers(params?: PlayerListParams): Promise<PlayerListR
   if (params?.page) sp.set('page', String(params.page));
   if (params?.per_page) sp.set('per_page', String(params.per_page));
   _addWorkspaceParam(sp);
-  const res = await fetch(`${BASE}/players?${sp}`);
+  const res = await fetch(`${BASE}/players?${sp}`, { signal });
   if (!res.ok) throw new Error(`Players failed: ${res.statusText}`);
   return res.json();
 }
@@ -1103,7 +1103,7 @@ export async function getPlayerStats(playerId: number, params?: {
   game_mode?: string;
   date_from?: string;
   date_to?: string;
-}): Promise<HeroStats> {
+}, signal?: AbortSignal): Promise<HeroStats> {
   const sp = new URLSearchParams();
   setPositionParam(sp, params?.position);
   if (params?.stakes) sp.set('stakes', params.stakes);
@@ -1111,15 +1111,15 @@ export async function getPlayerStats(playerId: number, params?: {
   if (params?.date_from) sp.set('date_from', params.date_from);
   if (params?.date_to) sp.set('date_to', params.date_to);
   _addWorkspaceParam(sp);
-  const res = await fetch(`${BASE}/players/${playerId}/stats?${sp}`);
+  const res = await fetch(`${BASE}/players/${playerId}/stats?${sp}`, { signal });
   if (!res.ok) throw new Error(`Player stats failed: ${res.statusText}`);
   return res.json();
 }
 
-export async function getHeadToHead(playerId: number): Promise<HeadToHeadResponse> {
+export async function getHeadToHead(playerId: number, signal?: AbortSignal): Promise<HeadToHeadResponse> {
   const sp = new URLSearchParams();
   _addWorkspaceParam(sp);
-  const res = await fetch(`${BASE}/players/${playerId}/head-to-head?${sp}`);
+  const res = await fetch(`${BASE}/players/${playerId}/head-to-head?${sp}`, { signal });
   if (!res.ok) throw new Error(`H2H failed: ${res.statusText}`);
   return res.json();
 }
@@ -1269,65 +1269,65 @@ function _buildPopParams(params?: PopulationFilterParams): URLSearchParams {
   return sp;
 }
 
-export async function getPopulationOverview(params?: PopulationFilterParams): Promise<PopulationOverview> {
+export async function getPopulationOverview(params?: PopulationFilterParams, signal?: AbortSignal): Promise<PopulationOverview> {
   const sp = _buildPopParams(params);
-  const res = await fetch(`${BASE}/population/overview?${sp}`);
+  const res = await fetch(`${BASE}/population/overview?${sp}`, { signal });
   if (!res.ok) throw new Error(`Population overview failed: ${res.statusText}`);
   return res.json();
 }
 
-export async function getPopulationFullStats(params?: PopulationFilterParams): Promise<HeroStats> {
+export async function getPopulationFullStats(params?: PopulationFilterParams, signal?: AbortSignal): Promise<HeroStats> {
   const sp = _buildPopParams(params);
-  const res = await fetch(`${BASE}/population/full-stats?${sp}`);
+  const res = await fetch(`${BASE}/population/full-stats?${sp}`, { signal });
   if (!res.ok) throw new Error(`Population full stats failed: ${res.statusText}`);
   return res.json();
 }
 
-export async function getPopulationPreflop(params?: PopulationFilterParams): Promise<PreflopResponse> {
+export async function getPopulationPreflop(params?: PopulationFilterParams, signal?: AbortSignal): Promise<PreflopResponse> {
   const sp = _buildPopParams(params);
-  const res = await fetch(`${BASE}/population/preflop?${sp}`);
+  const res = await fetch(`${BASE}/population/preflop?${sp}`, { signal });
   if (!res.ok) throw new Error(`Population preflop failed: ${res.statusText}`);
   return res.json();
 }
 
-export async function getPopulationSegments(params?: PopulationFilterParams): Promise<SegmentsResponse> {
+export async function getPopulationSegments(params?: PopulationFilterParams, signal?: AbortSignal): Promise<SegmentsResponse> {
   const sp = _buildPopParams(params);
-  const res = await fetch(`${BASE}/population/segments?${sp}`);
+  const res = await fetch(`${BASE}/population/segments?${sp}`, { signal });
   if (!res.ok) throw new Error(`Population segments failed: ${res.statusText}`);
   return res.json();
 }
 
-export async function getPopulationPostflop(params?: PopulationFilterParams): Promise<PostflopResponse> {
+export async function getPopulationPostflop(params?: PopulationFilterParams, signal?: AbortSignal): Promise<PostflopResponse> {
   const sp = _buildPopParams(params);
-  const res = await fetch(`${BASE}/population/postflop?${sp}`);
+  const res = await fetch(`${BASE}/population/postflop?${sp}`, { signal });
   if (!res.ok) throw new Error(`Population postflop failed: ${res.statusText}`);
   return res.json();
 }
 
-export async function getPopulationPotTypes(params?: PopulationFilterParams): Promise<PotTypesResponse> {
+export async function getPopulationPotTypes(params?: PopulationFilterParams, signal?: AbortSignal): Promise<PotTypesResponse> {
   const sp = _buildPopParams(params);
-  const res = await fetch(`${BASE}/population/pot-types?${sp}`);
+  const res = await fetch(`${BASE}/population/pot-types?${sp}`, { signal });
   if (!res.ok) throw new Error(`Population pot types failed: ${res.statusText}`);
   return res.json();
 }
 
-export async function getPopulationShowdown(params?: PopulationFilterParams): Promise<ShowdownResponse> {
+export async function getPopulationShowdown(params?: PopulationFilterParams, signal?: AbortSignal): Promise<ShowdownResponse> {
   const sp = _buildPopParams(params);
-  const res = await fetch(`${BASE}/population/showdown?${sp}`);
+  const res = await fetch(`${BASE}/population/showdown?${sp}`, { signal });
   if (!res.ok) throw new Error(`Population showdown failed: ${res.statusText}`);
   return res.json();
 }
 
-export async function getPopulationHuVsMw(params?: PopulationFilterParams): Promise<HuMwResponse> {
+export async function getPopulationHuVsMw(params?: PopulationFilterParams, signal?: AbortSignal): Promise<HuMwResponse> {
   const sp = _buildPopParams(params);
-  const res = await fetch(`${BASE}/population/hu-vs-mw?${sp}`);
+  const res = await fetch(`${BASE}/population/hu-vs-mw?${sp}`, { signal });
   if (!res.ok) throw new Error(`Population HU vs MW failed: ${res.statusText}`);
   return res.json();
 }
 
-export async function getPopulationComparison(params?: PopulationFilterParams): Promise<ComparisonResponse> {
+export async function getPopulationComparison(params?: PopulationFilterParams, signal?: AbortSignal): Promise<ComparisonResponse> {
   const sp = _buildPopParams(params);
-  const res = await fetch(`${BASE}/population/comparison?${sp}`);
+  const res = await fetch(`${BASE}/population/comparison?${sp}`, { signal });
   if (!res.ok) throw new Error(`Population comparison failed: ${res.statusText}`);
   return res.json();
 }
@@ -1817,7 +1817,7 @@ export async function getIdentityStats(identityId: number, params?: {
   game_mode?: string;
   date_from?: string;
   date_to?: string;
-}): Promise<HeroStats> {
+}, signal?: AbortSignal): Promise<HeroStats> {
   const sp = new URLSearchParams();
   _addWorkspaceParam(sp);
   setPositionParam(sp, params?.position);
@@ -1825,7 +1825,7 @@ export async function getIdentityStats(identityId: number, params?: {
   setGameModeParam(sp, params?.game_mode);
   if (params?.date_from) sp.set('date_from', params.date_from);
   if (params?.date_to) sp.set('date_to', params.date_to);
-  const res = await fetch(`${BASE}/identities/${identityId}/stats?${sp}`);
+  const res = await fetch(`${BASE}/identities/${identityId}/stats?${sp}`, { signal });
   if (!res.ok) throw new Error('Failed to fetch identity stats');
   return res.json();
 }
@@ -1856,7 +1856,7 @@ export async function fetchCompareStats(params: {
   workspace_id_b?: number;
   stakes?: string;
   game_mode?: string;
-}): Promise<CompareResponse> {
+}, signal?: AbortSignal): Promise<CompareResponse> {
   const sp = new URLSearchParams();
   _addWorkspaceParam(sp);
   sp.set('mode', params.mode);
@@ -1867,7 +1867,7 @@ export async function fetchCompareStats(params: {
   if (params.workspace_id_b != null) sp.set('workspace_id_b', String(params.workspace_id_b));
   if (params.stakes) sp.set('stakes', params.stakes);
   if (params.game_mode) sp.set('game_mode', params.game_mode === '__reg__' ? '' : params.game_mode);
-  const res = await fetch(`${BASE}/compare/stats?${sp}`);
+  const res = await fetch(`${BASE}/compare/stats?${sp}`, { signal });
   if (!res.ok) throw new Error('Compare failed');
   return res.json();
 }
