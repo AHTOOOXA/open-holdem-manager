@@ -200,3 +200,77 @@ def test_old_database_indexes_are_dropped_idempotently(db):
     assert "uq_hands_workspace_id" in idx
     init_schema(db)  # again: nothing left to drop, no error
     assert _indexes(db) == idx
+
+
+# ── 06/F6: finalize recomputes only the players an import touched, same results ──
+
+def _first_hands(n: int) -> list[str]:
+    from app.parsers import ggpoker
+    with open(FIXTURE_20K, encoding="utf-8") as f:
+        head = f.read(n * 1600)
+    return [h.strip() for h in ggpoker.split_hands(head) if h.strip()][:n]
+
+
+def _player_state(db):
+    players = db.execute("SELECT id, first_seen, last_seen FROM players ORDER BY id").fetchall()
+    classes = db.execute("SELECT player_id, workspace_id, player_type, is_reg FROM player_classifications "
+                         "ORDER BY player_id, workspace_id").fetchall()
+    return players, classes
+
+
+def _import(db, texts, ws):
+    from app.parsers import ggpoker
+    return ih.import_hand_texts(db, [(t, ggpoker) for t in texts], ws)
+
+
+@pytest.mark.skipif(not FIXTURE_20K.exists(), reason="20k fixture missing")
+def test_scoped_finalize_matches_full_finalize(db, monkeypatch):
+    db.execute("INSERT INTO workspaces (id, name) VALUES (2, 'Two') ON CONFLICT DO NOTHING")
+    db.execute("INSERT INTO hero_accounts (workspace_id, site_id, username, source) VALUES (2, 1, 'Hero', 'manual')")
+    hands = _first_hands(600)
+    assert len(hands) == 600
+    # Small reg thresholds so is_reg and player_type vary between players
+    from app import player_classification
+    real_rule = player_classification.get_reg_rule
+    monkeypatch.setattr(player_classification, "get_reg_rule",
+                        lambda conn: real_rule(conn).model_copy(update={"min_hands": 2, "auto_reg_hands": 6}))
+
+    third = len(hands) // 3
+    scoped_calls = []
+    real_scoped = ih._update_player_types_scoped
+    monkeypatch.setattr(ih, "_update_player_types_scoped",
+                        lambda conn, ws: (scoped_calls.append(ws), real_scoped(conn, ws)))
+    # Overlapping imports: the same players reappear across batches and workspaces
+    assert _import(db, hands[:2 * third], 1)["imported"] == 2 * third
+    assert _import(db, hands[third:], 2)["imported"] == len(hands) - third
+    assert _import(db, hands[2 * third:], 1)["imported"] == len(hands) - 2 * third
+    assert scoped_calls == [1, 2, 1]
+    scoped = _player_state(db)
+
+    # Full recompute of every workspace gives the same rows
+    ih.finalize_import(db, workspace_id=1)
+    ih.finalize_import(db, workspace_id=2)
+    assert _player_state(db) == scoped
+    assert len({r[2] for r in scoped[1]}) > 1 and len({r[3] for r in scoped[1]}) == 2
+
+    # A workspace clear keeps first/last seen exact for players left in the other workspace
+    import asyncio
+    import app.db as app_db
+    monkeypatch.setattr(app_db, "_conn", db)
+    asyncio.run(ih.clear_hands(workspace_id=2))
+    after_clear = _player_state(db)
+    ih.finalize_import(db, workspace_id=1)
+    assert _player_state(db)[0] == after_clear[0]
+
+
+@pytest.mark.skipif(not FIXTURE_20K.exists(), reason="20k fixture missing")
+def test_scoped_finalize_picks_up_players_never_finalised(db):
+    _import(db, _first_hands(50), 1)
+    # A crash between commit and finalize leaves first_seen NULL and no classification
+    db.execute("UPDATE players SET first_seen = NULL, last_seen = NULL")
+    db.execute("DELETE FROM player_classifications")
+    ih.finalize_import(db, workspace_id=1, player_ids=set())
+    scoped = _player_state(db)
+    ih.finalize_import(db, workspace_id=1)
+    assert _player_state(db) == scoped
+    assert all(r[1] is not None for r in scoped[0])

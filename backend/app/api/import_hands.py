@@ -223,11 +223,13 @@ def _build_batch_arrays(
     prepared: list[tuple[ParsedHand, dict, tuple]],
     rebuild: bool = False,
     workspace_id: int = 1,
+    touched: set[int] | None = None,
 ) -> tuple[pa.Table | None, pa.Table | None, pa.Table | None]:
     """Build PyArrow tables from a batch of (parsed, player_stats, financials) tuples.
 
     Pure CPU work — no DB writes. Safe to call from a thread.
     Returns (pa_hands, pa_hp, pa_board).  pa_hands is None when rebuild=True.
+    touched: when given, receives the player ids of the batch's rows.
     """
     global _next_hp_id
 
@@ -331,6 +333,8 @@ def _build_batch_arrays(
                     board_cols["workspace_id"].append(workspace_id)
                     board_cols["board_number"].append(bn)
 
+    if touched is not None:
+        touched.update(hp_cols["player_id"])
     pa_hands = pa.table(hands_cols) if hands_cols and hands_cols["id"] else None
     pa_hp = pa.table(hp_cols) if hp_cols["id"] else None
     pa_board = pa.table(board_cols) if board_cols["hand_id"] else None
@@ -371,6 +375,7 @@ def _flush_batch(
     rebuild: bool = False,
     in_transaction: bool = False,
     workspace_id: int = 1,
+    touched: set[int] | None = None,
 ) -> tuple[int, int, list[str]]:
     """Bulk-insert a batch of (parsed, player_stats, financials) tuples using PyArrow column-oriented inserts.
 
@@ -378,14 +383,19 @@ def _flush_batch(
     When in_transaction=True, caller manages the transaction — no BEGIN/COMMIT per batch,
     and a failure is re-raised: DuckDB aborts the whole transaction on any error, and a
     later COMMIT then silently rolls everything back instead of failing.
+    touched: when given, receives the player ids written (see finalize_import).
     Returns (imported_count, error_count, error_details).
     """
     if not prepared:
         return 0, 0, []
 
     try:
-        pa_hands, pa_hp, pa_board = _build_batch_arrays(db, prepared, rebuild=rebuild, workspace_id=workspace_id)
+        batch_touched: set[int] = set()
+        pa_hands, pa_hp, pa_board = _build_batch_arrays(
+            db, prepared, rebuild=rebuild, workspace_id=workspace_id, touched=batch_touched)
         _insert_arrays(db, pa_hands, pa_hp, pa_board, in_transaction=in_transaction)
+        if touched is not None:
+            touched |= batch_touched
         return len(prepared), 0, []
     except Exception as e:
         if in_transaction:
@@ -394,11 +404,21 @@ def _flush_batch(
         return 0, len(prepared), [f"Batch insert failed: {e}"]
 
 
-def finalize_import(db: duckdb.DuckDBPyConnection, workspace_id: int | None = None) -> None:
+def finalize_import(
+    db: duckdb.DuckDBPyConnection,
+    workspace_id: int | None = None,
+    player_ids: "set[int] | None" = None,
+) -> None:
     """Batch-update player first_seen/last_seen and player types. Call once after import.
 
     When workspace_id is provided, only recomputes player classifications for
     that workspace. When None (full rebuild), recomputes for all workspaces.
+
+    player_ids (with a workspace_id): the players the import wrote rows for. Only they
+    (plus players never finalised, first_seen NULL, e.g. after a crash between commit and
+    finalise) are recomputed: first/last seen is MIN/MAX over each player's own hands and
+    the classification reads only the player's rows in the workspace, so nobody else's
+    values can change. None = every player (deferred auto-import finalize, rebuild).
     """
     from app import data_generation
     data_generation.bump()  # invalidates cached report resolutions
@@ -406,20 +426,59 @@ def finalize_import(db: duckdb.DuckDBPyConnection, workspace_id: int | None = No
     db.execute("UPDATE hands SET imported_at = CURRENT_TIMESTAMP WHERE imported_at IS NULL"
                + (" AND workspace_id = ?" if workspace_id is not None else ""),
                [workspace_id] if workspace_id is not None else [])
-    db.execute("""
+    if player_ids is not None and workspace_id is not None:
+        pa_touched = pa.table({"player_id": pa.array(sorted(player_ids), pa.int32())})  # noqa: F841
+        db.execute("CREATE OR REPLACE TEMP TABLE _finalize_players AS "
+                   "SELECT player_id FROM pa_touched UNION SELECT id FROM players WHERE first_seen IS NULL")
+        try:
+            _update_first_last_seen(db, "WHERE hp.player_id IN (SELECT player_id FROM _finalize_players)")
+            _update_player_types_scoped(db, workspace_id)
+        finally:
+            db.execute("DROP TABLE IF EXISTS _finalize_players")
+    else:
+        _update_first_last_seen(db, "")
+        batch_update_player_types(db, workspace_id=workspace_id)
+    from app.heroes import detect_heroes
+    detect_heroes(db, workspace_id)
+
+
+def _update_first_last_seen(db: duckdb.DuckDBPyConnection, where: str) -> None:
+    db.execute(f"""
         UPDATE players SET
             first_seen = sub.min_t,
             last_seen = sub.max_t
         FROM (
             SELECT hp.player_id, MIN(h.played_at) AS min_t, MAX(h.played_at) AS max_t
             FROM hand_players hp JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
+            {where}
             GROUP BY hp.player_id
         ) sub
         WHERE players.id = sub.player_id
     """)
-    batch_update_player_types(db, workspace_id=workspace_id)
-    from app.heroes import detect_heroes
-    detect_heroes(db, workspace_id)
+
+
+def _update_player_types_scoped(db: duckdb.DuckDBPyConnection, workspace_id: int) -> None:
+    """batch_update_player_types(db, workspace_id) restricted to the players in the temp
+    table _finalize_players. Same SQL (app/player_classification.py) with one more filter:
+    a player's type and reg flag only read that player's rows in the workspace."""
+    from app import player_classification as pc
+    rule = pc.get_reg_rule(db)  # the same lookup batch_update_player_types uses
+    where = "AND hp.workspace_id = ? AND hp.player_id IN (SELECT player_id FROM _finalize_players)"
+    params = [workspace_id]
+    db.execute("DELETE FROM player_classifications WHERE workspace_id = ? "
+               "AND player_id IN (SELECT player_id FROM _finalize_players)", params)
+    db.execute(f"""
+        INSERT INTO player_classifications (player_id, workspace_id, player_type, is_reg)
+        SELECT t.player_id, t.workspace_id, t.player_type, r.is_reg
+        FROM (
+            SELECT hp.player_id, hp.workspace_id, {pc._TYPE_SQL} AS player_type
+            FROM hand_players hp
+            WHERE TRUE {where}
+            GROUP BY hp.player_id, hp.workspace_id
+        ) t
+        LEFT JOIN ({pc._reg_sql(rule).format(where=where)}) r
+          ON r.player_id = t.player_id AND r.workspace_id = t.workspace_id
+    """, params + params)
 
 
 def light_finalize(db: duckdb.DuckDBPyConnection, workspace_id: int) -> None:
@@ -821,6 +880,7 @@ def _stream_source(
                 )
 
             processed = 0
+            touched: set[int] = set()  # player ids written: finalize recomputes only them
             with _bulk_write(db), ThreadPoolExecutor(max_workers=1) as executor:
                 chunk = next(chunks, None)
                 parse_future: Future | None = submit(executor, chunk) if chunk else None
@@ -853,7 +913,8 @@ def _stream_source(
                     # Flush current batch to DB
                     if batch_prepared:
                         t0 = time.perf_counter()
-                        imp, errs, details = _flush_batch(db, batch_prepared, in_transaction=True, workspace_id=workspace_id)
+                        imp, errs, details = _flush_batch(db, batch_prepared, in_transaction=True,
+                                                          workspace_id=workspace_id, touched=touched)
                         t_db += time.perf_counter() - t0
                         imported += imp
                         errors += errs
@@ -879,7 +940,7 @@ def _stream_source(
                     })
                     chunk = nxt
 
-            finalize_import(db, workspace_id=workspace_id)
+            finalize_import(db, workspace_id=workspace_id, player_ids=touched)
             _checkpoint_after_bulk(db)
         finally:
             try:
@@ -970,10 +1031,12 @@ def import_hand_texts(db, hands: list[tuple[str, object]], workspace_id: int, *,
             error_details.extend(details)
             start = i
     imported = 0
+    touched: set[int] = set()
     if prepared:
         db.execute("BEGIN TRANSACTION")
         try:
-            imported, _, _ = _flush_batch(db, prepared, in_transaction=True, workspace_id=workspace_id)
+            imported, _, _ = _flush_batch(db, prepared, in_transaction=True, workspace_id=workspace_id,
+                                          touched=touched)
             db.execute("COMMIT")
         except BaseException:
             try:
@@ -983,7 +1046,7 @@ def import_hand_texts(db, hands: list[tuple[str, object]], workspace_id: int, *,
             reset_import_cache()
             raise
         if full_finalize:
-            finalize_import(db, workspace_id=workspace_id)
+            finalize_import(db, workspace_id=workspace_id, player_ids=touched)
         else:
             light_finalize(db, workspace_id)
     return {"imported": imported, "duplicates": duplicates, "errors": errors,
@@ -1266,6 +1329,9 @@ async def clear_hands(workspace_id: int = 1):
             [workspace_id, workspace_id],
         )
         db.execute("DELETE FROM hands WHERE workspace_id = ?", [workspace_id])
+        # Players also seen in other workspaces: first/last seen over the hands left. Imports
+        # only recompute the players they touch, so this can't wait for the next import.
+        _update_first_last_seen(db, "")
         from app.marked_hands import delete_workspace_marks
         delete_workspace_marks(db, workspace_id)
         db.execute("DELETE FROM player_classifications WHERE workspace_id = ?", [workspace_id])
