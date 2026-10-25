@@ -104,7 +104,9 @@ export default function DashboardView({
     queryFn: ({ signal }) => getGeneral(params, signal),
     placeholderData: keepPreviousData,
     staleTime: Infinity,
-    refetchOnMount: false,
+    // A valid cached grid costs no request; an invalidated one (data changed while away, or a
+    // post-import refetch cancelled by leaving the screen) refetches once on return
+    refetchOnMount: (q) => q.state.isInvalidated,
     refetchOnWindowFocus: false,
     ...HEAVY_QUERY,
   });
