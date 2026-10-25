@@ -19,6 +19,7 @@ from __future__ import annotations
 import logging
 import math
 from collections import defaultdict
+from decimal import Decimal
 
 from fastapi import APIRouter, HTTPException, Query
 
@@ -83,7 +84,8 @@ def _filters(stakes, game_mode, date_from, date_to, day_start: int = 0) -> tuple
     return sql, params
 
 
-def _aggregate_query(where: str) -> str:
+def _aggregate_query(where: str, hands_join: bool = True) -> str:
+    """`hands_join`: join `hands h`, needed only when the filter reads it (04/F9)."""
     masks = ", ".join(f"COALESCE(hp.{c}, 0) AS {c}" for c in _MASK_COLUMNS)
     sums = []
     for key in _ROW_KEYS:
@@ -94,13 +96,14 @@ def _aggregate_query(where: str) -> str:
         sums.append(f"SUM({case} * b.sd)")
         sums.append(f"SUM({case} * b.win)")
         sums.append(f"SUM({case} * b.sd * b.win)")
+    join = "\n            JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id" \
+        if hands_join else ""
     return f"""
         WITH b AS (
             SELECT hp.h2n_pos, hp.won_bb, {masks},
                    COALESCE(hp.went_to_showdown, FALSE)::INTEGER AS sd,
                    COALESCE(hp.is_winner, FALSE)::INTEGER AS win
-            FROM hand_players hp
-            JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
+            FROM hand_players hp{join}
             WHERE {where}
         )
         SELECT b.h2n_pos, COUNT(*), SUM(b.won_bb), {", ".join(sums)}
@@ -110,14 +113,17 @@ def _aggregate_query(where: str) -> str:
 
 
 def _group_counts(rows) -> tuple[int, float, dict[str | None, dict[str, Counts]]]:
-    """Parse the grouped query: hands, sum of won_bb, per position per row."""
+    """Parse the grouped query: hands, sum of won_bb, per position per row.
+
+    The per-position won_bb sums are DECIMAL: they are added exactly, then converted once,
+    so the total does not depend on the order DuckDB returns the groups in."""
     hands = 0
-    won_bb = 0.0
+    won_total = Decimal(0)
     groups: dict[str | None, dict[str, Counts]] = {}
     for r in rows:
         pos = r[0]
         hands += int(r[1] or 0)
-        won_bb += float(r[2] or 0)
+        won_total += Decimal(r[2] or 0)
         per_row: dict[str, Counts] = {}
         i = 3
         for key in _ROW_KEYS:
@@ -130,7 +136,7 @@ def _group_counts(rows) -> tuple[int, float, dict[str | None, dict[str, Counts]]
             c.won_sd = int(r[i + 2] or 0)
             i += 3
         groups[pos] = per_row
-    return hands, won_bb, groups
+    return hands, float(won_total), groups
 
 
 def _counts_by_ref(groups: dict[str | None, dict[str, Counts]]) -> dict[StatRef, Counts]:
@@ -256,9 +262,10 @@ def compute_general(db, player_id: int, workspace_id: int = 1, *, stakes: str | 
     AND-ed SQL + params, e.g. from a Reports chain, replaces the stakes/mode/date params)."""
     fsql, fparams = filter_sql or _filters(stakes, game_mode, date_from, date_to)
     # Hands H2N refuses to import (app.h2n.hand_rejection) are in none of its stats.
-    where = "hp.player_id = ? AND h.workspace_id = ? AND COALESCE(hp.h2n_valid, TRUE)" + fsql
+    where = "hp.player_id = ? AND hp.workspace_id = ? AND COALESCE(hp.h2n_valid, TRUE)" + fsql
     params = [player_id, workspace_id, *fparams]
-    hands, won_bb, groups = _group_counts(db.execute(_aggregate_query(where), params).fetchall())
+    hands, won_bb, groups = _group_counts(
+        db.execute(_aggregate_query(where, hands_join=bool(fsql.strip())), params).fetchall())
     counts = _counts_by_ref(groups)
 
     is_hero = hero_id is None or hero_id == player_id
