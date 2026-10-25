@@ -4,16 +4,16 @@
  * use the full chain (plus the range / hand-strength selections).
  */
 import { useDayKey } from '@/hooks/useDayStart';
-import { useMemo, useState } from 'react';
+import { lazy, Suspense, useMemo, useState } from 'react';
 import { Plus } from 'lucide-react';
 import { Chip } from '@/components/ui/chip';
+import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import FilterDialog from './FilterDialog';
 import LineBuilderDialog from './LineBuilderDialog';
 import { isCustomLineStep, lineStepDescription, type LineStep } from '@/lib/lines/step';
 import LowerReports, { type HandsInit } from './LowerReports';
 import StatsTab from './tabs/StatsTab';
-import GraphTab from './tabs/GraphTab';
 import PreflopRangeTab from './tabs/PreflopRangeTab';
 import HandStrengthTab from './tabs/HandStrengthTab';
 import {
@@ -21,6 +21,12 @@ import {
   type Dashboard, type FilterDialogTab, type HvSelection, type LowerTab, type ReportPage,
 } from '@/lib/reports/pages';
 import type { SplitRow, SplitType, Step } from '@/lib/reports/types';
+
+// The Graph tab is the only Reports view that draws a chart: loaded on demand (hovering or focusing
+// its tab starts the download), so a Reports first paint does not fetch the charting chunk.
+const loadGraphTab = () => import('./tabs/GraphTab');
+const GraphTab = lazy(loadGraphTab);
+const prefetchGraphTab = () => { void loadGraphTab(); };
 
 export interface PageActions {
   setOwn: (steps: Step[]) => void;
@@ -119,14 +125,18 @@ export default function ReportPageView({ page, dashboard, actions, handsInit, on
         <Tabs value={s.upperTab} onValueChange={(v) => { if (isUpperTab(v)) actions.setUpperTab(v); }} className="gap-0">
           <TabsList variant="line" aria-label="Report views" className="border-b-0 pl-3">
             <TabsTrigger value="stats">Stats</TabsTrigger>
-            <TabsTrigger value="graph">Graph</TabsTrigger>
+            <TabsTrigger value="graph" onPointerEnter={prefetchGraphTab} onFocus={prefetchGraphTab}>Graph</TabsTrigger>
             <TabsTrigger value="range" marker={cells.length > 0}>Preflop Range</TabsTrigger>
             <TabsTrigger value="strength" marker={hv !== null}>Hand Strength</TabsTrigger>
           </TabsList>
         </Tabs>
         <div className="min-w-0 px-6 py-4">
           {s.upperTab === 'stats' && <StatsTab query={upperQuery} onOpenStat={actions.openStat} />}
-          {s.upperTab === 'graph' && <GraphTab query={upperQuery} />}
+          {s.upperTab === 'graph' && (
+            <Suspense fallback={<Skeleton className="m-2 h-80 w-auto rounded" aria-busy />}>
+              <GraphTab query={upperQuery} />
+            </Suspense>
+          )}
           {s.upperTab === 'range' && <PreflopRangeTab query={upperQuery} selected={cells} onSelect={actions.setCells} />}
           {s.upperTab === 'strength' && <HandStrengthTab query={upperQuery} selected={hv} onSelect={actions.setHv} />}
         </div>

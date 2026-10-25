@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import { HEAVY_QUERY } from '@/lib/query-policy';
 import { getSpot } from '@/lib/reports/api';
 import { queryKeyOf } from '@/lib/reports/api';
 import type { ReportQuery, SpotStat, Step } from '@/lib/reports/types';
@@ -36,6 +37,7 @@ export default function StatsTab({ query, onOpenStat }: StatsTabProps) {
   const { data, isPending, isError, error } = useQuery({
     queryKey: ['reports', 'spot', queryKeyOf(query)],
     queryFn: ({ signal }) => getSpot(query, signal),
+    ...HEAVY_QUERY,
   });
 
   if (isPending) {

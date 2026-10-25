@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useInfiniteQuery } from '@tanstack/react-query';
+import { HEAVY_QUERY } from '@/lib/query-policy';
 import { X } from 'lucide-react';
 import HandDrawer, { type HandViewMode } from '@/components/hands/HandDrawer';
 import HandHistoryDialog from '@/components/hands/HandHistoryDialog';
 import HandRowMenuItems from '@/components/hands/HandRowMenuItems';
 import TagPickerPopover from '@/components/marked/TagPickerPopover';
-import { queryClient } from '@/lib/query-client';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
@@ -63,20 +63,21 @@ export default function GeneralHandList({ cellId, params, filter, title, onClose
 
   const query = useInfiniteQuery({
     queryKey: cellHandsQueryKey(cellId, params, filter, sort, order),
-    queryFn: ({ pageParam }) =>
+    queryFn: ({ pageParam, signal }) =>
       getCellHands(cellId, params, {
         ...filter,
         sort,
         order,
         offset: pageParam,
         limit: Math.min(HANDS_PAGE_SIZE, HANDS_MAX_ROWS - pageParam),
-      }),
+      }, signal),
     initialPageParam: 0,
     getNextPageParam: (last, pages) => {
       const loaded = pages.reduce((n, p) => n + p.rows.length, 0);
       const cap = Math.min(last.total, HANDS_MAX_ROWS);
       return last.rows.length > 0 && loaded < cap ? loaded : undefined;
     },
+    ...HEAVY_QUERY,
   });
   const { data, isPending, isError, error, hasNextPage, isFetchingNextPage, fetchNextPage } = query;
 
@@ -200,7 +201,6 @@ export default function GeneralHandList({ cellId, params, filter, title, onClose
           onClose={() => setOpenHandId(null)}
           onPrev={() => openIndex > 0 && setOpenHandId(rows[openIndex - 1].hand_id)}
           onNext={() => openIndex >= 0 && openIndex < rows.length - 1 && setOpenHandId(rows[openIndex + 1].hand_id)}
-          onTagsChanged={() => { void queryClient.invalidateQueries({ queryKey: ['general', 'hands'] }); }}
         />
       )}
       {historyId && (

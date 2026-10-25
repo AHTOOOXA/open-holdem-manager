@@ -387,7 +387,7 @@ export async function getGraphData(params?: {
   chain?: Step[];
   /** Player to graph (Reports dashboards on an opponent); omitted = the active hero. */
   player_id?: number;
-}): Promise<GraphResponse> {
+}, signal?: AbortSignal): Promise<GraphResponse> {
   const sp = new URLSearchParams();
   if (params?.stakes) sp.set('stakes', params.stakes);
   setGameModeParam(sp, params?.game_mode);
@@ -397,7 +397,7 @@ export async function getGraphData(params?: {
   if (params?.chain) sp.set('chain', chainParam(params.chain));
   if (params?.player_id) sp.set('player_id', String(params.player_id));
   _addWorkspaceParam(sp);
-  const res = await fetch(`${BASE}/reports/graph?${sp}`);
+  const res = await fetch(`${BASE}/reports/graph?${sp}`, { signal });
   if (!res.ok) throw new Error(`Graph failed: ${res.statusText}`);
   return res.json();
 }
@@ -654,30 +654,6 @@ export interface ComboStats {
   wsd_opp: number;
 }
 
-export interface RangeResponse {
-  combos: ComboStats[];
-  total_hands: number;
-}
-
-export async function getRangeStats(params?: {
-  position?: string;
-  stakes?: string;
-  game_mode?: string;
-  date_from?: string;
-  date_to?: string;
-}): Promise<RangeResponse> {
-  const sp = new URLSearchParams();
-  setPositionParam(sp, params?.position);
-  if (params?.stakes) sp.set('stakes', params.stakes);
-  setGameModeParam(sp, params?.game_mode);
-  if (params?.date_from) sp.set('date_from', params.date_from);
-  if (params?.date_to) sp.set('date_to', params.date_to);
-  _addWorkspaceParam(sp);
-  const res = await fetch(`${BASE}/stats/range?${sp}`);
-  if (!res.ok) throw new Error(`Range stats failed: ${res.statusText}`);
-  return res.json();
-}
-
 // ── Results Dashboard Types ──────────────────────────────────────────
 
 export interface FilterOptions {
@@ -750,7 +726,7 @@ export async function getResultsBreakdown(params?: {
   date_from?: string;
   date_to?: string;
   last_n?: number;
-}): Promise<ResultsBreakdown> {
+}, signal?: AbortSignal): Promise<ResultsBreakdown> {
   const sp = new URLSearchParams();
   if (params?.stakes) sp.set('stakes', params.stakes);
   setGameModeParam(sp, params?.game_mode);
@@ -758,7 +734,7 @@ export async function getResultsBreakdown(params?: {
   if (params?.date_to) sp.set('date_to', params.date_to);
   if (params?.last_n) sp.set('last_n', String(params.last_n));
   _addWorkspaceParam(sp);
-  const res = await fetch(`${BASE}/reports/breakdown?${sp}`);
+  const res = await fetch(`${BASE}/reports/breakdown?${sp}`, { signal });
   if (!res.ok) throw new Error(`Breakdown failed: ${res.statusText}`);
   return res.json();
 }

@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { HEAVY_QUERY } from '@/lib/query-policy';
 import {
   getPopulationOverview,
   getPopulationFullStats,
@@ -54,18 +55,21 @@ export default function PopulationPage() {
 
   const { data: overview, isPending: overviewLoading } = useQuery({
     queryKey: queryKeys.population.overview(filterParams),
-    queryFn: () => getPopulationOverview(filterParams),
+    queryFn: ({ signal }) => getPopulationOverview(filterParams, signal),
+    ...HEAVY_QUERY,
   });
 
   // Fired together with the overview (not after it): the overview only gates the render.
   const { data: stats, isPending: statsLoading } = useQuery({
     queryKey: queryKeys.population.fullStats(filterParams),
-    queryFn: () => getPopulationFullStats(filterParams),
+    queryFn: ({ signal }) => getPopulationFullStats(filterParams, signal),
+    ...HEAVY_QUERY,
   });
 
   const { data: heroStats } = useQuery({
     queryKey: queryKeys.stats.hero({}),
-    queryFn: () => getHeroStats(),
+    queryFn: ({ signal }) => getHeroStats(undefined, signal),
+    ...HEAVY_QUERY,
   });
 
   if (overviewLoading) {

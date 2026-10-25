@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
+import { HEAVY_QUERY } from '@/lib/query-policy';
 import { useNavigate } from 'react-router-dom';
 import { getHands } from '@/lib/api';
 import { chainParam } from '@/lib/reports/api';
@@ -337,6 +338,8 @@ export default function HandExplorer({
     queryKey: queryKeys.hands.list(handsQueryParams),
     queryFn: ({ signal }) => getHands(handsQueryParams, signal),
     placeholderData: keepPreviousData,
+    // A list over a Reports chain (an empty one too) resolves the chain: a report-sized request
+    ...(handsQueryParams.chain !== undefined ? HEAVY_QUERY : {}),
   });
 
   const sorting = useMemo<GridSorting>(() => [{ id: sort, desc: order === 'desc' }], [sort, order]);

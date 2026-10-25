@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import { HEAVY_QUERY } from '@/lib/query-policy';
 import { getStatDetailHands } from '@/lib/api';
 import { queryKeys } from '@/lib/query-keys';
 import { getStatDisplayName } from '@/lib/stat-registry';
@@ -35,7 +36,7 @@ export default function StatDetailPanel({
       page: 1,
       per_page: 0,
     }),
-    queryFn: () => getStatDetailHands(statKey, {
+    queryFn: ({ signal }) => getStatDetailHands(statKey, {
       position,
       stakes: filterParams.stakes,
       game_mode: filterParams.game_mode,
@@ -43,7 +44,8 @@ export default function StatDetailPanel({
       date_to: filterParams.date_to,
       page: 1,
       per_page: 0,
-    }),
+    }, signal),
+    ...HEAVY_QUERY,
   });
 
   const pct = statData && statData.opportunity_count > 0

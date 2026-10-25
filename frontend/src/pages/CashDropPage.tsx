@@ -1,5 +1,6 @@
 import { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { HEAVY_QUERY } from '@/lib/query-policy';
 import { getCashDropStats, createCheckpoint } from '@/lib/api';
 import type { CashDropRangeCategory, ComboStats } from '@/lib/api';
 import { useFilterOptions } from '@/hooks/useFilterOptions';
@@ -142,7 +143,8 @@ export default function CashDropPage() {
 
   const { data, isPending: loading } = useQuery({
     queryKey: queryKeys.cashDrop(cashDropParams),
-    queryFn: () => getCashDropStats(cashDropParams),
+    queryFn: ({ signal }) => getCashDropStats(cashDropParams, signal),
+    ...HEAVY_QUERY,
   });
 
   const s = data?.summary;

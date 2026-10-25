@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { HEAVY_QUERY } from '@/lib/query-policy';
 import { getDrift } from '@/lib/api';
 import type { DriftStat } from '@/lib/api';
 import { queryKeys } from '@/lib/query-keys';
@@ -28,8 +29,9 @@ export function useDrift(params: {
 
   const { data } = useQuery({
     queryKey: queryKeys.drift(filterParams),
-    queryFn: () => getDrift(filterParams),
+    queryFn: ({ signal }) => getDrift(filterParams, signal),
     enabled,
+    ...HEAVY_QUERY,
   });
 
   const driftMap = useMemo(() => {

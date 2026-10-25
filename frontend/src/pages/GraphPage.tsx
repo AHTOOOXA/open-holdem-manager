@@ -1,5 +1,6 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { HEAVY_QUERY } from '@/lib/query-policy';
 import {
   getGraphData,
   getResultsBreakdown,
@@ -35,7 +36,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { fixed, usd, moneyClass, bbUnits } from '@/lib/format';
 import { chartColors } from '@/lib/chart-theme';
 import ResultsChart, { sessionDurationHours } from '@/components/results/ResultsChart';
-import { GRAPH_GC_TIME, graphHands } from '@/components/results/graph-hands';
+import { graphHands } from '@/components/results/graph-hands';
 import type { LineToggle } from '@/components/results/ResultsChart';
 
 const LINE_COLORS = chartColors;
@@ -110,8 +111,8 @@ export default function GraphPage() {
   // Graph data query
   const { data: graphResp, isPending: graphLoading } = useQuery({
     queryKey: queryKeys.graph.data(filterParams),
-    queryFn: () => getGraphData(filterParams),
-    gcTime: GRAPH_GC_TIME,
+    queryFn: ({ signal }) => getGraphData(filterParams, signal),
+    ...HEAVY_QUERY,
   });
 
   const data = useMemo(() => graphResp?.points ?? [], [graphResp]);
@@ -121,7 +122,8 @@ export default function GraphPage() {
   // Breakdown query
   const { data: breakdown, isPending: breakdownLoading } = useQuery({
     queryKey: queryKeys.graph.breakdown(filterParams),
-    queryFn: () => getResultsBreakdown(filterParams),
+    queryFn: ({ signal }) => getResultsBreakdown(filterParams, signal),
+    ...HEAVY_QUERY,
   });
 
   const handlePreset = (preset: DatePreset) => {

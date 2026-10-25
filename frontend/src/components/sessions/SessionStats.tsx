@@ -3,6 +3,7 @@
  * stats are never clickable (sessions.md §5.2).
  */
 import { useQuery } from '@tanstack/react-query';
+import { HEAVY_QUERY } from '@/lib/query-policy';
 import { getSpot, queryKeyOf } from '@/lib/reports/api';
 import type { ReportQuery, SpotRecipe, SpotStat } from '@/lib/reports/types';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -34,6 +35,7 @@ export default function SessionStats({ query, recipe }: { query: ReportQuery; re
   const { data, isPending, isError, error } = useQuery({
     queryKey: ['reports', 'spot', recipe, queryKeyOf(query)],
     queryFn: ({ signal }) => getSpot({ ...query, recipe }, signal),
+    ...HEAVY_QUERY,
   });
 
   if (isPending) {

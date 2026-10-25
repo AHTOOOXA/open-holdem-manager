@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { keepPreviousData, useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { HEAVY_QUERY } from '@/lib/query-policy';
 import { useNavigate } from 'react-router-dom';
 import { getPlayers, getIdentities, createIdentity, addAlias } from '@/lib/api';
 import type { PlayerListParams, Identity } from '@/lib/api';
@@ -241,8 +242,9 @@ export default function PlayersPage() {
   // Page flips, sorts and searches keep the previous rows (dimmed) until the new page arrives.
   const { data, isPending, isPlaceholderData, isError } = useQuery({
     queryKey: queryKeys.players.list(queryParams),
-    queryFn: () => getPlayers(queryParams),
+    queryFn: ({ signal }) => getPlayers(queryParams, signal),
     placeholderData: keepPreviousData,
+    ...HEAVY_QUERY,
   });
 
   const handleSort = (col: string) => {

@@ -4,6 +4,7 @@
  */
 import { useCallback, useMemo } from 'react';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
+import { HEAVY_QUERY } from '@/lib/query-policy';
 import { DataGrid, createDataGridColumns, statCell, type DataGridColumnDef } from '@/components/ui/data-grid';
 import { getSplit } from '@/lib/reports/api';
 import { reportKeys } from '@/lib/reports/query-keys';
@@ -68,6 +69,7 @@ export default function SplitReport({ type, query, selectedKey, onOpenRow }: {
     queryKey: reportKeys.split(type, query),
     queryFn: ({ signal }) => getSplit({ ...query, type }, signal),
     placeholderData: keepPreviousData,
+    ...HEAVY_QUERY,
   });
   const data = q.data?.type === type ? q.data : undefined;
 

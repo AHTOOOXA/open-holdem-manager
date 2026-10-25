@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { HEAVY_QUERY } from '@/lib/query-policy';
 import { getHeroes, getPlayers, type PlayerSummary } from '@/lib/api';
 import { queryKeys } from '@/lib/query-keys';
 import { formatRelativeDate } from '@/lib/utils';
@@ -71,8 +72,9 @@ function SinglePicker({ onPick, onCancel }: { onPick: (p: PickedPlayer) => void;
   const params = { search: q || undefined, sort_by: 'hands', sort_dir: 'desc', per_page: 100 };
   const players = useQuery({
     queryKey: queryKeys.players.list({ ...params, ws: activeWorkspaceId, picker: true }),
-    queryFn: () => getPlayers(params),
+    queryFn: ({ signal }) => getPlayers(params, signal),
     placeholderData: (p) => p,
+    ...HEAVY_QUERY,
   });
   const heroes = useQuery({ queryKey: ['heroes', activeWorkspaceId], queryFn: () => getHeroes(activeWorkspaceId), staleTime: 60_000 });
 

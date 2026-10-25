@@ -126,8 +126,5 @@
   "src/pages/PopulationPage.tsx": {
     "text-arbitrary": 4,
     "palette": 9
-  },
-  "src/pages/RangePage.tsx": {
-    "text-arbitrary": 7
   }
 }

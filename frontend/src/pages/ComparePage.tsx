@@ -1,5 +1,6 @@
 import { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { HEAVY_QUERY } from '@/lib/query-policy';
 import { useWorkspace } from '@/contexts/WorkspaceContext';
 import type { Workspace } from '@/contexts/WorkspaceContext';
 import { useFilterOptions } from '@/hooks/useFilterOptions';
@@ -101,8 +102,9 @@ export default function ComparePage() {
 
   const { data, isPending } = useQuery({
     queryKey: ['compare', activeWorkspaceId, queryParams],
-    queryFn: () => fetchCompareStats(queryParams as Parameters<typeof fetchCompareStats>[0]),
+    queryFn: ({ signal }) => fetchCompareStats(queryParams as Parameters<typeof fetchCompareStats>[0], signal),
     enabled: canCompare,
+    ...HEAVY_QUERY,
   });
 
   const pa = data?.period_a;

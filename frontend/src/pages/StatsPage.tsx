@@ -1,5 +1,6 @@
 import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { HEAVY_QUERY } from '@/lib/query-policy';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { getHeroStats, createCheckpoint } from '@/lib/api';
 import { useFilterOptions } from '@/hooks/useFilterOptions';
@@ -88,7 +89,8 @@ function StatsListView() {
   // Stats query
   const { data: stats, isPending: loading } = useQuery({
     queryKey: queryKeys.stats.hero(filterParams),
-    queryFn: () => getHeroStats(filterParams),
+    queryFn: ({ signal }) => getHeroStats(filterParams, signal),
+    ...HEAVY_QUERY,
   });
 
   // Drift detection

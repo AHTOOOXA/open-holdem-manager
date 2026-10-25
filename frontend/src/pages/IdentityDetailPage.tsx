@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { HEAVY_QUERY } from '@/lib/query-policy';
 import {
   getIdentity, getIdentityStats, updateIdentity, deleteIdentity,
   removeAlias, addAlias, getPlayers,
@@ -57,7 +58,7 @@ function AddAliasDialog({
 
   const { data } = useQuery({
     queryKey: ['alias-search', search, activeWorkspaceId],
-    queryFn: () => getPlayers({ search: search || undefined, min_hands: 1, per_page: 20 }),
+    queryFn: ({ signal }) => getPlayers({ search: search || undefined, min_hands: 1, per_page: 20 }, signal),
     enabled: open,
   });
 
@@ -130,8 +131,9 @@ export default function IdentityDetailPage() {
 
   const { data: stats } = useQuery({
     queryKey: queryKeys.identities.stats(id, {}),
-    queryFn: () => getIdentityStats(id),
+    queryFn: ({ signal }) => getIdentityStats(id, undefined, signal),
     enabled: !isNaN(id),
+    ...HEAVY_QUERY,
   });
 
   const updateMut = useMutation({
