@@ -189,8 +189,10 @@ WITH hh AS (
       AND h.played_at IS NOT NULL
 ),
 m AS (
-    SELECT *, MAX(e) OVER (ORDER BY s, hid ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING)
-              AS prev_end
+    -- The running MAX(e) over the earlier rows is the previous row's e: every hand ends at
+    -- its start + 180 s (above) and the rows are in start order. This relies on that fixed
+    -- end; split_sessions() accepts explicit ends, this SQL does not.
+    SELECT *, LAG(e) OVER (ORDER BY s, hid) AS prev_end
     FROM hh
 ),
 g AS (
