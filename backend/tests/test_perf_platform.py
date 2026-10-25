@@ -409,3 +409,26 @@ Total                              =              655,360
     s = _parse_mallocstats(text)
     assert s["arenas"] == 2 and s["arena_bytes"] == 2_097_152
     assert s["bytes_in_allocated_blocks"] == 908_096 and s["total"] == 2_097_152
+
+
+# ── Data generation on owned write paths ────────────────────────────────
+
+def test_bump_clears_the_hero_cache(db):
+    from app import data_generation, heroes
+    heroes._cache[12345] = None
+    data_generation.bump()
+    assert 12345 not in heroes._cache
+
+
+def test_app_settings_bump_only_on_derived_change(db):
+    from app import data_generation
+    from app.app_settings import AppSettingsPatch, update_app_settings
+    g = data_generation.current()
+    update_app_settings(db, AppSettingsPatch(numeric_date_format=True))
+    assert data_generation.current() == g
+    update_app_settings(db, AppSettingsPatch(day_start_hour=0))  # unchanged value
+    assert data_generation.current() == g
+    update_app_settings(db, AppSettingsPatch(day_start_hour=5))
+    assert data_generation.current() == g + 1
+    update_app_settings(db, AppSettingsPatch(session_max_break_minutes=30))
+    assert data_generation.current() == g + 2

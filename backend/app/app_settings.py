@@ -72,11 +72,21 @@ def max_break_seconds(db) -> int:
     return int(get_app_settings(db)["session_max_break_minutes"]) * 60
 
 
+# Settings that change derived results (date-filter days, session splits): a change
+# bumps the data generation so cached results computed under the old value are freed.
+_DERIVED = ("session_max_break_minutes", "day_start_hour")
+
+
 def update_app_settings(db, patch: AppSettingsPatch) -> dict:
     """Write the given keys (caller holds the write lock); returns the full settings."""
+    before = get_app_settings(db)
     for key, value in patch.model_dump(exclude_none=True).items():
         db.execute("INSERT OR REPLACE INTO settings VALUES (?, ?)", [key, _encode(value)])
-    return get_app_settings(db)
+    after = get_app_settings(db)
+    if any(before[k] != after[k] for k in _DERIVED):
+        from app import data_generation
+        data_generation.bump()
+    return after
 
 
 __all__ = ["AppSettings", "AppSettingsPatch", "DEFAULTS", "get_app_settings",
