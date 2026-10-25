@@ -232,32 +232,35 @@ def get_graph(
             if hit is not None:
                 return hit
 
+    # The chain scope is built outside the slot: a cold spot resolve takes a slot of its own
+    # (chain.resolve), and a request waiting on another request's resolve of the same chain
+    # must not hold an idle slot meanwhile.
+    scope = chain_scope(db, workspace_id, player_id, chain)
+    if player_id is None:
+        player_id = get_hero_player_id(db, workspace_id)
+    if not player_id or (scope is not None and scope.empty):
+        return GraphResponse(points=[], sessions=[], variance=None, hands=0)
+
+    where = "hp.player_id = ? AND h.workspace_id = ?"
+    params: list = [player_id, workspace_id]
+    if stakes:
+        where += " AND h.stakes = ?"
+        params.append(stakes)
+    if game_mode is not None:
+        where += " AND h.game_mode = ?"
+        params.append(game_mode)
+    if date_from:
+        where += " AND h.played_at >= ?"
+        params.append(date_from)
+    if date_to:
+        where += " AND " + DATE_TO_SQL
+        params.append(date_to)
+    if scope is not None:
+        pred, pparams = scope.where("h.id")
+        where += f" AND {pred}"
+        params.extend(pparams)
+
     with heavy_slot():
-        scope = chain_scope(db, workspace_id, player_id, chain)
-        if player_id is None:
-            player_id = get_hero_player_id(db, workspace_id)
-        if not player_id or (scope is not None and scope.empty):
-            return GraphResponse(points=[], sessions=[], variance=None, hands=0)
-
-        where = "hp.player_id = ? AND h.workspace_id = ?"
-        params: list = [player_id, workspace_id]
-        if stakes:
-            where += " AND h.stakes = ?"
-            params.append(stakes)
-        if game_mode is not None:
-            where += " AND h.game_mode = ?"
-            params.append(game_mode)
-        if date_from:
-            where += " AND h.played_at >= ?"
-            params.append(date_from)
-        if date_to:
-            where += " AND " + DATE_TO_SQL
-            params.append(date_to)
-        if scope is not None:
-            pred, pparams = scope.where("h.id")
-            where += f" AND {pred}"
-            params.extend(pparams)
-
         out = graph_series(db, where, params, last_n, max_points)
     if key is not None:
         _GRAPH_CACHE.put(key, out)

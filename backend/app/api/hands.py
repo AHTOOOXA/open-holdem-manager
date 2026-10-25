@@ -330,14 +330,13 @@ EXPORT_CAP = 100_000
 _EXPORT_FETCH = 1000  # rows per chunk of the export stream
 
 
-def _export_query(db, *, sort, order, workspace_id, **filters) -> tuple[list, bool]:
-    """Run the export query on `db`: (first chunk of `(raw_text,)` rows, truncated). The rest
-    of the rows are read with `db.fetchmany`.
+def _export_query(db, f, *, sort, order, workspace_id) -> tuple[list, bool]:
+    """Run the export query of the list filters `f` (`_list_filters` on `db`): (first chunk of
+    `(raw_text,)` rows, truncated). The rest of the rows are read with `db.fetchmany`.
 
     A marked list without a subject has one row per marked (hand, player): one per hand (the
     row first in the sort). Hands are numbered in list order, capped, and only then joined to
     their texts, so the sort never carries the raw texts."""
-    f = _list_filters(db, workspace_id=workspace_id, **filters)
     if f.status != "ok":
         return [], False
     sort_col = _SORTS.get(sort, "h.played_at")
@@ -391,12 +390,17 @@ def export_hands(
     registered on the cursor that runs the query."""
     cur = get_db().cursor()
     try:
+        # The filters (and the chain scope in them) are built outside the slot: a cold spot
+        # resolve takes a slot of its own (chain.resolve), and waiting on another request's
+        # resolve of the same chain must not hold an idle slot.
+        f = _list_filters(
+            cur, position=position, stakes=stakes, result=result, marked=marked,
+            tag_ids=tag_ids, date_from=date_from, date_to=date_to, search=search,
+            stat_flag=stat_flag, stat_key=stat_key, player_id=player_id,
+            workspace_id=workspace_id, chain=chain)
         with heavy_slot():
-            rows, truncated = _export_query(
-                cur, sort=sort, order=order, position=position, stakes=stakes, result=result,
-                marked=marked, tag_ids=tag_ids, date_from=date_from, date_to=date_to,
-                search=search, stat_flag=stat_flag, stat_key=stat_key, player_id=player_id,
-                workspace_id=workspace_id, chain=chain)
+            rows, truncated = _export_query(cur, f, sort=sort, order=order,
+                                            workspace_id=workspace_id)
     except BaseException:
         cur.close()
         raise
