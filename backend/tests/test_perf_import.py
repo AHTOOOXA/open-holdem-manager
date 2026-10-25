@@ -160,3 +160,43 @@ def test_equity_memo_is_keyed_on_order_board_and_samples(monkeypatch):
     monkeypatch.setattr(equity, "_MEMO_MAX", 2)
     equity.equities([a, c], flop)
     assert len(equity._memo) == 2
+
+
+# ── 08/F3 + 06/F6: the non-unique indexes on the big tables are dropped ──
+
+_OLD_INDEXES = {
+    "idx_hands_played_at": "hands(played_at)", "idx_hands_stakes": "hands(stakes)",
+    "idx_hands_game_mode": "hands(game_mode)", "idx_h_played_stakes": "hands(played_at, stakes)",
+    "idx_hands_workspace": "hands(workspace_id)", "idx_hands_workspace_played": "hands(workspace_id, played_at)",
+    "idx_hp_hand_id": "hand_players(hand_id)", "idx_hp_player_id": "hand_players(player_id)",
+    "idx_hp_position": "hand_players(position)", "idx_hp_player_hand": "hand_players(player_id, hand_id)",
+    "idx_hp_hand_player": "hand_players(hand_id, player_id)",
+    "idx_hp_player_position": "hand_players(player_id, position)",
+    "idx_actions_hand_id": "actions(hand_id)", "idx_board_cards_hand_id": "board_cards(hand_id)",
+    "idx_hand_tags_hand_id": "hand_tags(hand_id)", "idx_hand_tags_tag": "hand_tags(tag)",
+}
+_BIG_TABLES = {"hands", "hand_players", "actions", "board_cards", "hand_tags"}
+
+
+def _indexes(conn) -> dict[str, tuple[str, bool]]:
+    return {r[0]: (r[1], r[2]) for r in conn.execute(
+        "SELECT index_name, table_name, is_unique FROM duckdb_indexes()").fetchall()}
+
+
+def test_schema_has_only_unique_indexes_on_big_tables(db):
+    idx = _indexes(db)
+    assert {n for n, (t, uniq) in idx.items() if t in _BIG_TABLES and not uniq} == set()
+    assert {"uq_hands_workspace_id", "uq_hand_tags", "uq_hand_notes"} <= set(idx)
+
+
+def test_old_database_indexes_are_dropped_idempotently(db):
+    from app.db import init_schema
+    for name, target in _OLD_INDEXES.items():
+        db.execute(f"CREATE INDEX {name} ON {target}")
+    assert set(_OLD_INDEXES) <= set(_indexes(db))
+    init_schema(db)
+    idx = _indexes(db)
+    assert not set(_OLD_INDEXES) & set(idx)
+    assert "uq_hands_workspace_id" in idx
+    init_schema(db)  # again: nothing left to drop, no error
+    assert _indexes(db) == idx

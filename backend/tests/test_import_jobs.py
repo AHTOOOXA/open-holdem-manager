@@ -170,9 +170,9 @@ def test_cancel_mid_stream_keeps_written_hands(client, db, monkeypatch):
     assert done["type"] == "done" and done["cancelled"] is True
     assert done["imported"] == 2 == _hand_count(db) < len(hands)
     assert all(m["type"] != "progress" for m in rest)  # stopped right after the batch
-    # Finalisation ran: indexes are back, imported_at stamped
+    # Finalisation ran: imported_at stamped, the unique hand key still in place
     idx = {r[0] for r in db.execute("SELECT index_name FROM duckdb_indexes()").fetchall()}
-    assert "idx_hands_played_at" in idx
+    assert "uq_hands_workspace_id" in idx
     assert db.execute("SELECT COUNT(*) FROM hands WHERE imported_at IS NULL").fetchone()[0] == 0
     assert ih.active_import_jobs() == 0
     assert client.post(f"/api/import/jobs/{start['job_id']}/cancel").status_code == 404

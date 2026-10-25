@@ -47,45 +47,6 @@ _next_hp_id: int | None = None
 
 BATCH_SIZE = 2000
 
-# ── Index definitions (dropped during bulk import, recreated after) ──
-_BULK_INDEXES = [
-    "CREATE INDEX IF NOT EXISTS idx_hands_played_at ON hands(played_at)",
-    "CREATE INDEX IF NOT EXISTS idx_hands_stakes ON hands(stakes)",
-    "CREATE INDEX IF NOT EXISTS idx_hands_game_mode ON hands(game_mode)",
-    "CREATE INDEX IF NOT EXISTS idx_hp_hand_id ON hand_players(hand_id)",
-    "CREATE INDEX IF NOT EXISTS idx_hp_player_id ON hand_players(player_id)",
-    "CREATE INDEX IF NOT EXISTS idx_hp_position ON hand_players(position)",
-    "CREATE INDEX IF NOT EXISTS idx_actions_hand_id ON actions(hand_id)",
-    "CREATE INDEX IF NOT EXISTS idx_hand_tags_hand_id ON hand_tags(hand_id)",
-    "CREATE INDEX IF NOT EXISTS idx_hand_tags_tag ON hand_tags(tag)",
-    "CREATE INDEX IF NOT EXISTS idx_board_cards_hand_id ON board_cards(hand_id)",
-    "CREATE INDEX IF NOT EXISTS idx_hp_player_hand ON hand_players(player_id, hand_id)",
-    "CREATE INDEX IF NOT EXISTS idx_hp_hand_player ON hand_players(hand_id, player_id)",
-    "CREATE INDEX IF NOT EXISTS idx_hp_player_position ON hand_players(player_id, position)",
-    "CREATE INDEX IF NOT EXISTS idx_h_played_stakes ON hands(played_at, stakes)",
-]
-
-_INDEX_NAMES = [
-    "idx_hands_played_at", "idx_hands_stakes", "idx_hands_game_mode",
-    "idx_hp_hand_id", "idx_hp_player_id", "idx_hp_position",
-    "idx_actions_hand_id", "idx_hand_tags_hand_id", "idx_hand_tags_tag",
-    "idx_board_cards_hand_id",
-    "idx_hp_player_hand", "idx_hp_hand_player", "idx_hp_player_position",
-    "idx_h_played_stakes",
-]
-
-
-def _drop_indexes(db: duckdb.DuckDBPyConnection) -> None:
-    """Drop all non-PK indexes for fast bulk loading."""
-    for name in _INDEX_NAMES:
-        db.execute(f"DROP INDEX IF EXISTS {name}")
-
-
-def _create_indexes(db: duckdb.DuckDBPyConnection) -> None:
-    """Recreate all indexes after bulk loading."""
-    for stmt in _BULK_INDEXES:
-        db.execute(stmt)
-
 # ── Column keys for column-oriented PyArrow inserts ──
 _HANDS_COLS = (
     "id", "site_id", "played_at", "game_type", "game_mode", "stakes",
@@ -144,13 +105,13 @@ def _check_shutdown() -> None:
 
 @contextmanager
 def _bulk_write(db: duckdb.DuckDBPyConnection):
-    """One transaction for a bulk load, with indexes dropped for speed.
+    """One transaction for a bulk load.
 
     Any error (or an app shutdown) rolls the whole load back, so the DB is
     never left half-written, and the connection is never left inside an
-    aborted transaction. On success the caller recreates the indexes.
+    aborted transaction. (The big tables have no non-unique indexes to drop
+    and rebuild around the load any more: see init_schema.)
     """
-    _drop_indexes(db)
     db.execute("BEGIN TRANSACTION")
     db.execute("SET checkpoint_threshold = '10GB'")
     try:
@@ -163,7 +124,6 @@ def _bulk_write(db: duckdb.DuckDBPyConnection):
             logging.getLogger(__name__).exception("ROLLBACK failed")
         # The cache may hold IDs that were just rolled back
         reset_import_cache()
-        _create_indexes(db)
         raise
     finally:
         # The setting is per connection: left at 10GB, nothing would be
@@ -792,8 +752,8 @@ def _stream_source(
     hour applied); hands outside are skipped and counted in `out_of_range`. Validated here,
     before streaming (400). The job is registered when the stream starts (first line:
     job_id) and removed when it ends; POST /api/import/jobs/{job_id}/cancel (or a client
-    disconnect) stops it after the batch in progress (written hands stay, indexes +
-    finalisation still run, done line has cancelled=true).
+    disconnect) stops it after the batch in progress (written hands stay, finalisation
+    still runs, done line has cancelled=true).
     """
     pre_errors = list(pre_errors or [])
     in_range = import_date_filter(date_from, date_to)
@@ -919,11 +879,6 @@ def _stream_source(
                     })
                     chunk = nxt
 
-            # Recreate indexes (bulk build is faster than incremental)
-            t0_idx = time.perf_counter()
-            _create_indexes(db)
-            t_idx = time.perf_counter() - t0_idx
-
             finalize_import(db, workspace_id=workspace_id)
             _checkpoint_after_bulk(db)
         finally:
@@ -938,7 +893,6 @@ def _stream_source(
             "stats_ms": round(t_stats * 1000),
             "equity_ms": round(t_equity * 1000),
             "db_ms": round(t_db * 1000),
-            "index_ms": round(t_idx * 1000),
         }))
 
     return _job_stream(work)
@@ -990,8 +944,8 @@ async def import_files_stream(
 
 def import_hand_texts(db, hands: list[tuple[str, object]], workspace_id: int, *,
                       full_finalize: bool = True) -> dict:
-    """Import a small set of (hand_text, parser) without streaming and without dropping
-    indexes (auto-import: a few hands per tick). Caller holds the write lock.
+    """Import a small set of (hand_text, parser) without streaming (auto-import: a few
+    hands per tick). Caller holds the write lock.
 
     Same pipeline as file import: dedup by id within the workspace, parse, stats, money,
     one transaction, then finalize_import (bumps the data generation). Raises on a failed
@@ -1066,7 +1020,6 @@ def _process_hands(db, text_contents: list[str], workspace_id: int = 1) -> Impor
             error_details, total_duplicates, total_errors, workspace_id,
         )
 
-    _create_indexes(db)
     finalize_import(db, workspace_id=workspace_id)
     _checkpoint_after_bulk(db)
 
@@ -1198,7 +1151,6 @@ def _run_rebuild_sync(db, on_progress: 'Callable[[int, int], None] | None' = Non
         # _batch_resolve_players will look up existing players from the DB.
         imported, errors, t_start = _rebuild_rows(db, all_rows, total, on_progress)
 
-    _create_indexes(db)
     # Full rebuild: recompute classifications for all workspaces
     finalize_import(db, workspace_id=None)
     _checkpoint_after_bulk(db)

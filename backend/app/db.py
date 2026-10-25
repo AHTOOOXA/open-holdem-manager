@@ -509,23 +509,20 @@ def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
     except Exception:
         pass
 
-    # Indexes
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_hands_played_at ON hands(played_at)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_hands_stakes ON hands(stakes)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_hands_game_mode ON hands(game_mode)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_hp_hand_id ON hand_players(hand_id)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_hp_player_id ON hand_players(player_id)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_hp_position ON hand_players(position)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_actions_hand_id ON actions(hand_id)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_hand_tags_hand_id ON hand_tags(hand_id)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_hand_tags_tag ON hand_tags(tag)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_board_cards_hand_id ON board_cards(hand_id)")
-
-    # Composite indexes for common query patterns
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_hp_player_hand ON hand_players(player_id, hand_id)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_hp_hand_player ON hand_players(hand_id, player_id)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_hp_player_position ON hand_players(player_id, position)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_h_played_stakes ON hands(played_at, stakes)")
+    # Non-unique indexes on the big tables are gone (performance/08 F3): DuckDB plans its
+    # analytical scans and joins without them (zonemaps + hash joins; point lookups measured
+    # the same at 214k hands), while every insert, delete and checkpoint paid to maintain and
+    # serialize them (46% of the used blocks at 20k hands). Dropping is idempotent; the
+    # unique indexes (uq_hands_workspace_id, uq_hand_tags, uq_hand_notes) stay.
+    for name in (
+        "idx_hands_played_at", "idx_hands_stakes", "idx_hands_game_mode", "idx_h_played_stakes",
+        "idx_hands_workspace", "idx_hands_workspace_played",
+        "idx_hp_hand_id", "idx_hp_player_id", "idx_hp_position",
+        "idx_hp_player_hand", "idx_hp_hand_player", "idx_hp_player_position",
+        "idx_actions_hand_id", "idx_board_cards_hand_id",
+        "idx_hand_tags_hand_id", "idx_hand_tags_tag",
+    ):
+        conn.execute(f"DROP INDEX IF EXISTS {name}")
 
     # Sync sequences to max existing IDs (prevents collisions after restart)
     for table, seq in [
@@ -638,12 +635,6 @@ def _migrate_to_workspaces(conn: duckdb.DuckDBPyConnection) -> None:
     # 6. Create indexes on hands.workspace_id
     conn.execute(
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_hands_workspace_id ON hands(workspace_id, id)"
-    )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_hands_workspace ON hands(workspace_id)"
-    )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_hands_workspace_played ON hands(workspace_id, played_at)"
     )
 
     # 7. Create checkpoints table
@@ -1069,24 +1060,8 @@ def _migrate_hands_composite_key(conn: duckdb.DuckDBPyConnection) -> None:
     conn.execute("DROP TABLE hands")
     conn.execute("ALTER TABLE _hands_tmp RENAME TO hands")
 
-    # Recreate all indexes (table recreation wiped them)
+    # Recreate the unique key (table recreation wiped it)
     conn.execute("CREATE UNIQUE INDEX uq_hands_workspace_id ON hands(workspace_id, id)")
-    conn.execute("CREATE INDEX idx_hands_workspace ON hands(workspace_id)")
-    conn.execute("CREATE INDEX idx_hands_workspace_played ON hands(workspace_id, played_at)")
-    conn.execute("CREATE INDEX idx_hands_played_at ON hands(played_at)")
-    conn.execute("CREATE INDEX idx_hands_stakes ON hands(stakes)")
-    conn.execute("CREATE INDEX idx_hands_game_mode ON hands(game_mode)")
-    conn.execute("CREATE INDEX idx_h_played_stakes ON hands(played_at, stakes)")
-    conn.execute("CREATE INDEX idx_hp_hand_id ON hand_players(hand_id)")
-    conn.execute("CREATE INDEX idx_hp_player_id ON hand_players(player_id)")
-    conn.execute("CREATE INDEX idx_hp_position ON hand_players(position)")
-    conn.execute("CREATE INDEX idx_hp_player_hand ON hand_players(player_id, hand_id)")
-    conn.execute("CREATE INDEX idx_hp_hand_player ON hand_players(hand_id, player_id)")
-    conn.execute("CREATE INDEX idx_hp_player_position ON hand_players(player_id, position)")
-    conn.execute("CREATE INDEX idx_actions_hand_id ON actions(hand_id)")
-    conn.execute("CREATE INDEX idx_hand_tags_hand_id ON hand_tags(hand_id)")
-    conn.execute("CREATE INDEX idx_hand_tags_tag ON hand_tags(tag)")
-    conn.execute("CREATE INDEX idx_board_cards_hand_id ON board_cards(hand_id)")
 
     conn.execute(
         "INSERT OR REPLACE INTO settings VALUES ('hands_composite_key', '1')"
