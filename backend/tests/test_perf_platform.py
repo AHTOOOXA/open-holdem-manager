@@ -264,3 +264,29 @@ def test_app_uses_the_pure_asgi_cursor_middleware():
     classes = [m.cls for m in app_main.app.user_middleware]
     assert app_main.CursorCleanupMiddleware in classes
     assert not any(isinstance(c, type) and issubclass(c, BaseHTTPMiddleware) for c in classes)
+
+
+# ── DuckDB limits (08/F12) ───────────────────────────────────────────────
+
+def test_duckdb_limits_default_and_overrides(monkeypatch):
+    monkeypatch.delenv("OHM_DUCKDB_MEMORY_LIMIT", raising=False)
+    monkeypatch.delenv("OHM_DUCKDB_THREADS", raising=False)
+    assert app_db.duckdb_limits() == {"memory_limit": "2GB"}
+    monkeypatch.setenv("OHM_DUCKDB_MEMORY_LIMIT", "3.5 GiB")
+    monkeypatch.setenv("OHM_DUCKDB_THREADS", "4")
+    assert app_db.duckdb_limits() == {"memory_limit": "3.5GiB", "threads": "4"}
+    monkeypatch.setenv("OHM_DUCKDB_MEMORY_LIMIT", "2GB'; DROP TABLE hands; --")
+    monkeypatch.setenv("OHM_DUCKDB_THREADS", "lots")
+    assert app_db.duckdb_limits() == {"memory_limit": "2GB"}
+
+
+def test_duckdb_limits_are_applied(monkeypatch):
+    monkeypatch.setenv("OHM_DUCKDB_MEMORY_LIMIT", "768MB")
+    monkeypatch.setenv("OHM_DUCKDB_THREADS", "3")
+    conn = duckdb.connect(":memory:")
+    app_db._apply_duckdb_limits(conn)
+    mem, threads = conn.execute(
+        "SELECT current_setting('memory_limit'), current_setting('threads')").fetchone()
+    assert threads == 3
+    assert mem.replace(" ", "") in ("732.4MiB", "768.0MB", "732.4MB")  # DuckDB prints MiB
+    conn.close()

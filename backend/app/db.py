@@ -3,6 +3,7 @@ import contextvars
 import duckdb
 import logging
 import os
+import re
 import time
 import threading
 from pathlib import Path
@@ -37,6 +38,40 @@ _request_cursors: contextvars.ContextVar[list | None] = contextvars.ContextVar(
 _rebuild_status: dict = {"active": False, "processed": 0, "total": 0}
 
 
+# DuckDB's buffer pool cap. Measured DuckDB memory (duckdb_memory()) stays far below it:
+# ~220 MB peak for the heaviest reads at 214k hands (raw_text scans, window over every
+# hand_players row), ~160 MB during a 60k rebuild, and those reads run unchanged at 512 MB.
+# The pool is mostly evictable block cache, so 2 GB is ~10x headroom (room for 1M hands)
+# while bounding DuckDB's share of a 16 GB machine to half the former 4 GB. Spills go to
+# DuckDB's default temp directory next to the database file. Override with
+# OHM_DUCKDB_MEMORY_LIMIT (e.g. "4GB") and OHM_DUCKDB_THREADS (default: all cores).
+DEFAULT_MEMORY_LIMIT = "2GB"
+_SIZE_RE = re.compile(r"^\s*\d+(\.\d+)?\s*(B|KB|MB|GB|TB|KIB|MIB|GIB|TIB)\s*$", re.IGNORECASE)
+
+
+def duckdb_limits() -> dict[str, str]:
+    """The SET values get_db() applies: memory_limit always, threads only if overridden."""
+    limits = {"memory_limit": DEFAULT_MEMORY_LIMIT}
+    mem = os.environ.get("OHM_DUCKDB_MEMORY_LIMIT", "").strip()
+    if mem:
+        if _SIZE_RE.match(mem):
+            limits["memory_limit"] = mem.replace(" ", "")
+        else:
+            logger.warning("Ignoring OHM_DUCKDB_MEMORY_LIMIT=%r (expected e.g. 2GB)", mem)
+    threads = os.environ.get("OHM_DUCKDB_THREADS", "").strip()
+    if threads:
+        if threads.isdigit() and int(threads) > 0:
+            limits["threads"] = str(int(threads))
+        else:
+            logger.warning("Ignoring OHM_DUCKDB_THREADS=%r (expected a positive integer)", threads)
+    return limits
+
+
+def _apply_duckdb_limits(conn: duckdb.DuckDBPyConnection) -> None:
+    for name, value in duckdb_limits().items():
+        conn.execute(f"SET {name} = '{value}'")
+
+
 def get_db() -> duckdb.DuckDBPyConnection:
     global _conn
     if _conn is None:
@@ -44,7 +79,7 @@ def get_db() -> duckdb.DuckDBPyConnection:
             if _conn is None:
                 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
                 _conn = _connect_with_recovery()
-                _conn.execute("SET memory_limit = '4GB'")
+                _apply_duckdb_limits(_conn)
                 init_schema(_conn)
                 atexit.register(close_db)
     return _conn
