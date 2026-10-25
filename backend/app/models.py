@@ -344,7 +344,7 @@ class DriftResponse(BaseModel):
     total_hands: int = 0
 
 
-# ── Range Page Models ────────────────────────────────────────────────
+# ── Per-combo stats (Cash Drop range) ───────────────────────────────
 
 class ComboStats(BaseModel):
     combo: str  # e.g. "AKs", "AKo", "AA"
@@ -360,11 +360,6 @@ class ComboStats(BaseModel):
     wtsd_opp: int = 0  # saw flop count
     wsd: int = 0
     wsd_opp: int = 0  # went to showdown count
-
-
-class RangeResponse(BaseModel):
-    combos: list[ComboStats] = []
-    total_hands: int = 0
 
 
 # ── Cash Drop Models ────────────────────────────────────────────────
