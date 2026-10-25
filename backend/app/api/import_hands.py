@@ -1203,9 +1203,12 @@ def _run_rebuild_sync(db, on_progress: 'Callable[[int, int], None] | None' = Non
     if total == 0:
         return
 
-    all_rows = db.execute(
-        "SELECT id, workspace_id, site_id, raw_text FROM hands ORDER BY played_at ASC, id ASC"
-    ).fetchall()
+    # Only the order (as Arrow, no Python objects) up front; raw_text is read chunk by chunk
+    # (_rebuild_chunks) instead of holding every hand text for the whole rebuild.
+    order = db.execute(
+        "SELECT id, workspace_id FROM hands ORDER BY played_at ASC, id ASC"
+    ).fetch_arrow_table()
+    order = order.append_column("pos", pa.array(range(order.num_rows), pa.int64()))
 
     reset_import_cache()
     with _bulk_write(db):
@@ -1217,7 +1220,7 @@ def _run_rebuild_sync(db, on_progress: 'Callable[[int, int], None] | None' = Non
         db.execute("DELETE FROM hand_players")
         # Keep players table intact — player_aliases has FK references, and
         # _batch_resolve_players will look up existing players from the DB.
-        imported, errors, t_start = _rebuild_rows(db, all_rows, total, on_progress)
+        imported, errors, t_start = _rebuild_rows(db, _rebuild_chunks(db, order), total, on_progress)
 
     # Full rebuild: recompute classifications for all workspaces
     finalize_import(db, workspace_id=None)
@@ -1232,13 +1235,23 @@ def _run_rebuild_sync(db, on_progress: 'Callable[[int, int], None] | None' = Non
     )
 
 
-def _rebuild_rows(db, all_rows, total, on_progress) -> tuple[int, int, float]:
+def _rebuild_chunks(db, order: pa.Table) -> "Iterator[list[tuple]]":
+    """(id, workspace_id, site_id, raw_text) rows in `order`, BATCH_SIZE at a time. Each
+    chunk is one join on (id, workspace_id) (unique), read on the rebuild's own connection
+    and transaction between its writes (raw_text, id and played_at are never written)."""
+    for start in range(0, order.num_rows, BATCH_SIZE):
+        pa_chunk = order.slice(start, BATCH_SIZE)  # noqa: F841 (replacement scan)
+        yield db.execute(
+            "SELECT h.id, h.workspace_id, h.site_id, h.raw_text FROM pa_chunk k "
+            "JOIN hands h ON h.id = k.id AND h.workspace_id = k.workspace_id ORDER BY k.pos"
+        ).fetchall()
+
+
+def _rebuild_rows(db, chunks: "Iterator[list[tuple]]", total, on_progress) -> tuple[int, int, float]:
     imported = 0
     errors = 0
     processed = 0
     t_start = time.perf_counter()
-
-    chunks = [all_rows[ci:ci + BATCH_SIZE] for ci in range(0, total, BATCH_SIZE)]
 
     for ci, chunk in enumerate(chunks):
         _check_shutdown()
@@ -1299,7 +1312,7 @@ def _rebuild_rows(db, all_rows, total, on_progress) -> tuple[int, int, float]:
         if on_progress:
             on_progress(processed, total)
 
-        if (ci + 1) % 5 == 0 or ci == len(chunks) - 1:
+        if (ci + 1) % 5 == 0 or processed >= total:
             elapsed = time.perf_counter() - t_start
             hps = imported / elapsed if elapsed > 0 else 0
             logging.getLogger(__name__).info(

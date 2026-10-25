@@ -305,3 +305,60 @@ def test_player_cache_released_after_stream_import(db, monkeypatch):
     assert db.execute("SELECT MIN(id) FROM hand_players WHERE id > ?", [max_hp]).fetchone()[0] == max_hp + 1
     assert db.execute("SELECT COUNT(*) FROM hand_players").fetchone()[0] == \
         db.execute("SELECT COUNT(DISTINCT id) FROM hand_players").fetchone()[0]
+
+
+# ── 06/F8: rebuild reads raw_text chunk by chunk, same rows as reading it all up front ──
+
+def _rebuild_snapshot(db):
+    hp = db.execute("SELECT * FROM hand_players ORDER BY id").fetchall()
+    board = db.execute("SELECT * FROM board_cards ORDER BY workspace_id, hand_id, board_number, street, card_order").fetchall()
+    hands = db.execute("SELECT id, workspace_id, rit_boards, is_cashout, stakes, sb_amount, bb_amount "
+                       "FROM hands ORDER BY workspace_id, id").fetchall()
+    return hp, board, hands, _player_state(db)
+
+
+@pytest.mark.skipif(not FIXTURE_20K.exists(), reason="20k fixture missing")
+def test_streamed_rebuild_matches_up_front_read(monkeypatch):
+    import duckdb
+    from app.db import init_schema
+    from app.heroes import invalidate_hero_cache
+
+    hands = _first_hands(2600)  # > one BATCH_SIZE chunk
+    monkeypatch.setattr(ih, "BATCH_SIZE", 700)
+
+    def fresh():
+        ih.reset_import_cache()
+        invalidate_hero_cache()
+        conn = duckdb.connect(":memory:")
+        init_schema(conn)
+        conn.execute("INSERT INTO workspaces (id, name) VALUES (2, 'Two')")
+        for ws in (1, 2):
+            conn.execute("INSERT INTO hero_accounts (workspace_id, site_id, username, source) "
+                         "VALUES (?, 1, 'Hero', 'manual')", [ws])
+        # Imported out of played_at order and split over two workspaces
+        _import(conn, hands[1300:], 1)
+        _import(conn, hands[:1300:2], 2)
+        _import(conn, hands[1:1300:2], 1)
+        return conn
+
+    def old_chunks(db, order):
+        rows = db.execute(
+            "SELECT id, workspace_id, site_id, raw_text FROM hands ORDER BY played_at ASC, id ASC").fetchall()
+        assert len(rows) == order.num_rows
+        for i in range(0, len(rows), ih.BATCH_SIZE):
+            yield rows[i:i + ih.BATCH_SIZE]
+
+    ref_db = fresh()
+    with monkeypatch.context() as m:
+        m.setattr(ih, "_rebuild_chunks", old_chunks)
+        ih._run_rebuild_sync(ref_db)
+    reference = _rebuild_snapshot(ref_db)
+
+    new_db = fresh()
+    seen = []
+    real_chunks = ih._rebuild_chunks
+    monkeypatch.setattr(ih, "_rebuild_chunks", lambda db, order: (seen.append(len(c)) or c for c in real_chunks(db, order)))
+    ih._run_rebuild_sync(new_db)
+    assert seen == [700, 700, 700, 500]
+    assert _rebuild_snapshot(new_db) == reference
+    assert len(reference[0]) > 2600 * 5
