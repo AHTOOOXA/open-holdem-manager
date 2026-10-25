@@ -174,22 +174,72 @@ def close_db():
             _conn = None
 
 
+_COLUMNS_SQL = (
+    "SELECT table_name, column_name FROM duckdb_columns() "
+    "WHERE database_name = current_database() AND schema_name = current_schema()"
+)
+
+
+class _ColumnCatalog:
+    """Column names per table, read with one catalog query.
+
+    Startup used to probe `duckdb_columns()` once per migrated column (~55 probes, ~28 ms at
+    20k and 214k alike). A snapshot answers every probe; it is re-read when a table it has
+    never seen is asked about (created after the snapshot). Migrations that recreate a table
+    keep its columns (CREATE TABLE AS SELECT *), so a known table's column set stays valid.
+    """
+
+    def __init__(self, conn) -> None:
+        self.conn = conn
+        self._cols: dict[str, set[str]] | None = None
+
+    def _load(self) -> None:
+        cols: dict[str, set[str]] = {}
+        for table, column in self.conn.execute(_COLUMNS_SQL).fetchall():
+            cols.setdefault(table, set()).add(column)
+        self._cols = cols
+
+    def has(self, table: str, column: str) -> bool:
+        if self._cols is None or table not in self._cols:
+            self._load()
+        return column in self._cols.get(table, ())
+
+    def added(self, table: str, column: str) -> None:
+        if self._cols is not None:
+            self._cols.setdefault(table, set()).add(column)
+
+
+# The snapshot of the init_schema() run in progress (None outside it).
+_column_catalog: contextvars.ContextVar[_ColumnCatalog | None] = contextvars.ContextVar(
+    "_column_catalog", default=None
+)
+
+
 def _add_column_if_missing(
     conn: duckdb.DuckDBPyConnection, table: str, column: str, ddl: str,
 ) -> None:
     """ALTER TABLE ADD COLUMN only when needed, instead of catching the error
-    (a failed statement aborts the surrounding transaction, if there is one)."""
-    exists = conn.execute(
-        "SELECT 1 FROM duckdb_columns() WHERE database_name = current_database() "
-        "AND schema_name = current_schema() "
-        "AND table_name = ? AND column_name = ?",
-        [table, column],
-    ).fetchone()
-    if not exists:
-        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+    (a failed statement aborts the surrounding transaction, if there is one).
+    `IF NOT EXISTS` keeps it safe even if the snapshot missed a column added meanwhile."""
+    catalog = _column_catalog.get()
+    if catalog is None or catalog.conn is not conn:
+        catalog = _ColumnCatalog(conn)
+    if not catalog.has(table, column):
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {ddl}")
+        catalog.added(table, column)
 
 
 def init_schema(conn: duckdb.DuckDBPyConnection) -> None:
+    """Create the schema and run the idempotent migrations (one catalog read for all
+    column checks, see _ColumnCatalog)."""
+    token = _column_catalog.set(_ColumnCatalog(conn))
+    try:
+        _init_schema(conn)
+    finally:
+        _column_catalog.reset(token)
+
+
+def _init_schema(conn: duckdb.DuckDBPyConnection) -> None:
     conn.execute("""
         CREATE TABLE IF NOT EXISTS sites (
             id INTEGER PRIMARY KEY,
