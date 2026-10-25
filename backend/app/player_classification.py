@@ -102,3 +102,7 @@ def batch_update_player_types(db, workspace_id: int | None = None) -> None:
         LEFT JOIN ({_reg_sql(rule).format(where=where)}) r
           ON r.player_id = t.player_id AND r.workspace_id = t.workspace_id
     """, params + params)
+    # Classifications are derived data that cached results read (players list, population
+    # type filters); finalize_import bumps before this rewrite, so bump again after it.
+    from app import data_generation
+    data_generation.bump()

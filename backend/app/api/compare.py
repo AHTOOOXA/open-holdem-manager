@@ -2,9 +2,18 @@ from fastapi import APIRouter, Query
 from app.date_filters import DATE_TO_SQL
 from app.db import get_read_cursor, get_hero_username, get_hero_player_id
 from app.models import PeriodStats, CompareResponse
-from app.stats_engine import compute_hero_stats, compute_population_stats
+from app.stats_engine import ResultCache, compute_hero_stats, compute_population_stats
 
 router = APIRouter()
+
+# Summary rows by (SQL, params), until the hand data changes. The stats themselves are cached
+# by the stats engine.
+_SUMMARY_CACHE = ResultCache("compare.summary", capacity=32)
+
+
+def _cached_row(db, query: str, params: list, heavy: bool = False):
+    return _SUMMARY_CACHE.get_or_compute(
+        db, (query, tuple(params)), lambda: db.execute(query, params).fetchone(), heavy=heavy)
 
 
 def _get_period_summary(
@@ -38,7 +47,7 @@ def _get_period_summary(
         query += " AND h.game_mode = ?"
         params.append(game_mode)
 
-    row = db.execute(query, params).fetchone()
+    row = _cached_row(db, query, params)
     hands = int(row[0])
     win_rate = round(float(row[1]), 2) if row[1] is not None else None
     ev_rate = round(float(row[2]), 2) if row[2] is not None else None
@@ -54,11 +63,14 @@ def _get_population_summary(
     game_mode: str | None,
 ) -> tuple[int, int]:
     """Return (player_count, total_observations) for population."""
-    query = """
+    # The hands join is only needed for hands columns (stakes, game mode): every
+    # hand_players row has its hand, and hp.workspace_id equals h.workspace_id by the join.
+    hands_filter = bool(stakes) or game_mode is not None
+    query = f"""
         SELECT COUNT(DISTINCT hp.player_id), COUNT(*)
         FROM hand_players hp
-        JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
-        WHERE h.workspace_id = ?
+        {"JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id" if hands_filter else ""}
+        WHERE hp.workspace_id = ?
     """
     params: list = [workspace_id]
     if hero_player_id:
@@ -74,8 +86,7 @@ def _get_population_summary(
         query += f"""
             AND hp.player_id IN (
                 SELECT hp2.player_id FROM hand_players hp2
-                JOIN hands h2 ON hp2.hand_id = h2.id AND hp2.workspace_id = h2.workspace_id
-                WHERE h2.workspace_id = ?
+                WHERE hp2.workspace_id = ?
                 {"AND hp2.player_id != ?" if hero_player_id else ""}
                 GROUP BY hp2.player_id HAVING COUNT(*) >= ?
             )
@@ -85,7 +96,7 @@ def _get_population_summary(
             params.append(hero_player_id)
         params.append(min_hands)
 
-    row = db.execute(query, params).fetchone()
+    row = _cached_row(db, query, params, heavy=True)
     return int(row[0]), int(row[1])
 
 
