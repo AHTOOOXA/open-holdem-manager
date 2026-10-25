@@ -125,7 +125,7 @@ export function StatInfo({ cellId, meta, params }: { cellId: string; meta: Gener
   const { data } = useQuery({
     queryKey: cellDetailQueryKey(cellId, params),
     queryFn: () => getCellDetail(cellId, params),
-    staleTime: 60_000,
+    staleTime: Infinity, // like the grid: the data only changes on import / rebuild (invalidated there)
   });
   const title = titleFor(meta);
   return (
@@ -190,7 +190,7 @@ export default function StatPopup({
   const { data, isPending, isError, error } = useQuery({
     queryKey: cellDetailQueryKey(cellId, params),
     queryFn: () => getCellDetail(cellId, params),
-    staleTime: 60_000,
+    staleTime: Infinity, // like the grid: the data only changes on import / rebuild (invalidated there)
   });
 
   const title = titleFor(meta);

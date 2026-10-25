@@ -15,10 +15,12 @@ Data sources:
 - Everything that needs individual actions (hero's next decision, Boards,
   Bet Sizes, hand rows) re-parses the hand's `raw_text` with its site parser
   and reruns the matcher (`app.h2n.replay`), because the `actions` table is
-  not populated. The per-hand results are kept in an in-memory LRU cache
-  keyed by (workspace, hand, player, row), so only the first popup over a set
-  of hands pays for the replay; later requests (other filters, the hands
-  list) reuse them.
+  not populated. The per-hand results are packed into one int each and kept
+  in an in-memory cache with one segment per (workspace, player, row), bounded
+  by bytes (OHM_POPUP_CACHE_MB, default 128) and cleared on every data change
+  (`data_generation.on_bump`), so only the first popup over a set of hands
+  pays for the replay; later requests (other filters, the hands list) reuse
+  them.
 
 Only action cells (one matcher row) have a popup. Expression cells (4-Bet
 Range, Aggression, WTSD, ...) are answered with 400.
@@ -29,8 +31,10 @@ from __future__ import annotations
 import gc
 import logging
 import math
+import os
+import sys
 import threading
-from collections import OrderedDict
+from collections import Counter, OrderedDict
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Iterable, Literal, Optional
@@ -40,7 +44,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.app_settings import get_app_settings
 from app.date_filters import bound_sql
-from app import marked_hands
+from app import data_generation, marked_hands
+from app.concurrency import heavy_slot
 from app.models import TagRef
 from app.db import get_hero_player_id, get_read_cursor
 from app.general_cells import GENERAL_CELLS, ActionCell
@@ -644,14 +649,14 @@ class _NextCounter:
         self.cases = [0] * 5
         self.opps = [0] * 5
 
-    def add(self, nxt: tuple[int, int] | None) -> None:
+    def add(self, nxt: tuple[int, int] | None, n: int = 1) -> None:
         if nxt is None:
             return
         eff, mask = nxt
-        self.cases[eff] += 1
+        self.cases[eff] += n
         for t in range(5):
             if mask >> t & 1:
-                self.opps[t] += 1
+                self.opps[t] += n
 
     def model(self) -> NextActions:
         r = {_TYPE_KEYS[t]: _ratio(self.cases[t], self.opps[t]) for t in range(5)}
@@ -664,10 +669,10 @@ def _ratio(cases: int, opps: int) -> Ratio:
     return Ratio(value=cases / opps * 100.0 if opps else None, cases=cases, opps=opps)
 
 
-# ── per-hand replay records + LRU cache ───────────────────────────────────
+# ── per-hand replay records + byte-bounded cache ──────────────────────────
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class _Rec:
     """What the popup needs from one replayed hand (for one player and row)."""
 
@@ -679,43 +684,183 @@ class _Rec:
     sizes: tuple[tuple[str, bool], ...]         # (bucket key, case) over every bucket
 
 
-_NONE_REC = object()   # replay failed or the hand is not an opportunity after all
+# Records are cached packed into one int (bit layout below, low bits first); 0 means "replay
+# failed or the hand is not an opportunity after all". Ints are ~30-40 bytes, a _Rec with its
+# tuples 0.6-1.3 KB; equal ints also let the aggregation count each distinct record once.
+#   valid 1 | case 1 | nxt 8 | direct 8 | size cases NB | size opps NB | n textures 4 | n cats 4
+#   | textures TEX_W each | cats CAT_W each (hand value index + 2, 0 = None)
+_NONE = 0
+_NB = len(_BUCKETS)
+_BUCKET_INDEX = {b.id: i for i, b in enumerate(_BUCKETS)}
+_TEX_W = max(len(v) for v in BOARD_CATEGORIES.values())
+_CAT_W = max(len(v) for v in STREET_CATEGORIES.values()).bit_length() + 1
+_SH_NXT, _SH_DIRECT, _SH_SC = 2, 10, 18
+_SH_SO = _SH_SC + _NB
+_SH_NT = _SH_SO + _NB
+_SH_NC = _SH_NT + 4
+_SH_BOARDS = _SH_NC + 4
 
 
-class _LRU:
-    def __init__(self, capacity: int):
-        self.capacity = capacity
-        self._d: OrderedDict = OrderedDict()
+def _code_next(n: tuple[int, int] | None) -> int:
+    return 0 if n is None else 1 + (n[0] << 5 | n[1])     # type 0..4, mask < 32: 1..160
+
+
+def _decode_next(c: int) -> tuple[int, int] | None:
+    return None if c == 0 else ((c - 1) >> 5, (c - 1) & 31)
+
+
+def _pack(rec: _Rec | None) -> int:
+    if rec is None:
+        return _NONE
+    if len(rec.textures) > 15 or len(rec.cats) > 15:
+        raise ValueError("too many boards")
+    v = 1 | rec.case << 1 | _code_next(rec.nxt) << _SH_NXT | _code_next(rec.direct) << _SH_DIRECT
+    for bid, is_case in rec.sizes:
+        v |= 1 << (_BUCKET_INDEX[bid] + (_SH_SC if is_case else _SH_SO))
+    v |= len(rec.textures) << _SH_NT | len(rec.cats) << _SH_NC
+    sh = _SH_BOARDS
+    for tex in rec.textures:
+        for c in tex:
+            v |= 1 << (sh + c)
+        sh += _TEX_W
+    for cat in rec.cats:
+        v |= (0 if cat is None else cat + 2) << sh
+        sh += _CAT_W
+    return v
+
+
+def _unpack(v: int) -> _Rec | None:
+    if not v:
+        return None
+    sizes = []
+    for i, b in enumerate(_BUCKETS):
+        if v >> (_SH_SC + i) & 1:
+            sizes.append((b.id, True))
+        elif v >> (_SH_SO + i) & 1:
+            sizes.append((b.id, False))
+    n_tex = v >> _SH_NT & 15
+    n_cats = v >> _SH_NC & 15
+    sh = _SH_BOARDS
+    textures = []
+    for _ in range(n_tex):
+        m = v >> sh
+        textures.append(tuple(c for c in range(_TEX_W) if m >> c & 1))
+        sh += _TEX_W
+    cats = []
+    for _ in range(n_cats):
+        c = v >> sh & ((1 << _CAT_W) - 1)
+        cats.append(None if c == 0 else c - 2)
+        sh += _CAT_W
+    return _Rec(bool(v >> 1 & 1), tuple(textures), tuple(cats),
+                _decode_next(v >> _SH_NXT & 255), _decode_next(v >> _SH_DIRECT & 255), tuple(sizes))
+
+
+def _pack_case(v: int) -> bool:
+    return bool(v >> 1 & 1)
+
+
+_DEFAULT_BUDGET_MB = 128
+
+
+class _Segment:
+    __slots__ = ("recs", "kv", "bytes")
+
+    def __init__(self):
+        self.recs: dict[str, int] = {}
+        self.kv = 0          # bytes of the keys and values
+        self.bytes = 0       # kv + the dict itself
+
+
+class _RecordCache:
+    """Packed replay records, one segment (hand id -> packed int) per (workspace, player, row).
+
+    Bounded by an estimate of the bytes held (sys.getsizeof of the dicts, keys and values),
+    evicting whole segments least recently used. A segment larger than `max_segment` (half
+    the budget by default) is dropped and not cached again until the next clear: one
+    oversized cell must not flush every other cell just to be evicted by the next one.
+    """
+
+    def __init__(self, budget: int, max_segment: int | None = None):
+        self.budget = budget
+        self.max_segment = budget // 2 if max_segment is None else max_segment
+        self._segs: OrderedDict[tuple, _Segment] = OrderedDict()
+        self._too_big: set[tuple] = set()
+        self._bytes = 0
         self._lock = threading.Lock()
 
-    def get(self, key):
+    def segment(self, key: tuple) -> dict[str, int]:
+        """The segment's records (read-only for the caller; may be empty)."""
         with self._lock:
-            v = self._d.get(key)
-            if v is not None:
-                self._d.move_to_end(key)
-            return v
+            seg = self._segs.get(key)
+            if seg is None:
+                return {}
+            self._segs.move_to_end(key)
+            return seg.recs
 
-    def put(self, key, value) -> None:
+    def add(self, key: tuple, items: list[tuple[str, int]]) -> None:
+        if not items:
+            return
+        size = sys.getsizeof
         with self._lock:
-            self._d[key] = value
-            self._d.move_to_end(key)
-            while len(self._d) > self.capacity:
-                self._d.popitem(last=False)
+            if key in self._too_big:
+                return
+            seg = self._segs.get(key)
+            if seg is None:
+                seg = self._segs[key] = _Segment()
+            else:
+                self._segs.move_to_end(key)
+            recs = seg.recs
+            kv = 0
+            for hid, v in items:
+                if hid not in recs:
+                    recs[hid] = v
+                    kv += size(hid) + size(v)
+            seg.kv += kv
+            new = size(recs) + seg.kv
+            self._bytes += new - seg.bytes
+            seg.bytes = new
+            if new > self.max_segment:
+                del self._segs[key]
+                self._bytes -= new
+                self._too_big.add(key)
+                return
+            while self._bytes > self.budget and len(self._segs) > 1:
+                _, old = self._segs.popitem(last=False)
+                self._bytes -= old.bytes
 
     def clear(self) -> None:
         with self._lock:
-            self._d.clear()
+            self._segs.clear()
+            self._too_big.clear()
+            self._bytes = 0
 
-    def __len__(self) -> int:
-        return len(self._d)
+    def stats(self) -> dict:
+        with self._lock:
+            return {"records": sum(len(s.recs) for s in self._segs.values()),
+                    "bytes": self._bytes, "segments": len(self._segs),
+                    "skipped": len(self._too_big)}
 
 
-_RECORDS = _LRU(300_000)
+def _budget_from_env() -> int:
+    try:
+        mb = float(os.environ.get("OHM_POPUP_CACHE_MB", _DEFAULT_BUDGET_MB))
+    except ValueError:
+        mb = _DEFAULT_BUDGET_MB
+    return int(mb * 1024 * 1024)
 
 
+_RECORDS = _RecordCache(_budget_from_env())
+
+
+@data_generation.on_bump
 def clear_cache() -> None:
-    """Drop every cached replay record (tests; after a rebuild is harmless)."""
+    """Drop every cached replay record (on every data change: import, clear, rebuild,
+    workspace delete; and in tests)."""
     _RECORDS.clear()
+
+
+def cache_stats() -> dict:
+    return _RECORDS.stats()
 
 
 def _parse(raw_text: str, site_id: int):
@@ -723,7 +868,11 @@ def _parse(raw_text: str, site_id: int):
     return parsed, replay_parsed(parsed)
 
 
-def _compute_record(parsed, seq: HandSeq, username: str, row: str, street: int) -> _Rec | None:
+def _compute_record(parsed, seq: HandSeq, username: str, row: str, street: int,
+                    stored: tuple[list[str], int | None] | None = None) -> _Rec | None:
+    """The record of `username` in one hand. Postflop rows need the boards and the
+    stat-street hand value: from `parsed`, or for a single-board hand from `stored` =
+    (board cards in deal order, `hand_players.hv_<street>`), see _stored_postflop."""
     res = match_row(seq, row, username)
     if res is None or not res.opp or res.hit is None:
         return None
@@ -733,11 +882,15 @@ def _compute_record(parsed, seq: HandSeq, username: str, row: str, street: int) 
     if street > 0:
         sname = STREET_NAMES[street]
         n = _BOARD_LEN[street]
-        boards = player_boards(parsed)
+        boards = player_boards(parsed) if stored is None else [stored[0]]
         textures = tuple(tuple(board_categories(b[:n], sname)) if len(b) >= n else ()
                          for b in boards)
         if res.case:
-            cats = tuple(c.get(f"hv_{sname}") for c in classify_boards_for_player(parsed, username))
+            if stored is None:
+                cats = tuple(c.get(f"hv_{sname}")
+                             for c in classify_boards_for_player(parsed, username))
+            else:
+                cats = (stored[1],)
     nxt = direct = None
     if res.case:
         flat = _Flat(seq)
@@ -777,34 +930,41 @@ def _fetch_seqs(db, workspace_id: int, ids: list[str]) -> dict[str, bytes]:
     return out
 
 
-def _records(db, workspace_id: int, row: str, street: int,
-             hands: Iterable[tuple[str, str]]) -> tuple[dict[str, _Rec], int, int]:
-    """Replay records for (hand id, username) pairs: (by hand id, replayed, failed).
+def _records(db, workspace_id: int, player_id: int, username: str, row: str, street: int,
+             hand_ids: Iterable[str], scope: "_Scope | None" = None
+             ) -> tuple[dict[str, int], int, int]:
+    """Packed replay records of the player's hands: (by hand id, replayed, failed).
 
+    The result holds no entry for a hand whose replay failed or that is no opportunity.
     Preflop rows only need the action sequence, which the import stored
     (`hand_players.h2n_seq`): decoding it is ~25x cheaper than re-parsing the
     hand history. Postflop rows also need the boards and hole cards, and
     hands without a usable stored sequence (older imports) are re-parsed.
+    `scope` (the query that selected `hand_ids`) lets a big batch fetch the stored
+    sequences / histories with one join instead of id lists.
     """
-    out: dict[str, _Rec] = {}
-    missing: list[tuple[str, str]] = []
-    for hid, name in hands:
-        v = _RECORDS.get((workspace_id, hid, name, row))
+    key = (workspace_id, player_id, row)
+    cached = _RECORDS.segment(key)
+    out: dict[str, int] = {}
+    missing: list[str] = []
+    for hid in hand_ids:
+        v = cached.get(hid)
         if v is None:
-            missing.append((hid, name))
-        elif v is not _NONE_REC:
+            missing.append(hid)
+        elif v:
             out[hid] = v
     failed = 0
     if missing:
+        gen = data_generation.current()
         with _gc_paused():
-            done = _replay_missing(db, workspace_id, row, street, missing)
-        for hid, name, rec in done:
-            if rec is None:
-                failed += 1
-                _RECORDS.put((workspace_id, hid, name, row), _NONE_REC)
+            done = _replay_missing(db, workspace_id, username, row, street, missing, scope)
+        for hid, v in done:
+            if v:
+                out[hid] = v
             else:
-                _RECORDS.put((workspace_id, hid, name, row), rec)
-                out[hid] = rec
+                failed += 1
+        if data_generation.current() == gen:    # no data change while replaying
+            _RECORDS.add(key, done)
     return out, len(missing), failed
 
 
@@ -825,44 +985,166 @@ def _gc_paused():
             gc.enable()
 
 
-def _replay_missing(db, workspace_id: int, row: str, street: int,
-                    missing: list[tuple[str, str]]) -> list[tuple[str, str, _Rec | None]]:
-    """(hand id, username, record or None) for every pair not in the cache."""
-    todo: list[tuple[str, str]] = []
-    done: list[tuple[str, str, _Rec | None]] = []
+def _safe_pack(hid: str, rec: _Rec | None) -> int:
+    try:
+        return _pack(rec)
+    except ValueError:
+        log.warning("popup record of hand %s cannot be stored", hid)
+        return _NONE
+
+
+# Above this many hands to fetch, the stored sequences / histories come from one join over
+# the selecting query instead of an id list (04/F5: 42 chunked queries at 214k).
+_JOIN_FETCH_MIN = 2000
+
+
+def _stream(db, sql: str, params: list, batch: int = 8192):
+    cur = db.execute(sql, params)
+    while True:
+        rows = cur.fetchmany(batch)
+        if not rows:
+            return
+        yield from rows
+
+
+def _seq_rows(db, workspace_id: int, ids: list[str], scope: "_Scope | None"):
+    """(hand id, stored sequence) for `ids` (hands without one are left out)."""
+    if scope is None or len(ids) < _JOIN_FETCH_MIN:
+        return list(_fetch_seqs(db, workspace_id, ids).items())
+    want = set(ids)
+    sql, params = scope.sql(
+        "hp.hand_id, s.h2n_seq",
+        join="JOIN hand_players s ON s.hand_id = hp.hand_id AND s.workspace_id = hp.workspace_id "
+             "AND s.h2n_seq IS NOT NULL")
+    return ((hid, blob) for hid, blob in _stream(db, sql, params) if hid in want)
+
+
+def _raw_rows(db, workspace_id: int, ids: list[str], scope: "_Scope | None"):
+    """(hand id, (raw_text, site_id)) for `ids`."""
+    if scope is None or len(ids) < _JOIN_FETCH_MIN:
+        return list(_fetch_raw(db, workspace_id, ids).items())
+    want = set(ids)
+    sql, params = scope.sql(
+        "hp.hand_id, hr.raw_text, hr.site_id",
+        join="JOIN hands hr ON hr.id = hp.hand_id AND hr.workspace_id = hp.workspace_id")
+    return ((hid, (raw, site)) for hid, raw, site in _stream(db, sql, params) if hid in want)
+
+
+_STREET_ORDER = {"flop": 0, "turn": 1, "river": 2}
+
+
+def _stored_postflop(db, workspace_id: int, missing: list[str], scope: "_Scope", street: int
+                     ) -> dict[str, tuple[bytes, list[str], int | None]]:
+    """Postflop inputs from stored columns (04/F4), for the hands that can use them:
+    hand id -> (stored sequence, board, hp.hv_<street>).
+
+    Only single-board hands (`hands.rit_boards` = 1 and no board_cards row of a later
+    board) with a stored sequence and board cards qualify. For them player_boards(parsed)
+    is the one board as board_cards holds it (written from parsed.board_cards), and
+    classify_boards_for_player gives exactly the hand value the import stored
+    (classify_for_player, same board). Every other hand is re-parsed.
+    """
+    if len(missing) < _JOIN_FETCH_MIN:
+        scope = scope.narrow("hp.hand_id IN (SELECT UNNEST(?::VARCHAR[]))", [missing])
+    want = set(missing)
+    hv = f"hp.hv_{STREET_NAMES[street]}"
+    sql, params = scope.sql(
+        f"hp.hand_id, s.h2n_seq, {hv}",
+        join="JOIN hands hr ON hr.id = hp.hand_id AND hr.workspace_id = hp.workspace_id "
+             "AND hr.rit_boards = 1 "
+             "JOIN hand_players s ON s.hand_id = hp.hand_id AND s.workspace_id = hp.workspace_id "
+             "AND s.h2n_seq IS NOT NULL")
+    seqs: dict[str, tuple[bytes, int | None]] = {}
+    for hid, blob, val in _stream(db, sql, params):
+        if hid in want:
+            seqs[hid] = (blob, None if val is None else int(val))
+    if not seqs:
+        return {}
+    sql, params = scope.sql(
+        "bc.hand_id, bc.board_number, bc.street, bc.card_order, bc.card",
+        join="JOIN board_cards bc ON bc.hand_id = hp.hand_id AND bc.workspace_id = hp.workspace_id")
+    cards: dict[str, list[tuple[int, int, str]]] = {}
+    multi: set[str] = set()
+    for hid, number, st, order, card in _stream(db, sql, params):
+        if hid not in seqs:
+            continue
+        if number != 1:
+            multi.add(hid)
+            continue
+        k = _STREET_ORDER.get(st)
+        if k is not None:
+            cards.setdefault(hid, []).append((k, order, card))
+    out: dict[str, tuple[bytes, list[str], int | None]] = {}
+    for hid, (blob, val) in seqs.items():
+        cs = cards.get(hid)
+        if cs is None or hid in multi:
+            continue
+        cs.sort()
+        out[hid] = (blob, [c for _, _, c in cs], val)
+    return out
+
+
+def _replay_missing(db, workspace_id: int, username: str, row: str, street: int,
+                    missing: list[str], scope: "_Scope | None" = None) -> list[tuple[str, int]]:
+    """(hand id, packed record) for every hand not in the cache."""
+    done: list[tuple[str, int]] = []
+    todo: list[str]
     if street == 0:
-        blobs = _fetch_seqs(db, workspace_id, [h for h, _ in missing])
-        for hid, name in missing:
-            seq = None
-            blob = blobs.get(hid)
-            if blob is not None:
-                try:
-                    seq = decode_sequence(blob)
-                except Exception:
-                    log.warning("stored sequence of hand %s is unreadable", hid, exc_info=True)
-            if seq is None:
-                todo.append((hid, name))
+        decoded: set[str] = set()
+        for hid, blob in _seq_rows(db, workspace_id, missing, scope):
+            if hid in decoded:
                 continue
+            try:
+                seq = decode_sequence(blob)
+            except Exception:
+                log.warning("stored sequence of hand %s is unreadable", hid, exc_info=True)
+                continue
+            if seq is None:
+                continue
+            decoded.add(hid)
             rec = None
             try:
-                rec = _compute_record(None, seq, name, row, street)
+                rec = _compute_record(None, seq, username, row, street)
             except Exception:
                 log.warning("popup replay failed for hand %s", hid, exc_info=True)
-            done.append((hid, name, rec))
+            done.append((hid, _safe_pack(hid, rec)))
+        todo = [hid for hid in missing if hid not in decoded]
+    elif scope is not None:
+        decoded = set()
+        for hid, (blob, board, val) in _stored_postflop(db, workspace_id, missing, scope,
+                                                         street).items():
+            try:
+                seq = decode_sequence(blob)
+            except Exception:
+                log.warning("stored sequence of hand %s is unreadable", hid, exc_info=True)
+                continue
+            if seq is None:
+                continue
+            decoded.add(hid)
+            rec = None
+            try:
+                rec = _compute_record(None, seq, username, row, street, (board, val))
+            except Exception:
+                log.warning("popup replay failed for hand %s", hid, exc_info=True)
+            done.append((hid, _safe_pack(hid, rec)))
+        todo = [hid for hid in missing if hid not in decoded]
     else:
         todo = missing
     if todo:
-        raw = _fetch_raw(db, workspace_id, [h for h, _ in todo])
-        for hid, name in todo:
+        found: set[str] = set()
+        for hid, src in _raw_rows(db, workspace_id, todo, scope):
+            if hid in found:
+                continue
+            found.add(hid)
             rec = None
-            src = raw.get(hid)
-            if src and src[0]:
+            if src[0]:
                 try:
                     parsed, seq = _parse(*src)
-                    rec = _compute_record(parsed, seq, name, row, street)
+                    rec = _compute_record(parsed, seq, username, row, street)
                 except Exception:
                     log.warning("popup replay failed for hand %s", hid, exc_info=True)
-            done.append((hid, name, rec))
+            done.append((hid, _safe_pack(hid, rec)))
+        done.extend((hid, _NONE) for hid in todo if hid not in found)
     return done
 
 
@@ -890,30 +1172,42 @@ def _filters(stakes, game_mode, date_from, date_to, day_start: int = 0) -> tuple
     return sql, params
 
 
-@dataclass
-class _Hand:
-    hand_id: str
-    played_at: object
-    stakes: str | None
-    site_id: int | None
-    username: str
-    pos: str | None
-    case: bool
-    sd: bool
-    win: bool
-    hv: int | None               # stat-street hand value (first board)
-    won: float | None
-    won_bb: float | None
-    ev_bb: float | None
+class _Scope:
+    """FROM / WHERE / params of a cell's rows: `hand_players hp` of one player in a workspace,
+    joined to `hands h` only when a filter reads it (hp.workspace_id already holds the
+    workspace; same rows, 04/F9). The request filter (`fsql`, leading " AND ") goes last,
+    verbatim, as in GET /api/general."""
+
+    __slots__ = ("where", "params", "fsql", "fparams")
+
+    def __init__(self, where: list[str], params: list, fsql: str, fparams: list):
+        self.where = where
+        self.params = params
+        self.fsql = fsql
+        self.fparams = fparams
+
+    def narrow(self, cond: str, params: Iterable = ()) -> "_Scope":
+        return _Scope([*self.where, cond], [*self.params, *params], self.fsql, self.fparams)
+
+    def sql(self, select: str, *, join: str = "", hands: bool = False, tail: str = "",
+            tail_params: Iterable = ()) -> tuple[str, list]:
+        frm = "hand_players hp"
+        if self.fsql.strip() or hands:
+            frm += " JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id"
+        if join:
+            frm += " " + join
+        return (f"SELECT {select} FROM {frm} WHERE {' AND '.join(self.where)}{self.fsql} {tail}",
+                [*self.params, *self.fparams, *tail_params])
 
 
-def _query_hands(db, stat: _Stat, player_id: int, workspace_id: int, filters: tuple[str, list],
-                 cases_only: bool) -> list[_Hand]:
+def _cell_scope(stat: _Stat, player_id: int, workspace_id: int, filters: tuple[str, list],
+                bit_sql: str) -> _Scope:
+    """The player's rows of the cell (position group, H2N-valid hands, filters) whose
+    `bit_sql` (opportunity or case bit) is set."""
     ref = stat.cell.ref
-    where = ["hp.player_id = ?", "h.workspace_id = ?", "COALESCE(hp.h2n_valid, TRUE)"]
+    where = ["hp.player_id = ?", "hp.workspace_id = ?", "COALESCE(hp.h2n_valid, TRUE)",
+             f"{bit_sql} = 1"]
     params: list = [player_id, workspace_id]
-    bit = sql_case(stat.row) if cases_only else sql_opp(stat.row)
-    where.append(f"{bit} = 1")
     if ref.positions is not None:
         marks = ", ".join("?" for _ in ref.positions)
         if ref.exclude:
@@ -921,26 +1215,39 @@ def _query_hands(db, stat: _Stat, player_id: int, workspace_id: int, filters: tu
         else:
             where.append(f"hp.h2n_pos IN ({marks})")
         params.extend(ref.positions)
-    hv = f"hp.hv_{STREET_NAMES[stat.street]}" if stat.street > 0 else "NULL"
     fsql, fparams = filters
-    rows = db.execute(f"""
-        SELECT h.id, h.played_at, h.stakes, h.site_id, p.username, hp.h2n_pos,
-               {sql_case(stat.row)}, COALESCE(hp.went_to_showdown, FALSE),
-               COALESCE(hp.is_winner, FALSE), {hv}, hp.won, hp.won_bb,
-               COALESCE(hp.all_in_ev_bb, hp.won_bb)
-        FROM hand_players hp
-        JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
-        JOIN players p ON p.id = hp.player_id
-        WHERE {" AND ".join(where)}{fsql}
-    """, params + fparams).fetchall()
-    return [
-        _Hand(r[0], r[1], r[2], r[3], r[4], r[5], bool(r[6]), bool(r[7]), bool(r[8]),
-              None if r[9] is None else int(r[9]),
-              None if r[10] is None else float(r[10]),
-              None if r[11] is None else float(r[11]),
-              None if r[12] is None else float(r[12]))
-        for r in rows
-    ]
+    return _Scope(where, params, fsql, list(fparams))
+
+
+def _summary_counts(db, stat: _Stat, scope: _Scope):
+    """(opps, cases, showdowns, won, won at showdown, stat-street hand values of the cases)
+    over the cell's opportunity rows, counted in SQL (04/F3)."""
+    hv = f"hp.hv_{STREET_NAMES[stat.street]}" if stat.street > 0 else "NULL"
+    sql, params = scope.sql(
+        f"{sql_case(stat.row)}, COALESCE(hp.went_to_showdown, FALSE), "
+        f"COALESCE(hp.is_winner, FALSE), {hv}, COUNT(*)",
+        tail="GROUP BY ALL")
+    opps = cases = sd = won = won_sd = 0
+    hv_counts: dict[int, int] = {}
+    for case, is_sd, win, val, n in db.execute(sql, params).fetchall():
+        opps += n
+        if not case:
+            continue
+        cases += n
+        if is_sd:
+            sd += n
+        if win:
+            won += n
+            if is_sd:
+                won_sd += n
+        if val is not None:
+            hv_counts[int(val)] = hv_counts.get(int(val), 0) + n
+    return opps, cases, sd, won, won_sd, hv_counts
+
+
+def _username(db, player_id: int) -> str | None:
+    r = db.execute("SELECT username FROM players WHERE id = ?", [player_id]).fetchone()
+    return r[0] if r else None
 
 
 def _target_player(db, workspace_id: int, player_id: int | None) -> int | None:
@@ -973,114 +1280,119 @@ def _strength(street: int, counts: dict[int, int]) -> Strength:
                     weak_pct=weak / total * 100.0 if total else None, buckets=buckets)
 
 
-def compute_detail(db, stat: _Stat, player_id: int, workspace_id: int,
-                   filters: tuple[str, list], filter_steps: list[dict] | None = None) -> CellDetail:
-    hands = _query_hands(db, stat, player_id, workspace_id, filters, cases_only=False)
-    cases = [h for h in hands if h.case]
-    n_cases = len(cases)
-    sd = sum(1 for h in cases if h.sd)
-    won = sum(1 for h in cases if h.win)
-    won_sd = sum(1 for h in cases if h.win and h.sd)
+def _aggregate(stat: _Stat, groups: Counter, buckets: tuple[_Bucket, ...]
+               ) -> tuple[_NextCounter, list[SplitRow], list[SplitRow]]:
+    """Summary next decision, Boards and Bet Sizes rows from the replayed hands.
 
-    strength = None
-    if stat.street > 0:
-        counts: dict[int, int] = {}
-        for h in cases:
-            if h.hv is not None:
-                counts[h.hv] = counts.get(h.hv, 0) + 1
-        strength = _strength(stat.street, counts)
-
-    buckets = _stat_buckets(stat)
-    # Boards and Bet Sizes count opportunities too; otherwise only cases are replayed.
-    replay_set = hands if (stat.street > 0 or buckets) else cases
-    recs, replayed, failed = _records(db, workspace_id, stat.row, stat.street,
-                                      ((h.hand_id, h.username) for h in replay_set))
-
+    `groups` counts the replayed hands by (packed record << 1 | case bit of the cell): equal
+    records add up in one step.
+    """
+    street = stat.street
+    post = street > 0
     summary_next = _NextCounter()
-    for h in cases:
-        rec = recs.get(h.hand_id)
-        if rec is not None:
-            summary_next.add(rec.nxt)
-
-    boards: list[SplitRow] = []
-    if stat.street > 0:
-        sname = STREET_NAMES[stat.street]
-        cats = BOARD_CATEGORIES[sname]
+    if post:
+        cats = BOARD_CATEGORIES[STREET_NAMES[street]]
         b_opps = [0] * len(cats)
         b_cases = [0] * len(cats)
         b_bars: list[dict[int, int]] = [{} for _ in cats]
         b_next = [_NextCounter() for _ in cats]
-        for h in replay_set:
-            rec = recs.get(h.hand_id)
-            if rec is None:
-                continue
-            seen = set()
+    ids = {b.id for b in buckets}
+    s_opps = {b.id: 0 for b in buckets}
+    s_cases = {b.id: 0 for b in buckets}
+    s_bars: dict[str, dict[int, int]] = {b.id: {} for b in buckets}
+    s_next = {b.id: _NextCounter() for b in buckets}
+    for key, n in groups.items():
+        case = key & 1
+        rec = _unpack(key >> 1)
+        if case:
+            summary_next.add(rec.nxt, n)
+        if post:
+            seen: set[int] = set()
             for tex in rec.textures:
                 seen.update(tex)
             for c in seen:
-                b_opps[c] += 1
-                if h.case:
-                    b_cases[c] += 1
-                    b_next[c].add(rec.direct)
-            if h.case:
+                b_opps[c] += n
+                if case:
+                    b_cases[c] += n
+                    b_next[c].add(rec.direct, n)
+            if case:
                 for tex, cat in zip(rec.textures, rec.cats):
                     if cat is None:
                         continue
                     for c in tex:
-                        b_bars[c][cat] = b_bars[c].get(cat, 0) + 1
+                        b_bars[c][cat] = b_bars[c].get(cat, 0) + n
+        if buckets:
+            for bid, is_case in rec.sizes:
+                if bid not in ids:
+                    continue
+                s_opps[bid] += n
+                if is_case and case:
+                    s_cases[bid] += n
+                    s_next[bid].add(rec.direct, n)
+                    for cat in rec.cats:
+                        if cat is not None:
+                            s_bars[bid][cat] = s_bars[bid].get(cat, 0) + n
+
+    boards: list[SplitRow] = []
+    if post:
         for c, bc in enumerate(cats):
             if not b_opps[c]:
                 continue
             boards.append(SplitRow(
                 key=bc.key, label=bc.label, cases=b_cases[c], opps=b_opps[c],
-                value=b_cases[c] / b_opps[c] * 100.0, strength=_strength(stat.street, b_bars[c]),
+                value=b_cases[c] / b_opps[c] * 100.0, strength=_strength(street, b_bars[c]),
                 next=b_next[c].model(),
             ))
 
     sizes: list[SplitRow] = []
-    if buckets:
-        ids = {b.id for b in buckets}
-        s_opps = {b.id: 0 for b in buckets}
-        s_cases = {b.id: 0 for b in buckets}
-        s_bars: dict[str, dict[int, int]] = {b.id: {} for b in buckets}
-        s_next = {b.id: _NextCounter() for b in buckets}
-        for h in replay_set:
-            rec = recs.get(h.hand_id)
-            if rec is None:
-                continue
-            for bid, is_case in rec.sizes:
-                if bid not in ids:
-                    continue
-                s_opps[bid] += 1
-                if is_case and h.case:
-                    s_cases[bid] += 1
-                    s_next[bid].add(rec.direct)
-                    for cat in rec.cats:
-                        if cat is not None:
-                            s_bars[bid][cat] = s_bars[bid].get(cat, 0) + 1
-        for b in buckets:
-            opps = s_opps[b.id]
-            # bet / raise buckets need a case; call / fold buckets any sample
-            visible = s_cases[b.id] > 0 if b.typ in (BET, RAISE, CHECK) else opps > 0
-            if not visible:
-                continue
-            sizes.append(SplitRow(
-                key=b.id, label=b.label, action=_TYPE_KEYS[b.typ], cases=s_cases[b.id],
-                opps=opps, value=s_cases[b.id] / opps * 100.0 if opps else None,
-                strength=_strength(stat.street, s_bars[b.id]) if stat.street > 0 else None,
-                next=s_next[b.id].model(),
-            ))
+    for b in buckets:
+        opps = s_opps[b.id]
+        # bet / raise buckets need a case; call / fold buckets any sample
+        visible = s_cases[b.id] > 0 if b.typ in (BET, RAISE, CHECK) else opps > 0
+        if not visible:
+            continue
+        sizes.append(SplitRow(
+            key=b.id, label=b.label, action=_TYPE_KEYS[b.typ], cases=s_cases[b.id],
+            opps=opps, value=s_cases[b.id] / opps * 100.0 if opps else None,
+            strength=_strength(street, s_bars[b.id]) if post else None,
+            next=s_next[b.id].model(),
+        ))
+    return summary_next, boards, sizes
 
-    player = None
-    r = db.execute("SELECT username FROM players WHERE id = ?", [player_id]).fetchone()
-    if r:
-        player = r[0]
+
+def compute_detail(db, stat: _Stat, player_id: int, workspace_id: int,
+                   filters: tuple[str, list], filter_steps: list[dict] | None = None) -> CellDetail:
+    player = _username(db, player_id)
+    scope = _cell_scope(stat, player_id, workspace_id, filters, sql_opp(stat.row))
+    opps = n_cases = sd = won = won_sd = 0
+    hv_counts: dict[int, int] = {}
+    groups: Counter = Counter()
+    replayed = failed = 0
+    if player is not None:
+        opps, n_cases, sd, won, won_sd, hv_counts = _summary_counts(db, stat, scope)
+
+    buckets = _stat_buckets(stat)
+    if player is not None and opps:
+        # Boards and Bet Sizes count opportunities too; otherwise only cases are replayed.
+        case_sql = sql_case(stat.row)
+        replay_scope = scope if (stat.street > 0 or buckets) else scope.narrow(f"{case_sql} = 1")
+        sql, params = replay_scope.sql(f"hp.hand_id, {case_sql}")
+        rows = db.execute(sql, params).fetchall()
+        recs, replayed, failed = _records(db, workspace_id, player_id, player, stat.row,
+                                          stat.street, (r[0] for r in rows), replay_scope)
+        get = recs.get
+        for hid, case in rows:
+            v = get(hid)
+            if v:
+                groups[v << 1 | case] += 1
+    summary_next, boards, sizes = _aggregate(stat, groups, buckets)
+
     return CellDetail(
         cell_id=stat.cell_id, row=stat.row,
         notation=ROWS[stat.row].notation, street=STREET_NAMES[stat.street],
         player=player, player_id=player_id,
-        value=n_cases / len(hands) * 100.0 if hands else None, cases=n_cases, opps=len(hands),
-        strength=strength,
+        value=n_cases / opps * 100.0 if opps else None, cases=n_cases, opps=opps,
+        strength=_strength(stat.street, hv_counts) if stat.street > 0 else None,
         summary=Summary(won_hand=_ratio(won, n_cases), wtsd=_ratio(sd, n_cases),
                         wsd=_ratio(won_sd, sd), next=summary_next.model()),
         boards=boards, bet_sizes=sizes, replayed=replayed, replay_failed=failed,
@@ -1202,11 +1514,32 @@ def _category_index(street: int, bucket: str) -> int:
     raise HTTPException(status_code=400, detail=f"Unknown hand value {bucket!r} on the {sname}")
 
 
+def _order_sql(sort: str, order: str) -> str:
+    """ORDER BY of the hands list, the old Python sort keys: (won_bb or 0) / (ev - won) /
+    nothing, then played_at, then hand id, all in the requested direction. The money
+    columns are DECIMAL(18,3); their DOUBLE cast equals Python's float() (checked on every
+    row of the 214k DB), so the order is the one the floats gave."""
+    d = "ASC" if order == "asc" else "DESC"
+    keys = []
+    if sort == "won":
+        keys.append(f"COALESCE(hp.won_bb::DOUBLE, 0) {d}")
+    elif sort == "ev":
+        keys.append(f"(COALESCE(COALESCE(hp.all_in_ev_bb, hp.won_bb)::DOUBLE, 0)"
+                    f" - COALESCE(hp.won_bb::DOUBLE, 0)) {d}")
+    keys += [f"h.played_at {d}", f"hp.hand_id {d}"]
+    return "ORDER BY " + ", ".join(keys)
+
+
+# raw_text is fetched by id for the page only: selecting it in the ordered query makes
+# DuckDB carry every case's history through the sort (~45 vs ~10 ms at 214k).
+_PAGE_COLUMNS = ("hp.hand_id, h.played_at, h.stakes, h.site_id, hp.h2n_pos, hp.won, hp.won_bb, "
+                 "COALESCE(hp.all_in_ev_bb, hp.won_bb)")
+
+
 def compute_hands(db, stat: _Stat, player_id: int, workspace_id: int, filters: tuple[str, list],
                   *, bucket: str | None = None, board: str | None = None, size: str | None = None,
                   offset: int = 0, limit: int = 50, sort: str = "date",
                   order: str = "desc") -> CellHands:
-    hands = _query_hands(db, stat, player_id, workspace_id, filters, cases_only=True)
     cat = None
     if bucket is not None:
         if stat.street == 0:
@@ -1224,12 +1557,27 @@ def compute_hands(db, stat: _Stat, player_id: int, workspace_id: int, filters: t
         if size not in _BUCKET_BY_ID or _BUCKET_BY_ID[size] not in _stat_buckets(stat):
             raise HTTPException(status_code=400, detail=f"Bet size {size} does not apply")
 
+    username = _username(db, player_id)
+    if username is None:
+        return CellHands(cell_id=stat.cell_id, total=0, offset=offset, limit=limit)
+    scope = _cell_scope(stat, player_id, workspace_id, filters, sql_case(stat.row))
+    order_sql = _order_sql(sort, order)
+
     if tex is not None or size is not None:
-        recs, _, _ = _records(db, workspace_id, stat.row, stat.street,
-                              ((h.hand_id, h.username) for h in hands))
+        # Board / bet size filters need every case's replay record: filter the ordered ids.
+        sql, params = scope.sql("hp.hand_id", hands=True, tail=order_sql)
+        ids = [r[0] for r in db.execute(sql, params).fetchall()]
+        recs, _, _ = _records(db, workspace_id, player_id, username, stat.row, stat.street, ids,
+                              scope)
+        unpacked: dict[int, _Rec | None] = {}
         kept = []
-        for h in hands:
-            rec = recs.get(h.hand_id)
+        for hid in ids:
+            v = recs.get(hid)
+            rec = None
+            if v:
+                rec = unpacked.get(v)
+                if rec is None:
+                    rec = unpacked[v] = _unpack(v)
             if rec is None or not rec.case:
                 continue
             if size is not None and (size, True) not in rec.sizes:
@@ -1241,54 +1589,61 @@ def compute_hands(db, stat: _Stat, player_id: int, workspace_id: int, filters: t
                 ] if stat.street > 0 else [True]
                 if not any(boards_ok):
                     continue
-            kept.append(h)
-        hands = kept
-    elif cat is not None:
-        hands = [h for h in hands if h.hv == cat]
-
-    reverse = order != "asc"
-    if sort == "won":
-        hands.sort(key=lambda h: (h.won_bb or 0.0, str(h.played_at), h.hand_id), reverse=reverse)
-    elif sort == "ev":
-        hands.sort(key=lambda h: ((h.ev_bb or 0.0) - (h.won_bb or 0.0), str(h.played_at),
-                                  h.hand_id), reverse=reverse)
+            kept.append(hid)
+        total = len(kept)
+        page_ids = kept[offset:offset + limit]
+        page: list = []
+        if page_ids:
+            sql, params = scope.narrow("hp.hand_id IN (SELECT UNNEST(?::VARCHAR[]))", [page_ids]
+                                       ).sql(_PAGE_COLUMNS, hands=True)
+            by_id = {r[0]: r for r in db.execute(sql, params).fetchall()}
+            page = [by_id[h] for h in page_ids if h in by_id]
     else:
-        hands.sort(key=lambda h: (str(h.played_at), h.hand_id), reverse=reverse)
+        # Plain list (04/F10): count, order and page in SQL; only the page's rows are fetched.
+        if cat is not None:
+            scope = scope.narrow(f"hp.hv_{STREET_NAMES[stat.street]} = ?", [cat])
+        sql, params = scope.sql("COUNT(*)")
+        total = int(db.execute(sql, params).fetchone()[0])
+        page = []
+        if offset < total:
+            sql, params = scope.sql(_PAGE_COLUMNS, hands=True, tail=f"{order_sql} LIMIT ? OFFSET ?",
+                                    tail_params=[limit, offset])
+            page = db.execute(sql, params).fetchall()
 
-    total = len(hands)
-    page = hands[offset:offset + limit]
-    raw = _fetch_raw(db, workspace_id, [h.hand_id for h in page])
-    marked_set, tags_map = marked_hands.marks_for(db, workspace_id, player_id,
-                                                  [h.hand_id for h in page])
+    page_ids = [r[0] for r in page]
+    raw = _fetch_raw(db, workspace_id, page_ids)
+    marked_set, tags_map = marked_hands.marks_for(db, workspace_id, player_id, page_ids)
     rows: list[HandRow] = []
-    for h in page:
-        src = raw.get(h.hand_id)
+    for hid, played_at, stakes, site_id, pos, won, won_bb, ev_bb in page:
+        raw_text, raw_site = raw.get(hid, (None, None))
+        won = None if won is None else float(won)
+        won_bb = None if won_bb is None else float(won_bb)
+        ev_bb = None if ev_bb is None else float(ev_bb)
         row = None
         err = None
-        if src and src[0]:
+        if raw_text:
             try:
-                parsed, seq = _parse(*src)
-                if h.username in seq.index:
-                    row = build_row(parsed, seq, h.username, stat.street)
+                parsed, seq = _parse(raw_text, raw_site)
+                if username in seq.index:
+                    row = build_row(parsed, seq, username, stat.street)
                 else:
                     err = "player not in hand"
             except Exception as e:  # keep the row so the list length stays right
-                log.warning("hand row replay failed for %s", h.hand_id, exc_info=True)
+                log.warning("hand row replay failed for %s", hid, exc_info=True)
                 err = f"replay failed: {e}"
         else:
             err = "no hand history"
         if row is None:
-            row = HandRow(hand_id=h.hand_id, position=h.pos, error=err)
-        row.hand_id = h.hand_id
-        row.played_at = str(h.played_at) if h.played_at is not None else None
-        row.stakes = h.stakes
-        row.site_id = h.site_id
-        row.won = h.won
-        row.won_bb = h.won_bb
-        row.ev_diff_bb = (h.ev_bb - h.won_bb) if h.ev_bb is not None and h.won_bb is not None \
-            else None
-        row.marked = h.hand_id in marked_set
-        row.tags = [TagRef(**t) for t in tags_map.get(h.hand_id, [])]
+            row = HandRow(hand_id=hid, position=pos, error=err)
+        row.hand_id = hid
+        row.played_at = str(played_at) if played_at is not None else None
+        row.stakes = stakes
+        row.site_id = site_id
+        row.won = won
+        row.won_bb = won_bb
+        row.ev_diff_bb = (ev_bb - won_bb) if ev_bb is not None and won_bb is not None else None
+        row.marked = hid in marked_set
+        row.tags = [TagRef(**t) for t in tags_map.get(hid, [])]
         rows.append(row)
     return CellHands(cell_id=stat.cell_id, total=total, offset=offset, limit=limit, rows=rows)
 
@@ -1308,16 +1663,18 @@ def get_cell_detail(
     player_id: int | None = Query(None, description="Defaults to the workspace hero"),
 ):
     stat = _resolve(cell_id)
-    db = get_read_cursor()
-    fsql, fparams, fsteps = resolve_filters(chain, stakes, game_mode, date_from, date_to,
-                                            int(get_app_settings(db)["day_start_hour"]))
-    target = _target_player(db, workspace_id, player_id)
-    if target is None:
-        return CellDetail(cell_id=cell_id, row=stat.row,
-                          notation=ROWS[stat.row].notation, street=STREET_NAMES[stat.street],
-                          chain=[*fsteps, *cell_steps(stat.cell.ref.positions, stat.cell.ref.exclude,
-                                                      stat.row, ROWS[stat.row].notation)])
-    return compute_detail(db, stat, target, workspace_id, (fsql, fparams), fsteps)
+    with heavy_slot():
+        db = get_read_cursor()
+        fsql, fparams, fsteps = resolve_filters(chain, stakes, game_mode, date_from, date_to,
+                                                int(get_app_settings(db)["day_start_hour"]))
+        target = _target_player(db, workspace_id, player_id)
+        if target is None:
+            return CellDetail(cell_id=cell_id, row=stat.row,
+                              notation=ROWS[stat.row].notation, street=STREET_NAMES[stat.street],
+                              chain=[*fsteps, *cell_steps(stat.cell.ref.positions,
+                                                          stat.cell.ref.exclude,
+                                                          stat.row, ROWS[stat.row].notation)])
+        return compute_detail(db, stat, target, workspace_id, (fsql, fparams), fsteps)
 
 
 @router.get("/general/cell/{cell_id}/hands", response_model=CellHands)
@@ -1339,17 +1696,18 @@ def get_cell_hands(
     player_id: int | None = Query(None, description="Defaults to the workspace hero"),
 ):
     stat = _resolve(cell_id)
-    db = get_read_cursor()
-    fsql, fparams, fsteps = resolve_filters(chain, stakes, game_mode, date_from, date_to,
-                                            int(get_app_settings(db)["day_start_hour"]))
-    target = _target_player(db, workspace_id, player_id)
-    if target is None:
-        return CellHands(cell_id=cell_id, offset=offset, limit=limit)
-    return compute_hands(db, stat, target, workspace_id,
-                         (fsql, fparams),
-                         bucket=bucket, board=board, size=size, offset=offset, limit=limit,
-                         sort=sort, order=order)
+    with heavy_slot():
+        db = get_read_cursor()
+        fsql, fparams, _ = resolve_filters(chain, stakes, game_mode, date_from, date_to,
+                                           int(get_app_settings(db)["day_start_hour"]))
+        target = _target_player(db, workspace_id, player_id)
+        if target is None:
+            return CellHands(cell_id=cell_id, offset=offset, limit=limit)
+        return compute_hands(db, stat, target, workspace_id,
+                             (fsql, fparams),
+                             bucket=bucket, board=board, size=size, offset=offset, limit=limit,
+                             sort=sort, order=order)
 
 
 __all__ = ["router", "compute_detail", "compute_hands", "build_row", "sort_hole_cards",
-           "clear_cache"]
+           "clear_cache", "cache_stats"]

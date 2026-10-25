@@ -18,10 +18,14 @@ from __future__ import annotations
 
 import logging
 import math
-from collections import defaultdict
+import threading
+from collections import OrderedDict, defaultdict
+from decimal import Decimal
 
 from fastapi import APIRouter, HTTPException, Query
 
+from app import data_generation
+from app.concurrency import heavy_slot
 from app.date_filters import bound_sql
 from app.app_settings import get_app_settings
 from app.db import get_hero_player_id, get_read_cursor
@@ -83,7 +87,8 @@ def _filters(stakes, game_mode, date_from, date_to, day_start: int = 0) -> tuple
     return sql, params
 
 
-def _aggregate_query(where: str) -> str:
+def _aggregate_query(where: str, hands_join: bool = True) -> str:
+    """`hands_join`: join `hands h`, needed only when the filter reads it (04/F9)."""
     masks = ", ".join(f"COALESCE(hp.{c}, 0) AS {c}" for c in _MASK_COLUMNS)
     sums = []
     for key in _ROW_KEYS:
@@ -94,13 +99,14 @@ def _aggregate_query(where: str) -> str:
         sums.append(f"SUM({case} * b.sd)")
         sums.append(f"SUM({case} * b.win)")
         sums.append(f"SUM({case} * b.sd * b.win)")
+    join = "\n            JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id" \
+        if hands_join else ""
     return f"""
         WITH b AS (
             SELECT hp.h2n_pos, hp.won_bb, {masks},
                    COALESCE(hp.went_to_showdown, FALSE)::INTEGER AS sd,
                    COALESCE(hp.is_winner, FALSE)::INTEGER AS win
-            FROM hand_players hp
-            JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
+            FROM hand_players hp{join}
             WHERE {where}
         )
         SELECT b.h2n_pos, COUNT(*), SUM(b.won_bb), {", ".join(sums)}
@@ -110,14 +116,17 @@ def _aggregate_query(where: str) -> str:
 
 
 def _group_counts(rows) -> tuple[int, float, dict[str | None, dict[str, Counts]]]:
-    """Parse the grouped query: hands, sum of won_bb, per position per row."""
+    """Parse the grouped query: hands, sum of won_bb, per position per row.
+
+    The per-position won_bb sums are DECIMAL: they are added exactly, then converted once,
+    so the total does not depend on the order DuckDB returns the groups in."""
     hands = 0
-    won_bb = 0.0
+    won_total = Decimal(0)
     groups: dict[str | None, dict[str, Counts]] = {}
     for r in rows:
         pos = r[0]
         hands += int(r[1] or 0)
-        won_bb += float(r[2] or 0)
+        won_total += Decimal(r[2] or 0)
         per_row: dict[str, Counts] = {}
         i = 3
         for key in _ROW_KEYS:
@@ -130,7 +139,7 @@ def _group_counts(rows) -> tuple[int, float, dict[str | None, dict[str, Counts]]
             c.won_sd = int(r[i + 2] or 0)
             i += 3
         groups[pos] = per_row
-    return hands, won_bb, groups
+    return hands, float(won_total), groups
 
 
 def _counts_by_ref(groups: dict[str | None, dict[str, Counts]]) -> dict[StatRef, Counts]:
@@ -185,9 +194,43 @@ def _is_vs_user(parsed_active: set[str], seq, hit: tuple[int, int], user: int, a
     return any(a.actor == user and a.flags & VPIP for a in acts[:idx])
 
 
+# Vs-user counters per (filter SQL, params, player, hero), 04/F7: they replay every hand the
+# opponent shares with the hero from raw_text. Small (one Counts per row and position), so a
+# count bound is enough; cleared on every data change.
+_VS_CACHE_SIZE = 64
+_vs_cache: OrderedDict[tuple, dict[tuple[str, str | None], Counts]] = OrderedDict()
+_vs_lock = threading.Lock()
+
+
+@data_generation.on_bump
+def clear_vs_cache() -> None:
+    with _vs_lock:
+        _vs_cache.clear()
+
+
 def _vs_user_counts(db, where: str, params: list, player_id: int,
                     hero_id: int) -> dict[tuple[str, str | None], Counts]:
-    """(row, h2n_pos of the player) -> vs-user Counts over shared hands."""
+    """(row, h2n_pos of the player) -> vs-user Counts over shared hands (cached).
+
+    The returned dict is shared with the cache: read it, don't change it."""
+    key = (where, tuple(params), player_id, hero_id)
+    with _vs_lock:
+        hit = _vs_cache.get(key)
+        if hit is not None:
+            _vs_cache.move_to_end(key)
+            return hit
+    gen = data_generation.current()
+    out = _replay_vs_user(db, where, params, player_id, hero_id)
+    with _vs_lock:
+        if data_generation.current() == gen:     # no data change while replaying
+            _vs_cache[key] = out
+            while len(_vs_cache) > _VS_CACHE_SIZE:
+                _vs_cache.popitem(last=False)
+    return out
+
+
+def _replay_vs_user(db, where: str, params: list, player_id: int,
+                    hero_id: int) -> dict[tuple[str, str | None], Counts]:
     from app.h2n.definitions import COMPILED
     from app.h2n.matcher import evaluate, gate
     from app.h2n.replay import parser_for, replay_parsed
@@ -202,7 +245,7 @@ def _vs_user_counts(db, where: str, params: list, player_id: int,
         JOIN players u ON u.id = hu.player_id
         WHERE {where}
     """, [hero_id, *params]).fetchall()
-    out: dict[tuple[str, str | None], Counts] = defaultdict(Counts)
+    acc: dict[tuple[str, str | None], Counts] = defaultdict(Counts)
     for raw_text, site_id, name, user_name in rows:
         if not raw_text:
             continue
@@ -229,11 +272,11 @@ def _vs_user_counts(db, where: str, params: list, player_id: int,
                 continue
             if not _is_vs_user(active, seq, res.hit, u, p):
                 continue
-            c = out[(key, pos)]
+            c = acc[(key, pos)]
             c.opps += 1
             if res.case:
                 c.cases += 1
-    return out
+    return dict(acc)
 
 
 def _vs_user_cell(ref: StatRef, vs: dict[tuple[str, str | None], Counts]) -> GeneralVsUser:
@@ -256,9 +299,10 @@ def compute_general(db, player_id: int, workspace_id: int = 1, *, stakes: str | 
     AND-ed SQL + params, e.g. from a Reports chain, replaces the stakes/mode/date params)."""
     fsql, fparams = filter_sql or _filters(stakes, game_mode, date_from, date_to)
     # Hands H2N refuses to import (app.h2n.hand_rejection) are in none of its stats.
-    where = "hp.player_id = ? AND h.workspace_id = ? AND COALESCE(hp.h2n_valid, TRUE)" + fsql
+    where = "hp.player_id = ? AND hp.workspace_id = ? AND COALESCE(hp.h2n_valid, TRUE)" + fsql
     params = [player_id, workspace_id, *fparams]
-    hands, won_bb, groups = _group_counts(db.execute(_aggregate_query(where), params).fetchall())
+    hands, won_bb, groups = _group_counts(
+        db.execute(_aggregate_query(where, hands_join=bool(fsql.strip())), params).fetchall())
     counts = _counts_by_ref(groups)
 
     is_hero = hero_id is None or hero_id == player_id
@@ -310,6 +354,12 @@ def get_general(
     workspace_id: int = Query(1),
     player_id: int | None = Query(None, description="Defaults to the workspace hero"),
 ):
+    with heavy_slot():
+        return _general(stakes, game_mode, date_from, date_to, chain, workspace_id, player_id)
+
+
+def _general(stakes, game_mode, date_from, date_to, chain, workspace_id: int,
+             player_id: int | None) -> GeneralResponse:
     db = get_read_cursor()
     fsql, fparams, _steps = resolve_filters(chain, stakes, game_mode, date_from, date_to,
                                             int(get_app_settings(db)["day_start_hour"]))
