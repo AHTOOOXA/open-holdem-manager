@@ -202,6 +202,35 @@ def test_delete_workspace_is_atomic(ws_client, monkeypatch):
     assert client.delete(f"/api/workspaces/{ws}").status_code == 200
 
 
+def test_failed_delete_keeps_pending_finalize_in_memory(ws_client, monkeypatch):
+    """A delete that fails at COMMIT must not drop the in-memory pending player pass."""
+    from app import auto_import
+    client, db, ws = ws_client
+    monkeypatch.setitem(auto_import._pending_finalize, ws, object())
+
+    class FailingCommit:
+        def __init__(self, conn):
+            self._conn = conn
+
+        def execute(self, sql, *args, **kwargs):
+            if sql.strip().upper() == "COMMIT":
+                raise RuntimeError("commit failed")
+            return self._conn.execute(sql, *args, **kwargs)
+
+        def __getattr__(self, name):
+            return getattr(self._conn, name)
+
+    monkeypatch.setattr(app_db, "_conn", FailingCommit(db))
+    with pytest.raises(RuntimeError):
+        client.delete(f"/api/workspaces/{ws}")
+    assert ws in auto_import._pending_finalize
+    assert db.execute("SELECT COUNT(*) FROM auto_import_files WHERE workspace_id = ?", [ws]).fetchone()[0] == 1
+
+    monkeypatch.setattr(app_db, "_conn", db)
+    assert client.delete(f"/api/workspaces/{ws}").status_code == 200
+    assert ws not in auto_import._pending_finalize
+
+
 # ── Cursor cleanup middleware (08/F10) ───────────────────────────────────
 
 def _closed(cursor) -> bool:

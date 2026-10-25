@@ -202,7 +202,10 @@ def delete_workspace(workspace_id: int):
             # Marks of this workspace (the tag catalogue is global and stays)
             delete_workspace_marks(db, workspace_id)
             db.execute("DELETE FROM settings WHERE key = ?", [f"statistics_dashboards.{workspace_id}"])
-            auto_import.forget_workspace(db, workspace_id, deleted=True)
+            # auto_import.forget_workspace's rows; its in-memory state is dropped only after
+            # COMMIT, so a rollback can't lose the pending player pass of a workspace that stays.
+            db.execute("DELETE FROM auto_import_files WHERE workspace_id = ?", [workspace_id])
+            db.execute("DELETE FROM settings WHERE key = ?", [auto_import.PENDING_KEY + str(workspace_id)])
             db.execute("COMMIT")
         except BaseException:
             db.execute("ROLLBACK")
@@ -211,6 +214,7 @@ def delete_workspace(workspace_id: int):
             invalidate_hero_cache(workspace_id)
             from app import data_generation
             data_generation.bump()
+        auto_import.forget_workspace(db, workspace_id, deleted=True)
         db.execute("DELETE FROM workspaces WHERE id = ?", [workspace_id])
 
         return {"status": "ok"}
