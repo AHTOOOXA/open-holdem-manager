@@ -5,7 +5,7 @@ import math
 
 from app.db import get_db, db_lock, get_read_cursor, get_hero_player_id
 from app.parsers.common import POSITIONS_BY_COUNT
-from app.stats_engine import compute_player_stats
+from app.stats_engine import ResultCache, compute_player_stats
 from app.models import HeroStats
 from app.config_sections import get_markers
 
@@ -69,88 +69,18 @@ def list_players(
     workspace_id: int = Query(1),
 ):
     db = get_read_cursor()
-
-    where_clauses: list[str] = []
-    params: list = []
-
-    if search:
-        where_clauses.append("p.username ILIKE ?")
-        params.append(f"%{search.strip()}%")
-
-    if player_type:
-        types = [t.strip().upper() for t in player_type.split(",") if t.strip()]
-        if types:
-            ph = ",".join("?" for _ in types)
-            where_clauses.append(f"pc.player_type IN ({ph})")
-            params.extend(types)
-
-    where_sql = (" AND " + " AND ".join(where_clauses)) if where_clauses else ""
-
-    # Count total matching players with min_hands filter
-    count_sql = f"""
-        SELECT COUNT(*) FROM (
-            SELECT p.id
-            FROM players p
-            JOIN hand_players hp ON hp.player_id = p.id
-            JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
-            LEFT JOIN player_classifications pc ON pc.player_id = p.id AND pc.workspace_id = h.workspace_id
-            WHERE h.workspace_id = ? {where_sql}
-            GROUP BY p.id
-            HAVING COUNT(*) >= ?
-        ) t
-    """
-    count_params = [workspace_id] + list(params) + [min_hands]
-    total = db.execute(count_sql, count_params).fetchone()[0]
-    total_pages = max(1, math.ceil(total / per_page))
-
-    # Allowed sort columns
-    allowed_sorts = {
-        "hands": "hands",
-        "vpip": "vpip_pct",
-        "pfr": "pfr_pct",
-        "three_bet": "three_bet_pct",
-        "af": "af",
-        "last_seen": "last_seen",
-        "username": "p.username",
-    }
-    sort_col = allowed_sorts.get(sort_by, "hands")
+    sort_key = sort_by if sort_by in _LIST_SORTS else "hands"
     direction = "DESC" if sort_dir.lower() == "desc" else "ASC"
-
-    offset = (page - 1) * per_page
-    main_sql = f"""
-        SELECT
-            p.id,
-            p.username,
-            COALESCE(pc.player_type, 'UNK'),
-            COUNT(*) as hands,
-            SUM(CASE WHEN hp.vpip THEN 1 ELSE 0 END) * 100.0 / COUNT(*) as vpip_pct,
-            SUM(CASE WHEN hp.pfr THEN 1 ELSE 0 END) * 100.0 / COUNT(*) as pfr_pct,
-            CASE WHEN SUM(CASE WHEN hp.three_bet_opp THEN 1 ELSE 0 END) > 0
-                THEN SUM(CASE WHEN hp.three_bet THEN 1 ELSE 0 END) * 100.0
-                     / SUM(CASE WHEN hp.three_bet_opp THEN 1 ELSE 0 END)
-                ELSE NULL END as three_bet_pct,
-            CASE WHEN SUM(COALESCE(hp.flop_calls, 0) + COALESCE(hp.turn_calls, 0) + COALESCE(hp.river_calls, 0)) > 0
-                THEN CAST(
-                    SUM(COALESCE(hp.flop_bets, 0) + COALESCE(hp.flop_raises, 0)
-                      + COALESCE(hp.turn_bets, 0) + COALESCE(hp.turn_raises, 0)
-                      + COALESCE(hp.river_bets, 0) + COALESCE(hp.river_raises, 0)) AS DOUBLE)
-                     / SUM(COALESCE(hp.flop_calls, 0) + COALESCE(hp.turn_calls, 0) + COALESCE(hp.river_calls, 0))
-                ELSE NULL END as af,
-            MAX(p.last_seen) as last_seen,
-            pc.is_reg,
-            p.color_tag
-        FROM players p
-        JOIN hand_players hp ON hp.player_id = p.id
-        JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
-        LEFT JOIN player_classifications pc ON pc.player_id = p.id AND pc.workspace_id = h.workspace_id
-        WHERE h.workspace_id = ? {where_sql}
-        GROUP BY p.id, p.username, COALESCE(pc.player_type, 'UNK'), pc.is_reg, p.color_tag
-        HAVING COUNT(*) >= ?
-        ORDER BY {sort_col} {direction} NULLS LAST
-        LIMIT ? OFFSET ?
-    """
-    main_params = [workspace_id] + list(params) + [min_hands, per_page, offset]
-    rows = db.execute(main_sql, main_params).fetchall()
+    types = [t.strip().upper() for t in player_type.split(",") if t.strip()] if player_type else []
+    key = ("list", workspace_id, search.strip() if search else None, tuple(types),
+           min_hands, sort_key, direction, page, per_page)
+    rows, total, stakes_map = _LIST_CACHE.get_or_compute(
+        db, key,
+        lambda: _player_list_rows(db, workspace_id, search, types, min_hands, sort_key,
+                                  direction, page, per_page),
+        heavy=True,
+    )
+    total_pages = max(1, math.ceil(total / per_page))
 
     if not rows:
         return PlayerListResponse(
@@ -158,29 +88,22 @@ def list_players(
             per_page=per_page, total_pages=total_pages,
         )
 
-    # Batch fetch stakes per player
+    # Editable / config parts are read fresh: colour tag (player notes), site, markers
     player_ids = [r[0] for r in rows]
     ph = ",".join("?" for _ in player_ids)
-    stakes_rows = db.execute(f"""
-        SELECT hp.player_id, h.stakes
-        FROM hand_players hp
-        JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
-        WHERE hp.player_id IN ({ph}) AND h.workspace_id = ?
-        GROUP BY hp.player_id, h.stakes
-    """, player_ids + [workspace_id]).fetchall()
-
-    stakes_map: dict[int, list[str]] = {}
-    for pid, stk in stakes_rows:
-        stakes_map.setdefault(pid, []).append(stk)
-
-    site_map = dict(db.execute(
-        f"SELECT p.id, s.name FROM players p JOIN sites s ON s.id = p.site_id WHERE p.id IN ({ph})",
-        player_ids,
-    ).fetchall())
+    extra = {
+        pid: (color_tag, site)
+        for pid, color_tag, site in db.execute(
+            f"SELECT p.id, p.color_tag, s.name FROM players p "
+            f"LEFT JOIN sites s ON s.id = p.site_id WHERE p.id IN ({ph})",
+            player_ids,
+        ).fetchall()
+    }
 
     markers = get_markers(db)
     players = []
     for r in rows:
+        color_tag, site = extra.get(r[0], (None, None))
         players.append(PlayerSummary(
             id=r[0],
             username=r[1],
@@ -192,9 +115,9 @@ def list_players(
             af=round(float(r[7]), 2) if r[7] is not None else None,
             last_seen=r[8].isoformat() if r[8] else None,
             stakes=sorted(stakes_map.get(r[0], [])),
-            site=site_map.get(r[0]),
+            site=site,
             reg=r[9],
-            marker=resolve_marker(markers, r[9], r[10]),
+            marker=resolve_marker(markers, r[9], color_tag),
         ))
 
     return PlayerListResponse(
@@ -204,6 +127,104 @@ def list_players(
         per_page=per_page,
         total_pages=total_pages,
     )
+
+
+# Allowed sort columns
+_LIST_SORTS = {
+    "hands": "hands",
+    "vpip": "vpip_pct",
+    "pfr": "pfr_pct",
+    "three_bet": "three_bet_pct",
+    "af": "af",
+    "last_seen": "last_seen",
+    "username": "p.username",
+}
+
+# (page rows, total, stakes per listed player) per list request, until the hand data changes.
+# Colour tags, sites and markers are not in it (they change without a data bump).
+_LIST_CACHE = ResultCache("players.list", capacity=64)
+
+
+def _player_list_rows(db, workspace_id: int, search: str | None, types: list[str],
+                      min_hands: int, sort_key: str, direction: str, page: int,
+                      per_page: int) -> tuple[list, int, dict[int, list[str]]]:
+    """One page of the players list: group hand_players per player first (only the
+    workspace's rows, the search and type filters as semi-joins on the small tables), keep
+    the players with min_hands, then join the names and classifications to the survivors.
+    The total comes from the same query (COUNT(*) OVER ())."""
+    cond = ["hp.workspace_id = ?"]
+    params: list = [workspace_id]
+    if search:
+        cond.append("hp.player_id IN (SELECT id FROM players WHERE username ILIKE ?)")
+        params.append(f"%{search.strip()}%")
+    if types:
+        ph = ",".join("?" for _ in types)
+        cond.append("hp.player_id IN (SELECT player_id FROM player_classifications "
+                    f"WHERE workspace_id = ? AND player_type IN ({ph}))")
+        params += [workspace_id, *types]
+
+    offset = (page - 1) * per_page
+    sql = f"""
+        WITH agg AS (
+            SELECT hp.player_id,
+                COUNT(*) as hands,
+                SUM(CASE WHEN hp.vpip THEN 1 ELSE 0 END) * 100.0 / COUNT(*) as vpip_pct,
+                SUM(CASE WHEN hp.pfr THEN 1 ELSE 0 END) * 100.0 / COUNT(*) as pfr_pct,
+                CASE WHEN SUM(CASE WHEN hp.three_bet_opp THEN 1 ELSE 0 END) > 0
+                    THEN SUM(CASE WHEN hp.three_bet THEN 1 ELSE 0 END) * 100.0
+                         / SUM(CASE WHEN hp.three_bet_opp THEN 1 ELSE 0 END)
+                    ELSE NULL END as three_bet_pct,
+                CASE WHEN SUM(COALESCE(hp.flop_calls, 0) + COALESCE(hp.turn_calls, 0) + COALESCE(hp.river_calls, 0)) > 0
+                    THEN CAST(
+                        SUM(COALESCE(hp.flop_bets, 0) + COALESCE(hp.flop_raises, 0)
+                          + COALESCE(hp.turn_bets, 0) + COALESCE(hp.turn_raises, 0)
+                          + COALESCE(hp.river_bets, 0) + COALESCE(hp.river_raises, 0)) AS DOUBLE)
+                         / SUM(COALESCE(hp.flop_calls, 0) + COALESCE(hp.turn_calls, 0) + COALESCE(hp.river_calls, 0))
+                    ELSE NULL END as af
+            FROM hand_players hp
+            WHERE {" AND ".join(cond)}
+            GROUP BY hp.player_id
+            HAVING COUNT(*) >= ?
+        )
+        SELECT
+            p.id,
+            p.username,
+            COALESCE(pc.player_type, 'UNK'),
+            a.hands, a.vpip_pct, a.pfr_pct, a.three_bet_pct, a.af,
+            p.last_seen as last_seen,
+            pc.is_reg,
+            COUNT(*) OVER () AS total
+        FROM agg a
+        JOIN players p ON p.id = a.player_id
+        LEFT JOIN player_classifications pc ON pc.player_id = a.player_id AND pc.workspace_id = ?
+        ORDER BY {_LIST_SORTS[sort_key]} {direction} NULLS LAST, p.id
+        LIMIT ? OFFSET ?
+    """
+    rows = db.execute(sql, params + [min_hands, workspace_id, per_page, offset]).fetchall()
+    if rows:
+        total = int(rows[0][10])
+    else:
+        total = db.execute(
+            f"SELECT COUNT(*) FROM (SELECT hp.player_id FROM hand_players hp "
+            f"WHERE {' AND '.join(cond)} AND hp.player_id IN (SELECT id FROM players) "
+            f"GROUP BY hp.player_id HAVING COUNT(*) >= ?)",
+            params + [min_hands],
+        ).fetchone()[0]
+    rows = [r[:10] for r in rows]
+
+    stakes_map: dict[int, list[str]] = {}
+    if rows:
+        player_ids = [r[0] for r in rows]
+        ph = ",".join("?" for _ in player_ids)
+        for pid, stk in db.execute(f"""
+            SELECT hp.player_id, h.stakes
+            FROM hand_players hp
+            JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
+            WHERE hp.player_id IN ({ph}) AND h.workspace_id = ?
+            GROUP BY hp.player_id, h.stakes
+        """, player_ids + [workspace_id]).fetchall():
+            stakes_map.setdefault(pid, []).append(stk)
+    return rows, total, stakes_map
 
 
 # ── Player header ───────────────────────────────────────────────────
