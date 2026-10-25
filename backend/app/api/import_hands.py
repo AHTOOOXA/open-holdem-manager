@@ -434,7 +434,14 @@ def finalize_import(
                    "SELECT player_id FROM pa_touched UNION SELECT id FROM players WHERE first_seen IS NULL")
         try:
             _update_first_last_seen(db, "WHERE hp.player_id IN (SELECT player_id FROM _finalize_players)")
-            _update_player_types_scoped(db, workspace_id)
+            from app import config_sections
+            if config_sections.rebuild_required(db):
+                # A game-types / reg-rule change is pending: the unscoped finalize this
+                # replaced re-classified the whole workspace with the current rule, so do
+                # the same rather than mix old-rule and new-rule is_reg in one workspace.
+                batch_update_player_types(db, workspace_id=workspace_id)
+            else:
+                _update_player_types_scoped(db, workspace_id)
         finally:
             db.execute("DROP TABLE IF EXISTS _finalize_players")
     else:

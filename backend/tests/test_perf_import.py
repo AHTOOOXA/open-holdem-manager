@@ -276,6 +276,37 @@ def test_scoped_finalize_picks_up_players_never_finalised(db):
     assert all(r[1] is not None for r in scoped[0])
 
 
+@pytest.mark.skipif(not FIXTURE_20K.exists(), reason="20k fixture missing")
+def test_import_with_pending_reg_rule_change_reclassifies_whole_workspace(db, monkeypatch):
+    from app import config_sections
+    hands = _first_hands(500)
+    _import(db, hands[:400], 1)
+    config_sections.store_rebuild_fingerprint(db)
+    before = _player_state(db)[1]
+
+    # The user edits the reg rule: 'rebuild required' until a rebuild runs
+    gt = config_sections.get_value(db, "game_types")
+    gt["reg_rule"].update({"min_hands": 2, "auto_reg_hands": 6})
+    config_sections.put_value(db, "game_types", gt)
+    assert config_sections.rebuild_required(db)
+
+    scoped_calls = []
+    monkeypatch.setattr(ih, "_update_player_types_scoped", lambda conn, ws: scoped_calls.append(ws))
+    _import(db, hands[400:], 1)
+    assert scoped_calls == []  # the pending change forces the whole-workspace path
+    after = _player_state(db)
+    ih.finalize_import(db, workspace_id=1)
+    assert _player_state(db) == after
+    # Players the second import did not touch were re-classified with the new rule too
+    touched = {r[0] for r in db.execute(
+        "SELECT DISTINCT hp.player_id FROM hand_players hp JOIN hands h ON h.id = hp.hand_id "
+        "AND h.workspace_id = hp.workspace_id WHERE h.raw_text IN (SELECT UNNEST(?::VARCHAR[]))",
+        [[t.replace("\x00", "") for t in hands[400:]]]).fetchall()}
+    assert touched
+    old = {r[0]: r for r in before if r[0] not in touched}
+    assert any(old[r[0]] != r for r in after[1] if r[0] in old)
+
+
 # ── 06/F10: the player cache is released when an import is done ──
 
 @pytest.mark.skipif(not FIXTURE_20K.exists(), reason="20k fixture missing")
