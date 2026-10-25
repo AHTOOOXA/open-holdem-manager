@@ -56,6 +56,8 @@ test('classification: heavy report / statistics / extras keys, cheap lists, stat
   assert.equal(isStaticQuery(q(['config', 'auto_import'])), true);
   assert.equal(isStaticQuery(q(['reports', 'quick-filters'])), true);
   assert.equal(isStaticQuery(q(['workspaces'])), false);
+  // Databases screen: db_size_bytes grows with every import
+  assert.equal(isStaticQuery(q(['system', 'info'])), false);
 });
 
 test('session steps are found in string-encoded and object chains', () => {
@@ -118,6 +120,48 @@ test('auto-import: a heavy screen that is not showing refetches once when it mou
   h.mount(graph);
   await flush();
   assert.equal(h.count(graph), 2, 'one refetch on return');
+});
+
+test('auto-import tick during an in-flight heavy fetch: the chip shows once that fetch lands', async () => {
+  const qc = client();
+  let n = 0;
+  let release: (() => void) | null = null;
+  const key = ['reports', 'spot', keyOf([])];
+  const o = new QueryObserver(qc, {
+    queryKey: key,
+    queryFn: () => new Promise((r) => { n++; release = () => r({ n }); }),
+  });
+  const unsub = o.subscribe(() => {});
+  await flush();
+  release!();
+  await flush();
+  void o.refetch(); // chip click / filter refetch: its data predates the tick below
+  await flush();
+  await refreshAfterDataChange(qc, 'auto-import');
+  release!();
+  await flush();
+  const query = qc.getQueryCache().find({ queryKey: key })!;
+  assert.equal(n, 2, 'the running fetch is not cancelled and not repeated');
+  assert.equal(query.state.isInvalidated, true);
+  assert.equal(isOutdatedOnScreen(query), true, 'New hands chip');
+  void refetchOutdatedOnScreen(qc);
+  await flush();
+  release!();
+  await flush();
+  assert.equal(n, 3);
+  assert.equal(isOutdatedOnScreen(query), false);
+  // hidden after the race: the remount refetches
+  void o.refetch();
+  await flush();
+  await refreshAfterDataChange(qc, 'auto-import');
+  unsub();
+  release!();
+  await flush();
+  assert.equal(query.state.isInvalidated, true);
+  const o2 = new QueryObserver(qc, { queryKey: key, queryFn: () => new Promise((r) => { n++; release = () => r({ n }); }) });
+  o2.subscribe(() => {});
+  await flush();
+  assert.equal(n, 5, 'one refetch on return');
 });
 
 test('manual import: the visible heavy screen refetches right away', async () => {

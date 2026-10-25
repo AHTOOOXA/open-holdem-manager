@@ -56,7 +56,7 @@ export const HEAVY_KEY_PREFIXES: readonly (readonly string[])[] = [
 
 /** Keys no hand import can change (settings, status poll, static lists): left alone on auto-import ticks. */
 const STATIC_KEY_HEADS: ReadonlySet<string> = new Set([
-  'auto-import', 'config', 'app-settings', 'sites', 'tag-defs', 'statistics', 'system',
+  'auto-import', 'config', 'app-settings', 'sites', 'tag-defs', 'statistics',
 ]);
 
 type QueryLike = Pick<Query, 'queryKey' | 'meta'>;
@@ -162,14 +162,35 @@ export function refreshAfterDataChange(qc: QueryClient, change: DataChange): Pro
     void qc.invalidateQueries({ predicate: (q) => rest(q) && !isSessionChainQuery(q) });
     return workspaces;
   }
-  void qc.invalidateQueries({
-    predicate: (q) => rest(q) && !isSessionChainQuery(q) && !isStaticQuery(q) && isHeavyQuery(q),
-    refetchType: 'none',
-  });
+  const heavy = (q: Query) => rest(q) && !isSessionChainQuery(q) && !isStaticQuery(q) && isHeavyQuery(q);
+  // A heavy fetch already running started before these hands arrived; its success would clear the
+  // stale mark. Mark it again once it settles, so the chip shows and a remount refetches.
+  keepStaleAfterFetch(qc, qc.getQueryCache().findAll({ predicate: (q) => heavy(q) && q.state.fetchStatus !== 'idle' }));
+  void qc.invalidateQueries({ predicate: heavy, refetchType: 'none' });
   void qc.invalidateQueries({
     predicate: (q) => rest(q) && !isSessionChainQuery(q) && !isStaticQuery(q) && !isHeavyQuery(q),
   });
   return workspaces;
+}
+
+/**
+ * Re-mark `queries` stale when their running fetch settles (a success clears `isInvalidated`, a
+ * cancel restores the pre-fetch state). No extra request: the server is not asked twice.
+ */
+function keepStaleAfterFetch(qc: QueryClient, queries: Query[]): void {
+  if (queries.length === 0) return;
+  const pending = new Set(queries);
+  const cache = qc.getQueryCache();
+  const unsubscribe = cache.subscribe((event) => {
+    const q = event.query;
+    if (!pending.has(q)) return;
+    if (event.type === 'removed') pending.delete(q);
+    else if (event.type === 'updated' && q.state.fetchStatus === 'idle') {
+      pending.delete(q);
+      if (!q.state.isInvalidated) void qc.invalidateQueries({ queryKey: q.queryKey, exact: true, refetchType: 'none' });
+    }
+    if (pending.size === 0) unsubscribe();
+  });
 }
 
 /**
