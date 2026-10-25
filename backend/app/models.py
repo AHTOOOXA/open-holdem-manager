@@ -563,12 +563,12 @@ class StatDetailHand(BaseModel):
     board_flop: list[str] = []
     board_turn: Optional[str] = None
     board_river: Optional[str] = None
-    preflop_actions: list[HandListAction] = []
-    flop_actions: list[HandListAction] = []
+    preflop_actions: list[ActionItem] = []
+    flop_actions: list[ActionItem] = []
     flop_pot: float = 0
-    turn_actions: list[HandListAction] = []
+    turn_actions: list[ActionItem] = []
     turn_pot: float = 0
-    river_actions: list[HandListAction] = []
+    river_actions: list[ActionItem] = []
     river_pot: float = 0
     key_street_actions: list[ActionItem] = []
 
