@@ -120,22 +120,26 @@ def get_read_cursor() -> duckdb.DuckDBPyConnection:
     return cursor
 
 
-def init_request_cursors():
-    """Call at the start of a request to enable cursor tracking."""
-    _request_cursors.set([])
+def init_request_cursors() -> contextvars.Token:
+    """Call at the start of a request to enable cursor tracking; pass the returned token to
+    cleanup_request_cursors() once the response has been sent completely."""
+    return _request_cursors.set([])
 
 
-def cleanup_request_cursors():
+def cleanup_request_cursors(token: contextvars.Token | None = None) -> None:
     """Close all read cursors opened during this request."""
     cursors = _request_cursors.get(None)
     if cursors:
-        for c in cursors:
+        for c in list(cursors):
             try:
                 c.close()
             except Exception:
                 pass
         cursors.clear()
-    _request_cursors.set(None)
+    if token is not None:
+        _request_cursors.reset(token)
+    else:
+        _request_cursors.set(None)
 
 
 def db_lock() -> threading.RLock:

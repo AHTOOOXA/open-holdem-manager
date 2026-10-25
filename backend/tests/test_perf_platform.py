@@ -200,3 +200,67 @@ def test_delete_workspace_is_atomic(ws_client, monkeypatch):
     monkeypatch.undo()
     monkeypatch.setattr(app_db, "_conn", db)
     assert client.delete(f"/api/workspaces/{ws}").status_code == 200
+
+
+# ── Cursor cleanup middleware (08/F10) ───────────────────────────────────
+
+def _closed(cursor) -> bool:
+    try:
+        cursor.execute("SELECT 1")
+        return False
+    except duckdb.Error:
+        return True
+
+
+@pytest.fixture
+def cursor_app(db, monkeypatch):
+    from fastapi import FastAPI
+    from fastapi.responses import StreamingResponse
+
+    monkeypatch.setattr(app_db, "_conn", db)
+    seen: list = []
+    test_app = FastAPI()
+    test_app.add_middleware(app_main.CursorCleanupMiddleware)
+
+    @test_app.get("/plain")
+    def plain():
+        cur = app_db.get_read_cursor()
+        seen.append(cur)
+        return {"n": cur.execute("SELECT 1").fetchone()[0]}
+
+    @test_app.get("/stream")
+    def stream():
+        first = app_db.get_read_cursor()
+        seen.append(first)
+
+        def gen():
+            yield b'{"step": 1}\n'
+            later = app_db.get_read_cursor()  # opened after the headers went out
+            seen.append(later)
+            yield (f'{{"n": {later.execute("SELECT 2").fetchone()[0]}}}\n').encode()
+
+        return StreamingResponse(gen(), media_type="application/x-ndjson")
+
+    return TestClient(test_app), seen
+
+
+def test_plain_response_cursors_are_closed(cursor_app):
+    client, seen = cursor_app
+    assert client.get("/plain").json() == {"n": 1}
+    assert len(seen) == 1 and _closed(seen[0])
+    assert app_db._request_cursors.get(None) is None
+
+
+def test_streaming_response_cursors_are_closed(cursor_app):
+    client, seen = cursor_app
+    resp = client.get("/stream")
+    assert resp.text.splitlines() == ['{"step": 1}', '{"n": 2}']
+    assert len(seen) == 2
+    assert all(_closed(c) for c in seen), [(_closed(c)) for c in seen]
+
+
+def test_app_uses_the_pure_asgi_cursor_middleware():
+    from starlette.middleware.base import BaseHTTPMiddleware
+    classes = [m.cls for m in app_main.app.user_middleware]
+    assert app_main.CursorCleanupMiddleware in classes
+    assert not any(isinstance(c, type) and issubclass(c, BaseHTTPMiddleware) for c in classes)

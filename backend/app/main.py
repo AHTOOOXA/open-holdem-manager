@@ -4,12 +4,11 @@ import os
 import re
 from pathlib import Path as _Path
 
-from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from starlette.formparsers import MultiPartParser
-from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.db import (
     get_db, close_db, get_read_cursor, get_rebuild_status, get_wal_recovery,
@@ -59,14 +58,28 @@ if not os.environ.get("OHM_STATIC_DIR"):
         allow_headers=["*"],
     )
 
-class CursorCleanupMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next):
-        init_request_cursors()
+class CursorCleanupMiddleware:
+    """Closes the read cursors a request opened, after its response has been sent completely.
+
+    Pure ASGI on purpose. The former BaseHTTPMiddleware ran its cleanup as soon as the
+    response headers were out, so cursors a StreamingResponse generator opened later (NDJSON
+    import progress) were never closed; it also piped every body through an extra memory
+    stream and task. Here the cleanup runs when the inner app returns, which for a streaming
+    response is after the last chunk (and after background tasks).
+    """
+
+    def __init__(self, app) -> None:
+        self.app = app
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        token = init_request_cursors()
         try:
-            response = await call_next(request)
-            return response
+            await self.app(scope, receive, send)
         finally:
-            cleanup_request_cursors()
+            cleanup_request_cursors(token)
 
 
 app.add_middleware(CursorCleanupMiddleware)
