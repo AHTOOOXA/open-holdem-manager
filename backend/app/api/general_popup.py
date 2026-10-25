@@ -955,6 +955,7 @@ def _records(db, workspace_id: int, player_id: int, username: str, row: str, str
             out[hid] = v
     failed = 0
     if missing:
+        gen = data_generation.current()
         with _gc_paused():
             done = _replay_missing(db, workspace_id, username, row, street, missing, scope)
         for hid, v in done:
@@ -962,7 +963,8 @@ def _records(db, workspace_id: int, player_id: int, username: str, row: str, str
                 out[hid] = v
             else:
                 failed += 1
-        _RECORDS.add(key, done)
+        if data_generation.current() == gen:    # no data change while replaying
+            _RECORDS.add(key, done)
     return out, len(missing), failed
 
 

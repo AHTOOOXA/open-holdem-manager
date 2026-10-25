@@ -123,6 +123,25 @@ def test_data_generation_bump_clears_the_popup_cache(client, db):
     assert again["summary"] == r.json()["summary"]
 
 
+def test_records_replayed_across_a_data_bump_are_not_cached(client, db, monkeypatch):
+    _insert(db, *_cbet_hands())
+    real = gp._replay_missing
+
+    def bumping(*a, **kw):
+        out = real(*a, **kw)
+        data_generation.bump()                 # e.g. a rebuild commits mid-replay
+        return out
+
+    monkeypatch.setattr(gp, "_replay_missing", bumping)
+    r = client.get("/api/general/cell/postflop.cbet.Flop/detail")
+    assert r.status_code == 200 and r.json()["replayed"] == 5
+    assert gp.cache_stats()["records"] == 0
+    monkeypatch.setattr(gp, "_replay_missing", real)
+    again = client.get("/api/general/cell/postflop.cbet.Flop/detail").json()
+    assert again["replayed"] == 5 and again["summary"] == r.json()["summary"]
+    assert gp.cache_stats()["records"] == 5
+
+
 def test_cache_is_per_player_and_row(client, db):
     _insert(db, *_cbet_hands())
     client.get("/api/general/cell/postflop.cbet.Flop/detail")
