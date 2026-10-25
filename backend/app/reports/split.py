@@ -218,6 +218,12 @@ class Acc:
     def merge(self, other: "Acc") -> None:
         _merge(self, other)
 
+    def copy(self) -> "Acc":
+        a = Acc.__new__(Acc)
+        for s in Acc.__slots__:
+            setattr(a, s, getattr(self, s))
+        return a
+
 
 def _make_merge():
     """Acc.merge as straight-line code: every slot summed (max_opps: the largest sample)."""
@@ -684,14 +690,33 @@ def _table_bytes(table: dict) -> int:
     return 600 * len(table) + 1024
 
 
+def copy_table(table: dict) -> dict:
+    """A Next / Faced table (or Sizing accumulators) with copied Accs, to extend."""
+    return {k: acc.copy() for k, acc in table.items()}
+
+
 def _compute_action_table(db, res: Resolution, which: str) -> dict:
     cands, ev = _candidates(res.ctx, which)
     table: dict = {}
     if not cands or not res.username:
         return table
-    # Plain chains keep no blobs: each chunk's come with its records and are dropped after it.
-    chunks = (iter_case_seqs(db, res) if res.plain
-              else ((recs, res.blobs) for recs in iter_records(db, res)))
+    if res.plain:
+        # Plain chains keep no blobs: each chunk's come with its records and are dropped after
+        # it. The rowid mark lets chain._extend_plain add only hands this table hasn't seen.
+        mark = [-1]
+        add_case_seqs(db, res, which, table, iter_case_seqs(db, res, mark=mark))
+        with res.lock:
+            res.table_marks[which] = mark[0]
+    else:
+        add_case_seqs(db, res, which, table,
+                      ((recs, res.blobs) for recs in iter_records(db, res)))
+    return table
+
+
+def add_case_seqs(db, res: Resolution, which: str, table: dict, chunks) -> None:
+    """Add the case hands of `chunks` ((records, {hand id: blob}) in hand order) to a Next /
+    Faced table of `res`."""
+    cands, ev = _candidates(res.ctx, which)
     for recs, blobs in chunks:
         ids = [h.hid for h in recs]
         src = SeqSource(db, res.workspace_id, blobs)
@@ -704,7 +729,6 @@ def _compute_action_table(db, res: Resolution, which: str) -> dict:
             if p is None:
                 continue
             _table_add(table, cands, ev, seq, p, h)
-    return table
 
 
 def action_table(db, res: Resolution, which: str) -> dict:
@@ -743,6 +767,39 @@ def _compute_sizing(db, res: Resolution) -> tuple[list, dict]:
                         acc.add(h, h.ap)
             out = (list(buckets), accs)
     return out
+
+
+def sizing_extender(base: Resolution, sizing: tuple[list, dict]):
+    """`base`'s Bet Sizing accumulators, copied, to extend with the new records of an
+    extension: (add(record, sequence), finish(res)). `add` is called for each new record in hand
+    order while its sequence is decoded, so no sequence is kept. `finish(res)` (`res`: the
+    extended resolution) is the extended (buckets, accumulators), or None when the merged
+    records select other buckets (the table is then recomputed lazily). None: not extendable."""
+    from app.api.general_popup import _BUCKETS, _size_hits
+
+    buckets, accs = sizing
+    if not (base.has_spot and base.username and base.hands):
+        return None
+    tb = tuple(buckets)
+    accs = copy_table(accs)
+
+    def add(h, seq) -> None:
+        if not tb or seq is None or h.hit is None:
+            return
+        for bid, is_case in _size_hits(seq, h.hit, tb):
+            acc = accs[bid]
+            acc.opps += 1
+            if is_case and h.case:
+                acc.add(h, h.ap)
+
+    def finish(res: Resolution) -> tuple[list, dict] | None:
+        pre = res.ctx.street == 0
+        types = _sizing_types(res)
+        if [b for b in _BUCKETS if b.preflop == pre and b.typ in types] != list(buckets):
+            return None
+        return (list(buckets), accs) if tb else sizing
+
+    return add, finish
 
 
 def sizing_table(db, res: Resolution) -> tuple[list, dict]:

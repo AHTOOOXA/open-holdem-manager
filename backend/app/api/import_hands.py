@@ -378,6 +378,7 @@ def _flush_batch(
     in_transaction: bool = False,
     workspace_id: int = 1,
     touched: set[int] | None = None,
+    inserted: list[str] | None = None,
 ) -> tuple[int, int, list[str]]:
     """Bulk-insert a batch of (parsed, player_stats, financials) tuples using PyArrow column-oriented inserts.
 
@@ -386,6 +387,8 @@ def _flush_batch(
     and a failure is re-raised: DuckDB aborts the whole transaction on any error, and a
     later COMMIT then silently rolls everything back instead of failing.
     touched: when given, receives the player ids written (see finalize_import).
+    inserted: when given, receives the ids of the hands inserted (in insertion order), for
+    finalize_import's data_generation.bump_append; only once the batch is written.
     Returns (imported_count, error_count, error_details).
     """
     if not prepared:
@@ -398,6 +401,8 @@ def _flush_batch(
         _insert_arrays(db, pa_hands, pa_hp, pa_board, in_transaction=in_transaction)
         if touched is not None:
             touched |= batch_touched
+        if inserted is not None and not rebuild:
+            inserted.extend(p[0].hand_id for p in prepared)
         return len(prepared), 0, []
     except Exception as e:
         if in_transaction:
@@ -410,8 +415,10 @@ def finalize_import(
     db: duckdb.DuckDBPyConnection,
     workspace_id: int | None = None,
     player_ids: "set[int] | None" = None,
+    hand_ids: "list[str] | None" = None,
 ) -> None:
-    """Batch-update player first_seen/last_seen and player types. Call once after import.
+    """Batch-update player first_seen/last_seen and player types. Call once after import,
+    after the import's commit.
 
     When workspace_id is provided, only recomputes player classifications for
     that workspace. When None (full rebuild), recomputes for all workspaces.
@@ -421,9 +428,18 @@ def finalize_import(
     finalise) are recomputed: first/last seen is MIN/MAX over each player's own hands and
     the classification reads only the player's rows in the workspace, so nobody else's
     values can change. None = every player (deferred auto-import finalize, rebuild).
+
+    Data generation (app/data_generation.py): `hand_ids` = the hands this import inserted
+    (duplicates excluded), announced first as an append (`bump_append`), so caches that
+    extend keep their results. The player pass itself is derived data (`bump_derived` at the
+    end); without `hand_ids` (the deferred auto-import pass: light_finalize announced the
+    hands) that is the only bump. workspace_id None (rebuild): a reset.
     """
     from app import data_generation
-    data_generation.bump()  # invalidates cached report resolutions
+    if workspace_id is None:
+        data_generation.bump()  # every workspace re-derived: every cache drops its results
+    elif hand_ids is not None:
+        data_generation.bump_append(workspace_id, hand_ids)
     # The bulk (Arrow) insert and the composite-key migration leave imported_at NULL.
     db.execute("UPDATE hands SET imported_at = CURRENT_TIMESTAMP WHERE imported_at IS NULL"
                + (" AND workspace_id = ?" if workspace_id is not None else ""),
@@ -451,6 +467,9 @@ def finalize_import(
         batch_update_player_types(db, workspace_id=workspace_id)
     from app.heroes import detect_heroes
     detect_heroes(db, workspace_id)
+    # Classification, first/last seen and heroes rewritten: caches that read them recompute
+    # (a cache that stored a result mid-pass would hold the old values).
+    data_generation.bump_derived(workspace_id)
 
 
 def _update_first_last_seen(db: duckdb.DuckDBPyConnection, where: str) -> None:
@@ -468,13 +487,18 @@ def _update_first_last_seen(db: duckdb.DuckDBPyConnection, where: str) -> None:
     """)
 
 
-def light_finalize(db: duckdb.DuckDBPyConnection, workspace_id: int) -> None:
+def light_finalize(db: duckdb.DuckDBPyConnection, workspace_id: int,
+                   hand_ids: "list[str] | None" = None) -> None:
     """The cheap part of finalize_import, for auto-import ticks: new hands become visible at
     once (data generation, imported_at, heroes). The workspace-wide player pass
     (first/last seen, classification) is deferred to finalize_import when the watcher is quiet.
+    hand_ids: the hands inserted (announced as an append); None = a reset.
     """
     from app import data_generation
-    data_generation.bump()
+    if hand_ids is not None:
+        data_generation.bump_append(workspace_id, hand_ids)
+    else:
+        data_generation.bump()
     db.execute("UPDATE hands SET imported_at = CURRENT_TIMESTAMP WHERE imported_at IS NULL AND workspace_id = ?",
                [workspace_id])
     from app.heroes import detect_heroes
@@ -916,6 +940,7 @@ def _stream_source(
 
             processed = 0
             touched: set[int] = set()  # player ids written: finalize recomputes only them
+            inserted: list[str] = []   # hand ids written: announced as an append
             with _bulk_write(db), ThreadPoolExecutor(max_workers=1) as executor:
                 chunk = next(chunks, None)
                 parse_future: Future | None = submit(executor, chunk) if chunk else None
@@ -949,7 +974,8 @@ def _stream_source(
                     if batch_prepared:
                         t0 = time.perf_counter()
                         imp, errs, details = _flush_batch(db, batch_prepared, in_transaction=True,
-                                                          workspace_id=workspace_id, touched=touched)
+                                                          workspace_id=workspace_id, touched=touched,
+                                                          inserted=inserted)
                         t_db += time.perf_counter() - t0
                         imported += imp
                         errors += errs
@@ -975,7 +1001,7 @@ def _stream_source(
                     })
                     chunk = nxt
 
-            finalize_import(db, workspace_id=workspace_id, player_ids=touched)
+            finalize_import(db, workspace_id=workspace_id, player_ids=touched, hand_ids=inserted)
             _checkpoint_after_bulk(db)
         finally:
             try:
@@ -1047,7 +1073,7 @@ def import_hand_texts(db, hands: list[tuple[str, object]], workspace_id: int, *,
     hands per tick). Caller holds the write lock.
 
     Same pipeline as file import: dedup by id within the workspace, parse, stats, money,
-    one transaction, then finalize_import (bumps the data generation). Raises on a failed
+    one transaction, then finalize_import (announces the inserted hands: bump_append). Raises on a failed
     insert (rolled back, nothing written). Returns imported / duplicates / errors counts.
     """
     texts = [h for h, _ in hands]
@@ -1070,11 +1096,12 @@ def import_hand_texts(db, hands: list[tuple[str, object]], workspace_id: int, *,
             start = i
     imported = 0
     touched: set[int] = set()
+    inserted: list[str] = []
     if prepared:
         db.execute("BEGIN TRANSACTION")
         try:
             imported, _, _ = _flush_batch(db, prepared, in_transaction=True, workspace_id=workspace_id,
-                                          touched=touched)
+                                          touched=touched, inserted=inserted)
             db.execute("COMMIT")
         except BaseException:
             try:
@@ -1084,9 +1111,9 @@ def import_hand_texts(db, hands: list[tuple[str, object]], workspace_id: int, *,
             reset_import_cache()
             raise
         if full_finalize:
-            finalize_import(db, workspace_id=workspace_id, player_ids=touched)
+            finalize_import(db, workspace_id=workspace_id, player_ids=touched, hand_ids=inserted)
         else:
-            light_finalize(db, workspace_id)
+            light_finalize(db, workspace_id, hand_ids=inserted)
         reset_import_cache()
     return {"imported": imported, "duplicates": duplicates, "errors": errors,
             "error_details": error_details[:20]}
@@ -1116,13 +1143,14 @@ def _process_hands(db, text_contents: list[str], workspace_id: int = 1) -> Impor
 
     existing_ids = _existing_hand_ids(db, all_ids, workspace_id)
 
+    inserted: list[str] = []
     with _bulk_write(db):
         total_imported, total_duplicates, total_errors = _process_hands_in_txn(
             db, all_hands, all_ids, hand_parsers_list, existing_ids,
-            error_details, total_duplicates, total_errors, workspace_id,
+            error_details, total_duplicates, total_errors, workspace_id, inserted,
         )
 
-    finalize_import(db, workspace_id=workspace_id)
+    finalize_import(db, workspace_id=workspace_id, hand_ids=inserted)
     _checkpoint_after_bulk(db)
     reset_import_cache()
 
@@ -1137,6 +1165,7 @@ def _process_hands(db, text_contents: list[str], workspace_id: int = 1) -> Impor
 def _process_hands_in_txn(
     db, all_hands, all_ids, hand_parsers_list, existing_ids,
     error_details, total_duplicates, total_errors, workspace_id,
+    inserted: list[str] | None = None,
 ) -> tuple[int, int, int]:
     total_imported = 0
     pending: list[tuple[ParsedHand, dict, tuple]] = []
@@ -1162,14 +1191,16 @@ def _process_hands_in_txn(
 
         if len(pending) >= BATCH_SIZE:
             _check_shutdown()
-            imp, errs, details = _flush_batch(db, pending, in_transaction=True, workspace_id=workspace_id)
+            imp, errs, details = _flush_batch(db, pending, in_transaction=True, workspace_id=workspace_id,
+                                              inserted=inserted)
             total_imported += imp
             total_errors += errs
             error_details.extend(details)
             pending = []
 
     if pending:
-        imp, errs, details = _flush_batch(db, pending, in_transaction=True, workspace_id=workspace_id)
+        imp, errs, details = _flush_batch(db, pending, in_transaction=True, workspace_id=workspace_id,
+                                          inserted=inserted)
         total_imported += imp
         total_errors += errs
         error_details.extend(details)

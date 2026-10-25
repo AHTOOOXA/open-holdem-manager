@@ -23,12 +23,23 @@ and the views aggregate in SQL / Arrow (split.plain_groups); hand lists and the 
 with `case_filter` (a subquery, or the spot cases as a registered Arrow relation).
 
 Resolutions are cached (LRU bounded by estimated bytes) by workspace, player, the chain
-without labels and a data version (hand count, last import time, the highest
-`hand_players.id`, which a rebuild moves, and `data_generation`, whose bump also clears the
-cache), so the several requests a Reports page fires share one resolution; split tables and
-finished responses computed from a resolution are cached on it (`Resolution.memo`). Cold
-spot-chain resolves and memoized computations run in `app.concurrency.heavy_slot()`; requests
-waiting for one of them hold no slot.
+without labels and the day-start setting, so the several requests a Reports page fires share
+one resolution; split tables and finished responses computed from a resolution are cached on it
+(`Resolution.memo`). Cold spot-chain resolves and memoized computations run in
+`app.concurrency.heavy_slot()`; requests waiting for one of them hold no slot.
+
+A cached resolution records the data generation it was computed at (`app.data_generation`,
+read before computing) and a cheap data version (the workspace's hand count and highest
+`hand_players.id`, which a rebuild moves; it also catches a write that did not report itself).
+At a newer generation it is extended, not recomputed, when only hands were appended since
+(`data_generation.changes_since`): the new hands go through the same plain SQL filter, row bits
+and spot evaluation as `_compute`, in hand order after the existing ones (every new hand has a
+higher `rowid`, which also dedupes a hand seen twice; `_rowids_kept` verifies that, see
+`_NEW_IDS`), and the Next / Faced / Sizing tables are extended with them; every other
+memoized table and response is dropped and recomputed from the merged records. Plain chains
+recount in SQL and extend their Next / Faced tables the same way.
+Chains have absolute dates only (the frontend resolves date presets), so a chain's filter means
+the same after an import. A reset (`data_generation.bump`) drops the cache.
 """
 
 from __future__ import annotations
@@ -625,6 +636,15 @@ class Resolution:
     blob_bytes: int = 0
     table_bytes: int = 0
     _flights: dict = field(default_factory=dict, repr=False)   # memo key -> _Flight
+    # Incremental extension (module docstring): data generation and version the resolution was
+    # computed at, the highest hands.rowid its records were read from (spot chains), and the
+    # same for each plain-chain Next / Faced table (`table_marks[which]`), and the whole
+    # table's rowid snapshot that proves those watermarks still mean the same rows.
+    gen: int = -1
+    version: tuple = ()
+    max_rowid: int = -1
+    table_marks: dict = field(default_factory=dict, repr=False)
+    rowid_snap: tuple = ()    # (highest hands.rowid, row count) after the reads: _rowid_snapshot
 
     @property
     def plain(self) -> bool:
@@ -840,25 +860,31 @@ _SEQ_SELECT = f"""SELECT h.id, {_D.format("COALESCE(hp.won, 0)")},
            {_D.format("COALESCE(hp.rake, 0)")}, COALESCE(hp.went_to_showdown, FALSE),
            COALESCE(hp.is_winner, FALSE), COALESCE(hp.h2n_pre_opp, 0),
            COALESCE(hp.h2n_pre_case, 0), COALESCE(hp.h2n_post_case, 0),
-           {_D.format("COALESCE(hp.rake_bb, 0)")}, sq.h2n_seq {_FROM}
+           {_D.format("COALESCE(hp.rake_bb, 0)")}, sq.h2n_seq, h.rowid {_FROM}
     LEFT JOIN hand_players sq ON sq.hand_id = hp.hand_id AND sq.workspace_id = hp.workspace_id
         AND sq.h2n_seq IS NOT NULL"""
 
 
-def iter_case_seqs(db, res: Resolution, chunk: int = 8192):
+def iter_case_seqs(db, res: Resolution, chunk: int = 8192, mark: list | None = None,
+                   extra: tuple[str, list] = ("", [])):
     """Plain chains: the case hands as (CaseRec list, {hand id: stored blob or None}) chunks in
-    hand order, from one query (nothing is kept on the resolution)."""
+    hand order, from one query (nothing is kept on the resolution).
+
+    `mark` ([int]): receives the highest hands.rowid read (the extension watermark of a table
+    built from these chunks). `extra`: more SQL conditions (leading " AND ") and their params."""
     if not res.plain:
         raise PlainResolutionError("iter_case_seqs is for plain resolutions")
     if not res.n_cases:
         return
     cur = db.cursor()   # own cursor: callers run other queries on `db` between chunks
     try:
-        cur.execute(f"{_SEQ_SELECT} WHERE {res.where}{ORDER}", res.params)
+        cur.execute(f"{_SEQ_SELECT} WHERE {res.where}{extra[0]}{ORDER}", [*res.params, *extra[1]])
         while True:
             rows = cur.fetchmany(chunk)
             if not rows:
                 break
+            if mark is not None:
+                mark[0] = max(mark[0], rows[-1][13])   # rows come in rowid order
             yield [CaseRec(*r[:12]) for r in rows], {r[0]: r[12] for r in rows}
     finally:
         cur.close()
@@ -964,23 +990,49 @@ def _compute(db, workspace_id: int, player_id: int | None, chain: list[_Step],
         res.n_cases = res.total_hands if res.where == _BASE_WHERE else int(db.execute(
             f"SELECT COUNT(*) {_FROM} WHERE {res.where}", res.params).fetchone()[0])
         res.hands = PlainCases(res.n_cases)
+        res.rowid_snap = _rowid_snapshot(db)
         return res
-    rows = db.execute(f"{_SELECT} WHERE {res.where}{ORDER}", res.params).fetchall()
-    ids = [r[0] for r in rows]
-    blobs = fetch_seqs(db, workspace_id, ids)
-    res.blobs = {h: blobs.get(h) for h in ids}
-    src = SeqSource(db, workspace_id, res.blobs)
-    src.prefetch_missing(ids)
-    name = res.username
+    rows = db.execute(f"{_SELECT_ROWID} WHERE {res.where}{ORDER}", res.params).fetchall()
+    res.rowid_snap = _rowid_snapshot(db)
     # Next / Faced tables are filled here from the sequence decoded for the spot step
     # (same evaluators, same hand order as split.action_table), so no tab decodes it again.
     from app.reports import split as split_mod
-    fill = split_mod.table_fillers(ctx) if name else {}
+    fill = split_mod.table_fillers(ctx) if res.username else {}
+    out, blobs, failed, fill, top = _evaluate(db, res, rows, steps, fill)
+    res.replay_failed = failed
+    res.max_rowid = top
+    res.hands = out
+    res.n_cases = sum(1 for h in out if h.case)
+    res.blobs = blobs
+    res.blob_bytes = sum(len(b) + 120 if b is not None else 120 for b in res.blobs.values())
+    for which, (_cands, _ev, table) in fill.items():
+        res.tables[("table", which)] = table
+        res.table_bytes += 600 * len(table) + 1024
+    return res
+
+
+_SELECT_ROWID = f"SELECT {_COLS}, h.rowid {_FROM}"   # rowid: column 26
+
+
+def _evaluate(db, res: Resolution, rows: list, steps: list[_Step], fill: dict, on_rec=None):
+    """The spot records of `rows` (`_SELECT_ROWID` rows of the player, hand order): (records,
+    {hand id: blob} of the records, replay failures, `fill` (emptied when a table fill
+    failed), highest rowid read). Case records are added to the `fill` tables
+    (split.table_fillers) in hand order; `on_rec(record, sequence)` sees every record in hand
+    order while its sequence is decoded (no sequence outlives its hand)."""
+    from app.reports import split as split_mod
+    ids = [r[0] for r in rows]
+    stored = fetch_seqs(db, res.workspace_id, ids)
+    blobs = {h: stored.get(h) for h in ids}
+    src = SeqSource(db, res.workspace_id, blobs)
+    src.prefetch_missing(ids)
+    name = res.username
     out: list[HandRec] = []
+    failed = 0
     for r in rows:
         seq = src.get(r[0])
         if seq is None:
-            res.replay_failed += 1
+            failed += 1
             continue
         p = seq.index.get(name)
         if p is None:
@@ -989,7 +1041,7 @@ def _compute(db, workspace_id: int, player_id: int | None, chain: list[_Step],
             code, hit = evaluate_spot(seq, p, steps)
         except Exception:
             log.warning("reports spot evaluation failed for hand %s", r[0], exc_info=True)
-            res.replay_failed += 1
+            failed += 1
             continue
         if not code:
             continue
@@ -1000,19 +1052,141 @@ def _compute(db, workspace_id: int, player_id: int | None, chain: list[_Step],
         if a.actor == p:
             rec.ap = 0.0 if a.eff == spots.FOLD else rec.ev_bb + spots.committed_bb(seq, p, hit)
         out.append(rec)
+        if on_rec is not None:
+            on_rec(rec, seq)
         if fill and rec.case:
             try:
                 split_mod.fill_tables(fill, seq, p, rec)
             except Exception:  # the lazy path recomputes (and reports) it
                 log.warning("reports table fill failed for hand %s", r[0], exc_info=True)
                 fill = {}
-    res.hands = out
-    res.n_cases = sum(1 for h in out if h.case)
-    res.blobs = {h.hid: res.blobs.get(h.hid) for h in out}
-    res.blob_bytes = sum(len(b) + 120 if b is not None else 120 for b in res.blobs.values())
+    top = rows[-1][26] if rows else -1
+    return out, {h.hid: blobs.get(h.hid) for h in out}, failed, fill, top
+
+
+# ── incremental extension ────────────────────────────────────────────────
+
+
+# The appended hands of an extension, as a condition (a list parameter: the plain path reads
+# through its own cursor, which can't see a relation registered on `db`).
+#
+# `h.rowid > watermark` relies on hands.rowid only growing between resets. DuckDB numbers rows
+# by position and a checkpoint may vacuum deleted rows, which renumbers the rows after them;
+# today that never happens to `hands` because DuckDB (1.4) skips checkpoint vacuum on tables
+# with an index and `hands` keeps uq_hands_workspace_id (db.py). Deletes are resets anyway, but
+# a vacuum checkpointed later could move appended hands below a watermark taken in between.
+# `_rowids_kept` checks the snapshot every extension relies on, so if the index ever goes,
+# extensions fall back to a full compute instead of missing hands
+# (test_perf_incremental_review checks both the index and this fallback).
+_NEW_IDS = " AND h.rowid > ? AND h.id IN (SELECT UNNEST(?::VARCHAR[]))"
+
+
+def _rowid_snapshot(db) -> tuple[int, int]:
+    """(highest rowid, row count) of the whole hands table, read after a resolution's rows (so
+    its watermarks are at most the highest rowid)."""
+    top, n = db.execute("SELECT MAX(rowid), COUNT(*) FROM hands").fetchone()
+    return (-1 if top is None else int(top), int(n))
+
+
+def _rowids_kept(db, snap: tuple) -> bool:
+    """True when no hands row moved to or below `snap`'s highest rowid since the snapshot: the
+    same rows still sit there (appends only take higher rowids), so a watermark at or below it
+    still separates the rows read from the appended ones. False after a renumbering vacuum
+    (or an unreported delete): the caller recomputes. Read after the extension's own reads."""
+    if not snap:
+        return False
+    top, n = snap
+    return int(db.execute("SELECT COUNT(*) FROM hands WHERE rowid <= ?",
+                          [top]).fetchone()[0]) == n
+
+
+def _extend(db, base: Resolution, ids: list[str], day_start: int) -> Resolution | None:
+    """`base` extended with the appended hands `ids` (module docstring), as a new Resolution
+    (requests still reading `base` keep a consistent object). None: recompute instead."""
+    if base.player_id is None or base.username is None:
+        return None
+    if base.plain:
+        return _extend_plain(db, base, ids, day_start)
+    from app.reports import split as split_mod
+    res = Resolution(base.workspace_id, base.player_id, base.username, base.chain, base.ctx,
+                     True, 0)
+    res.where, res.params = base.where, list(base.params)
+    with base.lock:
+        tables = dict(base.tables)
+    res.total_hands = int(db.execute(f"SELECT COUNT(*) {_FROM} WHERE {_BASE_WHERE}",
+                                     [base.player_id, base.workspace_id]).fetchone()[0])
+    rows = db.execute(f"{_SELECT_ROWID} WHERE {res.where}{_NEW_IDS}{ORDER}",
+                      [*res.params, base.max_rowid, list(dict.fromkeys(ids))]).fetchall()
+    if not _rowids_kept(db, base.rowid_snap) or base.max_rowid > base.rowid_snap[0]:
+        return None   # the watermark may no longer separate old and new rows: recompute
+    res.rowid_snap = _rowid_snapshot(db)
+    # Next / Faced tables: the base's, copied, take the new case hands (same evaluators and hand
+    # order as a full compute). A table the base doesn't have is computed lazily as usual.
+    fill = {}
+    fillers = split_mod.table_fillers(base.ctx)
+    for which, (cands, ev, _empty) in fillers.items():
+        old = tables.get(("table", which))
+        if old is not None:
+            fill[which] = (cands, ev, split_mod.copy_table(old))
+    for which in ("next", "faced"):   # no candidates at this hit point: always empty
+        if which not in fillers and ("table", which) in tables:
+            res.tables[("table", which)] = tables[("table", which)]
+            res.table_bytes += 1024
+    sizing = tables.get(("sizing",))
+    sizer = split_mod.sizing_extender(base, sizing) if sizing is not None else None
+    out, blobs, failed, fill, top = _evaluate(db, res, rows, spot_steps(base.chain), fill,
+                                              on_rec=sizer[0] if sizer else None)
+    res.hands = [*base.hands, *out]
+    res.n_cases = base.n_cases + sum(1 for h in out if h.case)
+    res.replay_failed = base.replay_failed + failed
+    res.max_rowid = max(base.max_rowid, top)
+    res.blobs = {**base.blobs, **blobs}
+    res.blob_bytes = base.blob_bytes + sum(len(b) + 120 if b is not None else 120
+                                           for b in blobs.values())
     for which, (_cands, _ev, table) in fill.items():
         res.tables[("table", which)] = table
         res.table_bytes += 600 * len(table) + 1024
+    if sizer is not None:
+        ext = sizer[1](res)
+        if ext is not None:
+            res.tables[("sizing",)] = ext
+            res.table_bytes += 600 * len(ext[1]) + 1024
+    return res
+
+
+def _extend_plain(db, base: Resolution, ids: list[str], day_start: int) -> Resolution:
+    """Plain chains: recount (two COUNT queries) and extend the base's Next / Faced tables
+    with the new case hands after each table's own rowid mark."""
+    from app.reports import split as split_mod
+    res = _compute(db, base.workspace_id, base.player_id, base.chain, day_start)
+    with base.lock:
+        tables = {k: v for k, v in base.tables.items() if k[0] == "table"}
+        marks = dict(base.table_marks)
+        sizing = base.tables.get(("sizing",))
+    # A mark above the base's snapshot (a table built later, after an unreported commit) can't
+    # be checked: that table is recomputed lazily.
+    marks = {w: m for w, m in marks.items() if m <= (base.rowid_snap or (-1,))[0]}
+    if sizing is not None:   # plain chains have no hit point: never any bucket
+        res.tables[("sizing",)] = sizing
+        res.table_bytes += 1024
+    if not tables or not res.n_cases:
+        return res
+    new = list(dict.fromkeys(ids))
+    for (_t, which), old in tables.items():
+        if which not in marks:
+            if not split_mod._candidates(res.ctx, which)[0]:   # always empty: keep it
+                res.tables[("table", which)] = old
+                res.table_bytes += 1024
+            continue
+        mark = [marks[which]]
+        table = split_mod.copy_table(old)
+        split_mod.add_case_seqs(db, res, which, table, iter_case_seqs(
+            db, res, mark=mark, extra=(_NEW_IDS, [marks[which], new])))
+        res.tables[("table", which)] = table
+        res.table_marks[which] = mark[0]
+        res.table_bytes += 600 * len(table) + 1024
+    if marks and not _rowids_kept(db, base.rowid_snap):
+        return None   # a renumbering vacuum moved rows below the marks: recompute
     return res
 
 
@@ -1075,15 +1249,25 @@ def clear_cache() -> None:
     _CACHE.clear()
 
 
-# Every write that changes hands / hand_players bumps the generation: drop the resolutions
-# (keying on the generation alone would leave them in memory until LRU eviction).
-data_generation.on_bump(clear_cache)
+# A reset (delete, clear, rebuild, restore, ...) drops the resolutions. Appends extend them on
+# their next lookup (`resolve`); derived-data changes don't affect them.
+data_generation.on_reset(clear_cache)
 
 
 def bump_generation() -> None:
-    """Call after any write that changes hands / hand_players (invalidates resolutions)."""
+    """Reset after a write that changes hands / hand_players in place (drops resolutions)."""
     data_generation.bump()
     _CACHE.clear()
+
+
+def _version(db, workspace_id: int) -> tuple:
+    """(hand count, highest hand_players.id) of the workspace: catches a write that did not
+    report itself to data_generation (e.g. tests inserting hands directly)."""
+    n, top = db.execute(
+        "SELECT (SELECT COUNT(*) FROM hands WHERE workspace_id = ?), "
+        "(SELECT MAX(id) FROM hand_players WHERE workspace_id = ?)",
+        [workspace_id, workspace_id]).fetchone()
+    return (int(n), top)
 
 
 def data_version(db, workspace_id: int) -> tuple:
@@ -1111,7 +1295,9 @@ def resolve(db, workspace_id: int, player_id: int | None, chain: list[_Step]) ->
     """Resolution of `chain` for the player (None = the workspace's active hero), cached.
 
     Parallel requests for one key share one computation, also during a background rebuild
-    (when nothing is cached because the data is changing).
+    (when nothing is cached because the data is changing). A cached resolution from an older
+    data generation is extended with the hands appended since (`_extend`) when it can be;
+    that runs on the same in-flight entry and throttle as a cold resolve.
 
     A cold spot-chain resolve (per-hand sequence decoding and evaluation) runs in a
     `heavy_slot()`: every caller (Reports endpoints, hand list, graph, export) is throttled
@@ -1124,20 +1310,21 @@ def resolve(db, workspace_id: int, player_id: int | None, chain: list[_Step]) ->
     from app.app_settings import get_app_settings
     day_start = int(get_app_settings(db)["day_start_hour"])
     cacheable = not get_rebuild_status().get("active")
-    key = (workspace_id, target, canonical(chain), data_version(db, workspace_id), day_start)
-    if cacheable:
-        hit = _CACHE.get(key)
-        if hit is not None:
-            return hit
+    key = (workspace_id, target, canonical(chain), day_start)
     slot = heavy_slot if spot_steps(chain) else nullcontext
     while True:
+        gen = data_generation.current()
+        if cacheable:
+            hit = _CACHE.get(key)
+            if hit is not None and hit.gen == gen and hit.version == _version(db, workspace_id):
+                return hit
         with _inflight_lock:
             flight = _inflight.get(key)
         if flight is not None:            # someone is computing it: wait without a slot
             flight.done.wait()
-            if flight.result is not None:
+            if flight.result is not None and (not cacheable or flight.result.gen >= gen):
                 return flight.result
-            continue                      # that computation failed: try again
+            continue                      # failed, or older than this request: look again
         with slot():
             with _inflight_lock:
                 flight = _inflight.get(key)
@@ -1147,11 +1334,7 @@ def resolve(db, workspace_id: int, player_id: int | None, chain: list[_Step]) ->
             if not owner:
                 continue                  # lost the race while taking the slot: leave it, wait
             try:
-                hit = _CACHE.get(key) if cacheable else None
-                if hit is None:
-                    hit = _compute(db, workspace_id, target, chain, day_start)
-                    if cacheable:
-                        _CACHE.put(key, hit)
+                hit = _fresh(db, workspace_id, target, chain, day_start, key, cacheable)
                 flight.result = hit
                 return hit
             finally:
@@ -1159,6 +1342,35 @@ def resolve(db, workspace_id: int, player_id: int | None, chain: list[_Step]) ->
                     if _inflight.get(key) is flight:
                         del _inflight[key]
                 flight.done.set()
+
+
+def _fresh(db, workspace_id: int, target: int | None, chain: list[_Step], day_start: int,
+           key: tuple, cacheable: bool) -> Resolution:
+    """The resolution at the current data generation (owner of the in-flight entry): cached,
+    extended from an older cached one, or computed; stored when cacheable."""
+    gen = data_generation.current()          # read before computing (module docstring)
+    version = _version(db, workspace_id)
+    base = _CACHE.get(key) if cacheable else None
+    if base is not None and base.gen == gen and base.version == version:
+        return base
+    res = None
+    if base is not None and base.gen < gen:
+        ids = data_generation.changes_since(base.gen, workspace_id)
+        if ids is not None and not ids and version == base.version:
+            base.gen = gen                   # no hand of this workspace changed: still valid
+            return base
+        if ids:
+            try:
+                res = _extend(db, base, ids, day_start)
+            except Exception:
+                log.warning("reports resolution extension failed; recomputing", exc_info=True)
+                res = None
+    if res is None:
+        res = _compute(db, workspace_id, target, chain, day_start)
+    res.gen, res.version = gen, version
+    if cacheable:
+        _CACHE.put(key, res)
+    return res
 
 
 def resolved_ids(db, workspace_id: int, player_id: int | None, chain: list[_Step]) -> list[str]:

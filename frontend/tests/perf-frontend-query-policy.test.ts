@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { QueryClient, QueryObserver, type QueryKey } from '@tanstack/query-core';
 import {
-  HEAVY_META, isHeavyQuery, isOutdatedOnScreen, isSessionChainQuery, isStaticQuery, refetchOutdatedOnScreen,
+  AUTO_REFRESH_DEBOUNCE_MS, HEAVY_META, isHeavyQuery, isOutdatedOnScreen, isSessionChainQuery, isStaticQuery,
   refreshAfterDataChange, sessionQueriesToRefetch, sessionStepsOf, type SessionRowLike,
 } from '../src/lib/query-policy.ts';
 
@@ -11,6 +11,8 @@ import {
 const keyOf = (chain: unknown[]) => JSON.stringify([1, null, JSON.stringify(chain)]);
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
+/** Past the debounced refresh of the visible heavy queries after an auto-import tick. */
+const settle = () => new Promise((r) => setTimeout(r, AUTO_REFRESH_DEBOUNCE_MS + 30));
 
 function client() {
   return new QueryClient({ defaultOptions: { queries: { staleTime: Infinity, gcTime: Infinity, retry: 0, refetchOnWindowFocus: false } } });
@@ -69,7 +71,7 @@ test('session steps are found in string-encoded and object chains', () => {
   assert.equal(isSessionChainQuery(q(['reports', 'graph', keyOf([])])), false);
 });
 
-test('auto-import tick: before = every visible query refetches; after = only the cheap ones', async () => {
+test('auto-import tick: before = every visible query refetches twice for the workspaces; after = cheap now, heavy once after the debounce', async () => {
   const keys = {
     spot: ['reports', 'spot', keyOf([])], split: ['reports', 'split', 'positions', keyOf([])],
     graph: ['reports', 'graph', keyOf([])], hands: ['hands', 'list', { page: 1, chain: [] }],
@@ -95,15 +97,14 @@ test('auto-import tick: before = every visible query refetches; after = only the
   const after = await run('after');
   // before: 7 visible queries, the workspace list twice (second call cancels and restarts the first)
   assert.equal(before.refetched, 8);
-  // after: workspaces + heroes; config untouched; the 4 heavy report queries keep their data
+  // after: workspaces + heroes right away; config untouched; the 4 heavy report queries keep their
+  // data (no chip: they are about to refresh) and refetch once after the debounce (the backend
+  // extends its warm results with the new hands instead of recomputing them)
   assert.equal(after.refetched, 2);
   assert.equal(after.h.count(keys.spot), 1);
-  const outdated = after.qc.getQueryCache().getAll().filter(isOutdatedOnScreen).map((x) => x.queryKey[1]);
-  assert.deepEqual(outdated.sort(), ['graph', 'list', 'split', 'spot']);
-  // The chip's Refresh: each heavy query once
-  await refetchOutdatedOnScreen(after.qc);
-  assert.equal(after.h.count(keys.spot), 2);
-  assert.equal(after.h.count(keys.graph), 2);
+  assert.equal(after.qc.getQueryCache().getAll().filter(isOutdatedOnScreen).length, 0);
+  await settle();
+  for (const k of [keys.spot, keys.split, keys.graph, keys.hands]) assert.equal(after.h.count(k), 2, JSON.stringify(k));
   assert.equal(after.qc.getQueryCache().getAll().filter(isOutdatedOnScreen).length, 0);
 });
 
@@ -122,7 +123,7 @@ test('auto-import: a heavy screen that is not showing refetches once when it mou
   assert.equal(h.count(graph), 2, 'one refetch on return');
 });
 
-test('auto-import tick during an in-flight heavy fetch: the chip shows once that fetch lands', async () => {
+test('auto-import tick during an in-flight heavy fetch: not cancelled, refetched once after it lands', async () => {
   const qc = client();
   let n = 0;
   let release: (() => void) | null = null;
@@ -138,17 +139,19 @@ test('auto-import tick during an in-flight heavy fetch: the chip shows once that
   void o.refetch(); // chip click / filter refetch: its data predates the tick below
   await flush();
   await refreshAfterDataChange(qc, 'auto-import');
+  await settle();
+  assert.equal(n, 2, 'the running fetch is not cancelled and not repeated while it runs');
   release!();
   await flush();
   const query = qc.getQueryCache().find({ queryKey: key })!;
-  assert.equal(n, 2, 'the running fetch is not cancelled and not repeated');
-  assert.equal(query.state.isInvalidated, true);
-  assert.equal(isOutdatedOnScreen(query), true, 'New hands chip');
-  void refetchOutdatedOnScreen(qc);
-  await flush();
+  assert.equal(query.state.isInvalidated, true, 'its data predates the tick');
+  assert.equal(isOutdatedOnScreen(query), false, 'no chip: the refresh is due');
+  await settle();
+  assert.equal(n, 3, 'one refresh for the tick');
   release!();
   await flush();
   assert.equal(n, 3);
+  assert.equal(query.state.isInvalidated, false);
   assert.equal(isOutdatedOnScreen(query), false);
   // hidden after the race: the remount refetches
   void o.refetch();

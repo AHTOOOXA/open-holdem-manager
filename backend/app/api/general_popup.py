@@ -17,10 +17,12 @@ Data sources:
   and reruns the matcher (`app.h2n.replay`), because the `actions` table is
   not populated. The per-hand results are packed into one int each and kept
   in an in-memory cache with one segment per (workspace, player, row), bounded
-  by bytes (OHM_POPUP_CACHE_MB, default 128) and cleared on every data change
-  (`data_generation.on_bump`), so only the first popup over a set of hands
-  pays for the replay; later requests (other filters, the hands list) reuse
-  them.
+  by bytes (OHM_POPUP_CACHE_MB, default 128), so only the first popup over a set
+  of hands pays for the replay; later requests (other filters, the hands list)
+  reuse them. A record depends only on its hand and player, and hands never
+  change once imported: an import (`data_generation.bump_append`) keeps the
+  segments, and the next popup replays only the new hands it selects. A reset
+  (delete, clear, rebuild, restore: `data_generation.on_reset`) drops them.
 
 Only action cells (one matcher row) have a popup. Expression cells (4-Bet
 Range, Aggression, WTSD, ...) are answered with 400.
@@ -852,10 +854,10 @@ def _budget_from_env() -> int:
 _RECORDS = _RecordCache(_budget_from_env())
 
 
-@data_generation.on_bump
+@data_generation.on_reset
 def clear_cache() -> None:
-    """Drop every cached replay record (on every data change: import, clear, rebuild,
-    workspace delete; and in tests)."""
+    """Drop every cached replay record (on a reset: clear, rebuild, restore, workspace delete;
+    and in tests). Appended hands extend the segments instead (module docstring)."""
     _RECORDS.clear()
 
 
@@ -963,7 +965,9 @@ def _records(db, workspace_id: int, player_id: int, username: str, row: str, str
                 out[hid] = v
             else:
                 failed += 1
-        if data_generation.current() == gen:    # no data change while replaying
+        # Appends while replaying are fine (records of existing hands don't change); a reset
+        # (e.g. a rebuild committing mid-replay) may have changed what was read.
+        if not data_generation.reset_since(gen):
             _RECORDS.add(key, done)
     return out, len(missing), failed
 
