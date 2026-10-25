@@ -89,3 +89,47 @@ def test_export_query_returns_ids_not_texts(client, bench_db, monkeypatch):
     want = [bench_db.execute("SELECT raw_text FROM hands WHERE id = ? AND workspace_id = 1",
                              [i]).fetchone()[0] for i in ids.column("id").to_pylist()[10:15]]
     assert texts == want
+
+
+# ── Workspace delete refreshes first/last seen (import review minor) ─────────────────────────
+
+
+def test_delete_workspace_refreshes_first_last_seen(db, monkeypatch):
+    from pathlib import Path
+
+    from fastapi.testclient import TestClient
+
+    import app.main as app_main
+    from app import db as app_db
+    from app.api.import_hands import _update_first_last_seen, insert_parsed_hand
+    from app.parsers.ggpoker import parse_hand_history
+
+    monkeypatch.setattr(app_db, "_conn", db)
+    client = TestClient(app_main.app)
+    ws = client.post("/api/workspaces", json={"name": "W2", "hero_username": "Hero",
+                                              "hero_site": "GG"}).json()["id"]
+    text = (Path(__file__).parent / "fixtures" / "ggpoker" / "sample.txt").read_text()
+    hands = [h.strip() for h in text.split("\n\n\n") if h.strip()]
+    for w in (1, ws):
+        for h in hands:
+            insert_parsed_hand(db, parse_hand_history(h), workspace_id=w)
+    # The second workspace's copies are played a month later and earlier: they set every
+    # shared player's first and last seen.
+    db.execute("UPDATE hands SET played_at = played_at + INTERVAL 30 DAY WHERE workspace_id = ? "
+               "AND id IN (SELECT id FROM hands WHERE workspace_id = ? ORDER BY played_at DESC "
+               "LIMIT 2)", [ws, ws])
+    db.execute("UPDATE hands SET played_at = played_at - INTERVAL 30 DAY WHERE workspace_id = ? "
+               "AND id IN (SELECT id FROM hands WHERE workspace_id = ? ORDER BY played_at "
+               "LIMIT 2)", [ws, ws])
+    _update_first_last_seen(db, "")
+    want = dict((pid, (lo, hi)) for pid, lo, hi in db.execute(
+        "SELECT hp.player_id, MIN(h.played_at), MAX(h.played_at) FROM hand_players hp "
+        "JOIN hands h ON h.id = hp.hand_id AND h.workspace_id = hp.workspace_id "
+        "WHERE h.workspace_id = 1 GROUP BY 1").fetchall())
+    seen = lambda: {pid: (lo, hi) for pid, lo, hi in db.execute(  # noqa: E731
+        "SELECT id, first_seen, last_seen FROM players WHERE id IN (SELECT UNNEST(?::INTEGER[]))",
+        [list(want)]).fetchall()}
+    assert seen() != want          # the shifted copies moved some players' range
+
+    assert client.delete(f"/api/workspaces/{ws}").status_code == 200
+    assert seen() == want

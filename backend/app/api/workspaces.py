@@ -199,6 +199,11 @@ def delete_workspace(workspace_id: int):
         try:
             for table in _WORKSPACE_TABLES:
                 db.execute(f"DELETE FROM {table} WHERE workspace_id = ?", [workspace_id])
+            # Players also seen in other workspaces: first/last seen over the hands left (as
+            # /import/clear does). Imports only recompute the players they touch, so a stale
+            # last_seen from the deleted hands would otherwise stay until a rebuild.
+            from app.api.import_hands import _update_first_last_seen
+            _update_first_last_seen(db, "")
             # Marks of this workspace (the tag catalogue is global and stays)
             delete_workspace_marks(db, workspace_id)
             db.execute("DELETE FROM settings WHERE key = ?", [f"statistics_dashboards.{workspace_id}"])
