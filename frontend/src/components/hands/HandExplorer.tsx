@@ -7,7 +7,6 @@ import type { Step } from '@/lib/reports/types';
 import type { HandListParams, HandSummary } from '@/lib/api';
 import { useFilterOptions } from '@/hooks/useFilterOptions';
 import { queryKeys } from '@/lib/query-keys';
-import { queryClient } from '@/lib/query-client';
 import { cn, formatStakes, formatRelativeDate } from '@/lib/utils';
 import { formatLocalDate } from '@/lib/date';
 import EmptyState from '@/components/EmptyState';
@@ -336,7 +335,7 @@ export default function HandExplorer({
   // Previous page stays on screen (with a progress line) while the next sort/page/filter loads
   const { data, isPending: loading, isPlaceholderData, isError, error } = useQuery({
     queryKey: queryKeys.hands.list(handsQueryParams),
-    queryFn: () => getHands(handsQueryParams),
+    queryFn: ({ signal }) => getHands(handsQueryParams, signal),
     placeholderData: keepPreviousData,
   });
 
@@ -669,7 +668,6 @@ export default function HandExplorer({
           onNext={handleNext}
           initialMode={drawerMode}
           evBb={selectedHand?.all_in_ev_bb}
-          onTagsChanged={() => { queryClient.invalidateQueries({ queryKey: ['hands'] }); }}
         />
       )}
     </div>

@@ -1,12 +1,14 @@
 import { toast } from 'sonner';
-import { currentHandsExportUrl, getHandDetail } from '@/lib/api';
+import { currentHandsExportUrl } from '@/lib/api';
 import type { HandListParams } from '@/lib/api';
+import { queryClient } from '@/lib/query-client';
+import { handDetailQuery } from '@/components/hands/handDetailQuery';
 import { EXPORT_FILENAME, exportCapNotice, handHistoryText } from '@/lib/hands/hand-plot';
 
-/** Copy a hand's original hand-history text to the clipboard (toast either way). */
+/** Copy a hand's original hand-history text to the clipboard (toast either way). Reuses the cached detail. */
 export async function copyHandHistory(handId: string, playerId?: number): Promise<void> {
   try {
-    const text = handHistoryText(await getHandDetail(handId, playerId));
+    const text = handHistoryText(await queryClient.fetchQuery(handDetailQuery(handId, playerId)));
     if (text === null) {
       toast.error('This hand has no stored hand history');
       return;

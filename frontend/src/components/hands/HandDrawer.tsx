@@ -1,6 +1,9 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useMemo } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { HandDetail } from '@/lib/api';
-import { getHandDetail, updateNote } from '@/lib/api';
+import { updateNote } from '@/lib/api';
+import { handDetailQuery } from '@/components/hands/handDetailQuery';
+import { queryKeys } from '@/lib/query-keys';
 import { HandPlayersTable, HandResultLine } from './HandTextParts';
 import HandActionsDisplay from './HandActions';
 import HandReplayer from './replayer/HandReplayer';
@@ -55,7 +58,8 @@ export default function HandDrawer({
   onClose: () => void;
   onPrev: () => void;
   onNext: () => void;
-  onTagsChanged: () => void;
+  /** After a mark / tag change in the drawer (the hand lists and the detail are refreshed already). */
+  onTagsChanged?: () => void;
   /** Radix focus-restore hook: preventDefault() it to place focus yourself. */
   onCloseAutoFocus?: (event: Event) => void;
   /** View the drawer opens in (the replayer by default). */
@@ -63,28 +67,20 @@ export default function HandDrawer({
   /** The row's all-in EV (bb), shown on the result line when it differs from the result. */
   evBb?: number | null;
 }) {
-  const [hand, setHand] = useState<HandDetail | null>(null);
-  const [loading, setLoading] = useState(true);
+  // The shared detail cache (panel, quick replay, history dialog): j/k onto a hand seen there is instant.
+  // Mark / tag changes patch and refresh that entry (useMarkHand); a saved note is written into it.
+  const qc = useQueryClient();
+  const { data, isPending: loading } = useQuery(handDetailQuery(handId, playerId));
+  const hand = useMemo<HandDetail | null>(() => (data ? { ...data, tags: data.tags ?? [] } : null), [data]);
   const [viewMode, setViewMode] = useState<ViewMode>(initialMode);
-  const [note, setNote] = useState('');
+  // The note being edited, per hand: until edited it shows the stored note.
+  const noteKey = `${handId}:${playerId ?? ''}`;
+  const [draft, setDraft] = useState<{ key: string; text: string } | null>(null);
+  const note = draft?.key === noteKey ? draft.text : (hand?.note || '');
+  const setNote = (text: string) => setDraft({ key: noteKey, text });
   const [noteSaving, setNoteSaving] = useState(false);
   const [copied, setCopied] = useState(false);
   const [anonymized, setAnonymized] = useState(false);
-
-  const loadHand = useCallback(async () => {
-    setLoading(true);
-    try {
-      const h = await getHandDetail(handId, playerId);
-      setHand({ ...h, tags: h.tags ?? [] });
-      setNote(h.note || '');
-    } finally {
-      setLoading(false);
-    }
-  }, [handId, playerId]);
-
-  useEffect(() => {
-    loadHand();
-  }, [loadHand]);
 
   useEffect(() => {
     function handleKey(e: KeyboardEvent) {
@@ -103,33 +99,27 @@ export default function HandDrawer({
 
   const handleMark = async () => {
     if (!hand) return;
-    const st = await mark(hand.id, undefined, playerId);
-    if (st) {
-      setHand((h) => (h?.id === st.hand_id ? { ...h, marked: st.marked, tags: st.tags ?? [] } : h));
-      onTagsChanged();
-    }
+    if (await mark(hand.id, undefined, playerId)) onTagsChanged?.();
   };
   const handleUnmark = async () => {
     if (!hand) return;
-    const id = hand.id;
-    if (await unmark(id, playerId)) {
-      setHand((h) => (h?.id === id ? { ...h, marked: false, tags: [] } : h));
-      onTagsChanged();
-    }
+    if (await unmark(hand.id, playerId)) onTagsChanged?.();
   };
   const handlePickerClose = () => {
+    // the picker saves as it goes (each save patches and refreshes the cached detail)
     setPickerOpen(false);
-    // the picker saves as it goes; refresh the drawer's own copy
-    void loadHand();
-    onTagsChanged();
+    onTagsChanged?.();
   };
 
   const handleNoteSave = async () => {
     if (!hand) return;
+    const id = hand.id;
+    const text = note;
     setNoteSaving(true);
     try {
-      await updateNote(hand.id, note);
-      setHand({ ...hand, note });
+      await updateNote(id, text);
+      // A note belongs to the hand: every cached view of it (any row player)
+      qc.setQueriesData<HandDetail>({ queryKey: queryKeys.hands.detail(id) }, (old) => (old ? { ...old, note: text } : old));
     } finally {
       setNoteSaving(false);
     }

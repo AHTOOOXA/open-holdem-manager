@@ -167,6 +167,14 @@ class ActionItem(BaseModel):
     ai: Optional[bool] = None  # is all-in (detail view only)
 
 
+class HandListAction(BaseModel):
+    """One action of a hand-list row. The list shows only these; who acted (`p`) and all-in
+    (`ai`) are hand-detail fields of ActionItem."""
+    a: str
+    v: Optional[float] = None
+    h: bool = False
+
+
 class TagRef(BaseModel):
     """A tag on a marked hand (frontend/src/lib/marked/types.ts)."""
     id: int
@@ -190,16 +198,16 @@ class HandSummary(BaseModel):
     is_cashout: bool = False
     marked: bool = False
     tags: list[TagRef] = []   # the row player's mark tags, catalogue order
-    preflop_actions: list[ActionItem] = []
+    preflop_actions: list[HandListAction] = []
     flop_cards: list[str] = []
     flop_pot: float = 0
-    flop_actions: list[ActionItem] = []
+    flop_actions: list[HandListAction] = []
     turn_card: Optional[str] = None
     turn_pot: float = 0
-    turn_actions: list[ActionItem] = []
+    turn_actions: list[HandListAction] = []
     river_card: Optional[str] = None
     river_pot: float = 0
-    river_actions: list[ActionItem] = []
+    river_actions: list[HandListAction] = []
 
 
 class HandListResponse(BaseModel):

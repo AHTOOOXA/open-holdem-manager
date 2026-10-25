@@ -5,7 +5,10 @@ import { useWorkspace } from '@/contexts/WorkspaceContext';
 import { getTagDefs, markHand, tagDefsQueryKey, unmarkHand } from '@/lib/marked/api';
 import { listParamsMatchPlayer, patchRow } from '@/lib/marked/logic';
 import type { MarkState, TagDef } from '@/lib/marked/types';
-import type { HandListResponse } from '@/lib/api';
+import type { HandDetail, HandListParams, HandListResponse } from '@/lib/api';
+import { queryKeys } from '@/lib/query-keys';
+import { handDetailKey } from '@/components/hands/handDetailQuery';
+import { listDependsOnMarks } from './markInvalidation';
 
 const NO_TAGS: TagDef[] = [];
 
@@ -16,8 +19,9 @@ export function useTagDefs(): TagDef[] {
 }
 
 /**
- * Mark / tag / unmark one hand. Updates cached hand-list rows right away, then refetches the
- * lists (and the General hands pane) so ordering and counts catch up.
+ * Mark / tag / unmark one hand. Updates cached hand-list rows and the hand's detail right away, then refetches
+ * only what the patch can't fix: lists filtered on marks / tags or sorted by tags (rows, order, counts), the
+ * hand's detail views, and the General hands pane.
  */
 export function useMarkHand() {
   const qc = useQueryClient();
@@ -32,11 +36,18 @@ export function useMarkHand() {
         },
         (old) => (old && Array.isArray(old.hands) ? { ...old, hands: patchRow(old.hands, state, playerId) } : old),
       );
+      qc.setQueryData<HandDetail>(handDetailKey(state.hand_id, playerId), (old) =>
+        old ? { ...old, marked: state.marked, tags: state.tags ?? [] } : old,
+      );
     },
     [qc],
   );
-  const refresh = useCallback(() => {
-    qc.invalidateQueries({ queryKey: ['hands'] });
+  const refresh = useCallback((handId: string) => {
+    qc.invalidateQueries({
+      queryKey: ['hands', 'list'],
+      predicate: (q) => listDependsOnMarks(q.queryKey[2] as HandListParams | undefined),
+    });
+    qc.invalidateQueries({ queryKey: queryKeys.hands.detail(handId) });
     qc.invalidateQueries({ queryKey: ['general', 'hands'] });
   }, [qc]);
 
@@ -46,7 +57,7 @@ export function useMarkHand() {
       try {
         const state = await markHand(activeWorkspaceId, handId, tagIds ? { tag_ids: tagIds } : {}, playerId);
         apply(state, playerId);
-        refresh();
+        refresh(handId);
         return state;
       } catch (e) {
         toast.error('Could not mark the hand', { description: e instanceof Error ? e.message : undefined });
@@ -60,7 +71,7 @@ export function useMarkHand() {
       try {
         await unmarkHand(activeWorkspaceId, handId, playerId);
         apply({ hand_id: handId, marked: false, tags: [] }, playerId);
-        refresh();
+        refresh(handId);
         return true;
       } catch (e) {
         toast.error('Could not unmark the hand', { description: e instanceof Error ? e.message : undefined });

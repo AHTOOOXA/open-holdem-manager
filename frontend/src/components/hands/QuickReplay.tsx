@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Pin, PinOff, Play } from 'lucide-react';
-import { getHandDetail } from '@/lib/api';
-import { queryKeys } from '@/lib/query-keys';
+import { handDetailQuery } from '@/components/hands/handDetailQuery';
 import {
   QUICK_REPLAY_CLOSE_GRACE_MS,
   QUICK_REPLAY_OPEN_MS,
@@ -16,11 +15,7 @@ import HandReplayer from '@/components/hands/replayer/HandReplayer';
 const stop = (e: { stopPropagation: () => void }) => e.stopPropagation();
 
 function MiniReplayer({ handId, playerId, keyboard, keyScope }: { handId: string; playerId?: number; keyboard: boolean; keyScope: HTMLElement | null }) {
-  const { data, isError } = useQuery({
-    queryKey: [...queryKeys.hands.detail(handId), playerId ?? null],
-    queryFn: () => getHandDetail(handId, playerId),
-    staleTime: 60_000,
-  });
+  const { data, isError } = useQuery({ ...handDetailQuery(handId, playerId), staleTime: 60_000 });
   if (isError) return <p className="text-sm text-muted-foreground">Could not load the hand.</p>;
   if (!data) return <p className="text-sm text-muted-foreground">Loading…</p>;
   return <HandReplayer hand={data} quick keyboard={keyboard} keyScope={keyScope} />;

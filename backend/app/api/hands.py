@@ -11,9 +11,10 @@ from app.date_filters import bound_sql
 from app.db import get_db, db_lock, get_read_cursor, get_hero_player_id, get_hero_username
 from app.models import (
     HandSummary, HandListResponse, HandDetail, HandPlayerDetail,
-    HandAction, BoardCards, ActionItem, TagRef,
+    HandAction, BoardCards, TagRef,
 )
 from app import marked_hands
+from app.concurrency import heavy_slot
 from app.action_parser import parse_actions_from_raw
 from app.stat_registry import STAT_REGISTRY
 
@@ -44,9 +45,10 @@ def _list_filters(db, *, position, stakes, result, marked, tag_ids, date_from, d
     if hero_id is None and not all_marked:
         return SimpleNamespace(status="no_subject")
 
-    from app.api.reports_lite import chain_hand_ids
-    chain_ids = chain_hand_ids(db, workspace_id, player_id, chain)
-    if chain_ids is not None and not chain_ids:
+    # The chain's case hands as a SQL predicate (no id list bound into the query).
+    from app.api.reports_lite import chain_scope
+    scope = chain_scope(db, workspace_id, player_id, chain)
+    if scope is not None and scope.empty:
         return SimpleNamespace(status="empty_chain")
 
     if player_id is not None:
@@ -55,11 +57,17 @@ def _list_filters(db, *, position, stakes, result, marked, tag_ids, date_from, d
     else:
         hero_username = get_hero_username(db, workspace_id)
     if all_marked:
-        join_player = ("EXISTS (SELECT 1 FROM marked_hands mh0 WHERE mh0.workspace_id = hp.workspace_id "
-                       "AND mh0.hand_id = hp.hand_id AND mh0.player_id = hp.player_id)")
+        # Driven from the (few) marks instead of probing marked_hands for every hand_players
+        # row. marked_hands is keyed (workspace, hand, player): one row per marked pair, the
+        # same rows as the old `EXISTS (marked_hands …)` join condition.
+        from_sql = ("marked_hands mh0 "
+                    "JOIN hand_players hp ON hp.workspace_id = mh0.workspace_id "
+                    "AND hp.hand_id = mh0.hand_id AND hp.player_id = mh0.player_id "
+                    "JOIN hands h ON h.id = hp.hand_id AND h.workspace_id = hp.workspace_id")
         params: list = []
     else:
-        join_player = "hp.player_id = ?"
+        from_sql = ("hands h JOIN hand_players hp ON hp.hand_id = h.id "
+                    "AND hp.workspace_id = h.workspace_id AND hp.player_id = ?")
         params = [hero_id]
     where_clauses: list[str] = ["h.workspace_id = ?"]
     params.append(workspace_id)
@@ -89,8 +97,11 @@ def _list_filters(db, *, position, stakes, result, marked, tag_ids, date_from, d
         if result in result_map:
             where_clauses.append(result_map[result])
 
+    # In the marked view every row is a mark already (the FROM starts at marked_hands), so a
+    # `marked=true` EXISTS would always hold.
     mark_clauses, mark_params = marked_hands.list_filter_sql(
-        marked, marked_hands.parse_id_list(tag_ids) or None, "h.id", "h.workspace_id", "hp.player_id")
+        None if (all_marked and marked) else marked,
+        marked_hands.parse_id_list(tag_ids) or None, "h.id", "h.workspace_id", "hp.player_id")
     where_clauses.extend(mark_clauses)
     params.extend(mark_params)
 
@@ -104,15 +115,13 @@ def _list_filters(db, *, position, stakes, result, marked, tag_ids, date_from, d
         where_clauses.append(frag)
         params.append(val)
 
-    if player_id is not None:
-        where_clauses.append(
-            "EXISTS (SELECT 1 FROM hand_players hp2 WHERE hp2.hand_id = h.id AND hp2.workspace_id = h.workspace_id AND hp2.player_id = ?)"
-        )
-        params.append(player_id)
+    # (With player_id the row join is already `hp.player_id = player_id`, so "the player sat in
+    # the hand" holds for every joined row: no extra EXISTS.)
 
-    if chain_ids is not None:
-        where_clauses.append("h.id IN (SELECT UNNEST(?::VARCHAR[]))")
-        params.append(chain_ids)
+    if scope is not None:
+        frag, frag_params = scope.where("h.id")
+        where_clauses.append(frag)
+        params.extend(frag_params)
 
     if search:
         where_clauses.append("h.id LIKE ?")
@@ -147,10 +156,18 @@ def _list_filters(db, *, position, stakes, result, marked, tag_ids, date_from, d
             if extra_where:
                 where_clauses.append(extra_where)
 
+    # Only the chain filters the subject's rows: each case hand has exactly one subject row, so
+    # the list total is the chain's case count (no COUNT query needed).
+    known_total = (scope.count if scope is not None and not all_marked and len(where_clauses) == 2
+                   else None)
     where_sql = (" AND " + " AND ".join(where_clauses)) if where_clauses else ""
-    return SimpleNamespace(status="ok", join_player=join_player, where_sql=where_sql,
+    return SimpleNamespace(status="ok", from_sql=from_sql, where_sql=where_sql,
                            params=params, hero_id=hero_id, hero_username=hero_username,
-                           all_marked=all_marked)
+                           all_marked=all_marked, known_total=known_total)
+
+
+def _list_actions(items) -> list[dict]:
+    return [{"a": it.a, "v": it.v, "h": it.h} for it in items]
 
 
 @router.get("/hands", response_model=HandListResponse)
@@ -186,16 +203,17 @@ def list_hands(
         return HandListResponse(hands=[], total=0, page=1, per_page=per_page, total_pages=0)
     if f.status == "empty_chain":
         return HandListResponse(hands=[], total=0, page=1, per_page=per_page, total_pages=1)
-    join_player, where_sql, params = f.join_player, f.where_sql, f.params
-    hero_id, hero_username, all_marked = f.hero_id, f.hero_username, f.all_marked
+    from_sql, where_sql, params = f.from_sql, f.where_sql, f.params
+    hero_username, all_marked = f.hero_username, f.all_marked
 
     count_sql = f"""
         SELECT COUNT(*)
-        FROM hands h
-        JOIN hand_players hp ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id AND {join_player}
+        FROM {from_sql}
         WHERE 1=1 {where_sql}
     """
-    total = db.execute(count_sql, params).fetchone()[0]
+    total = f.known_total
+    if total is None:
+        total = db.execute(count_sql, params).fetchone()[0]
     total_pages = max(1, math.ceil(total / per_page))
 
     sort_col = _SORTS.get(sort, "h.played_at")
@@ -203,11 +221,10 @@ def list_hands(
 
     offset = (page - 1) * per_page
     main_sql = f"""
-        SELECT h.id, h.played_at, h.stakes, h.bb_amount,
-               hp.position, hp.card1, hp.card2, hp.won_bb,
-               hp.all_in_ev_bb, h.rit_boards, h.is_cashout, hp.player_id
-        FROM hands h
-        JOIN hand_players hp ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id AND {join_player}
+        SELECT h.id, h.played_at, h.stakes, h.bb_amount::DOUBLE,
+               hp.position, hp.card1, hp.card2, hp.won_bb::DOUBLE,
+               hp.all_in_ev_bb::DOUBLE, h.rit_boards, h.is_cashout, hp.player_id
+        FROM {from_sql}
         WHERE 1=1 {where_sql}
         ORDER BY {sort_col} {sort_dir}, h.played_at DESC, h.id, hp.player_id
         LIMIT ? OFFSET ?
@@ -240,63 +257,15 @@ def list_hands(
         board_map.setdefault(hid, {"flop": [], "turn": [], "river": []})
         board_map[hid][street].append(card)
 
-    _STREETS = ("preflop", "flop", "turn", "river")
-
-    # Try batch fetch actions from DB
-    action_rows = db.execute(
-        f"SELECT a.hand_id, a.street, a.action_type, a.amount_bb, a.player_id "
-        f"FROM actions a WHERE a.hand_id IN ({ph}) AND a.workspace_id = ? ORDER BY a.hand_id, a.action_order",
-        hand_ids + [workspace_id],
-    ).fetchall()
-
-    actions_map: dict[str, dict[str, dict]] = {}
-    action_pid: dict[int, int] = {}
-    _ACT_MAP = {"raise": "R", "bet": "B", "call": "C", "check": "X", "fold": "F"}
-    _BLIND_TYPES = {"sb", "bb", "ante", "straddle"}
-
-    for hid, street, action_type, amount_bb, pid in action_rows:
-        hand_acts = actions_map.setdefault(hid, {
-            s: {"actions": [], "pot": 0} for s in _STREETS
-        })
-        amt_bb_f = float(amount_bb) if amount_bb is not None else 0
-        if action_type in _BLIND_TYPES:
-            hand_acts["preflop"]["pot"] += amt_bb_f
-            continue
-        abbr = _ACT_MAP.get(action_type)
-        if not abbr or street not in hand_acts:
-            continue
-        v = round(amt_bb_f, 1) if amt_bb_f else None
-        item = ActionItem(a=abbr, v=v, h=(pid == hero_id))
-        action_pid[id(item)] = pid
-        hand_acts[street]["actions"].append(item)
-
-    # Propagate pot sizes for hands that had DB actions
-    for hid, hand_acts in actions_map.items():
-        running = 0
-        for s in _STREETS:
-            sa = hand_acts[s]
-            street_total = sum(
-                (float(ai.v) if ai.v else 0) for ai in sa["actions"] if ai.a in ("R", "B", "C")
-            )
-            sa["pot"] = round(running + sa.get("pot", 0))
-            running = sa["pot"] + round(street_total)
-
-    # Fallback: parse from raw_text for any hands missing from actions table
+    # Actions and pots from the raw text. (The `actions` table is never written: imports
+    # stopped filling it, and every rebuild empties it. 03/F5.)
     raw_by_hand: dict[str, tuple[str, float]] = {}
-    missing_ids = [hid for hid in hand_ids if hid not in actions_map]
-    if missing_ids:
-        mph = ",".join("?" for _ in missing_ids)
-        raw_rows = db.execute(
-            f"SELECT id, raw_text, bb_amount FROM hands WHERE id IN ({mph}) AND workspace_id = ?",
-            missing_ids + [workspace_id],
-        ).fetchall()
-        for hid, raw_text, bb_amt in raw_rows:
-            if not raw_text:
-                continue
-            bb = float(bb_amt) if bb_amt else 0
-            ss = parse_actions_from_raw(raw_text, hero_username, bb)
-            actions_map[hid] = ss
-            raw_by_hand[hid] = (raw_text, bb)
+    for hid, raw_text, bb_amt in db.execute(
+        f"SELECT id, raw_text, bb_amount::DOUBLE FROM hands WHERE id IN ({ph}) AND workspace_id = ?",
+        hand_ids + [workspace_id],
+    ).fetchall():
+        if raw_text:
+            raw_by_hand[hid] = (raw_text, float(bb_amt) if bb_amt else 0)
 
     usernames: dict[int, str] = {}
     if all_marked:
@@ -311,17 +280,13 @@ def list_hands(
 
         board = board_map.get(hid, {"flop": [], "turn": [], "river": []})
         row_pid = int(r[11])
-        hand_acts = actions_map.get(hid, {s: {"actions": [], "pot": 0} for s in _STREETS})
-        if all_marked:
-            # Re-express the actions from this row's player (a hand can be marked for several)
-            if hid in raw_by_hand:
-                raw_text, bb = raw_by_hand[hid]
-                uname = usernames.get(row_pid)
-                hand_acts = parse_actions_from_raw(raw_text, uname, bb)
-            else:
-                hand_acts = {s: {"pot": v["pot"], "actions": [
-                    ActionItem(a=a.a, v=a.v, h=(action_pid.get(id(a)) == row_pid)) for a in v["actions"]]}
-                    for s, v in hand_acts.items()}
+        if hid in raw_by_hand:
+            raw_text, bb = raw_by_hand[hid]
+            # Marked view: from this row's player (a hand can be marked for several)
+            hand_acts = parse_actions_from_raw(
+                raw_text, usernames.get(row_pid) if all_marked else hero_username, bb)
+        else:
+            hand_acts = {s: {"actions": [], "pot": 0} for s in ("preflop", "flop", "turn", "river")}
 
         hands.append(HandSummary(
             id=hid,
@@ -338,16 +303,16 @@ def list_hands(
             is_cashout=bool(r[10]) if r[10] is not None else False,
             marked=(hid, row_pid) in marked_set,
             tags=[TagRef(**t) for t in tags_map.get((hid, row_pid), [])],
-            preflop_actions=hand_acts["preflop"]["actions"],
+            preflop_actions=_list_actions(hand_acts["preflop"]["actions"]),
             flop_cards=board["flop"],
             flop_pot=hand_acts["flop"]["pot"],
-            flop_actions=hand_acts["flop"]["actions"],
+            flop_actions=_list_actions(hand_acts["flop"]["actions"]),
             turn_card=board["turn"][0] if board["turn"] else None,
             turn_pot=hand_acts["turn"]["pot"],
-            turn_actions=hand_acts["turn"]["actions"],
+            turn_actions=_list_actions(hand_acts["turn"]["actions"]),
             river_card=board["river"][0] if board["river"] else None,
             river_pot=hand_acts["river"]["pot"],
-            river_actions=hand_acts["river"]["actions"],
+            river_actions=_list_actions(hand_acts["river"]["actions"]),
         ))
 
     return HandListResponse(
@@ -362,7 +327,40 @@ def list_hands(
 # ── Hand detail ──────────────────────────────────────────────────────
 
 EXPORT_CAP = 100_000
-_EXPORT_BATCH = 500
+_EXPORT_FETCH = 1000  # rows per chunk of the export stream
+
+
+def _export_query(db, *, sort, order, workspace_id, **filters) -> tuple[list, bool]:
+    """Run the export query on `db`: (first chunk of `(raw_text,)` rows, truncated). The rest
+    of the rows are read with `db.fetchmany`.
+
+    A marked list without a subject has one row per marked (hand, player): one per hand (the
+    row first in the sort). Hands are numbered in list order, capped, and only then joined to
+    their texts, so the sort never carries the raw texts."""
+    f = _list_filters(db, workspace_id=workspace_id, **filters)
+    if f.status != "ok":
+        return [], False
+    sort_col = _SORTS.get(sort, "h.played_at")
+    sort_dir = "DESC" if order.lower() == "desc" else "ASC"
+    db.execute(f"""
+        WITH s AS (
+            SELECT h.id, {sort_col} AS sk, h.played_at AS pa,
+                   ROW_NUMBER() OVER (PARTITION BY h.id ORDER BY {sort_col} {sort_dir}, hp.player_id) AS rn
+            FROM {f.from_sql}
+            WHERE h.raw_text IS NOT NULL AND h.raw_text <> '' {f.where_sql}
+        ), o AS (
+            SELECT id, ROW_NUMBER() OVER (ORDER BY sk {sort_dir}, pa DESC, id) AS ord
+            FROM s WHERE rn = 1
+        ), c AS (
+            SELECT id, ord, COUNT(*) OVER () AS n FROM o WHERE ord <= ?
+        )
+        SELECT h.raw_text, c.n
+        FROM c JOIN hands h ON h.id = c.id AND h.workspace_id = ?
+        WHERE c.ord <= ?
+        ORDER BY c.ord
+    """, [*f.params, EXPORT_CAP + 1, workspace_id, EXPORT_CAP])
+    rows = db.fetchmany(_EXPORT_FETCH)
+    return rows, bool(rows) and int(rows[0][1]) > EXPORT_CAP
 
 
 @router.get("/hands/export")
@@ -386,58 +384,37 @@ def export_hands(
 ):
     """The original hand histories of the whole filtered list (same filters and order as
     GET /api/hands, not just a page): text/plain attachment, hands separated by two blank
-    lines, each hand once, at most EXPORT_CAP hands (`X-OHM-Truncated: 1` when capped)."""
-    db = get_read_cursor()
-    f = _list_filters(
-        db, position=position, stakes=stakes, result=result, marked=marked, tag_ids=tag_ids,
-        date_from=date_from, date_to=date_to, search=search, stat_flag=stat_flag,
-        stat_key=stat_key, player_id=player_id, workspace_id=workspace_id, chain=chain)
-    ids: list[str] = []
-    if f.status == "ok":
-        sort_col = _SORTS.get(sort, "h.played_at")
-        sort_dir = "DESC" if order.lower() == "desc" else "ASC"
-        # A marked list without a subject has one row per marked (hand, player): one per hand.
-        ids = [r[0] for r in db.execute(f"""
-            SELECT id FROM (
-                SELECT h.id, {sort_col} AS sk, h.played_at AS pa,
-                       ROW_NUMBER() OVER (PARTITION BY h.id ORDER BY {sort_col} {sort_dir}, hp.player_id) AS rn
-                FROM hands h
-                JOIN hand_players hp ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
-                     AND {f.join_player}
-                WHERE h.raw_text IS NOT NULL AND h.raw_text <> '' {f.where_sql}
-            ) WHERE rn = 1
-            ORDER BY sk {sort_dir}, pa DESC, id
-            LIMIT ?
-        """, [*f.params, EXPORT_CAP + 1]).fetchall()]
-    truncated = len(ids) > EXPORT_CAP
-    ids = ids[:EXPORT_CAP]
+    lines, each hand once, at most EXPORT_CAP hands (`X-OHM-Truncated: 1` when capped).
+
+    One ordered query, read in chunks by the stream (03/F2). It runs on the stream's own
+    cursor: the request's cursors are closed when the endpoint returns, and the chain scope is
+    registered on the cursor that runs the query."""
+    cur = get_db().cursor()
+    try:
+        with heavy_slot():
+            rows, truncated = _export_query(
+                cur, sort=sort, order=order, position=position, stakes=stakes, result=result,
+                marked=marked, tag_ids=tag_ids, date_from=date_from, date_to=date_to,
+                search=search, stat_flag=stat_flag, stat_key=stat_key, player_id=player_id,
+                workspace_id=workspace_id, chain=chain)
+    except BaseException:
+        cur.close()
+        raise
 
     def stream():
-        # The request's cursors are closed when the endpoint returns; the stream has its own.
-        cur = get_db().cursor()
+        nonlocal rows
         try:
-            yield from _stream_texts(cur)
+            first = True
+            while rows:
+                chunk = [t for t in ((r[0] or "").strip() for r in rows) if t]
+                if chunk:
+                    yield (("" if first else "\n\n\n") + "\n\n\n".join(chunk)).encode("utf-8")
+                    first = False
+                rows = cur.fetchmany(_EXPORT_FETCH)
+            if not first:
+                yield b"\n"
         finally:
             cur.close()
-
-    def _stream_texts(db):
-        first = True
-        for i in range(0, len(ids), _EXPORT_BATCH):
-            batch = ids[i:i + _EXPORT_BATCH]
-            ph = ",".join("?" for _ in batch)
-            texts = dict(db.execute(
-                f"SELECT id, raw_text FROM hands WHERE workspace_id = ? AND id IN ({ph})",
-                [workspace_id, *batch]).fetchall())
-            chunk = []
-            for hid in batch:
-                t = (texts.get(hid) or "").strip()
-                if t:
-                    chunk.append(t)
-            if chunk:
-                yield (("" if first else "\n\n\n") + "\n\n\n".join(chunk)).encode("utf-8")
-                first = False
-        if not first:
-            yield b"\n"
 
     headers = {"Content-Disposition": 'attachment; filename="OHM hands.txt"'}
     if truncated:

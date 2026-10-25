@@ -1,7 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { Copy } from 'lucide-react';
-import { getHandDetail } from '@/lib/api';
-import { queryKeys } from '@/lib/query-keys';
+import { handDetailQuery } from '@/components/hands/handDetailQuery';
 import { handHistoryText } from '@/lib/hands/hand-plot';
 import { copyHandHistory } from '@/components/hands/handListActions';
 import { Button } from '@/components/ui/button';
@@ -15,10 +14,7 @@ export default function HandHistoryDialog({ handId, playerId, onClose, onCloseAu
   /** Radix focus-restore hook: the list focuses the row the dialog was opened from (the row menu is gone by then). */
   onCloseAutoFocus?: (event: Event) => void;
 }) {
-  const { data, isError } = useQuery({
-    queryKey: [...queryKeys.hands.detail(handId), playerId ?? null],
-    queryFn: () => getHandDetail(handId, playerId),
-  });
+  const { data, isError } = useQuery(handDetailQuery(handId, playerId));
   const text = data ? handHistoryText(data) : null;
   return (
     <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
