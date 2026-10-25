@@ -88,9 +88,13 @@ export interface SessionMarker {
 }
 
 export interface GraphResponse {
+  /** The points the chart draws (at most ~1000, always including the last hand), not one per hand. */
   points: GraphPoint[];
+  /** Session markers and variance cover every hand. */
   sessions: SessionMarker[];
   variance: VarianceStats | null;
+  /** Number of hands graphed (use this, not `points.length`). */
+  hands: number;
 }
 
 export interface StatValue {

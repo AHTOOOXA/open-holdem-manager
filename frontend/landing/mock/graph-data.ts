@@ -118,6 +118,7 @@ export const mockGraphResponse: GraphResponse = {
   points: POINTS,
   sessions: SESSIONS,
   variance: mockVariance,
+  hands: n,
 };
 
 export const mockFilterOptions: FilterOptions = {

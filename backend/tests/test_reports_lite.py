@@ -298,9 +298,9 @@ def test_hands_endpoint_takes_the_chain(client, general):
 def test_graph_takes_the_chain_and_player(client, general, hero_id):
     r = client.get("/api/reports/graph", params={"chain": json.dumps(C01)})
     assert r.status_code == 200
-    assert len(r.json()["points"]) == general["postflop.cbet.Flop"][0]
+    assert r.json()["hands"] == general["postflop.cbet.Flop"][0]
     r2 = client.get("/api/reports/graph", params={"chain": json.dumps(C01), "player_id": hero_id})
-    assert len(r2.json()["points"]) == len(r.json()["points"])
+    assert r2.json()["hands"] == r.json()["hands"]
     assert client.get("/api/reports/graph", params={"chain": "[{}]"}).status_code == 422
 
 
@@ -316,7 +316,7 @@ def test_opponent_chain(client, bench_db):
     r = client.get("/api/hands", params={"chain": json.dumps(P01), "player_id": vid})
     assert r.json()["total"] <= opens
     g = client.get("/api/reports/graph", params={"chain": json.dumps(P01), "player_id": vid})
-    assert len(g.json()["points"]) == opens
+    assert g.json()["hands"] == opens
 
 
 # ── (f) Faced Next ───────────────────────────────────────────────────────
@@ -605,7 +605,7 @@ def test_empty_chain_param_applies_h2n_valid(client, bench_db, hero_id):
                          "COALESCE(h2n_valid, TRUE)", [hero_id]).fetchone()[0]
     assert client.get("/api/hands", params={"chain": "[]", "per_page": 1}).json()["total"] == n
     g = client.get("/api/reports/graph", params={"chain": "[]"}).json()
-    assert len(g["points"]) == n
+    assert g["hands"] == n
 
 
 # ── M5: Sessions steps, splits and recipes ───────────────────────────────
@@ -644,7 +644,7 @@ def test_session_steps_narrow(client, bench_db, hero_id, make, where):
     assert _post(client, "spot", chain)["hands"] == expected
     assert client.get("/api/hands", params={"chain": json.dumps(chain)}).json()["total"] == expected
     g = client.get("/api/reports/graph", params={"chain": json.dumps(chain)}).json()
-    assert len(g["points"]) == expected
+    assert g["hands"] == expected
 
 
 def test_tables_split(client, bench_db, hero_id):

@@ -360,7 +360,7 @@ def test_bench_session_pages(bench_client, bench_db, hero_id):  # noqa: F811
     for k in ("vpip", "pfr", "threebet", "ag", "wtsd", "wsd", "wwsf"):
         assert stats[k]["value"] == plain[k]["value"], k
     g = c.get("/api/reports/graph", params={"chain": json.dumps(chain)}).json()
-    assert len(g["points"]) == big["hands"]
+    assert g["hands"] == big["hands"]
     h = c.get("/api/hands", params={"chain": json.dumps(chain), "per_page": 5}).json()
     assert h["total"] == big["hands"]
 

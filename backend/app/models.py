@@ -50,9 +50,12 @@ class SessionMarker(BaseModel):
 
 
 class GraphResponse(BaseModel):
+    # The points the chart draws (at most `max_points`, default 1000, always incl. the last hand);
+    # `hands` is the number of hands graphed. Sessions and variance cover every hand.
     points: list[GraphPoint]
     sessions: list[SessionMarker] = []
     variance: VarianceStats | None = None
+    hands: int = 0
 
 
 class StatValue(BaseModel):
