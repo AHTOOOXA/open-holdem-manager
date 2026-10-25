@@ -4,11 +4,17 @@
  * Queries come in two weights:
  * - **cheap** (status, counts, workspaces, hero list, plain lists): refetched right away when visible.
  * - **heavy** (Reports spot / split / graph / range / strength, Statistics grid + popup, Extras
- *   aggregates, hand lists over a Reports chain): every request is a chain resolve or a replay
- *   that costs seconds at 200k hands. After an auto-import tick they are only marked stale: a
- *   screen that is not showing refetches once when it mounts again, and a screen that is showing
- *   keeps its numbers and gets the "New hands" refresh chip (`NewHandsIndicator`). A manual
- *   import, a rebuild or a clear still refetches the visible screen right away.
+ *   aggregates, hand lists over a Reports chain): a cold request is a chain resolve or a replay
+ *   that costs seconds at 200k hands. The backend extends its warm Reports resolutions and popup
+ *   records with the new hands of an auto-import instead of recomputing them, so after a tick:
+ *   - the visible heavy queries refetch once, shortly after the tick (ticks landing within
+ *     `AUTO_REFRESH_DEBOUNCE_MS` share one refresh). A query that is already fetching is not
+ *     cancelled and not fetched twice: it refetches once when that fetch lands;
+ *   - heavy queries that are not showing are only marked stale and refetch once when they mount;
+ *   - a visible query whose last automatic refresh took longer than `SLOW_REFRESH_MS` (the
+ *     backend could not extend it) is not refreshed automatically any more: it keeps its numbers
+ *     and gets the "New hands" refresh chip (`NewHandsIndicator`) until a refresh is fast again.
+ *   A manual import, a rebuild or a clear still refetches the visible screen right away.
  *
  * Tag a heavy query with the meta flag, or spread the options helper (also sets the shorter cache
  * retention and no retry):
@@ -32,6 +38,12 @@ export const HEAVY_GC_MS = 60_000;
 
 /** Options to spread into a heavy `useQuery`: the meta flag, short retention, no retry. */
 export const HEAVY_QUERY = { meta: HEAVY_META, gcTime: HEAVY_GC_MS, retry: 0 } as const;
+
+/** Auto-import ticks landing within this window share one refresh of the visible heavy queries. */
+export const AUTO_REFRESH_DEBOUNCE_MS = 300;
+
+/** A visible heavy query whose automatic refresh took longer than this falls back to the chip. */
+export const SLOW_REFRESH_MS = 4_000;
 
 /** Key prefixes of heavy queries (matched element by element against the key's start). */
 export const HEAVY_KEY_PREFIXES: readonly (readonly string[])[] = [
@@ -164,18 +176,66 @@ export function refreshAfterDataChange(qc: QueryClient, change: DataChange): Pro
   }
   const heavy = (q: Query) => rest(q) && !isSessionChainQuery(q) && !isStaticQuery(q) && isHeavyQuery(q);
   // A heavy fetch already running started before these hands arrived; its success would clear the
-  // stale mark. Mark it again once it settles, so the chip shows and a remount refetches.
+  // stale mark. Mark it again once it settles, so a remount (or the visible refresh) refetches it.
   keepStaleAfterFetch(qc, qc.getQueryCache().findAll({ predicate: (q) => heavy(q) && q.state.fetchStatus !== 'idle' }));
+  // The visible ones refresh shortly (no chip meanwhile): mark them before they turn stale.
+  for (const q of qc.getQueryCache().findAll({ predicate: (q) => heavy(q) && q.isActive() && !slowRefresh.has(q) })) {
+    markAwaiting(qc, q);
+  }
   void qc.invalidateQueries({ predicate: heavy, refetchType: 'none' });
   void qc.invalidateQueries({
     predicate: (q) => rest(q) && !isSessionChainQuery(q) && !isStaticQuery(q) && !isHeavyQuery(q),
   });
+  scheduleVisibleRefresh(qc);
   return workspaces;
+}
+
+/** Heavy queries whose automatic refresh was slow: they get the chip instead. */
+const slowRefresh = new WeakSet<Query>();
+/** Visible heavy queries due for the pending automatic refresh (the chip stays hidden for them). */
+const awaiting = new WeakSet<Query>();
+const awaitingByClient = new WeakMap<QueryClient, Set<Query>>();
+const refreshTimers = new WeakMap<QueryClient, ReturnType<typeof setTimeout>>();
+
+function markAwaiting(qc: QueryClient, q: Query): void {
+  let set = awaitingByClient.get(qc);
+  if (!set) {
+    set = new Set();
+    awaitingByClient.set(qc, set);
+  }
+  set.add(q);
+  awaiting.add(q);
+}
+
+/** One refresh of the visible outdated heavy queries, `AUTO_REFRESH_DEBOUNCE_MS` after the last call. */
+function scheduleVisibleRefresh(qc: QueryClient): void {
+  const prev = refreshTimers.get(qc);
+  if (prev !== undefined) clearTimeout(prev);
+  refreshTimers.set(
+    qc,
+    setTimeout(() => {
+      refreshTimers.delete(qc);
+      for (const q of awaitingByClient.get(qc) ?? []) awaiting.delete(q);
+      awaitingByClient.delete(qc);
+      const due = qc.getQueryCache().findAll({ predicate: (q) => isOutdatedOnScreen(q) && !slowRefresh.has(q) });
+      void Promise.all(due.map((q) => timedRefetch(qc, q)));
+    }, AUTO_REFRESH_DEBOUNCE_MS),
+  );
+}
+
+/** Refetch one query (never cancelling a running fetch) and remember whether that was slow. */
+async function timedRefetch(qc: QueryClient, q: Query): Promise<void> {
+  const t0 = Date.now();
+  await qc.refetchQueries({ predicate: (x) => x === q, type: 'active' }, { cancelRefetch: false });
+  if (q.state.status !== 'success') return;
+  if (Date.now() - t0 > SLOW_REFRESH_MS) slowRefresh.add(q);
+  else slowRefresh.delete(q);
 }
 
 /**
  * Re-mark `queries` stale when their running fetch settles (a success clears `isInvalidated`, a
- * cancel restores the pre-fetch state). No extra request: the server is not asked twice.
+ * cancel restores the pre-fetch state), then refresh the visible ones once (not cancelled, not
+ * asked twice: the running fetch belongs to whatever started it, the refresh to the tick).
  */
 function keepStaleAfterFetch(qc: QueryClient, queries: Query[]): void {
   if (queries.length === 0) return;
@@ -187,7 +247,9 @@ function keepStaleAfterFetch(qc: QueryClient, queries: Query[]): void {
     if (event.type === 'removed') pending.delete(q);
     else if (event.type === 'updated' && q.state.fetchStatus === 'idle') {
       pending.delete(q);
+      if (q.isActive() && !slowRefresh.has(q)) markAwaiting(qc, q);
       if (!q.state.isInvalidated) void qc.invalidateQueries({ queryKey: q.queryKey, exact: true, refetchType: 'none' });
+      scheduleVisibleRefresh(qc);
     }
     if (pending.size === 0) unsubscribe();
   });
@@ -195,7 +257,8 @@ function keepStaleAfterFetch(qc: QueryClient, queries: Query[]): void {
 
 /**
  * Visible heavy queries that show data older than the last auto-import (invalidated, not
- * refetching, last fetch succeeded). Sessions pages follow their list instead.
+ * refetching, last fetch succeeded) and are not about to be refreshed automatically: the
+ * "New hands" chip. Sessions pages follow their list instead.
  */
 export function isOutdatedOnScreen(q: Query): boolean {
   return (
@@ -204,13 +267,15 @@ export function isOutdatedOnScreen(q: Query): boolean {
     q.state.status === 'success' &&
     q.isActive() &&
     isHeavyQuery(q) &&
-    !isSessionChainQuery(q)
+    !isSessionChainQuery(q) &&
+    !awaiting.has(q)
   );
 }
 
 /** Refetch what `isOutdatedOnScreen` reports (the "New hands" chip's Refresh). */
 export function refetchOutdatedOnScreen(qc: QueryClient): Promise<void> {
-  return qc.refetchQueries({ predicate: isOutdatedOnScreen, type: 'active' });
+  const due = qc.getQueryCache().findAll({ predicate: isOutdatedOnScreen });
+  return Promise.all(due.map((q) => timedRefetch(qc, q))).then(() => undefined);
 }
 
 // ── Sessions pages ──────────────────────────────────────────────────────────────────────────────
