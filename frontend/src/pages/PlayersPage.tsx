@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { getPlayers, getIdentities, createIdentity, addAlias } from '@/lib/api';
 import type { PlayerListParams, Identity } from '@/lib/api';
@@ -238,9 +238,11 @@ export default function PlayersPage() {
     sort_dir: sortDir,
   };
 
-  const { data, isPending, isError } = useQuery({
+  // Page flips, sorts and searches keep the previous rows (dimmed) until the new page arrives.
+  const { data, isPending, isPlaceholderData, isError } = useQuery({
     queryKey: queryKeys.players.list(queryParams),
     queryFn: () => getPlayers(queryParams),
+    placeholderData: keepPreviousData,
   });
 
   const handleSort = (col: string) => {
@@ -371,7 +373,10 @@ export default function PlayersPage() {
           />
         ) : (
           <>
-            <div className="overflow-x-auto">
+            <div
+              className={`overflow-x-auto transition-opacity ${isPlaceholderData ? 'opacity-60' : ''}`}
+              aria-busy={isPlaceholderData}
+            >
               <Table>
                 <TableHeader>
                   <TableRow className="text-[13px] uppercase tracking-wide">

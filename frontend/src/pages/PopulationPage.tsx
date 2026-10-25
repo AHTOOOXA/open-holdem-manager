@@ -57,10 +57,10 @@ export default function PopulationPage() {
     queryFn: () => getPopulationOverview(filterParams),
   });
 
+  // Fired together with the overview (not after it): the overview only gates the render.
   const { data: stats, isPending: statsLoading } = useQuery({
     queryKey: queryKeys.population.fullStats(filterParams),
     queryFn: () => getPopulationFullStats(filterParams),
-    enabled: !!overview && overview.player_count > 0,
   });
 
   const { data: heroStats } = useQuery({
