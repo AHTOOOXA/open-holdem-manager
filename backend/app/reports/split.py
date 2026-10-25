@@ -50,8 +50,8 @@ from app.h2n.rows import ROWS
 from app.h2n.sequence import BET, CHECK, FOLD, RAISE
 from app.reports import spots
 from app.reports.chain import (
-    POS_NAMES, HandRec, Resolution, SeqSource, fetch_seqs, opponent_recs, stack_caption,
-    stakes_caption,
+    _FROM, ORDER, POS_NAMES, HandRec, Resolution, SeqSource, case_filter, fetch_seqs,
+    iter_records, stack_caption, stakes_caption,
 )
 from app.sessions_h2n import TimeStats, time_stats
 
@@ -216,11 +216,158 @@ class Acc:
                 self.v03_won_sd += h.win
 
     def merge(self, other: "Acc") -> None:
-        for s in self.__slots__:
-            if s == "max_opps":
-                self.max_opps = max(self.max_opps, other.max_opps, other.opps)
-            else:
-                setattr(self, s, getattr(self, s) + getattr(other, s))
+        _merge(self, other)
+
+
+def _make_merge():
+    """Acc.merge as straight-line code: every slot summed (max_opps: the largest sample)."""
+    lines = [f"    a.{s} += b.{s}\n" for s in Acc.__slots__ if s != "max_opps"]
+    src = ("def merge(a, b):\n" + "".join(lines)
+           + "    a.max_opps = max(a.max_opps, b.max_opps, b.opps)\n")
+    ns: dict = {}
+    exec(src, ns)  # noqa: S102  (generated from the slot names, no input)
+    return ns["merge"]
+
+
+_merge = _make_merge()
+
+
+# ── SQL aggregation (plain chains, Players) ─────────────────────────────
+#
+# The same sums as `Acc.add`, without one Python object per hand. Plain chains fetch one
+# narrow row per case hand as Arrow, in hand insertion order (chain.ORDER), and sum each group
+# with Arrow's single-threaded hash aggregate: it adds every group's floats one after another
+# in row order, so the results are bit-identical to `Acc.add` over the same hands in the same
+# order. Counts and bit sums are exact integers either way.
+
+
+def _b(which: str, key: str) -> str:
+    r = ROWS[key]
+    col = r.case_column if which == "case" else r.opp_column
+    return f"((COALESCE(hp.{col}, 0) >> {r.bit}) & 1)"
+
+
+_SD = "COALESCE(hp.went_to_showdown, FALSE)"
+_WIN = "COALESCE(hp.is_winner, FALSE)"
+_DBL = "CAST({} AS DOUBLE)"
+_WON = _DBL.format("COALESCE(hp.won, 0)")
+_WON_BB = _DBL.format("COALESCE(hp.won_bb, 0)")
+_FLOP = _b("case", "E_FLOP_ANY")
+_V03 = _b("case", "V03")
+
+# Acc slot -> per-row SQL (summed in row order); NULL rows are not added (won_nsd).
+_ROW_FLOATS = {
+    "won": _WON,
+    "won_bb": _WON_BB,
+    "ev": _DBL.format("COALESCE(hp.all_in_ev_bb, hp.won_bb, 0) * h.bb_amount"),
+    "ev_bb": _DBL.format("COALESCE(hp.all_in_ev_bb, hp.won_bb, 0)"),
+    "rake": _DBL.format("COALESCE(hp.rake, 0)"),
+    "rake_bb": _DBL.format("COALESCE(hp.rake_bb, 0)"),
+    "sq": f"{_WON_BB} * {_WON_BB}",
+    "won_nsd": f"CASE WHEN NOT {_SD} THEN {_WON} END",
+}
+_ROW_INTS = {
+    "sd": f"CAST({_SD} AS INTEGER)",
+    "win_sd": f"CAST({_SD} AND {_WIN} AS INTEGER)",
+    "vpip_c": _b("case", "V01"), "vpip_o": _b("opp", "V01"),
+    "pfr_c": _b("case", "V02"), "pfr_o": _b("opp", "V02"),
+    "tb_c": _b("case", "P07"), "tb_o": _b("opp", "P07"),
+    "ag_br": " + ".join(f"{_b('case', k['B'])} + {_b('case', k['R'])}" for k in _E.values()),
+    "ag_c": " + ".join(_b("case", k["C"]) for k in _E.values()),
+    "ag_o": " + ".join(_b("case", k["ANY"]) for k in _E.values()),
+    "flop": _FLOP,
+    "flop_sd": f"CASE WHEN {_SD} THEN {_FLOP} ELSE 0 END",
+    "flop_win": f"CASE WHEN {_WIN} THEN {_FLOP} ELSE 0 END",
+    "v03": _V03,
+    "v03_sd": f"CASE WHEN {_SD} THEN {_V03} ELSE 0 END",
+    "v03_won_sd": f"CASE WHEN {_SD} AND {_WIN} THEN {_V03} ELSE 0 END",
+}
+_ROW_SQL = ", ".join([f"{e} AS {c}" for c, e in _ROW_FLOATS.items()]
+                     + [f"CAST({e} AS UTINYINT) AS {c}" for c, e in _ROW_INTS.items()])
+_ROW_AGGS = [(c, "sum") for c in (*_ROW_FLOATS, *_ROW_INTS)] + [([], "count_all")]
+
+
+def plain_groups(db, res: Resolution, keys: list[str]) -> list[tuple[tuple, Acc]]:
+    """(key values, Acc) per group of a plain resolution's case hands, by SQL key expressions
+    (none = one group), in order of the groups' first hand (as `_group_plain` builds them)."""
+    if not res.n_cases:
+        return []
+    names = [f"k{i}" for i in range(max(1, len(keys)))]
+    kcols = [f"{k} AS k{i}" for i, k in enumerate(keys)] or ["1 AS k0"]
+    tbl = db.execute(f"SELECT {', '.join(kcols)}, {_ROW_SQL} {_FROM} WHERE {res.where}{ORDER}",
+                     res.params).fetch_arrow_table()
+    agg = tbl.group_by(names, use_threads=False).aggregate(_ROW_AGGS)
+    agg = agg.select(names + ["count_all"] + [c + "_sum" for c in (*_ROW_FLOATS, *_ROW_INTS)])
+    n = len(names)
+    build = _build_sql_acc   # same slot order: hands, floats, ints
+    # DuckDB converts the (small) aggregate to Python values faster than Arrow's to_pylist;
+    # a NULL sum (no row added, e.g. won_nsd) stays int 0 like Acc.add.
+    return [(r[:n], build(tuple(0 if v is None else v for v in r[n:])))
+            for r in db.from_arrow(agg).fetchall()]
+
+
+def plain_acc(db, res: Resolution) -> Acc:
+    """Acc of all case hands of a plain resolution."""
+    groups = plain_groups(db, res, [])
+    return groups[0][1] if groups else Acc()
+
+
+def plain_times(db, res: Resolution, key: str | None = None) -> dict:
+    """{key value: (hand starts, table names)} of a plain resolution's case hands, in hand
+    order (the inputs of `time_stats`)."""
+    out: dict = {}
+    if not res.n_cases:
+        return out
+    k = key or "NULL"
+    for kv, t, tab in db.execute(
+            f"SELECT {k}, h.played_at, h.table_name {_FROM} WHERE {res.where}{ORDER}",
+            res.params).fetchall():
+        ent = out.get(kv)
+        if ent is None:
+            ent = out[kv] = ([], [])
+        ent[0].append(t)
+        ent[1].append(tab)
+    return out
+
+
+_SQL_FLOATS = {
+    "won": "SUM(COALESCE(hp.won, 0))",
+    "won_bb": "SUM(COALESCE(hp.won_bb, 0))",
+    "ev": "SUM(COALESCE(hp.all_in_ev_bb, hp.won_bb, 0) * h.bb_amount)",
+    "ev_bb": "SUM(COALESCE(hp.all_in_ev_bb, hp.won_bb, 0))",
+    "rake": "SUM(COALESCE(hp.rake, 0))",
+    "rake_bb": "SUM(COALESCE(hp.rake_bb, 0))",
+    "sq": "SUM(COALESCE(hp.won_bb, 0) * COALESCE(hp.won_bb, 0))",
+    "won_nsd": f"SUM(COALESCE(hp.won, 0)) FILTER (WHERE NOT {_SD})",
+}
+# Exact DECIMAL sums, cast once (the same float as float(Decimal) of the sum: an exact
+# integer divided by a power of ten); NULL (no row) stays int 0 like Acc.add.
+assert tuple(_SQL_FLOATS) == tuple(_ROW_FLOATS)
+_SQL_COLS = ("hands", *_SQL_FLOATS, *_ROW_INTS)
+_SQL_AGGS = ", ".join(["COUNT(*) AS hands"]
+                      + [f"CAST({e} AS DOUBLE) AS {c}" for c, e in _SQL_FLOATS.items()]
+                      + [f"CAST(SUM({e}) AS BIGINT) AS {c}" for c, e in _ROW_INTS.items()])
+
+
+def _make_acc_builder(names: tuple[str, ...]):
+    """fn(values in `names` order) -> Acc, every other slot 0 (one tuple assignment)."""
+    rest = [s for s in Acc.__slots__ if s not in names]
+    src = (f"def build(vals):\n    a = new(Acc)\n"
+           f"    {', '.join('a.' + n for n in names)}, = vals\n"
+           + "".join(f"    a.{n} = 0\n" for n in rest) + "    return a\n")
+    ns = {"Acc": Acc, "new": object.__new__}
+    exec(src, ns)  # noqa: S102  (generated from the slot names above, no input)
+    return ns["build"]
+
+
+_build_sql_acc = _make_acc_builder(_SQL_COLS)
+
+
+def sql_accs(db, sql: str, params: list, n_keys: int) -> list[tuple]:
+    """Rows of `sql` = (`n_keys` key columns, then the `_SQL_COLS` columns) as (keys, Acc)."""
+    build = _build_sql_acc
+    return [(r[:n_keys], build(tuple(0 if v is None else v for v in r[n_keys:])))
+            for r in db.execute(sql, params).fetchall()]
 
 
 def _pct(a, b):
@@ -328,10 +475,43 @@ def _hour(h: HandRec):
     return getattr(pa, "hour", None)
 
 
-def plain_split(res: Resolution, typ: str) -> tuple[list[dict], dict | None]:
+_STACK_SQL = "CASE " + " ".join(
+    f"WHEN CAST(hp.stack_bb AS DOUBLE) >= {lo}"
+    + (f" AND CAST(hp.stack_bb AS DOUBLE) < {hi}" if hi is not None else "") + f" THEN {i}"
+    for i, (lo, hi) in enumerate(STACK_RANGES)) + " END"
+
+# split type -> (Python key of a HandRec, SQL key expressions, SQL key values -> Python key)
+_PLAIN_KEYS = {
+    "results": (lambda h: (h.stakes, h.mode == "Fast Fold", h.tsize, h.bb_amount),
+                ["h.stakes", "COALESCE(h.game_mode = 'Fast Fold', FALSE)", "h.table_size",
+                 "CAST(h.bb_amount AS DOUBLE)"],
+                lambda k: k),
+    "positions": (lambda h: h.pos, ["hp.h2n_pos"], lambda k: k[0]),
+    "stack_sizes": (_stack_range, [_STACK_SQL],
+                    lambda k: None if k[0] is None else STACK_RANGES[k[0]]),
+    "hour_of_day": (_hour, ["EXTRACT(hour FROM h.played_at)"],
+                    lambda k: None if k[0] is None else int(k[0])),
+    "table_size": (lambda h: h.tsize, ["h.table_size"], lambda k: k[0]),
+}
+
+
+def plain_split_groups(db, res: Resolution, typ: str) -> dict:
+    """{group key: Acc} of a plain split type (SQL for plain chains, records otherwise)."""
+    keyfn, keys, conv = _PLAIN_KEYS[typ]
+    if not res.plain:
+        return _group_plain(res, keyfn)
+    groups: dict = {}
+    for kv, acc in plain_groups(db, res, keys):
+        k = conv(kv)
+        if k is not None:
+            groups[k] = acc
+    return groups
+
+
+def plain_split(db, res: Resolution, typ: str) -> tuple[list[dict], dict | None]:
     rows: list[dict] = []
+    groups = plain_split_groups(db, res, typ) if typ in _PLAIN_KEYS else {}
     if typ == "results":
-        groups = _group_plain(res, lambda h: (h.stakes, h.mode == "Fast Fold", h.tsize, h.bb_amount))
         for (stakes, fast, tsize, bb) in sorted(groups, key=lambda k: (k[3], not k[1], k[2] or 0)):
             acc = groups[(stakes, fast, tsize, bb)]
             parts = [stakes_caption(bb, stakes)]
@@ -344,24 +524,20 @@ def plain_split(res: Resolution, typ: str) -> tuple[list[dict], dict | None]:
                              {"k": "game", "stakes": stakes, "mode": mode, "tsize": tsize},
                              plain_values(acc)))
     elif typ == "positions":
-        groups = _group_plain(res, lambda h: h.pos)
         for pos in POSITION_ORDER:
             if pos in groups:
                 rows.append(_row(pos, POS_NAMES[pos], {"k": "pos", "v": [pos]},
                                  plain_values(groups[pos]), open_tab="next_actions"))
     elif typ == "stack_sizes":
-        groups = _group_plain(res, _stack_range)
         for lo, hi in STACK_RANGES:
             if (lo, hi) in groups:
                 rows.append(_row(f"{lo}-{hi if hi is not None else ''}", stack_caption(lo, hi),
                                  {"k": "stack", "lo": lo, "hi": hi},
                                  plain_values(groups[(lo, hi)])))
     elif typ == "hour_of_day":
-        groups = _group_plain(res, _hour)
         for hr in sorted(groups):
             rows.append(_row(str(hr), str(hr), {"k": "hour", "v": [hr]}, plain_values(groups[hr])))
     elif typ == "table_size":
-        groups = _group_plain(res, lambda h: h.tsize)
         for n in sorted(groups):
             rows.append(_row(str(n), f"{n}-max", {"k": "tsize", "v": [n]},
                              plain_values(groups[n])))
@@ -381,17 +557,29 @@ def tables_split(db, res: Resolution) -> tuple[list[dict], dict | None]:
     """One row per hands.table_name of the case hands (hands without a name are left out),
     by name; time stats per table (Duration, Hands / h). Summary: raw values add up."""
     max_break_s = max_break_seconds(db)
-    groups: dict[str, list[HandRec]] = {}
-    for h in res.cases:
-        if h.table is not None:
-            groups.setdefault(h.table, []).append(h)
+    accs: dict[str, Acc] = {}
+    times: dict[str, tuple[list, list]] = {}
+    if res.plain:
+        for (name,), acc in plain_groups(db, res, ["h.table_name"]):
+            if name is not None:
+                accs[name] = acc
+        times = plain_times(db, res, "h.table_name")
+    else:
+        for h in res.cases:
+            if h.table is not None:
+                ent = times.get(h.table)
+                if ent is None:
+                    ent = times[h.table] = ([], [])
+                    accs[h.table] = Acc()
+                ent[0].append(h.played_at)
+                ent[1].append(h.table)
+                accs[h.table].add(h)
     rows: list[dict] = []
     total, total_ts = Acc(), TimeStats(0, 0, 0, 0, 0)
-    for name in sorted(groups):
-        acc = Acc()
-        for h in groups[name]:
-            acc.add(h)
-        ts = hand_time(groups[name], max_break_s)
+    for name in sorted(accs):
+        acc = accs[name]
+        starts, tables = times[name]
+        ts = time_stats(starts, tables, max_break_s)
         rows.append(_row(name, name, {"k": "table", "v": [name]}, session_values(acc, ts)))
         total.merge(acc)
         total_ts = total_ts.merge(ts)
@@ -401,22 +589,19 @@ def tables_split(db, res: Resolution) -> tuple[list[dict], dict | None]:
 
 def players_table(db, res: Resolution) -> list[tuple[int, str, Acc]]:
     """(player id, username, Acc of the opponent's own rows) per opponent dealt in to the
-    chain's case hands; cached on the resolution."""
-    with res.lock:
-        if ("players",) in res.tables:
-            return res.tables[("players",)]
-    out: list[tuple[int, str, Acc]] = []
-    if res.player_id is not None and res.hands:
-        accs: dict[int, tuple[str, Acc]] = {}
-        for pid, name, rec in opponent_recs(db, res.workspace_id, res.case_ids, res.player_id):
-            ent = accs.get(pid)
-            if ent is None:
-                ent = accs[pid] = (name, Acc())
-            ent[1].add(rec)
-        out = sorted(((pid, name, acc) for pid, (name, acc) in accs.items()),
-                     key=lambda t: (-t[2].hands, t[1], t[0]))
-    with res.lock:
-        res.tables[("players",)] = out
+    chain's case hands, Hands descending: one SQL GROUP BY over the opponents' rows (exact
+    DECIMAL money sums)."""
+    if res.player_id is None or not res.n_cases:
+        return []
+    pred, pparams = case_filter(db, res, "hp.hand_id")
+    cols = ", ".join(_SQL_COLS)
+    rows = sql_accs(db, (
+        f"SELECT a.pid, p.username, {cols} FROM (SELECT hp.player_id AS pid, {_SQL_AGGS} "
+        f"{_FROM} WHERE h.workspace_id = ? AND hp.player_id <> ? "
+        f"AND COALESCE(hp.h2n_valid, TRUE) AND {pred} GROUP BY hp.player_id) a "
+        "JOIN players p ON p.id = a.pid"), [res.workspace_id, res.player_id, *pparams], 2)
+    out = [(int(pid), name, acc) for (pid, name), acc in rows]
+    out.sort(key=lambda t: (-t[2].hands, t[1], t[0]))
     return out
 
 
@@ -438,51 +623,77 @@ def players_split(db, res: Resolution) -> tuple[list[dict], dict | None]:
 # ── action tables (computed once per resolution, cached on it) ──────────
 
 
-def _source(db, res: Resolution) -> SeqSource:
-    ids = [h.hid for h in res.cases]
-    if not res.blobs:
-        res.blobs = dict(fetch_seqs(db, res.workspace_id, ids))
-    src = SeqSource(db, res.workspace_id, res.blobs)
-    src.prefetch_missing([h for h in ids if res.blobs.get(h) is None])
-    return src
+def _table_add(table: dict, cands, ev, seq, p: int, h: HandRec) -> None:
+    """Add one case hand to a Next / Faced table (opps Acc per (street, key))."""
+    hit = h.hit
+    for street, key in cands:
+        code, nhit = ev(seq, p, hit, street, key)
+        if not code:
+            continue
+        acc = table.get((street, key))
+        if acc is None:
+            acc = table[(street, key)] = Acc()
+        acc.opps += 1
+        if code & spots.CASE:
+            ap = None
+            a = seq.streets[nhit[0]][nhit[1]]
+            if a.actor == p:
+                ap = 0.0 if a.eff == FOLD else h.ev_bb + spots.committed_bb(seq, p, nhit)
+            acc.add(h, ap)
+
+
+def _candidates(ctx, which: str):
+    if which == "next":
+        return spots.next_candidates(ctx), spots.eval_next
+    return spots.faced_candidates(ctx), spots.eval_faced
+
+
+def table_fillers(ctx) -> dict:
+    """{which: (candidates, evaluator, empty table)} of the Next / Faced tables at `ctx`
+    (filled by chain._compute while it has each case's sequence decoded)."""
+    out = {}
+    for which in ("next", "faced"):
+        cands, ev = _candidates(ctx, which)
+        if cands:
+            out[which] = (cands, ev, {})
+    return out
+
+
+def fill_tables(fill: dict, seq, p: int, h: HandRec) -> None:
+    for cands, ev, table in fill.values():
+        _table_add(table, cands, ev, seq, p, h)
+
+
+def _table_bytes(table: dict) -> int:
+    return 600 * len(table) + 1024
+
+
+def _compute_action_table(db, res: Resolution, which: str) -> dict:
+    cands, ev = _candidates(res.ctx, which)
+    table: dict = {}
+    if not cands or not res.username:
+        return table
+    for recs in iter_records(db, res):
+        ids = [h.hid for h in recs]
+        # Plain chains keep no blobs: this chunk's are fetched and dropped after it.
+        blobs = fetch_seqs(db, res.workspace_id, ids) if res.plain else res.blobs
+        src = SeqSource(db, res.workspace_id, blobs)
+        src.prefetch_missing([h for h in ids if blobs.get(h) is None])
+        for h in recs:
+            seq = src.get(h.hid)
+            if seq is None:
+                continue
+            p = seq.index.get(res.username)
+            if p is None:
+                continue
+            _table_add(table, cands, ev, seq, p, h)
+    return table
 
 
 def action_table(db, res: Resolution, which: str) -> dict:
     """{(street, key): (opps Acc with cases)} for "next" or "faced" rows after the hit."""
-    cache_key = ("table", which)
-    with res.lock:
-        if cache_key in res.tables:
-            return res.tables[cache_key]
-        cands = (spots.next_candidates(res.ctx) if which == "next"
-                 else spots.faced_candidates(res.ctx))
-        table: dict = {}
-        if cands and res.username:
-            src = _source(db, res)
-            ev = spots.eval_next if which == "next" else spots.eval_faced
-            for h in res.cases:
-                seq = src.get(h.hid)
-                if seq is None:
-                    continue
-                p = seq.index.get(res.username)
-                if p is None:
-                    continue
-                hit = h.hit
-                for street, key in cands:
-                    code, nhit = ev(seq, p, hit, street, key)
-                    if not code:
-                        continue
-                    acc = table.get((street, key))
-                    if acc is None:
-                        acc = table[(street, key)] = Acc()
-                    acc.opps += 1
-                    if code & spots.CASE:
-                        ap = None
-                        a = seq.streets[nhit[0]][nhit[1]]
-                        if a.actor == p:
-                            ap = 0.0 if a.eff == FOLD else h.ev_bb + spots.committed_bb(seq, p, nhit)
-                        acc.add(h, ap)
-        res.tables[cache_key] = table
-        return table
+    return res.memo(("table", which), lambda: _compute_action_table(db, res, which),
+                    size=_table_bytes)
 
 
 def _sizing_types(res: Resolution) -> set[int]:
@@ -491,12 +702,9 @@ def _sizing_types(res: Resolution) -> set[int]:
     return {h.hit_eff for h in res.cases if h.hit_eff is not None}
 
 
-def sizing_table(db, res: Resolution) -> tuple[list, dict]:
+def _compute_sizing(db, res: Resolution) -> tuple[list, dict]:
     from app.api.general_popup import _BUCKETS, _size_hits
 
-    with res.lock:
-        if ("sizing",) in res.tables:
-            return res.tables[("sizing",)]
     out: tuple[list, dict] = ([], {})
     if res.has_spot and res.username and res.hands:
         types = _sizing_types(res)
@@ -517,9 +725,12 @@ def sizing_table(db, res: Resolution) -> tuple[list, dict]:
                     if is_case and h.case:
                         acc.add(h, h.ap)
             out = (list(buckets), accs)
-    with res.lock:
-        res.tables[("sizing",)] = out
     return out
+
+
+def sizing_table(db, res: Resolution) -> tuple[list, dict]:
+    return res.memo(("sizing",), lambda: _compute_sizing(db, res),
+                    size=lambda t: 600 * len(t[1]) + 1024)
 
 
 def _sort_key(item):
@@ -585,7 +796,19 @@ def action_split(db, res: Resolution, typ: str) -> tuple[list[dict], list[dict],
     return ACTION_COLUMNS, rows, summary
 
 
+def _response_bytes(d: dict) -> int:
+    """Rough resident size of a split / spot response (dict per row with ~20 values)."""
+    return 2500 * (len(d.get("rows") or d.get("stats") or d.get("cells") or ())) + 4096
+
+
 def split(db, res: Resolution, typ: str) -> dict:
+    """The finished response, cached on the resolution (the Tables split also by the
+    max-break setting its time stats use)."""
+    key = ("split", typ, max_break_seconds(db)) if typ == "tables" else ("split", typ)
+    return res.memo(key, lambda: _split(db, res, typ), size=_response_bytes)
+
+
+def _split(db, res: Resolution, typ: str) -> dict:
     if typ in ("next_actions", "faced_next", "bet_sizing"):
         columns, rows, summary = action_split(db, res, typ)
     elif typ == "tables":
@@ -596,11 +819,12 @@ def split(db, res: Resolution, typ: str) -> dict:
         rows, summary = players_split(db, res)
     else:
         columns = PLAIN_COLUMNS
-        rows, summary = plain_split(res, typ)
+        rows, summary = plain_split(db, res, typ)
     return {"type": typ, "entry_header": ENTRY_HEADERS[typ], "columns": columns, "rows": rows,
             "summary": summary, "total_hands": res.total_hands}
 
 
 __all__ = ["split", "action_table", "Acc", "plain_values", "action_values", "session_values",
-           "hand_time", "PLAIN_COLUMNS", "ACTION_COLUMNS", "FACED_COLUMNS", "TABLE_COLUMNS",
+           "hand_time", "plain_acc", "plain_groups", "plain_times", "PLAIN_COLUMNS",
+           "ACTION_COLUMNS", "FACED_COLUMNS", "TABLE_COLUMNS",
            "PLAYER_COLUMNS"]
