@@ -15,7 +15,6 @@ URL-encoded JSON `chain` query parameter (`chain_hand_ids`).
 
 from __future__ import annotations
 
-import itertools
 from dataclasses import dataclass, field
 from typing import Literal, Optional
 
@@ -24,7 +23,7 @@ from fastapi import APIRouter, HTTPException
 from app.db import get_read_cursor
 from app.reports import split as split_mod
 from app.reports import views
-from app.reports.chain import ReportQuery, parse_chain, resolve
+from app.reports.chain import ReportQuery, case_filter, case_ids, parse_chain, resolve
 
 router = APIRouter()
 
@@ -52,6 +51,12 @@ def _resolve(q: ReportQuery):
         raise HTTPException(status_code=422, detail=str(e))
 
 
+# CPU throttle (app.concurrency.heavy_slot, at most MAX_HEAVY at once) without holding a slot
+# while waiting: a cold spot-chain resolve takes one inside `resolve`, and every response /
+# table computation inside `Resolution.memo`. A cached response is served without a slot, and
+# requests waiting for another request's resolve or computation of the same thing hold none.
+
+
 @router.post("/reports/split")
 def post_split(q: SplitQuery) -> dict:
     db, res = _resolve(q)
@@ -68,14 +73,14 @@ def post_spot(q: SpotQuery) -> dict:
 
 @router.post("/reports/preflop-range")
 def post_preflop_range(q: ReportQuery) -> dict:
-    _db, res = _resolve(q)
-    return views.preflop_range(res)
+    db, res = _resolve(q)
+    return views.preflop_range(db, res)
 
 
 @router.post("/reports/hand-strength")
 def post_hand_strength(q: HandStrengthQuery) -> dict:
-    _db, res = _resolve(q)
-    return views.hand_strength(res, q.street)
+    db, res = _resolve(q)
+    return views.hand_strength(db, res, q.street)
 
 
 @router.get("/reports/quick-filters")
@@ -106,31 +111,27 @@ class ChainScope:
         return self.sql.format(col=col), list(self.params)
 
 
-_scope_names = itertools.count()
-
-
 def chain_scope(db, workspace_id: int, player_id: int | None, chain: str | None
                 ) -> ChainScope | None:
     """Scope of a URL-encoded JSON chain (None: no `chain` param given); 422 if invalid.
 
     Same hand set as `chain_hand_ids` (any given chain, even `[]`, keeps only H2N-valid hands).
-    Contract implementation: registers the resolution's case ids as an Arrow relation on `db`.
-    Plain chains (no spot steps) may instead return a pure SQL predicate without materializing
-    the ids; consumers must not depend on which form they get.
+    Plain chains (no spot steps): a pure SQL subquery with the chain's own WHERE, no ids leave
+    DuckDB. Spot chains: the resolution's case ids as an Arrow relation registered on `db`.
+    Consumers must not depend on which form they get.
     """
     if chain is None or not chain.strip():
         return None
     try:
         steps = parse_chain(chain)
-        ids = resolve(db, workspace_id, player_id, steps).case_ids
+        res = resolve(db, workspace_id, player_id, steps)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=f"Invalid chain: {e}")
-    if not ids:
+    if not res.n_cases:
         return ChainScope(0, "FALSE")
-    import pyarrow as pa
-    name = f"_chain_scope_{next(_scope_names)}"
-    db.register(name, pa.table({"id": pa.array(ids, pa.string())}))
-    return ChainScope(len(ids), f"{{col}} IN (SELECT id FROM {name})")
+    pred, params = case_filter(db, res, "{col}")
+    return ChainScope(res.n_cases, pred.replace("{", "{{").replace("}", "}}")
+                      .replace("{{col}}", "{col}"), params)
 
 
 def chain_hand_ids(db, workspace_id: int, player_id: int | None, chain: str | None
@@ -145,9 +146,10 @@ def chain_hand_ids(db, workspace_id: int, player_id: int | None, chain: str | No
         return None
     try:
         steps = parse_chain(chain)
-        return resolve(db, workspace_id, player_id, steps).case_ids
+        res = resolve(db, workspace_id, player_id, steps)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=f"Invalid chain: {e}")
+    return case_ids(db, res)
 
 
 __all__ = ["router", "chain_hand_ids", "chain_scope", "ChainScope"]

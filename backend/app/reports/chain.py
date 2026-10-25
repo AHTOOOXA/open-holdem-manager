@@ -18,24 +18,36 @@ have no hit point and every matching hand is a case.
   case / opportunity. `row` steps also prefilter in SQL on their General bit (case bit, or
   the opportunity bit for the last spot step).
 
-Resolutions are cached (LRU) by workspace, player, the chain without labels and a data
-version (hand count, last import time and the highest `hand_players.id`, which a rebuild
-moves), so the several requests a Reports page fires share one resolution; split tables
-computed from a resolution are cached on it.
+Plain chains are not materialized: their Resolution carries the SQL WHERE of the case rows
+and the views aggregate in SQL / Arrow (split.plain_groups); hand lists and the graph filter
+with `case_filter` (a subquery, or the spot cases as a registered Arrow relation).
+
+Resolutions are cached (LRU bounded by estimated bytes) by workspace, player, the chain
+without labels and a data version (hand count, last import time, the highest
+`hand_players.id`, which a rebuild moves, and `data_generation`, whose bump also clears the
+cache), so the several requests a Reports page fires share one resolution; split tables and
+finished responses computed from a resolution are cached on it (`Resolution.memo`). Cold
+spot-chain resolves and memoized computations run in `app.concurrency.heavy_slot()`; requests
+waiting for one of them hold no slot.
 """
 
 from __future__ import annotations
 
 import datetime as _dt
+import itertools
 import json
 import logging
+import sys
 import threading
 from collections import OrderedDict
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from typing import Annotated, Any, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator, model_validator
 
+from app import data_generation
+from app.concurrency import heavy_slot
 from app.api.general_popup import _BUCKET_BY_ID, _fetch_raw, _size_hits
 from app.date_filters import day_from_sql, day_to_sql
 from app.db import get_hero_player_id, get_rebuild_status
@@ -511,7 +523,10 @@ def stack_caption(lo: float, hi: float | None) -> str:
 
 @dataclass(slots=True)
 class HandRec:
-    """One hand of a resolution (facts from SQL + the spot result)."""
+    """One hand of a spot resolution (facts from SQL + the spot result).
+
+    Low-cardinality strings (stakes, mode, position, cards, table) are interned: a cached
+    resolution holds one copy of each value instead of one per hand."""
 
     hid: str
     case: bool
@@ -532,7 +547,9 @@ class HandRec:
     tsize: int | None
     card1: str | None
     card2: str | None
-    hv: tuple[int | None, int | None, int | None]
+    hv_flop: int | None
+    hv_turn: int | None
+    hv_river: int | None
     pre_opp: int
     pre_case: int
     post_opp: int
@@ -543,9 +560,53 @@ class HandRec:
     hit_eff: int | None = None   # effective type of the hit action
     hit_hero: bool = False       # the hit action is the player's own
 
+    @property
+    def hv(self) -> tuple[int | None, int | None, int | None]:
+        return (self.hv_flop, self.hv_turn, self.hv_river)
+
+
+# Approximate resident bytes of one HandRec (slots, boxed floats, id string, datetime, the
+# 4 bitmask ints, hit tuple; interned strings excluded). Measured ~700-800 B with tracemalloc.
+REC_BYTES = 760
+# A derived table / response bigger than this (estimate) is not kept on the resolution.
+MEMO_MAX_BYTES = 16 << 20
+# Compact per-row tables (one Acc per row, no response dicts) may be kept up to this size:
+# rebuilding the response from them is ~5x cheaper than recomputing (e.g. the Players split).
+TABLE_MAX_BYTES = 96 << 20
+
+
+class PlainResolutionError(RuntimeError):
+    """A plain resolution has no per-hand records: aggregate in SQL (`case_filter`,
+    `iter_records`, `case_ids`) instead of reading `.cases` / `.case_ids`."""
+
+
+class PlainCases:
+    """`Resolution.hands` of a plain chain: only its length (the case count) is known."""
+
+    __slots__ = ("n",)
+
+    def __init__(self, n: int):
+        self.n = n
+
+    def __len__(self) -> int:
+        return self.n
+
+    def __iter__(self):
+        raise PlainResolutionError("plain resolution: no per-hand records")
+
+    def __getitem__(self, i):
+        raise PlainResolutionError("plain resolution: no per-hand records")
+
 
 @dataclass
 class Resolution:
+    """The hands of a chain for one player.
+
+    Plain chains (no spot step) hold no per-hand records: the cases are the rows of
+    `SELECT ... _FROM WHERE {where}` (`params`), counted in `n_cases` (`hands` is a
+    length-only `PlainCases`); views aggregate them in SQL. Spot chains hold one `HandRec`
+    per opportunity hand (`hands`) and their blobs."""
+
     workspace_id: int
     player_id: int | None
     username: str | None
@@ -553,49 +614,254 @@ class Resolution:
     ctx: SpotCtx
     has_spot: bool
     total_hands: int
-    hands: list[HandRec] = field(default_factory=list)   # cases and opportunity-only hands
+    hands: list[HandRec] | PlainCases = field(default_factory=list)  # cases + opportunity-only hands
     blobs: dict[str, bytes | None] = field(default_factory=dict)
     replay_failed: int = 0
-    tables: dict = field(default_factory=dict)            # cached derived tables
+    tables: dict = field(default_factory=dict)            # cached derived tables / responses
     lock: threading.Lock = field(default_factory=threading.Lock)
+    n_cases: int = 0
+    where: str = "FALSE"                                  # case rows (aliases hp, h of _FROM)
+    params: list = field(default_factory=list)
+    blob_bytes: int = 0
+    table_bytes: int = 0
+    _flights: dict = field(default_factory=dict, repr=False)   # memo key -> _Flight
+
+    @property
+    def plain(self) -> bool:
+        return not self.has_spot
 
     @property
     def cases(self) -> list[HandRec]:
+        if self.plain:
+            raise PlainResolutionError("plain resolution: no per-hand records")
         return [h for h in self.hands if h.case]
 
     @property
     def case_ids(self) -> list[str]:
+        if self.plain:
+            raise PlainResolutionError("plain resolution: use chain.case_ids(db, res)")
         return [h.hid for h in self.hands if h.case]
 
+    def memo(self, key, fn, size=None, max_bytes: int = MEMO_MAX_BYTES, heavy: bool = True):
+        """`fn()` computed once per key (racing requests wait for the first one) and kept in
+        `tables` unless its estimated size (`size(value)`, default 1 KB) is over `max_bytes`
+        (MEMO_MAX_BYTES by default).
 
-_COLS = """h.id, COALESCE(hp.won, 0), COALESCE(hp.won_bb, 0),
-           COALESCE(hp.all_in_ev_bb, hp.won_bb, 0),
-           COALESCE(hp.all_in_ev_bb, hp.won_bb, 0) * h.bb_amount,
-           COALESCE(hp.rake, 0), COALESCE(hp.went_to_showdown, FALSE),
-           COALESCE(hp.is_winner, FALSE), hp.h2n_pos, hp.stack_bb, h.played_at, h.stakes,
-           h.bb_amount, h.game_mode, h.table_size, hp.card1, hp.card2,
+        Requests that arrive while a key is being computed take that computation's value (a
+        per-key `_Flight`, as in `resolve`), also when it is too big to keep: an over-cap value
+        is computed once per burst of racing requests, not once per waiter. When the
+        computation fails, its waiters try again.
+
+        `heavy`: the computation runs in a `heavy_slot()`; all CPU work of the Reports
+        endpoints happens in memoized computations, so this is where they are throttled. A
+        cached value is returned without a slot, and a request waiting for another request's
+        computation of the same key holds no slot (the endpoints call this outside any slot).
+        As in `resolve`, the computing request takes its slot *before* it registers the
+        flight, so a flight always belongs to a request that is already running. Nested keys
+        (Next / Faced / Sizing / Players tables) are only computed inside a heavy computation,
+        whose slot is re-entrant. `case_ids_arrow` is also built outside any slot (hand list,
+        graph) and is cheap: it takes none."""
+        slot = heavy_slot if heavy else nullcontext
+        while True:
+            with self.lock:
+                if key in self.tables:
+                    return self.tables[key]
+                flight = self._flights.get(key)
+            if flight is not None:          # someone is computing it: wait without a slot
+                flight.done.wait()
+                if flight.ok:
+                    return flight.result
+                continue                    # that computation failed: try again
+            with slot():
+                with self.lock:
+                    if key in self.tables:
+                        return self.tables[key]
+                    flight = self._flights.get(key)
+                    owner = flight is None
+                    if owner:
+                        flight = self._flights[key] = _Flight()
+                if not owner:
+                    continue                # lost the race while taking the slot: wait
+                try:
+                    value = fn()
+                    nbytes = size(value) if size is not None else 1024
+                    if nbytes <= max_bytes:
+                        with self.lock:
+                            self.tables[key] = value
+                            self.table_bytes += nbytes
+                        if nbytes > (1 << 20):
+                            _CACHE.trim()
+                    flight.result, flight.ok = value, True
+                    return value
+                finally:
+                    with self.lock:
+                        if self._flights.get(key) is flight:
+                            del self._flights[key]
+                    flight.done.set()
+
+    def approx_bytes(self) -> int:
+        recs = 0 if self.plain else len(self.hands)
+        return recs * REC_BYTES + self.blob_bytes + self.table_bytes + 4096
+
+
+_D = "CAST({} AS DOUBLE)"
+_COLS = f"""h.id, {_D.format("COALESCE(hp.won, 0)")}, {_D.format("COALESCE(hp.won_bb, 0)")},
+           {_D.format("COALESCE(hp.all_in_ev_bb, hp.won_bb, 0)")},
+           {_D.format("COALESCE(hp.all_in_ev_bb, hp.won_bb, 0) * h.bb_amount")},
+           {_D.format("COALESCE(hp.rake, 0)")}, COALESCE(hp.went_to_showdown, FALSE),
+           COALESCE(hp.is_winner, FALSE), hp.h2n_pos, {_D.format("hp.stack_bb")}, h.played_at,
+           h.stakes, {_D.format("h.bb_amount")}, h.game_mode, h.table_size, hp.card1, hp.card2,
            hp.hv_flop, hp.hv_turn, hp.hv_river,
            COALESCE(hp.h2n_pre_opp, 0), COALESCE(hp.h2n_pre_case, 0),
            COALESCE(hp.h2n_post_opp, 0), COALESCE(hp.h2n_post_case, 0),
-           COALESCE(hp.rake_bb, 0), h.table_name"""
+           {_D.format("COALESCE(hp.rake_bb, 0)")}, h.table_name"""
+# Money columns are DECIMAL: CAST(... AS DOUBLE) is the same float as Python's float(Decimal)
+# (exact int64 / power of ten, rounded once; the EV product is cast after the exact DECIMAL
+# product), without one Decimal object per value.
 _FROM = """
     FROM hand_players hp
     JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
 """
 _SELECT = f"SELECT {_COLS} {_FROM}"
 _BASE_WHERE = "hp.player_id = ? AND h.workspace_id = ? AND COALESCE(hp.h2n_valid, TRUE)"
+# Hands in insertion order: the per-hand float sums are sequential in this order, so they are
+# the same on every request (a parallel scan without ORDER BY may return rows in any order).
+ORDER = " ORDER BY h.rowid"
+
+_intern = sys.intern
+
+
+def _istr(s):
+    return None if s is None else _intern(s)
 
 
 def _rec(r, case: bool = True, hit=None) -> HandRec:
-    f = lambda x: float(x) if x is not None else 0.0  # noqa: E731
     return HandRec(
-        hid=r[0], case=case, hit=hit, won=f(r[1]), won_bb=f(r[2]), ev_bb=f(r[3]), ev=f(r[4]),
-        rake=f(r[5]), sd=bool(r[6]), win=bool(r[7]), pos=r[8],
-        stack_bb=None if r[9] is None else float(r[9]), played_at=r[10], stakes=r[11],
-        bb_amount=f(r[12]), mode=r[13] or "", tsize=r[14], card1=r[15], card2=r[16],
-        hv=(r[17], r[18], r[19]), pre_opp=int(r[20]), pre_case=int(r[21]),
-        post_opp=int(r[22]), post_case=int(r[23]), rake_bb=f(r[24]), table=r[25],
+        hid=r[0], case=case, hit=hit, won=r[1], won_bb=r[2], ev_bb=r[3], ev=r[4],
+        rake=r[5], sd=bool(r[6]), win=bool(r[7]), pos=_istr(r[8]),
+        stack_bb=r[9], played_at=r[10], stakes=_istr(r[11]),
+        bb_amount=r[12] if r[12] is not None else 0.0, mode=_istr(r[13] or ""), tsize=r[14],
+        card1=_istr(r[15]), card2=_istr(r[16]), hv_flop=r[17], hv_turn=r[18], hv_river=r[19],
+        pre_opp=int(r[20]), pre_case=int(r[21]), post_opp=int(r[22]), post_case=int(r[23]),
+        rake_bb=r[24], table=_istr(r[25]),
     )
+
+
+_reg_names = itertools.count()
+
+
+def register_ids(db, ids) -> str:
+    """Register `ids` (list or Arrow string array) as a one-column (`id`) relation on `db`;
+    returns its name. Valid on that cursor only."""
+    import pyarrow as pa
+    arr = ids if isinstance(ids, pa.Array) else pa.array(ids, pa.string())
+    name = f"_ohm_ids_{next(_reg_names)}"
+    db.register(name, pa.table({"id": arr}))
+    return name
+
+
+def case_ids(db, res: Resolution) -> list[str]:
+    """Case hand ids of a resolution (plain chains: from SQL, in hand insertion order)."""
+    if not res.plain:
+        return [h.hid for h in res.hands if h.case]
+    if not res.n_cases:
+        return []
+    return db.execute(f"SELECT h.id {_FROM} WHERE {res.where}{ORDER}",
+                      res.params).fetch_arrow_table().column(0).to_pylist()
+
+
+def case_filter(db, res: Resolution, col: str) -> tuple[str, list]:
+    """(SQL predicate, params) selecting the case hands by the hand-id column `col`.
+
+    Plain chains: a subquery with the chain's own WHERE (no ids leave DuckDB). Spot chains:
+    the case ids as an Arrow relation registered on `db` (built once per resolution)."""
+    if res.plain:
+        if not res.n_cases:
+            return "FALSE", []
+        return f"{col} IN (SELECT h.id {_FROM} WHERE {res.where})", list(res.params)
+    import pyarrow as pa
+    arr = res.memo(("case_ids_arrow",),
+                   lambda: pa.array([h.hid for h in res.hands if h.case], pa.string()),
+                   size=lambda a: a.nbytes + 1024, heavy=False)
+    if not len(arr):
+        return "FALSE", []
+    return f"{col} IN (SELECT id FROM {register_ids(db, arr)})", []
+
+
+def iter_records(db, res: Resolution, chunk: int = 20_000):
+    """The case hands as HandRec lists (plain chains: fetched in chunks, never kept)."""
+    if not res.plain:
+        yield [h for h in res.hands if h.case]
+        return
+    if not res.n_cases:
+        return
+    cur = db.cursor()   # own cursor: callers run other queries on `db` between chunks
+    try:
+        cur.execute(f"{_SELECT} WHERE {res.where}{ORDER}", res.params)
+        while True:
+            rows = cur.fetchmany(chunk)
+            if not rows:
+                break
+            yield [_rec(r) for r in rows]
+    finally:
+        cur.close()
+
+
+class CaseRec:
+    """The facts of one case hand that `split.Acc.add` and the Next / Faced tables read (plain
+    chains: built per chunk, never kept). Same values as the matching HandRec fields."""
+
+    __slots__ = ("hid", "won", "won_bb", "ev_bb", "ev", "rake", "sd", "win", "pre_opp",
+                 "pre_case", "post_case", "rake_bb")
+    hit = None   # plain chains have no hit point
+
+    def __init__(self, hid, won, won_bb, ev_bb, ev, rake, sd, win, pre_opp, pre_case,
+                 post_case, rake_bb):
+        self.hid = hid
+        self.won = won
+        self.won_bb = won_bb
+        self.ev_bb = ev_bb
+        self.ev = ev
+        self.rake = rake
+        self.sd = sd
+        self.win = win
+        self.pre_opp = pre_opp
+        self.pre_case = pre_case
+        self.post_case = post_case
+        self.rake_bb = rake_bb
+
+
+# CaseRec fields, then the hand's stored sequence blob (the one hand_players row carrying it,
+# app/h2n/CONTRACT.md), in one query.
+_SEQ_SELECT = f"""SELECT h.id, {_D.format("COALESCE(hp.won, 0)")},
+           {_D.format("COALESCE(hp.won_bb, 0)")},
+           {_D.format("COALESCE(hp.all_in_ev_bb, hp.won_bb, 0)")},
+           {_D.format("COALESCE(hp.all_in_ev_bb, hp.won_bb, 0) * h.bb_amount")},
+           {_D.format("COALESCE(hp.rake, 0)")}, COALESCE(hp.went_to_showdown, FALSE),
+           COALESCE(hp.is_winner, FALSE), COALESCE(hp.h2n_pre_opp, 0),
+           COALESCE(hp.h2n_pre_case, 0), COALESCE(hp.h2n_post_case, 0),
+           {_D.format("COALESCE(hp.rake_bb, 0)")}, sq.h2n_seq {_FROM}
+    LEFT JOIN hand_players sq ON sq.hand_id = hp.hand_id AND sq.workspace_id = hp.workspace_id
+        AND sq.h2n_seq IS NOT NULL"""
+
+
+def iter_case_seqs(db, res: Resolution, chunk: int = 8192):
+    """Plain chains: the case hands as (CaseRec list, {hand id: stored blob or None}) chunks in
+    hand order, from one query (nothing is kept on the resolution)."""
+    if not res.plain:
+        raise PlainResolutionError("iter_case_seqs is for plain resolutions")
+    if not res.n_cases:
+        return
+    cur = db.cursor()   # own cursor: callers run other queries on `db` between chunks
+    try:
+        cur.execute(f"{_SEQ_SELECT} WHERE {res.where}{ORDER}", res.params)
+        while True:
+            rows = cur.fetchmany(chunk)
+            if not rows:
+                break
+            yield [CaseRec(*r[:12]) for r in rows], {r[0]: r[12] for r in rows}
+    finally:
+        cur.close()
 
 
 def opponent_recs(db, workspace_id: int, ids: list[str], player_id: int
@@ -617,16 +883,20 @@ def opponent_recs(db, workspace_id: int, ids: list[str], player_id: int
 
 
 def fetch_seqs(db, workspace_id: int, ids: list[str]) -> dict[str, bytes]:
+    """Stored sequence blobs of the given hands (one row per hand carries it)."""
     out: dict[str, bytes] = {}
-    for i in range(0, len(ids), 5000):
-        chunk = ids[i:i + 5000]
+    if not ids:
+        return out
+    name = register_ids(db, ids)
+    try:
         for hid, blob in db.execute(
             "SELECT hand_id, h2n_seq FROM hand_players "
-            "WHERE workspace_id = ? AND h2n_seq IS NOT NULL "
-            "AND hand_id IN (SELECT UNNEST(?::VARCHAR[]))",
-            [workspace_id, chunk],
+            f"WHERE workspace_id = ? AND h2n_seq IS NOT NULL AND hand_id IN (SELECT id FROM {name})",
+            [workspace_id],
         ).fetchall():
             out[hid] = bytes(blob)
+    finally:
+        db.unregister(name)
     return out
 
 
@@ -684,22 +954,28 @@ def _compute(db, workspace_id: int, player_id: int | None, chain: list[_Step],
         return res
     row = db.execute("SELECT username FROM players WHERE id = ?", [player_id]).fetchone()
     res.username = row[0] if row else None
-    res.total_hands = int(db.execute(
-        "SELECT COUNT(*) FROM hand_players hp JOIN hands h ON hp.hand_id = h.id "
-        f"AND hp.workspace_id = h.workspace_id WHERE {_BASE_WHERE}",
-        [player_id, workspace_id]).fetchone()[0])
+    base = [player_id, workspace_id]
+    res.total_hands = int(db.execute(f"SELECT COUNT(*) {_FROM} WHERE {_BASE_WHERE}",
+                                     base).fetchone()[0])
     psql, pparams = plain_sql(chain, day_start)
-    where = _BASE_WHERE + psql + _row_bits_sql(chain)
-    rows = db.execute(f"{_SELECT} WHERE {where}", [player_id, workspace_id, *pparams]).fetchall()
+    res.where = _BASE_WHERE + psql + _row_bits_sql(chain)
+    res.params = [*base, *pparams]
     if not steps:
-        res.hands = [_rec(r) for r in rows]
+        res.n_cases = res.total_hands if res.where == _BASE_WHERE else int(db.execute(
+            f"SELECT COUNT(*) {_FROM} WHERE {res.where}", res.params).fetchone()[0])
+        res.hands = PlainCases(res.n_cases)
         return res
+    rows = db.execute(f"{_SELECT} WHERE {res.where}{ORDER}", res.params).fetchall()
     ids = [r[0] for r in rows]
     blobs = fetch_seqs(db, workspace_id, ids)
     res.blobs = {h: blobs.get(h) for h in ids}
     src = SeqSource(db, workspace_id, res.blobs)
     src.prefetch_missing(ids)
     name = res.username
+    # Next / Faced tables are filled here from the sequence decoded for the spot step
+    # (same evaluators, same hand order as split.action_table), so no tab decodes it again.
+    from app.reports import split as split_mod
+    fill = split_mod.table_fillers(ctx) if name else {}
     out: list[HandRec] = []
     for r in rows:
         seq = src.get(r[0])
@@ -724,8 +1000,19 @@ def _compute(db, workspace_id: int, player_id: int | None, chain: list[_Step],
         if a.actor == p:
             rec.ap = 0.0 if a.eff == spots.FOLD else rec.ev_bb + spots.committed_bb(seq, p, hit)
         out.append(rec)
+        if fill and rec.case:
+            try:
+                split_mod.fill_tables(fill, seq, p, rec)
+            except Exception:  # the lazy path recomputes (and reports) it
+                log.warning("reports table fill failed for hand %s", r[0], exc_info=True)
+                fill = {}
     res.hands = out
+    res.n_cases = sum(1 for h in out if h.case)
     res.blobs = {h.hid: res.blobs.get(h.hid) for h in out}
+    res.blob_bytes = sum(len(b) + 120 if b is not None else 120 for b in res.blobs.values())
+    for which, (_cands, _ev, table) in fill.items():
+        res.tables[("table", which)] = table
+        res.table_bytes += 600 * len(table) + 1024
     return res
 
 
@@ -733,11 +1020,13 @@ def _compute(db, workspace_id: int, player_id: int | None, chain: list[_Step],
 
 
 class _LRU:
-    """LRU of resolutions, bounded by entry count and by the total number of hand records."""
+    """LRU of resolutions, bounded by entry count and by their estimated resident bytes
+    (`Resolution.approx_bytes`: records, blobs and cached tables). An entry over the whole
+    budget is not kept (callers waiting on the same computation still get it)."""
 
-    def __init__(self, capacity: int, max_hands: int):
+    def __init__(self, capacity: int, max_bytes: int):
         self.capacity = capacity
-        self.max_hands = max_hands
+        self.max_bytes = max_bytes
         self._d: OrderedDict = OrderedDict()
         self._lock = threading.Lock()
 
@@ -752,17 +1041,32 @@ class _LRU:
         with self._lock:
             self._d[key] = value
             self._d.move_to_end(key)
-            while len(self._d) > 1 and (
-                    len(self._d) > self.capacity
-                    or sum(len(v.hands) for v in self._d.values()) > self.max_hands):
-                self._d.popitem(last=False)
+            self._trim()
+
+    def trim(self) -> None:
+        with self._lock:
+            self._trim()
+
+    def _trim(self) -> None:
+        total = sum(v.approx_bytes() for v in self._d.values())
+        while self._d and (len(self._d) > self.capacity or total > self.max_bytes):
+            _k, v = self._d.popitem(last=False)
+            total -= v.approx_bytes()
+
+    def nbytes(self) -> int:
+        with self._lock:
+            return sum(v.approx_bytes() for v in self._d.values())
+
+    def __len__(self) -> int:
+        return len(self._d)
 
     def clear(self) -> None:
         with self._lock:
             self._d.clear()
 
 
-_CACHE = _LRU(32, 600_000)
+CACHE_MAX_BYTES = 384 << 20
+_CACHE = _LRU(32, CACHE_MAX_BYTES)
 _inflight: dict = {}
 _inflight_lock = threading.Lock()
 
@@ -771,9 +1075,13 @@ def clear_cache() -> None:
     _CACHE.clear()
 
 
+# Every write that changes hands / hand_players bumps the generation: drop the resolutions
+# (keying on the generation alone would leave them in memory until LRU eviction).
+data_generation.on_bump(clear_cache)
+
+
 def bump_generation() -> None:
     """Call after any write that changes hands / hand_players (invalidates resolutions)."""
-    from app import data_generation
     data_generation.bump()
     _CACHE.clear()
 
@@ -784,44 +1092,84 @@ def data_version(db, workspace_id: int) -> tuple:
     ).fetchone()
     top = db.execute("SELECT MAX(id) FROM hand_players WHERE workspace_id = ?",
                      [workspace_id]).fetchone()[0]
-    from app import data_generation
     return (int(n), str(last), top, data_generation.current())
 
 
+class _Flight:
+    """One in-progress computation of a cache key; waiters take its result (`resolve`: None
+    when the computation failed; `Resolution.memo`: `ok` False). On failure they try again."""
+
+    __slots__ = ("done", "result", "ok")
+
+    def __init__(self):
+        self.done = threading.Event()
+        self.result = None
+        self.ok = False
+
+
 def resolve(db, workspace_id: int, player_id: int | None, chain: list[_Step]) -> Resolution:
-    """Resolution of `chain` for the player (None = the workspace's active hero), cached."""
+    """Resolution of `chain` for the player (None = the workspace's active hero), cached.
+
+    Parallel requests for one key share one computation, also during a background rebuild
+    (when nothing is cached because the data is changing).
+
+    A cold spot-chain resolve (per-hand sequence decoding and evaluation) runs in a
+    `heavy_slot()`: every caller (Reports endpoints, hand list, graph, export) is throttled
+    here. The computing request takes the slot *before* it registers the in-flight entry, so
+    an entry always belongs to a request that is already running; requests waiting for it
+    hold no slot of their own (unless their caller already had one, which then can't
+    deadlock: the entry's owner never waits for a slot). Plain chains resolve with two
+    COUNT queries and take no slot."""
     target = target_player(db, workspace_id, player_id)
     from app.app_settings import get_app_settings
     day_start = int(get_app_settings(db)["day_start_hour"])
-    if get_rebuild_status().get("active"):
-        return _compute(db, workspace_id, target, chain, day_start)
+    cacheable = not get_rebuild_status().get("active")
     key = (workspace_id, target, canonical(chain), data_version(db, workspace_id), day_start)
-    hit = _CACHE.get(key)
-    if hit is not None:
-        return hit
-    # One computation per key at a time: parallel requests of one page wait for it.
-    with _inflight_lock:
-        lock = _inflight.setdefault(key, threading.Lock())
-    try:
-        with lock:
-            hit = _CACHE.get(key)
-            if hit is None:
-                hit = _compute(db, workspace_id, target, chain, day_start)
-                _CACHE.put(key, hit)
-    finally:
+    if cacheable:
+        hit = _CACHE.get(key)
+        if hit is not None:
+            return hit
+    slot = heavy_slot if spot_steps(chain) else nullcontext
+    while True:
         with _inflight_lock:
-            _inflight.pop(key, None)
-    return hit
+            flight = _inflight.get(key)
+        if flight is not None:            # someone is computing it: wait without a slot
+            flight.done.wait()
+            if flight.result is not None:
+                return flight.result
+            continue                      # that computation failed: try again
+        with slot():
+            with _inflight_lock:
+                flight = _inflight.get(key)
+                owner = flight is None
+                if owner:
+                    flight = _inflight[key] = _Flight()
+            if not owner:
+                continue                  # lost the race while taking the slot: leave it, wait
+            try:
+                hit = _CACHE.get(key) if cacheable else None
+                if hit is None:
+                    hit = _compute(db, workspace_id, target, chain, day_start)
+                    if cacheable:
+                        _CACHE.put(key, hit)
+                flight.result = hit
+                return hit
+            finally:
+                with _inflight_lock:
+                    if _inflight.get(key) is flight:
+                        del _inflight[key]
+                flight.done.set()
 
 
 def resolved_ids(db, workspace_id: int, player_id: int | None, chain: list[_Step]) -> list[str]:
     """Case hand ids of the chain (the hands a page lists / graphs)."""
-    return resolve(db, workspace_id, player_id, chain).case_ids
+    return case_ids(db, resolve(db, workspace_id, player_id, chain))
 
 
 __all__ = [
     "Step", "ReportQuery", "CHAIN", "parse_chain", "resolve", "resolved_ids", "Resolution",
     "HandRec", "SeqSource", "plain_sql", "opponent_recs", "card_class", "card_class_sql", "CLASSES",
-    "chain_ctx", "canonical", "clear_cache", "POS_NAMES",
-    "stakes_caption", "stack_caption", "target_player", "ROWS",
+    "chain_ctx", "canonical", "clear_cache", "POS_NAMES", "case_ids", "case_filter",
+    "iter_records", "iter_case_seqs", "CaseRec", "register_ids", "stakes_caption",
+    "stack_caption", "target_player", "ROWS",
 ]

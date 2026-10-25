@@ -28,9 +28,13 @@ from app.h2n.rows import ROWS
 from app.h2n.sequence import BET, CALL, CHECK, FOLD, RAISE
 from app.hand_value import OTHER, STREET_CATEGORIES, category_info
 from app.reports import spots
-from app.reports.chain import CLASSES, Resolution, card_class
+from app.reports.chain import _FROM, CLASSES, ORDER, Resolution, card_class, card_class_sql
 from app.app_settings import max_break_seconds
-from app.reports.split import Acc, action_table, action_values, hand_time, plain_values, session_values
+from app.reports.split import (
+    Acc, _response_bytes, action_table, action_values, hand_time, plain_acc, plain_times,
+    plain_values, session_values,
+)
+from app.sessions_h2n import time_stats
 
 def _stat(id_, caption, value, fmt, sample=None, winnings=False, filter_=None) -> dict:
     d = {"id": id_, "caption": caption, "value": value, "sample": sample, "format": fmt}
@@ -84,14 +88,30 @@ def _best(res, table, keys, which) -> list[dict]:
     return out
 
 
-def spot(db, res: Resolution) -> dict:
-    cases = res.cases
-    kind = _kind(res)
-    hit_label = res.ctx.name if res.has_spot else None
+def _case_acc(db, res: Resolution) -> Acc:
+    """Acc of the case hands (Action Profit of the player's own hit actions)."""
+    if res.plain:
+        acc = plain_acc(db, res)
+        acc.opps = res.n_cases
+        return acc
     acc = Acc()
-    for h in cases:
+    for h in res.cases:
         acc.add(h, h.ap if h.hit_hero else None)
     acc.opps = len(res.hands)
+    return acc
+
+
+def spot(db, res: Resolution) -> dict:
+    """Stats tab response (cached on the resolution). `total_hands`: every hand of the player
+    (the page-0 header's count)."""
+    return res.memo(("spot",), lambda: _spot(db, res), size=_response_bytes)
+
+
+def _spot(db, res: Resolution) -> dict:
+    kind = _kind(res)
+    hit_label = res.ctx.name if res.has_spot else None
+    acc = _case_acc(db, res)
+    n = res.n_cases
     stats: list[dict] = []
     if kind == "plain":
         v = plain_values(acc)
@@ -112,7 +132,8 @@ def spot(db, res: Resolution) -> dict:
             _stat("ev_bb100", "Win Rate EV, bb/100", v["ev_bb100"], "bb100", v["hands"],
                   winnings=True),
         ]
-        return {"hands": len(cases), "kind": kind, "hit_label": None, "stats": stats}
+        return {"hands": n, "kind": kind, "hit_label": None, "stats": stats,
+                "total_hands": res.total_hands}
 
     v = action_values(acc, res.total_hands, with_ap=kind != "villain")
     head = [
@@ -156,7 +177,8 @@ def spot(db, res: Resolution) -> dict:
             _stat("wsd", "W%SD", v["wsd"], "pct", v["sd_hands"]),
         ]
         stats = [*head, *middle, *ap, *tail, *sd]
-    return {"hands": len(cases), "kind": kind, "hit_label": hit_label, "stats": stats}
+    return {"hands": n, "kind": kind, "hit_label": hit_label, "stats": stats,
+            "total_hands": res.total_hands}
 
 
 def recipe(db, res: Resolution, name: str) -> dict:
@@ -171,11 +193,23 @@ def recipe(db, res: Resolution, name: str) -> dict:
       WWSF%, Rake paid, Rake Paid bb/100. "Won From Hero" is left out: splitting a multiway
       pot into "won from one opponent" has no exact definition here.
     """
-    cases = res.cases
-    acc = Acc()
-    for h in cases:
-        acc.add(h)
-    v = session_values(acc, hand_time(cases, max_break_seconds(db)))
+    max_break_s = max_break_seconds(db)
+    return res.memo(("recipe", name, max_break_s), lambda: _recipe(db, res, name, max_break_s),
+                    size=_response_bytes)
+
+
+def _recipe(db, res: Resolution, name: str, max_break_s: int) -> dict:
+    if res.plain:
+        acc = plain_acc(db, res)
+        starts, tables = plain_times(db, res).get(None, ([], []))
+        ts = time_stats(starts, tables, max_break_s)
+    else:
+        cases = res.cases
+        acc = Acc()
+        for h in cases:
+            acc.add(h)
+        ts = hand_time(cases, max_break_s)
+    v = session_values(acc, ts)
 
     def st(id_, caption, fmt, group, sample=None, winnings=False):
         d = _stat(id_, caption, v[id_], fmt, v[sample] if sample else None, winnings)
@@ -213,7 +247,7 @@ def recipe(db, res: Resolution, name: str) -> dict:
             stats.append(st("avg_tables", "Avg. Tables", "ratio", "grid"))
         stats += [p("vpip"), p("pfr"), ag, p("threebet"), p("wtsd"), p("wsd"), p("wwsf"),
                   *rake, st("won_bb", "Won bb", "bb", "grid", winnings=True)]
-    return {"hands": len(cases), "kind": _kind(res),
+    return {"hands": res.n_cases, "kind": _kind(res),
             "hit_label": res.ctx.name if res.has_spot else None, "stats": stats}
 
 
@@ -221,17 +255,41 @@ def _combos(cls: str) -> int:
     return 6 if len(cls) == 2 else 4 if cls.endswith("s") else 12
 
 
-def preflop_range(res: Resolution) -> dict:
+def _plain_by(db, res: Resolution, key_sql: str) -> list[tuple]:
+    """(key, hands, won bb) per key of a plain resolution's case hands; won bb summed one hand
+    after another in hand order (the same floats as the per-record loop)."""
+    if not res.n_cases:
+        return []
+    tbl = db.execute(
+        f"SELECT {key_sql} AS k, CAST(COALESCE(hp.won_bb, 0) AS DOUBLE) AS w "
+        f"{_FROM} WHERE {res.where}{ORDER}", res.params).fetch_arrow_table()
+    agg = tbl.group_by("k", use_threads=False).aggregate([("w", "sum"), ([], "count_all")])
+    return [(d["k"], d["count_all"], d["w_sum"]) for d in agg.to_pylist()]
+
+
+def preflop_range(db, res: Resolution) -> dict:
+    """Preflop Range tab response (cached on the resolution)."""
+    return res.memo(("range",), lambda: _preflop_range(db, res), size=lambda d: 64 * 1024)
+
+
+def _preflop_range(db, res: Resolution) -> dict:
     counts = {c: 0 for c in CLASSES}
     won = {c: 0.0 for c in CLASSES}
     total = 0
-    for h in res.cases:
-        cls = card_class(h.card1, h.card2)
-        if cls is None:
-            continue
-        counts[cls] += 1
-        won[cls] += h.won_bb
-        total += 1
+    if res.plain:
+        for cls, n, w in _plain_by(db, res, card_class_sql()):
+            if cls in counts:
+                counts[cls] = n
+                won[cls] = w
+                total += n
+    else:
+        for h in res.cases:
+            cls = card_class(h.card1, h.card2)
+            if cls is None:
+                continue
+            counts[cls] += 1
+            won[cls] += h.won_bb
+            total += 1
     dens = [counts[c] / _combos(c) for c in CLASSES if counts[c]]
     avg = sum(dens) / len(dens) if dens else 0.0
     cells = []
@@ -245,17 +303,30 @@ def preflop_range(res: Resolution) -> dict:
     return {"total": total, "cells": cells}
 
 
-def hand_strength(res: Resolution, street: str) -> dict:
+def hand_strength(db, res: Resolution, street: str) -> dict:
+    """Hand Strength tab response for one street (cached on the resolution)."""
+    return res.memo(("strength", street), lambda: _hand_strength(db, res, street),
+                    size=lambda d: 8 * 1024)
+
+
+def _hand_strength(db, res: Resolution, street: str) -> dict:
     si = {"flop": 0, "turn": 1, "river": 2}[street]
     counts: dict[int, int] = {}
     won: dict[int, float] = {}
-    for h in res.cases:
-        idx = h.hv[si]
-        if idx is None:
-            continue
-        idx = int(idx)
-        counts[idx] = counts.get(idx, 0) + 1
-        won[idx] = won.get(idx, 0.0) + h.won_bb
+    if res.plain:
+        for idx, n, w in _plain_by(db, res, f"hp.hv_{street}"):
+            if idx is not None:
+                counts[int(idx)] = n
+                won[int(idx)] = w
+    else:
+        attr = ("hv_flop", "hv_turn", "hv_river")[si]
+        for h in res.cases:
+            idx = getattr(h, attr)
+            if idx is None:
+                continue
+            idx = int(idx)
+            counts[idx] = counts.get(idx, 0) + 1
+            won[idx] = won.get(idx, 0.0) + h.won_bb
     known = sum(counts.values())
     indices = list(range(len(STREET_CATEGORIES[street])))
     if counts.get(OTHER):
