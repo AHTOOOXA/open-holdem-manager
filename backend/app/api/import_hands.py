@@ -87,7 +87,9 @@ _BOARD_COLS = ("hand_id", "street", "card", "card_order", "workspace_id", "board
 
 
 def reset_import_cache() -> None:
-    """Reset caches. Call before rebuild or when tables are wiped."""
+    """Reset caches. Call before rebuild, when tables are wiped, and when an import is done
+    (the player cache grows by one entry per player seen, ~65 MB at 260k players; the next
+    import re-resolves its players with one join per batch)."""
     global _player_cache, _next_player_id, _next_hp_id
     _player_cache.clear()
     _next_player_id = None
@@ -947,6 +949,7 @@ def _stream_source(
                 if batches is not None and hasattr(batches, "close"):
                     batches.close()  # e.g. the tracker DB connection, closed in this thread
             finally:
+                reset_import_cache()  # still under the write lock
                 db_lock().release()
 
         emit(_done(t_start, imported, duplicates, errors, out_of_range[0], cancelled, error_details, {
@@ -1049,6 +1052,7 @@ def import_hand_texts(db, hands: list[tuple[str, object]], workspace_id: int, *,
             finalize_import(db, workspace_id=workspace_id, player_ids=touched)
         else:
             light_finalize(db, workspace_id)
+        reset_import_cache()
     return {"imported": imported, "duplicates": duplicates, "errors": errors,
             "error_details": error_details[:20]}
 
@@ -1085,6 +1089,7 @@ def _process_hands(db, text_contents: list[str], workspace_id: int = 1) -> Impor
 
     finalize_import(db, workspace_id=workspace_id)
     _checkpoint_after_bulk(db)
+    reset_import_cache()
 
     return ImportResult(
         imported=total_imported,
@@ -1217,6 +1222,7 @@ def _run_rebuild_sync(db, on_progress: 'Callable[[int, int], None] | None' = Non
     # Full rebuild: recompute classifications for all workspaces
     finalize_import(db, workspace_id=None)
     _checkpoint_after_bulk(db)
+    reset_import_cache()
 
     elapsed = time.perf_counter() - t_start
     hps = imported / elapsed if elapsed > 0 else 0

@@ -274,3 +274,34 @@ def test_scoped_finalize_picks_up_players_never_finalised(db):
     ih.finalize_import(db, workspace_id=1)
     assert _player_state(db) == scoped
     assert all(r[1] is not None for r in scoped[0])
+
+
+# ── 06/F10: the player cache is released when an import is done ──
+
+@pytest.mark.skipif(not FIXTURE_20K.exists(), reason="20k fixture missing")
+def test_player_cache_released_after_stream_import(db, monkeypatch):
+    import json
+    import app.db as app_db
+    from fastapi.testclient import TestClient
+    from app.main import app
+    monkeypatch.setattr(app_db, "_conn", db)
+    client = TestClient(app)
+    hands = _first_hands(300)
+
+    def upload(texts):
+        r = client.post("/api/import/files/stream",
+                        files=[("files", ("hh.txt", "\n\n".join(texts).encode(), "text/plain"))])
+        return [json.loads(line) for line in r.text.splitlines() if line.strip()][-1]
+
+    assert upload(hands[:200])["imported"] == 200
+    assert ih._player_cache == {} and ih._next_player_id is None and ih._next_hp_id is None
+    players = dict(db.execute("SELECT username, id FROM players").fetchall())
+    max_hp = db.execute("SELECT MAX(id) FROM hand_players").fetchone()[0]
+    assert upload(hands[100:])["imported"] == 100  # overlaps: 100 duplicates
+    assert ih._player_cache == {}
+    after = dict(db.execute("SELECT username, id FROM players").fetchall())
+    assert {u: after[u] for u in players} == players  # known players keep their ids
+    assert len(after) == db.execute("SELECT COUNT(DISTINCT username) FROM players").fetchone()[0]
+    assert db.execute("SELECT MIN(id) FROM hand_players WHERE id > ?", [max_hp]).fetchone()[0] == max_hp + 1
+    assert db.execute("SELECT COUNT(*) FROM hand_players").fetchone()[0] == \
+        db.execute("SELECT COUNT(DISTINCT id) FROM hand_players").fetchone()[0]
