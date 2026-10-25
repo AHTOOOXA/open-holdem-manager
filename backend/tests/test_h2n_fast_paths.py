@@ -262,17 +262,6 @@ def _hero_id(db) -> int:
 # ── H2N columns in the other stats endpoints ─────────────────────────────
 
 
-def test_range_position_filter_uses_h2n_groups(client, db):
-    insert_parsed_hand(db, parse_hand_history(
-        hh(["Hero", "V"], "Hero R2.5, V F", max_seats=2, hand_no=1, cards={"Hero": "AhKd"},
-           collected={"Hero": 2})))
-    # heads-up button: H2N column SB, whatever OHM's own label says
-    db.execute("UPDATE hand_players SET position = 'BTN' WHERE player_id = ?", [_hero_id(db)])
-    sb = client.get("/api/stats/range", params={"position": "SB"}).json()
-    btn = client.get("/api/stats/range", params={"position": "BTN"}).json()
-    assert sb["total_hands"] == 1 and btn["total_hands"] == 0
-
-
 def test_last_n_counts_only_hands_the_stats_count(db):
     texts = [hh(["Hero", "S", "B"], "Hero R2.5, S F, B F", max_seats=3, hand_no=i,
                 collected={"Hero": 2.5}) for i in (1, 2, 3)]

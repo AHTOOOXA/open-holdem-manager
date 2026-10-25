@@ -237,9 +237,14 @@ def test_scoped_finalize_matches_full_finalize(db, monkeypatch):
 
     third = len(hands) // 3
     scoped_calls = []
-    real_scoped = ih._update_player_types_scoped
-    monkeypatch.setattr(ih, "_update_player_types_scoped",
-                        lambda conn, ws: (scoped_calls.append(ws), real_scoped(conn, ws)))
+    real_batch = ih.batch_update_player_types
+
+    def batch(conn, workspace_id=None, *, players_sql=None):
+        if players_sql is not None:
+            scoped_calls.append(workspace_id)
+        real_batch(conn, workspace_id, players_sql=players_sql)
+
+    monkeypatch.setattr(ih, "batch_update_player_types", batch)
     # Overlapping imports: the same players reappear across batches and workspaces
     assert _import(db, hands[:2 * third], 1)["imported"] == 2 * third
     assert _import(db, hands[third:], 2)["imported"] == len(hands) - third
@@ -291,7 +296,14 @@ def test_import_with_pending_reg_rule_change_reclassifies_whole_workspace(db, mo
     assert config_sections.rebuild_required(db)
 
     scoped_calls = []
-    monkeypatch.setattr(ih, "_update_player_types_scoped", lambda conn, ws: scoped_calls.append(ws))
+    real_batch = ih.batch_update_player_types
+
+    def batch(conn, workspace_id=None, *, players_sql=None):
+        if players_sql is not None:
+            scoped_calls.append(workspace_id)
+        real_batch(conn, workspace_id, players_sql=players_sql)
+
+    monkeypatch.setattr(ih, "batch_update_player_types", batch)
     _import(db, hands[400:], 1)
     assert scoped_calls == []  # the pending change forces the whole-workspace path
     after = _player_state(db)

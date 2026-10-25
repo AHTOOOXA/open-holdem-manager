@@ -4,7 +4,7 @@ from fastapi import APIRouter, Query, HTTPException, Path
 from app.date_filters import DATE_TO_SQL
 from app.db import get_read_cursor, get_hero_player_id, get_hero_username
 from app.models import (
-    HeroStats, ComboStats, RangeResponse, StatDetailHand, StatDetailHandsResponse,
+    HeroStats, StatDetailHand, StatDetailHandsResponse,
 )
 from app.stats_engine import compute_hero_stats
 from app.stat_registry import POS_SQL, STAT_REGISTRY, get_key_street
@@ -45,129 +45,6 @@ def get_hero_stats(
     return compute_hero_stats(db, hero_username, position=position, stakes=stakes,
                               game_mode=game_mode, date_from=date_from, date_to=date_to,
                               last_n=last_n, workspace_id=workspace_id)
-
-
-@router.get("/stats/range", response_model=RangeResponse)
-def get_range_stats(
-    position: str | None = Query(None),
-    stakes: str | None = Query(None),
-    game_mode: str | None = Query(None),
-    date_from: str | None = Query(None),
-    date_to: str | None = Query(None),
-    workspace_id: int = Query(1),
-):
-    db = get_read_cursor()
-    hero_username = get_hero_username(db, workspace_id)
-
-    player_id = get_hero_player_id(db, workspace_id)
-    if not player_id:
-        return RangeResponse()
-
-    query = """
-        SELECT hp.card1, hp.card2,
-               hp.won_bb, COALESCE(hp.all_in_ev_bb, hp.won_bb),
-               hp.vpip, hp.pfr, hp.three_bet,
-               hp.saw_flop, hp.went_to_showdown, hp.won_at_showdown
-        FROM hand_players hp
-        JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
-        WHERE hp.player_id = ?
-          AND h.workspace_id = ?
-          AND hp.card1 IS NOT NULL AND hp.card2 IS NOT NULL
-    """
-    params: list = [player_id, workspace_id]
-
-    if position:
-        query += f" AND {POS_SQL} = ?"
-        params.append(position.upper())
-    if stakes:
-        query += " AND h.stakes = ?"
-        params.append(stakes)
-    if game_mode is not None:
-        query += " AND h.game_mode = ?"
-        params.append(game_mode)
-    if date_from:
-        query += " AND h.played_at >= ?"
-        params.append(date_from)
-    if date_to:
-        query += " AND " + DATE_TO_SQL
-        params.append(date_to)
-
-    rows = db.execute(query, params).fetchall()
-
-    # Also get total hands for context (including folded pre without seeing cards)
-    total_query = """
-        SELECT COUNT(*) FROM hand_players hp
-        JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
-        WHERE hp.player_id = ?
-          AND h.workspace_id = ?
-    """
-    total_params: list = [player_id, workspace_id]
-    if position:
-        total_query += f" AND {POS_SQL} = ?"
-        total_params.append(position.upper())
-    if stakes:
-        total_query += " AND h.stakes = ?"
-        total_params.append(stakes)
-    if game_mode is not None:
-        total_query += " AND h.game_mode = ?"
-        total_params.append(game_mode)
-    if date_from:
-        total_query += " AND h.played_at >= ?"
-        total_params.append(date_from)
-    if date_to:
-        total_query += " AND " + DATE_TO_SQL
-        total_params.append(date_to)
-
-    total_hands = db.execute(total_query, total_params).fetchone()[0]
-
-    # Aggregate by combo in Python
-    combo_data: dict[str, dict] = {}
-    for card1, card2, won_bb, ev_bb, vpip, pfr, three_bet, saw_flop, went_sd, won_sd in rows:
-        combo = _normalize_combo(card1, card2)
-        if combo not in combo_data:
-            combo_data[combo] = {
-                'hands': 0, 'vpip': 0, 'pfr': 0, 'three_bet': 0,
-                'won_bb': 0.0, 'ev_bb': 0.0,
-                'wtsd': 0, 'wtsd_opp': 0, 'wsd': 0, 'wsd_opp': 0,
-            }
-        d = combo_data[combo]
-        d['hands'] += 1
-        d['won_bb'] += float(won_bb or 0)
-        d['ev_bb'] += float(ev_bb or 0)
-        if vpip:
-            d['vpip'] += 1
-        if pfr:
-            d['pfr'] += 1
-        if three_bet:
-            d['three_bet'] += 1
-        if saw_flop:
-            d['wtsd_opp'] += 1  # saw flop = eligible for WTSD
-            if went_sd:
-                d['wtsd'] += 1
-                d['wsd_opp'] += 1  # went to SD = eligible for WSD
-                if won_sd:
-                    d['wsd'] += 1
-
-    combos = []
-    for combo, d in combo_data.items():
-        h = d['hands']
-        combos.append(ComboStats(
-            combo=combo,
-            hands=h,
-            vpip=d['vpip'],
-            pfr=d['pfr'],
-            three_bet=d['three_bet'],
-            won_bb=round(d['won_bb'], 2),
-            ev_bb=round(d['ev_bb'], 2),
-            bb_per_100=round(d['won_bb'] / h * 100, 2) if h else 0,
-            ev_bb_per_100=round(d['ev_bb'] / h * 100, 2) if h else 0,
-            wtsd=d['wtsd'],
-            wtsd_opp=d['wtsd_opp'],
-            wsd=d['wsd'],
-            wsd_opp=d['wsd_opp'],
-        ))
-
-    return RangeResponse(combos=combos, total_hands=total_hands)
 
 
 @router.get("/stats/detail/{stat_key}/hands", response_model=StatDetailHandsResponse)

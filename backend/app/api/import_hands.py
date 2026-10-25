@@ -441,7 +441,9 @@ def finalize_import(
                 # the same rather than mix old-rule and new-rule is_reg in one workspace.
                 batch_update_player_types(db, workspace_id=workspace_id)
             else:
-                _update_player_types_scoped(db, workspace_id)
+                batch_update_player_types(
+                    db, workspace_id=workspace_id,
+                    players_sql="SELECT player_id FROM _finalize_players")
         finally:
             db.execute("DROP TABLE IF EXISTS _finalize_players")
     else:
@@ -464,30 +466,6 @@ def _update_first_last_seen(db: duckdb.DuckDBPyConnection, where: str) -> None:
         ) sub
         WHERE players.id = sub.player_id
     """)
-
-
-def _update_player_types_scoped(db: duckdb.DuckDBPyConnection, workspace_id: int) -> None:
-    """batch_update_player_types(db, workspace_id) restricted to the players in the temp
-    table _finalize_players. Same SQL (app/player_classification.py) with one more filter:
-    a player's type and reg flag only read that player's rows in the workspace."""
-    from app import player_classification as pc
-    rule = pc.get_reg_rule(db)  # the same lookup batch_update_player_types uses
-    where = "AND hp.workspace_id = ? AND hp.player_id IN (SELECT player_id FROM _finalize_players)"
-    params = [workspace_id]
-    db.execute("DELETE FROM player_classifications WHERE workspace_id = ? "
-               "AND player_id IN (SELECT player_id FROM _finalize_players)", params)
-    db.execute(f"""
-        INSERT INTO player_classifications (player_id, workspace_id, player_type, is_reg)
-        SELECT t.player_id, t.workspace_id, t.player_type, r.is_reg
-        FROM (
-            SELECT hp.player_id, hp.workspace_id, {pc._TYPE_SQL} AS player_type
-            FROM hand_players hp
-            WHERE TRUE {where}
-            GROUP BY hp.player_id, hp.workspace_id
-        ) t
-        LEFT JOIN ({pc._reg_sql(rule).format(where=where)}) r
-          ON r.player_id = t.player_id AND r.workspace_id = t.workspace_id
-    """, params + params)
 
 
 def light_finalize(db: duckdb.DuckDBPyConnection, workspace_id: int) -> None:
