@@ -11,7 +11,7 @@ from app.date_filters import bound_sql
 from app.db import get_db, db_lock, get_read_cursor, get_hero_player_id, get_hero_username
 from app.models import (
     HandSummary, HandListResponse, HandDetail, HandPlayerDetail,
-    HandAction, BoardCards, ActionItem, TagRef,
+    HandAction, BoardCards, TagRef,
 )
 from app import marked_hands
 from app.concurrency import heavy_slot
@@ -200,7 +200,7 @@ def list_hands(
     if f.status == "empty_chain":
         return HandListResponse(hands=[], total=0, page=1, per_page=per_page, total_pages=1)
     from_sql, where_sql, params = f.from_sql, f.where_sql, f.params
-    hero_id, hero_username, all_marked = f.hero_id, f.hero_username, f.all_marked
+    hero_username, all_marked = f.hero_username, f.all_marked
 
     count_sql = f"""
         SELECT COUNT(*)
@@ -217,9 +217,9 @@ def list_hands(
 
     offset = (page - 1) * per_page
     main_sql = f"""
-        SELECT h.id, h.played_at, h.stakes, h.bb_amount,
-               hp.position, hp.card1, hp.card2, hp.won_bb,
-               hp.all_in_ev_bb, h.rit_boards, h.is_cashout, hp.player_id
+        SELECT h.id, h.played_at, h.stakes, h.bb_amount::DOUBLE,
+               hp.position, hp.card1, hp.card2, hp.won_bb::DOUBLE,
+               hp.all_in_ev_bb::DOUBLE, h.rit_boards, h.is_cashout, hp.player_id
         FROM {from_sql}
         WHERE 1=1 {where_sql}
         ORDER BY {sort_col} {sort_dir}, h.played_at DESC, h.id, hp.player_id
@@ -253,63 +253,15 @@ def list_hands(
         board_map.setdefault(hid, {"flop": [], "turn": [], "river": []})
         board_map[hid][street].append(card)
 
-    _STREETS = ("preflop", "flop", "turn", "river")
-
-    # Try batch fetch actions from DB
-    action_rows = db.execute(
-        f"SELECT a.hand_id, a.street, a.action_type, a.amount_bb, a.player_id "
-        f"FROM actions a WHERE a.hand_id IN ({ph}) AND a.workspace_id = ? ORDER BY a.hand_id, a.action_order",
-        hand_ids + [workspace_id],
-    ).fetchall()
-
-    actions_map: dict[str, dict[str, dict]] = {}
-    action_pid: dict[int, int] = {}
-    _ACT_MAP = {"raise": "R", "bet": "B", "call": "C", "check": "X", "fold": "F"}
-    _BLIND_TYPES = {"sb", "bb", "ante", "straddle"}
-
-    for hid, street, action_type, amount_bb, pid in action_rows:
-        hand_acts = actions_map.setdefault(hid, {
-            s: {"actions": [], "pot": 0} for s in _STREETS
-        })
-        amt_bb_f = float(amount_bb) if amount_bb is not None else 0
-        if action_type in _BLIND_TYPES:
-            hand_acts["preflop"]["pot"] += amt_bb_f
-            continue
-        abbr = _ACT_MAP.get(action_type)
-        if not abbr or street not in hand_acts:
-            continue
-        v = round(amt_bb_f, 1) if amt_bb_f else None
-        item = ActionItem(a=abbr, v=v, h=(pid == hero_id))
-        action_pid[id(item)] = pid
-        hand_acts[street]["actions"].append(item)
-
-    # Propagate pot sizes for hands that had DB actions
-    for hid, hand_acts in actions_map.items():
-        running = 0
-        for s in _STREETS:
-            sa = hand_acts[s]
-            street_total = sum(
-                (float(ai.v) if ai.v else 0) for ai in sa["actions"] if ai.a in ("R", "B", "C")
-            )
-            sa["pot"] = round(running + sa.get("pot", 0))
-            running = sa["pot"] + round(street_total)
-
-    # Fallback: parse from raw_text for any hands missing from actions table
+    # Actions and pots from the raw text. (The `actions` table is never written: imports
+    # stopped filling it, and every rebuild empties it. 03/F5.)
     raw_by_hand: dict[str, tuple[str, float]] = {}
-    missing_ids = [hid for hid in hand_ids if hid not in actions_map]
-    if missing_ids:
-        mph = ",".join("?" for _ in missing_ids)
-        raw_rows = db.execute(
-            f"SELECT id, raw_text, bb_amount FROM hands WHERE id IN ({mph}) AND workspace_id = ?",
-            missing_ids + [workspace_id],
-        ).fetchall()
-        for hid, raw_text, bb_amt in raw_rows:
-            if not raw_text:
-                continue
-            bb = float(bb_amt) if bb_amt else 0
-            ss = parse_actions_from_raw(raw_text, hero_username, bb)
-            actions_map[hid] = ss
-            raw_by_hand[hid] = (raw_text, bb)
+    for hid, raw_text, bb_amt in db.execute(
+        f"SELECT id, raw_text, bb_amount::DOUBLE FROM hands WHERE id IN ({ph}) AND workspace_id = ?",
+        hand_ids + [workspace_id],
+    ).fetchall():
+        if raw_text:
+            raw_by_hand[hid] = (raw_text, float(bb_amt) if bb_amt else 0)
 
     usernames: dict[int, str] = {}
     if all_marked:
@@ -324,17 +276,13 @@ def list_hands(
 
         board = board_map.get(hid, {"flop": [], "turn": [], "river": []})
         row_pid = int(r[11])
-        hand_acts = actions_map.get(hid, {s: {"actions": [], "pot": 0} for s in _STREETS})
-        if all_marked:
-            # Re-express the actions from this row's player (a hand can be marked for several)
-            if hid in raw_by_hand:
-                raw_text, bb = raw_by_hand[hid]
-                uname = usernames.get(row_pid)
-                hand_acts = parse_actions_from_raw(raw_text, uname, bb)
-            else:
-                hand_acts = {s: {"pot": v["pot"], "actions": [
-                    ActionItem(a=a.a, v=a.v, h=(action_pid.get(id(a)) == row_pid)) for a in v["actions"]]}
-                    for s, v in hand_acts.items()}
+        if hid in raw_by_hand:
+            raw_text, bb = raw_by_hand[hid]
+            # Marked view: from this row's player (a hand can be marked for several)
+            hand_acts = parse_actions_from_raw(
+                raw_text, usernames.get(row_pid) if all_marked else hero_username, bb)
+        else:
+            hand_acts = {s: {"actions": [], "pot": 0} for s in ("preflop", "flop", "turn", "river")}
 
         hands.append(HandSummary(
             id=hid,
