@@ -267,7 +267,8 @@ def test_export_empty(client):
 
 
 def test_list_actions_from_raw_text(bench_db, client, marks):
-    """03/F5: actions come from the raw text only (the `actions` table is never written)."""
+    """03/F5: actions come from the raw text only (the `actions` table is never written).
+    03/F8: without the detail-only `p` / `ai`."""
     assert bench_db.execute("SELECT COUNT(*) FROM actions").fetchone()[0] == 0
     for params in ({"per_page": 50}, {"marked": "true", "per_page": 100}):
         d = client.get("/api/hands", params=params).json()
@@ -278,8 +279,8 @@ def test_list_actions_from_raw_text(bench_db, client, marks):
             ss = parse_actions_from_raw(raw, unames[h["player_id"]], float(bb))
             for st in ("preflop", "flop", "turn", "river"):
                 want = [{"a": a.a, "v": a.v, "h": a.h} for a in ss[st]["actions"]]
-                got = [{k: it.get(k) for k in ("a", "v", "h")} for it in h[f"{st}_actions"]]
-                assert got == want
+                got = h[f"{st}_actions"]
+                assert got == want  # 03/F8: list rows carry only a, v, h
                 if st != "preflop":
                     assert h[f"{st}_pot"] == ss[st]["pot"]
 

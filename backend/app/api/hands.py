@@ -166,6 +166,10 @@ def _list_filters(db, *, position, stakes, result, marked, tag_ids, date_from, d
                            all_marked=all_marked, known_total=known_total)
 
 
+def _list_actions(items) -> list[dict]:
+    return [{"a": it.a, "v": it.v, "h": it.h} for it in items]
+
+
 @router.get("/hands", response_model=HandListResponse)
 def list_hands(
     page: int = Query(1, ge=1),
@@ -299,16 +303,16 @@ def list_hands(
             is_cashout=bool(r[10]) if r[10] is not None else False,
             marked=(hid, row_pid) in marked_set,
             tags=[TagRef(**t) for t in tags_map.get((hid, row_pid), [])],
-            preflop_actions=hand_acts["preflop"]["actions"],
+            preflop_actions=_list_actions(hand_acts["preflop"]["actions"]),
             flop_cards=board["flop"],
             flop_pot=hand_acts["flop"]["pot"],
-            flop_actions=hand_acts["flop"]["actions"],
+            flop_actions=_list_actions(hand_acts["flop"]["actions"]),
             turn_card=board["turn"][0] if board["turn"] else None,
             turn_pot=hand_acts["turn"]["pot"],
-            turn_actions=hand_acts["turn"]["actions"],
+            turn_actions=_list_actions(hand_acts["turn"]["actions"]),
             river_card=board["river"][0] if board["river"] else None,
             river_pot=hand_acts["river"]["pot"],
-            river_actions=hand_acts["river"]["actions"],
+            river_actions=_list_actions(hand_acts["river"]["actions"]),
         ))
 
     return HandListResponse(
