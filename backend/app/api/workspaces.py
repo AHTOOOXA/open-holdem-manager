@@ -163,6 +163,15 @@ def update_workspace(workspace_id: int, body: UpdateWorkspace):
         return _row_to_response(row, db)
 
 
+# Every table holding rows of one workspace, children before parents. Child tables carry
+# workspace_id themselves (db._migrate_child_workspace_id), so each delete is one predicate
+# instead of one bound placeholder per hand.
+_WORKSPACE_TABLES = (
+    "hand_notes", "hand_tags", "board_cards", "actions", "hand_players", "hands",
+    "player_aliases", "checkpoints", "hero_accounts", "player_classifications",
+)
+
+
 @router.delete("/workspaces/{workspace_id}")
 def delete_workspace(workspace_id: int):
     with db_lock():
@@ -179,67 +188,29 @@ def delete_workspace(workspace_id: int):
         if count <= 1:
             raise HTTPException(status_code=400, detail="Cannot delete the last workspace")
 
-        # Get all hand IDs in this workspace for cascading deletes
-        hand_ids = [
-            r[0]
-            for r in db.execute(
-                "SELECT id FROM hands WHERE workspace_id = ?", [workspace_id]
-            ).fetchall()
-        ]
-
-        if hand_ids:
-            # DuckDB does not support CASCADE — delete related rows manually
-            placeholders = ",".join("?" for _ in hand_ids)
-
-            db.execute(
-                f"DELETE FROM hand_notes WHERE hand_id IN ({placeholders}) AND workspace_id = ?",
-                hand_ids + [workspace_id],
-            )
-            db.execute(
-                f"DELETE FROM hand_tags WHERE hand_id IN ({placeholders}) AND workspace_id = ?",
-                hand_ids + [workspace_id],
-            )
-            db.execute(
-                f"DELETE FROM board_cards WHERE hand_id IN ({placeholders}) AND workspace_id = ?",
-                hand_ids + [workspace_id],
-            )
-            db.execute(
-                f"DELETE FROM actions WHERE hand_id IN ({placeholders}) AND workspace_id = ?",
-                hand_ids + [workspace_id],
-            )
-            db.execute(
-                f"DELETE FROM hand_players WHERE hand_id IN ({placeholders}) AND workspace_id = ?",
-                hand_ids + [workspace_id],
-            )
-            db.execute(
-                f"DELETE FROM hands WHERE workspace_id = ?", [workspace_id]
-            )
-
-        # Marks of this workspace (the tag catalogue is global and stays)
-        from app.marked_hands import delete_workspace_marks
-        delete_workspace_marks(db, workspace_id)
-
-        # Delete aliases for this workspace
-        db.execute(
-            "DELETE FROM player_aliases WHERE workspace_id = ?", [workspace_id]
-        )
-
-        # Delete checkpoints for this workspace
-        db.execute(
-            "DELETE FROM checkpoints WHERE workspace_id = ?", [workspace_id]
-        )
-
-        db.execute("DELETE FROM hero_accounts WHERE workspace_id = ?", [workspace_id])
-        db.execute("DELETE FROM settings WHERE key = ?", [f"statistics_dashboards.{workspace_id}"])
         from app import auto_import
-        auto_import.forget_workspace(db, workspace_id, deleted=True)
-        invalidate_hero_cache(workspace_id)
+        from app.marked_hands import delete_workspace_marks
 
-        # Delete the workspace itself
-        db.execute(
-            "DELETE FROM workspaces WHERE id = ?", [workspace_id]
-        )
-        from app import data_generation
-        data_generation.bump()
+        # The workspace's rows go in one transaction: a failure halfway leaves the workspace
+        # whole instead of half-deleted. The workspaces row itself is deleted after the
+        # commit, because DuckDB checks foreign keys (checkpoints, player_aliases) against
+        # the committed state; should that last statement fail, an empty workspace remains.
+        db.execute("BEGIN TRANSACTION")
+        try:
+            for table in _WORKSPACE_TABLES:
+                db.execute(f"DELETE FROM {table} WHERE workspace_id = ?", [workspace_id])
+            # Marks of this workspace (the tag catalogue is global and stays)
+            delete_workspace_marks(db, workspace_id)
+            db.execute("DELETE FROM settings WHERE key = ?", [f"statistics_dashboards.{workspace_id}"])
+            auto_import.forget_workspace(db, workspace_id, deleted=True)
+            db.execute("COMMIT")
+        except BaseException:
+            db.execute("ROLLBACK")
+            raise
+        finally:
+            invalidate_hero_cache(workspace_id)
+            from app import data_generation
+            data_generation.bump()
+        db.execute("DELETE FROM workspaces WHERE id = ?", [workspace_id])
 
         return {"status": "ok"}

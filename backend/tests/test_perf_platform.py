@@ -123,3 +123,80 @@ def test_catalog_snapshot_sees_tables_created_after_it():
     conn.execute("CREATE TABLE later (x INTEGER)")
     assert catalog.has("later", "x")
     conn.close()
+
+
+# ── Workspace delete (08/F9) ─────────────────────────────────────────────
+
+from pathlib import Path
+
+from fastapi.testclient import TestClient
+
+_GG = Path(__file__).parent / "fixtures" / "ggpoker" / "sample.txt"
+_WS_TABLES = ("hands", "hand_players", "board_cards", "actions", "hand_tags", "hand_notes",
+              "player_aliases", "checkpoints", "hero_accounts", "player_classifications",
+              "marked_hands", "auto_import_files")
+
+
+def _load(db, workspace_id):
+    from app.api.import_hands import insert_parsed_hand
+    from app.parsers.ggpoker import parse_hand_history
+    text = _GG.read_text()
+    for hand in [h.strip() for h in text.split("\n\n\n") if h.strip()]:
+        insert_parsed_hand(db, parse_hand_history(hand), workspace_id=workspace_id)
+
+
+def _ws_counts(db, workspace_id):
+    return {t: db.execute(f"SELECT COUNT(*) FROM {t} WHERE workspace_id = ?",
+                          [workspace_id]).fetchone()[0] for t in _WS_TABLES}
+
+
+@pytest.fixture
+def ws_client(db, monkeypatch):
+    monkeypatch.setattr(app_db, "_conn", db)
+    client = TestClient(app_main.app)
+    ws = client.post("/api/workspaces", json={"name": "W2", "hero_username": "Hero", "hero_site": "GG"}).json()["id"]
+    _load(db, 1)
+    _load(db, ws)
+    hid = db.execute("SELECT id FROM hands WHERE workspace_id = ? LIMIT 1", [ws]).fetchone()[0]
+    pid = db.execute("SELECT player_id FROM hand_players WHERE workspace_id = ? LIMIT 1", [ws]).fetchone()[0]
+    db.execute("INSERT INTO hand_tags (hand_id, tag, workspace_id) VALUES (?, 'x', ?)", [hid, ws])
+    db.execute("INSERT INTO hand_notes (hand_id, note, workspace_id) VALUES (?, 'n', ?)", [hid, ws])
+    db.execute("INSERT INTO checkpoints (id, workspace_id, name, checkpoint_at) VALUES (99, ?, 'c', now())", [ws])
+    db.execute("INSERT OR IGNORE INTO player_classifications (player_id, workspace_id, player_type) VALUES (?, ?, 'UNK')", [pid, ws])
+    db.execute("INSERT INTO marked_hands (workspace_id, player_id, hand_id) VALUES (?, ?, ?)", [ws, pid, hid])
+    db.execute("INSERT INTO auto_import_files (workspace_id, path, size, mtime, \"offset\") VALUES (?, '/x', 1, 1, 1)", [ws])
+    return client, db, ws
+
+
+import app.main as app_main  # noqa: E402
+
+
+def test_delete_workspace_removes_every_row_and_keeps_others(ws_client):
+    from app import data_generation
+    client, db, ws = ws_client
+    before_other = _ws_counts(db, 1)
+    assert _ws_counts(db, ws)["hands"] > 0 and _ws_counts(db, ws)["marked_hands"] == 1
+    gen = data_generation.current()
+    assert client.delete(f"/api/workspaces/{ws}").status_code == 200
+    assert all(v == 0 for v in _ws_counts(db, ws).values()), _ws_counts(db, ws)
+    assert _ws_counts(db, 1) == before_other
+    assert db.execute("SELECT COUNT(*) FROM workspaces WHERE id = ?", [ws]).fetchone()[0] == 0
+    assert data_generation.current() > gen
+
+
+def test_delete_workspace_is_atomic(ws_client, monkeypatch):
+    client, db, ws = ws_client
+    before = _ws_counts(db, ws)
+
+    def boom(conn, workspace_id):
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr("app.marked_hands.delete_workspace_marks", boom)
+    with pytest.raises(RuntimeError):
+        client.delete(f"/api/workspaces/{ws}")
+    assert _ws_counts(db, ws) == before
+    assert db.execute("SELECT COUNT(*) FROM workspaces WHERE id = ?", [ws]).fetchone()[0] == 1
+    # The connection is usable again (no transaction left open)
+    monkeypatch.undo()
+    monkeypatch.setattr(app_db, "_conn", db)
+    assert client.delete(f"/api/workspaces/{ws}").status_code == 200
