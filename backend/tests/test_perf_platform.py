@@ -337,3 +337,75 @@ def test_max_heavy_override(monkeypatch):
     assert concurrency._max_heavy() == 2
     monkeypatch.delenv("OHM_MAX_HEAVY")
     assert concurrency._max_heavy() == 2
+
+
+# ── GET /api/debug/memory ────────────────────────────────────────────────
+
+def test_debug_memory_endpoint(db, monkeypatch):
+    monkeypatch.setattr(app_db, "_conn", db)
+    from app import data_generation
+    from app.api import import_hands
+    import_hands._player_cache[(1, "probe")] = 1
+    try:
+        r = TestClient(app_main.app).get("/api/debug/memory")
+    finally:
+        import_hands._player_cache.pop((1, "probe"), None)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["data_generation"] == data_generation.current()
+    assert body["max_rss_bytes"] > 10 * 2**20
+    assert body["rss_bytes"] is None or body["rss_bytes"] > 10 * 2**20
+    assert set(body["caches"]) == {
+        "reports.chain._CACHE", "general_popup._RECORDS", "h2n._SHAPES",
+        "import_hands._player_cache", "heroes._cache"}
+    assert body["caches"]["import_hands._player_cache"]["entries"] >= 1
+    chain = body["caches"]["reports.chain._CACHE"]
+    assert chain["entries"] == 0 or "hand_records" in chain
+    pm = body["pymalloc"]
+    assert pm["arena_bytes"] > 0 and 0 < pm["bytes_in_allocated_blocks"] <= pm["arena_bytes"]
+    assert 0 < pm["live_fraction"] <= 1
+    assert "raw" not in pm
+    assert body["duckdb"]["total_bytes"] >= 0
+    assert body["heavy_slots"]["max"] >= 1
+    assert "tracked_objects" not in body["gc"]
+
+
+def test_debug_memory_counts_cached_resolutions(db, monkeypatch):
+    from types import SimpleNamespace
+    from app.api import debug
+    from app.reports import chain as chain_mod
+    fake = SimpleNamespace(hands=[1, 2, 3], blobs={"a": b"xyz", "b": None})
+    chain_mod._CACHE.put(("probe",), fake)
+    try:
+        info = debug._cache_info("app.reports.chain", "_CACHE")
+    finally:
+        chain_mod._CACHE.clear()
+    assert info["entries"] == 1 and info["hand_records"] == 3 and info["blob_bytes"] == 3
+    assert debug._cache_info("app.reports.chain", "_RENAMED") == {"error": "not found"}
+    assert "error" in debug._cache_info("app.no_such_module", "_CACHE")
+
+
+def test_debug_memory_optional_sections(db, monkeypatch):
+    monkeypatch.setattr(app_db, "_conn", db)
+    body = TestClient(app_main.app).get("/api/debug/memory",
+                                        params={"objects": "true", "raw": "true"}).json()
+    assert body["gc"]["tracked_objects"] > 1000
+    assert body["gc"]["top_types"][0][1] > 0
+    assert "arenas allocated" in body["pymalloc"]["raw"]
+
+
+def test_mallocstats_parser_keeps_the_arena_total():
+    from app.api.debug import _parse_mallocstats
+    text = """# arenas allocated total           =                    2
+# arenas highwater mark            =                    2
+2 arenas * 1048576 bytes/arena     =            2,097,152
+
+# bytes in allocated blocks        =              908,096
+Total                              =            2,097,152
+
+arena map counts
+Total                              =              655,360
+"""
+    s = _parse_mallocstats(text)
+    assert s["arenas"] == 2 and s["arena_bytes"] == 2_097_152
+    assert s["bytes_in_allocated_blocks"] == 908_096 and s["total"] == 2_097_152
