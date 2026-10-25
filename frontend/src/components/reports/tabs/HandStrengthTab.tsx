@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { HEAVY_QUERY } from '@/lib/query-policy';
 import { getHandStrength, queryKeyOf } from '@/lib/reports/api';
 import type { ReportQuery, Street } from '@/lib/reports/types';
 import { hvColor } from '@/lib/hv-color';
@@ -32,6 +33,7 @@ export default function HandStrengthTab({ query, selected, onSelect }: HandStren
   const { data, isPending, isError, error } = useQuery({
     queryKey: ['reports', 'hand-strength', queryKeyOf(query), street],
     queryFn: ({ signal }) => getHandStrength({ ...query, street }, signal),
+    ...HEAVY_QUERY,
   });
 
   const selectedCats = selected && selected.street === street ? selected.cats : [];

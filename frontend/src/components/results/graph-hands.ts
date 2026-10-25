@@ -1,8 +1,5 @@
 import type { GraphPoint, GraphResponse } from '@/lib/api';
 
-/** How long a graph query's response is kept after its last observer unmounts. */
-export const GRAPH_GC_TIME = 60 * 1000;
-
 /** Number of hands in a graph response.
  *
  * The backend sends only the points the chart draws (about 1000, always including the last hand),

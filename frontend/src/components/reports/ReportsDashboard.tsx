@@ -5,6 +5,7 @@
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { HEAVY_QUERY } from '@/lib/query-policy';
 import { Settings, UserRound } from 'lucide-react';
 import { PageChain } from '@/components/page-chain/PageChain';
 import {
@@ -109,6 +110,7 @@ export default function ReportsDashboard({ workspaceId, legacy }: { workspaceId:
       const [ws, pid] = JSON.parse(prevQuery.queryKey[2]) as [number, number | null];
       return ws === dashboard.workspaceId && pid === (dashboard.playerId ?? null) ? prev : undefined;
     },
+    ...HEAVY_QUERY,
   });
 
   const pickPlayer = useCallback((p: StoredPlayer) => {

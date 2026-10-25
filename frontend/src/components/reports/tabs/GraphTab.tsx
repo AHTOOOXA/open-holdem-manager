@@ -1,10 +1,11 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { HEAVY_QUERY } from '@/lib/query-policy';
 import { getGraphData } from '@/lib/api';
 import { queryKeyOf } from '@/lib/reports/api';
 import type { ReportQuery } from '@/lib/reports/types';
 import ResultsChart, { type LineToggle } from '@/components/results/ResultsChart';
-import { GRAPH_GC_TIME, graphHands } from '@/components/results/graph-hands';
+import { graphHands } from '@/components/results/graph-hands';
 import { Skeleton } from '@/components/ui/skeleton';
 import { count, fixed, moneyClass, signedBb } from '@/lib/format';
 
@@ -15,8 +16,8 @@ export default function GraphTab({ query }: { query: ReportQuery }) {
   const chain = query.chain;
   const { data, isPending, isError, error } = useQuery({
     queryKey: ['reports', 'graph', queryKeyOf(query)],
-    queryFn: () => getGraphData({ chain, player_id: query.player_id }),
-    gcTime: GRAPH_GC_TIME,
+    queryFn: ({ signal }) => getGraphData({ chain, player_id: query.player_id }, signal),
+    ...HEAVY_QUERY,
   });
 
   const summary = useMemo(() => {

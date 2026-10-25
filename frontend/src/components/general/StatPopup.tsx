@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { HEAVY_QUERY } from '@/lib/query-policy';
 import { Info, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -124,8 +125,9 @@ interface StatPopupProps {
 export function StatInfo({ cellId, meta, params }: { cellId: string; meta: GeneralCellMeta; params: GeneralFilterParams }) {
   const { data } = useQuery({
     queryKey: cellDetailQueryKey(cellId, params),
-    queryFn: () => getCellDetail(cellId, params),
+    queryFn: ({ signal }) => getCellDetail(cellId, params, signal),
     staleTime: Infinity, // like the grid: the data only changes on import / rebuild (invalidated there)
+    ...HEAVY_QUERY,
   });
   const title = titleFor(meta);
   return (
@@ -189,8 +191,9 @@ export default function StatPopup({
 
   const { data, isPending, isError, error } = useQuery({
     queryKey: cellDetailQueryKey(cellId, params),
-    queryFn: () => getCellDetail(cellId, params),
+    queryFn: ({ signal }) => getCellDetail(cellId, params, signal),
     staleTime: Infinity, // like the grid: the data only changes on import / rebuild (invalidated there)
+    ...HEAVY_QUERY,
   });
 
   const title = titleFor(meta);

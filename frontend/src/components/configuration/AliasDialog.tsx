@@ -27,7 +27,7 @@ export default function AliasDialog({ identity, onClose }: { identity: Identity 
 
   const { data } = useQuery({
     queryKey: ['alias-player-search', search, activeWorkspaceId],
-    queryFn: () => getPlayers({ search: search || undefined, min_hands: 1, per_page: 30 }),
+    queryFn: ({ signal }) => getPlayers({ search: search || undefined, min_hands: 1, per_page: 30 }, signal),
   });
   const taken = new Set(members.map((m) => `${m.workspaceId}:${m.playerId}`));
   const candidates = (data?.players ?? []).filter((p) => !taken.has(`${activeWorkspaceId}:${p.id}`));

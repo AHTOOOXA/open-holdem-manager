@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { HEAVY_QUERY } from '@/lib/query-policy';
 import { getPreflopRange, queryKeyOf } from '@/lib/reports/api';
 import type { RangeCell, ReportQuery } from '@/lib/reports/types';
 import {
@@ -43,6 +44,7 @@ export default function PreflopRangeTab({ query, selected, onSelect }: PreflopRa
   const { data, isPending, isError, error } = useQuery({
     queryKey: ['reports', 'preflop-range', queryKeyOf(query)],
     queryFn: ({ signal }) => getPreflopRange(query, signal),
+    ...HEAVY_QUERY,
   });
 
   const byClass = useMemo(() => {

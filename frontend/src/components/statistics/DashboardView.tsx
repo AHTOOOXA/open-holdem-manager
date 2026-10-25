@@ -13,6 +13,7 @@
  */
 import { useEffect, useMemo, useState } from 'react';
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
+import { HEAVY_QUERY } from '@/lib/query-policy';
 import { RefreshCw } from 'lucide-react';
 import EmptyState from '@/components/EmptyState';
 import GeneralGrid from '@/components/general/GeneralGrid';
@@ -100,11 +101,12 @@ export default function DashboardView({
 
   const general = useQuery({
     queryKey: generalQueryKey(params),
-    queryFn: () => getGeneral(params),
+    queryFn: ({ signal }) => getGeneral(params, signal),
     placeholderData: keepPreviousData,
     staleTime: Infinity,
     refetchOnMount: false,
     refetchOnWindowFocus: false,
+    ...HEAVY_QUERY,
   });
   const data = general.data;
 

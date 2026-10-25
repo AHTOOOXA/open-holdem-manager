@@ -96,9 +96,9 @@ export function generalQueryKey(params: GeneralFilterParams) {
   return ['general', 'grid', params] as const;
 }
 
-export async function getGeneral(params: GeneralFilterParams = {}): Promise<GeneralResponse> {
+export async function getGeneral(params: GeneralFilterParams = {}, signal?: AbortSignal): Promise<GeneralResponse> {
   if (GENERAL_FORCE_MOCK) return getGeneralMock();
-  const res = await fetch(`${BASE}/general?${filterSearchParams(params)}`);
+  const res = await fetch(`${BASE}/general?${filterSearchParams(params)}`, { signal });
   if (!res.ok) throw new Error(await errorText(res, 'General stats failed'));
   return res.json();
 }
@@ -198,9 +198,14 @@ export function cellDetailQueryKey(cellId: string, params: GeneralFilterParams) 
   return ['general', 'detail', cellId, params] as const;
 }
 
-export async function getCellDetail(cellId: string, params: GeneralFilterParams = {}): Promise<CellDetail> {
+export async function getCellDetail(
+  cellId: string,
+  params: GeneralFilterParams = {},
+  signal?: AbortSignal,
+): Promise<CellDetail> {
   const res = await fetch(
     `${BASE}/general/cell/${encodeURIComponent(cellId)}/detail?${filterSearchParams(params)}`,
+    { signal },
   );
   if (!res.ok) throw new Error(await errorText(res, 'Stat detail failed'));
   return res.json();
@@ -317,6 +322,7 @@ export async function getCellHands(
   cellId: string,
   params: GeneralFilterParams = {},
   page: HandsPageParams = {},
+  signal?: AbortSignal,
 ): Promise<CellHands> {
   const sp = filterSearchParams(params);
   if (page.bucket) sp.set('bucket', page.bucket);
@@ -326,7 +332,7 @@ export async function getCellHands(
   sp.set('limit', String(page.limit ?? HANDS_PAGE_SIZE));
   if (page.sort) sp.set('sort', page.sort);
   if (page.order) sp.set('order', page.order);
-  const res = await fetch(`${BASE}/general/cell/${encodeURIComponent(cellId)}/hands?${sp}`);
+  const res = await fetch(`${BASE}/general/cell/${encodeURIComponent(cellId)}/hands?${sp}`, { signal });
   if (!res.ok) throw new Error(await errorText(res, 'Hands failed'));
   return res.json();
 }

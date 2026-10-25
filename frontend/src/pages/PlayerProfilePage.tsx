@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { HEAVY_QUERY } from '@/lib/query-policy';
 import { getPlayer, getPlayerStats, getHeroStats, getHeadToHead, updatePlayerNotes } from '@/lib/api';
 import type { HeroStats } from '@/lib/api';
 import { queryKeys } from '@/lib/query-keys';
@@ -32,7 +33,8 @@ function StatsTab({ stats }: { stats: HeroStats }) {
 
   const { data: heroStats } = useQuery({
     queryKey: queryKeys.stats.hero({}),
-    queryFn: () => getHeroStats(),
+    queryFn: ({ signal }) => getHeroStats(undefined, signal),
+    ...HEAVY_QUERY,
   });
 
   const wr = stats.win_rate_bb100;
@@ -77,7 +79,8 @@ function StatsTab({ stats }: { stats: HeroStats }) {
 function H2HTab({ playerId }: { playerId: number }) {
   const { data, isPending } = useQuery({
     queryKey: queryKeys.players.h2h(playerId),
-    queryFn: () => getHeadToHead(playerId),
+    queryFn: ({ signal }) => getHeadToHead(playerId, signal),
+    ...HEAVY_QUERY,
   });
 
   if (isPending) return <p className="text-text-muted text-sm py-4">Loading...</p>;
@@ -213,8 +216,9 @@ export default function PlayerProfilePage() {
 
   const { data: stats, isPending: statsLoading } = useQuery({
     queryKey: queryKeys.players.stats(pid, {}),
-    queryFn: () => getPlayerStats(pid),
+    queryFn: ({ signal }) => getPlayerStats(pid, undefined, signal),
     enabled: !isNaN(pid) && activeTab === 'Stats',
+    ...HEAVY_QUERY,
   });
 
   if (playerLoading) {
