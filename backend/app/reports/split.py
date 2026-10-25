@@ -769,32 +769,37 @@ def _compute_sizing(db, res: Resolution) -> tuple[list, dict]:
     return out
 
 
-def extend_sizing(base: Resolution, res: Resolution, sizing: tuple[list, dict],
-                  seqs: list) -> tuple[list, dict] | None:
-    """`base`'s Bet Sizing accumulators extended with the new records of `res` ([(record,
-    sequence)] in hand order, `seqs`); None when the buckets change (recompute)."""
+def sizing_extender(base: Resolution, sizing: tuple[list, dict]):
+    """`base`'s Bet Sizing accumulators, copied, to extend with the new records of an
+    extension: (add(record, sequence), finish(res)). `add` is called for each new record in hand
+    order while its sequence is decoded, so no sequence is kept. `finish(res)` (`res`: the
+    extended resolution) is the extended (buckets, accumulators), or None when the merged
+    records select other buckets (the table is then recomputed lazily). None: not extendable."""
     from app.api.general_popup import _BUCKETS, _size_hits
 
     buckets, accs = sizing
-    if not (res.has_spot and res.username and base.hands):
+    if not (base.has_spot and base.username and base.hands):
         return None
-    pre = res.ctx.street == 0
-    types = _sizing_types(res)
-    if [b for b in _BUCKETS if b.preflop == pre and b.typ in types] != list(buckets):
-        return None
-    if not buckets:
-        return sizing
-    accs = copy_table(accs)
     tb = tuple(buckets)
-    for h, seq in seqs:
-        if seq is None or h.hit is None:
-            continue
+    accs = copy_table(accs)
+
+    def add(h, seq) -> None:
+        if not tb or seq is None or h.hit is None:
+            return
         for bid, is_case in _size_hits(seq, h.hit, tb):
             acc = accs[bid]
             acc.opps += 1
             if is_case and h.case:
                 acc.add(h, h.ap)
-    return (list(buckets), accs)
+
+    def finish(res: Resolution) -> tuple[list, dict] | None:
+        pre = res.ctx.street == 0
+        types = _sizing_types(res)
+        if [b for b in _BUCKETS if b.preflop == pre and b.typ in types] != list(buckets):
+            return None
+        return (list(buckets), accs) if tb else sizing
+
+    return add, finish
 
 
 def sizing_table(db, res: Resolution) -> tuple[list, dict]:

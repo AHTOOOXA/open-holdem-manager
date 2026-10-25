@@ -34,9 +34,10 @@ read before computing) and a cheap data version (the workspace's hand count and 
 At a newer generation it is extended, not recomputed, when only hands were appended since
 (`data_generation.changes_since`): the new hands go through the same plain SQL filter, row bits
 and spot evaluation as `_compute`, in hand order after the existing ones (every new hand has a
-higher `rowid`, which also dedupes a hand seen twice), and the Next / Faced / Sizing tables are
-extended with them; every other memoized table and response is dropped and recomputed from the
-merged records. Plain chains recount in SQL and extend their Next / Faced tables the same way.
+higher `rowid`, which also dedupes a hand seen twice; `_rowids_kept` verifies that, see
+`_NEW_IDS`), and the Next / Faced / Sizing tables are extended with them; every other
+memoized table and response is dropped and recomputed from the merged records. Plain chains
+recount in SQL and extend their Next / Faced tables the same way.
 Chains have absolute dates only (the frontend resolves date presets), so a chain's filter means
 the same after an import. A reset (`data_generation.bump`) drops the cache.
 """
@@ -637,11 +638,13 @@ class Resolution:
     _flights: dict = field(default_factory=dict, repr=False)   # memo key -> _Flight
     # Incremental extension (module docstring): data generation and version the resolution was
     # computed at, the highest hands.rowid its records were read from (spot chains), and the
-    # same for each plain-chain Next / Faced table (`table_marks[which]`).
+    # same for each plain-chain Next / Faced table (`table_marks[which]`), and the whole
+    # table's rowid snapshot that proves those watermarks still mean the same rows.
     gen: int = -1
     version: tuple = ()
     max_rowid: int = -1
     table_marks: dict = field(default_factory=dict, repr=False)
+    rowid_snap: tuple = ()    # (highest hands.rowid, row count) after the reads: _rowid_snapshot
 
     @property
     def plain(self) -> bool:
@@ -987,13 +990,15 @@ def _compute(db, workspace_id: int, player_id: int | None, chain: list[_Step],
         res.n_cases = res.total_hands if res.where == _BASE_WHERE else int(db.execute(
             f"SELECT COUNT(*) {_FROM} WHERE {res.where}", res.params).fetchone()[0])
         res.hands = PlainCases(res.n_cases)
+        res.rowid_snap = _rowid_snapshot(db)
         return res
     rows = db.execute(f"{_SELECT_ROWID} WHERE {res.where}{ORDER}", res.params).fetchall()
+    res.rowid_snap = _rowid_snapshot(db)
     # Next / Faced tables are filled here from the sequence decoded for the spot step
     # (same evaluators, same hand order as split.action_table), so no tab decodes it again.
     from app.reports import split as split_mod
     fill = split_mod.table_fillers(ctx) if res.username else {}
-    out, blobs, failed, fill, _seqs, top = _evaluate(db, res, rows, steps, fill)
+    out, blobs, failed, fill, top = _evaluate(db, res, rows, steps, fill)
     res.replay_failed = failed
     res.max_rowid = top
     res.hands = out
@@ -1009,12 +1014,12 @@ def _compute(db, workspace_id: int, player_id: int | None, chain: list[_Step],
 _SELECT_ROWID = f"SELECT {_COLS}, h.rowid {_FROM}"   # rowid: column 26
 
 
-def _evaluate(db, res: Resolution, rows: list, steps: list[_Step], fill: dict,
-              keep_seqs: bool = False):
+def _evaluate(db, res: Resolution, rows: list, steps: list[_Step], fill: dict, on_rec=None):
     """The spot records of `rows` (`_SELECT_ROWID` rows of the player, hand order): (records,
     {hand id: blob} of the records, replay failures, `fill` (emptied when a table fill
-    failed), [(record, sequence)] when `keep_seqs`, highest rowid read). Case records are added
-    to the `fill` tables (split.table_fillers) in hand order."""
+    failed), highest rowid read). Case records are added to the `fill` tables
+    (split.table_fillers) in hand order; `on_rec(record, sequence)` sees every record in hand
+    order while its sequence is decoded (no sequence outlives its hand)."""
     from app.reports import split as split_mod
     ids = [r[0] for r in rows]
     stored = fetch_seqs(db, res.workspace_id, ids)
@@ -1023,7 +1028,6 @@ def _evaluate(db, res: Resolution, rows: list, steps: list[_Step], fill: dict,
     src.prefetch_missing(ids)
     name = res.username
     out: list[HandRec] = []
-    seqs: list = []
     failed = 0
     for r in rows:
         seq = src.get(r[0])
@@ -1048,8 +1052,8 @@ def _evaluate(db, res: Resolution, rows: list, steps: list[_Step], fill: dict,
         if a.actor == p:
             rec.ap = 0.0 if a.eff == spots.FOLD else rec.ev_bb + spots.committed_bb(seq, p, hit)
         out.append(rec)
-        if keep_seqs:
-            seqs.append((rec, seq))
+        if on_rec is not None:
+            on_rec(rec, seq)
         if fill and rec.case:
             try:
                 split_mod.fill_tables(fill, seq, p, rec)
@@ -1057,7 +1061,7 @@ def _evaluate(db, res: Resolution, rows: list, steps: list[_Step], fill: dict,
                 log.warning("reports table fill failed for hand %s", r[0], exc_info=True)
                 fill = {}
     top = rows[-1][26] if rows else -1
-    return out, {h.hid: blobs.get(h.hid) for h in out}, failed, fill, seqs, top
+    return out, {h.hid: blobs.get(h.hid) for h in out}, failed, fill, top
 
 
 # ── incremental extension ────────────────────────────────────────────────
@@ -1065,7 +1069,35 @@ def _evaluate(db, res: Resolution, rows: list, steps: list[_Step], fill: dict,
 
 # The appended hands of an extension, as a condition (a list parameter: the plain path reads
 # through its own cursor, which can't see a relation registered on `db`).
+#
+# `h.rowid > watermark` relies on hands.rowid only growing between resets. DuckDB numbers rows
+# by position and a checkpoint may vacuum deleted rows, which renumbers the rows after them;
+# today that never happens to `hands` because DuckDB (1.4) skips checkpoint vacuum on tables
+# with an index and `hands` keeps uq_hands_workspace_id (db.py). Deletes are resets anyway, but
+# a vacuum checkpointed later could move appended hands below a watermark taken in between.
+# `_rowids_kept` checks the snapshot every extension relies on, so if the index ever goes,
+# extensions fall back to a full compute instead of missing hands
+# (test_perf_incremental_review checks both the index and this fallback).
 _NEW_IDS = " AND h.rowid > ? AND h.id IN (SELECT UNNEST(?::VARCHAR[]))"
+
+
+def _rowid_snapshot(db) -> tuple[int, int]:
+    """(highest rowid, row count) of the whole hands table, read after a resolution's rows (so
+    its watermarks are at most the highest rowid)."""
+    top, n = db.execute("SELECT MAX(rowid), COUNT(*) FROM hands").fetchone()
+    return (-1 if top is None else int(top), int(n))
+
+
+def _rowids_kept(db, snap: tuple) -> bool:
+    """True when no hands row moved to or below `snap`'s highest rowid since the snapshot: the
+    same rows still sit there (appends only take higher rowids), so a watermark at or below it
+    still separates the rows read from the appended ones. False after a renumbering vacuum
+    (or an unreported delete): the caller recomputes. Read after the extension's own reads."""
+    if not snap:
+        return False
+    top, n = snap
+    return int(db.execute("SELECT COUNT(*) FROM hands WHERE rowid <= ?",
+                          [top]).fetchone()[0]) == n
 
 
 def _extend(db, base: Resolution, ids: list[str], day_start: int) -> Resolution | None:
@@ -1085,6 +1117,9 @@ def _extend(db, base: Resolution, ids: list[str], day_start: int) -> Resolution 
                                      [base.player_id, base.workspace_id]).fetchone()[0])
     rows = db.execute(f"{_SELECT_ROWID} WHERE {res.where}{_NEW_IDS}{ORDER}",
                       [*res.params, base.max_rowid, list(dict.fromkeys(ids))]).fetchall()
+    if not _rowids_kept(db, base.rowid_snap) or base.max_rowid > base.rowid_snap[0]:
+        return None   # the watermark may no longer separate old and new rows: recompute
+    res.rowid_snap = _rowid_snapshot(db)
     # Next / Faced tables: the base's, copied, take the new case hands (same evaluators and hand
     # order as a full compute). A table the base doesn't have is computed lazily as usual.
     fill = {}
@@ -1097,8 +1132,10 @@ def _extend(db, base: Resolution, ids: list[str], day_start: int) -> Resolution 
         if which not in fillers and ("table", which) in tables:
             res.tables[("table", which)] = tables[("table", which)]
             res.table_bytes += 1024
-    out, blobs, failed, fill, seqs, top = _evaluate(db, res, rows, spot_steps(base.chain), fill,
-                                                    keep_seqs=True)
+    sizing = tables.get(("sizing",))
+    sizer = split_mod.sizing_extender(base, sizing) if sizing is not None else None
+    out, blobs, failed, fill, top = _evaluate(db, res, rows, spot_steps(base.chain), fill,
+                                              on_rec=sizer[0] if sizer else None)
     res.hands = [*base.hands, *out]
     res.n_cases = base.n_cases + sum(1 for h in out if h.case)
     res.replay_failed = base.replay_failed + failed
@@ -1109,9 +1146,8 @@ def _extend(db, base: Resolution, ids: list[str], day_start: int) -> Resolution 
     for which, (_cands, _ev, table) in fill.items():
         res.tables[("table", which)] = table
         res.table_bytes += 600 * len(table) + 1024
-    sizing = tables.get(("sizing",))
-    if sizing is not None:
-        ext = split_mod.extend_sizing(base, res, sizing, seqs)
+    if sizer is not None:
+        ext = sizer[1](res)
         if ext is not None:
             res.tables[("sizing",)] = ext
             res.table_bytes += 600 * len(ext[1]) + 1024
@@ -1127,6 +1163,9 @@ def _extend_plain(db, base: Resolution, ids: list[str], day_start: int) -> Resol
         tables = {k: v for k, v in base.tables.items() if k[0] == "table"}
         marks = dict(base.table_marks)
         sizing = base.tables.get(("sizing",))
+    # A mark above the base's snapshot (a table built later, after an unreported commit) can't
+    # be checked: that table is recomputed lazily.
+    marks = {w: m for w, m in marks.items() if m <= (base.rowid_snap or (-1,))[0]}
     if sizing is not None:   # plain chains have no hit point: never any bucket
         res.tables[("sizing",)] = sizing
         res.table_bytes += 1024
@@ -1146,6 +1185,8 @@ def _extend_plain(db, base: Resolution, ids: list[str], day_start: int) -> Resol
         res.tables[("table", which)] = table
         res.table_marks[which] = mark[0]
         res.table_bytes += 600 * len(table) + 1024
+    if marks and not _rowids_kept(db, base.rowid_snap):
+        return None   # a renumbering vacuum moved rows below the marks: recompute
     return res
 
 
