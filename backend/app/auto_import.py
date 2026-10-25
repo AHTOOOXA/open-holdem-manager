@@ -552,6 +552,7 @@ def _finalize_quiet(now: float, wait: float = 0.0) -> None:
         for ws in due:
             try:
                 if db.execute("SELECT 1 FROM workspaces WHERE id = ?", [ws]).fetchone():
+                    # Player pass only (bump_derived): light_finalize announced the hands
                     finalize_import(db, workspace_id=ws)
                 db.execute("DELETE FROM settings WHERE key = ?", [PENDING_KEY + str(ws)])
                 _pending_finalize.pop(ws, None)
@@ -675,7 +676,7 @@ def _import_files(candidates: list[tuple[str, int, float]], ws: int, now: float)
             _status["last_error"] = errors[-1]
         elif any(h for _, h in per_file) or new_states:
             _status["last_error"] = None
-    # light_finalize (inside import_hand_texts) bumped the data generation
+    # light_finalize (inside import_hand_texts) announced the hands (data_generation.bump_append)
     return imported
 
 

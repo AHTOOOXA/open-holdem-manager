@@ -105,4 +105,4 @@ def batch_update_player_types(db, workspace_id: int | None = None) -> None:
     # Classifications are derived data that cached results read (players list, population
     # type filters); finalize_import bumps before this rewrite, so bump again after it.
     from app import data_generation
-    data_generation.bump()
+    data_generation.bump_derived(workspace_id)
