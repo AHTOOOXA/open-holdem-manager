@@ -654,30 +654,6 @@ export interface ComboStats {
   wsd_opp: number;
 }
 
-export interface RangeResponse {
-  combos: ComboStats[];
-  total_hands: number;
-}
-
-export async function getRangeStats(params?: {
-  position?: string;
-  stakes?: string;
-  game_mode?: string;
-  date_from?: string;
-  date_to?: string;
-}): Promise<RangeResponse> {
-  const sp = new URLSearchParams();
-  setPositionParam(sp, params?.position);
-  if (params?.stakes) sp.set('stakes', params.stakes);
-  setGameModeParam(sp, params?.game_mode);
-  if (params?.date_from) sp.set('date_from', params.date_from);
-  if (params?.date_to) sp.set('date_to', params.date_to);
-  _addWorkspaceParam(sp);
-  const res = await fetch(`${BASE}/stats/range?${sp}`);
-  if (!res.ok) throw new Error(`Range stats failed: ${res.statusText}`);
-  return res.json();
-}
-
 // ── Results Dashboard Types ──────────────────────────────────────────
 
 export interface FilterOptions {
