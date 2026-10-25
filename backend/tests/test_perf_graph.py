@@ -158,16 +158,20 @@ def test_chain_graph_cache(fresh, monkeypatch):
     _graph(fresh, stakes="$0.05/$0.10", **params)
     _graph(fresh, max_points=10, **params)
     assert len(calls) == 2 and len(rep._GRAPH_CACHE) == 3
+    # graphs larger than the chart's GRAPH_MAX_POINTS are served but never cached
+    big = _graph(fresh, max_points=rep.GRAPH_MAX_POINTS + 1, **params)
+    assert big["hands"] == first["hands"] and len(calls) == 3 and len(rep._GRAPH_CACHE) == 3
     # a data change empties it
     data_generation.bump()
     assert len(rep._GRAPH_CACHE) == 0
-    assert _graph(fresh, **params) == first and len(calls) == 3
+    assert _graph(fresh, **params) == first and len(calls) == 4
     # the legacy (no chain) graph is not cached
     _graph(fresh)
     assert len(rep._GRAPH_CACHE) == 1
 
 
 def test_graph_cache_is_bounded():
+    assert rep._GRAPH_CACHE.max_items <= 40_000
     c = rep._GraphCache(capacity=3, max_items=10)
     mk = lambda k: rep.GraphResponse(points=[rep.GraphPoint(hand_number=i + 1, cumulative_bb=0)
                                              for i in range(k)])

@@ -139,9 +139,11 @@ def graph_series(db, where: str, params: list, last_n: int | None = None,
 
 class _GraphCache:
     """LRU of finished chain graphs, bounded by entries and by the points + sessions they hold.
-    Keys carry the data version; every data_generation bump also empties it."""
+    Keys carry the data version; every data_generation bump also empties it. Only graphs of at
+    most GRAPH_MAX_POINTS points are cached (get_graph), so 16 entries hold ~16k points (~1.6 KB
+    each) plus sessions; 40k items keeps the worst case around 50 MB."""
 
-    def __init__(self, capacity: int = 16, max_items: int = 200_000):
+    def __init__(self, capacity: int = 16, max_items: int = 40_000):
         self.capacity = capacity
         self.max_items = max_items
         self._d: OrderedDict = OrderedDict()
@@ -220,7 +222,9 @@ def get_graph(
 
     db = get_read_cursor()
     key = None
-    if chain is not None and chain.strip():
+    # Larger max_points (full-series checks) are served but never cached: they would pin
+    # hundreds of MB of GraphPoint objects.
+    if chain is not None and chain.strip() and max_points <= GRAPH_MAX_POINTS:
         key = _graph_cache_key(db, workspace_id, player_id, chain,
                                (stakes, game_mode, date_from, date_to, last_n, max_points))
         if key is not None:
