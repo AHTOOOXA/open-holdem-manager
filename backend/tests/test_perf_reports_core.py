@@ -375,6 +375,7 @@ def test_racing_requests_compute_a_table_once(bench_db, hero_id, monkeypatch):
           for _ in range(2)]
     for t in ts:
         t.start()
+    threading.Event().wait(0.3)   # let the second one reach the table's lock
     gate.set()
     for t in ts:
         t.join()
@@ -416,3 +417,51 @@ def test_strings_interned_in_records(bench_db, hero_id):
         prev = by_stakes.setdefault(h.stakes, h.stakes)
         assert prev is h.stakes
     db.close()
+
+
+def test_reports_endpoints_take_a_heavy_slot(client, monkeypatch):
+    from contextlib import contextmanager
+    from app.api import reports_lite
+    entered = []
+
+    @contextmanager
+    def slot():
+        entered.append(1)
+        yield
+
+    monkeypatch.setattr(reports_lite, "heavy_slot", slot)
+    q = {"workspace_id": 1, "chain": []}
+    assert client.post("/api/reports/spot", json=q).status_code == 200
+    assert client.post("/api/reports/split", json={**q, "type": "positions"}).status_code == 200
+    assert client.post("/api/reports/preflop-range", json=q).status_code == 200
+    assert client.post("/api/reports/hand-strength", json={**q, "street": "flop"}).status_code == 200
+    assert len(entered) == 4
+
+
+def test_waiters_share_an_uncacheable_result(bench_db, monkeypatch):
+    """An entry over the whole cache budget is not kept, but requests waiting on its
+    computation get it instead of recomputing."""
+    monkeypatch.setattr(app_db, "_conn", bench_db)
+    monkeypatch.setattr(chain_mod, "_CACHE", chain_mod._LRU(32, 1))
+    calls = []
+    real = chain_mod._compute
+    gate = threading.Event()
+
+    def slow(*a, **k):
+        calls.append(1)
+        gate.wait(2)
+        return real(*a, **k)
+
+    monkeypatch.setattr(chain_mod, "_compute", slow)
+    steps = chain_mod.CHAIN.validate_python([{"k": "row", "key": "C01"}])
+    out = []
+    ts = [threading.Thread(target=lambda: out.append(chain_mod.resolve(bench_db.cursor(), 1, None, steps)))
+          for _ in range(3)]
+    for t in ts:
+        t.start()
+    threading.Event().wait(0.3)   # let the other two reach the in-flight lock
+    gate.set()
+    for t in ts:
+        t.join()
+    assert len(calls) == 1 and out[0] is out[1] is out[2]
+    assert not chain_mod._inflight and len(chain_mod._CACHE) == 0
