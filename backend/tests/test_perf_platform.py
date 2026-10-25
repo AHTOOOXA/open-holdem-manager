@@ -290,3 +290,50 @@ def test_duckdb_limits_are_applied(monkeypatch):
     assert threads == 3
     assert mem.replace(" ", "") in ("732.4MiB", "768.0MB", "732.4MB")  # DuckDB prints MiB
     conn.close()
+
+
+# ── heavy_slot (08/F4) ───────────────────────────────────────────────────
+
+def test_heavy_slot_limits_and_reports_counts():
+    import threading as th
+    from app import concurrency
+
+    assert concurrency.heavy_stats() == {"max": concurrency.MAX_HEAVY, "running": 0, "waiting": 0}
+    inside = th.Event()
+    release = th.Event()
+    peak = []
+
+    def worker():
+        with concurrency.heavy_slot():
+            peak.append(concurrency.heavy_stats()["running"])
+            inside.set()
+            release.wait(5)
+
+    threads = [th.Thread(target=worker) for _ in range(concurrency.MAX_HEAVY + 1)]
+    for t in threads:
+        t.start()
+    inside.wait(5)
+    import time
+    deadline = time.time() + 5
+    while concurrency.heavy_stats()["waiting"] < 1 and time.time() < deadline:
+        time.sleep(0.01)
+    stats = concurrency.heavy_stats()
+    assert stats["running"] == concurrency.MAX_HEAVY and stats["waiting"] == 1
+    release.set()
+    for t in threads:
+        t.join(5)
+    assert max(peak) <= concurrency.MAX_HEAVY
+    assert concurrency.heavy_stats() == {"max": concurrency.MAX_HEAVY, "running": 0, "waiting": 0}
+    with concurrency.heavy_slot():
+        with concurrency.heavy_slot():  # re-entrant: one slot
+            assert concurrency.heavy_stats()["running"] == 1
+
+
+def test_max_heavy_override(monkeypatch):
+    from app import concurrency
+    monkeypatch.setenv("OHM_MAX_HEAVY", "1")
+    assert concurrency._max_heavy() == 1
+    monkeypatch.setenv("OHM_MAX_HEAVY", "zero")
+    assert concurrency._max_heavy() == 2
+    monkeypatch.delenv("OHM_MAX_HEAVY")
+    assert concurrency._max_heavy() == 2
