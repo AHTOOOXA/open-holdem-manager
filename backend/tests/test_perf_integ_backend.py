@@ -105,8 +105,8 @@ def test_delete_workspace_refreshes_first_last_seen(db, monkeypatch):
     from app.parsers.ggpoker import parse_hand_history
 
     monkeypatch.setattr(app_db, "_conn", db)
-    client = TestClient(app_main.app)
-    ws = client.post("/api/workspaces", json={"name": "W2", "hero_username": "Hero",
+    api = TestClient(app_main.app)
+    ws = api.post("/api/workspaces", json={"name": "W2", "hero_username": "Hero",
                                               "hero_site": "GG"}).json()["id"]
     text = (Path(__file__).parent / "fixtures" / "ggpoker" / "sample.txt").read_text()
     hands = [h.strip() for h in text.split("\n\n\n") if h.strip()]
@@ -131,7 +131,7 @@ def test_delete_workspace_refreshes_first_last_seen(db, monkeypatch):
         [list(want)]).fetchall()}
     assert seen() != want          # the shifted copies moved some players' range
 
-    assert client.delete(f"/api/workspaces/{ws}").status_code == 200
+    assert api.delete(f"/api/workspaces/{ws}").status_code == 200
     assert seen() == want
 
 
