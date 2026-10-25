@@ -7,6 +7,7 @@ import RebuildBanner from '@/components/RebuildBanner';
 import { RAIL_LABELS, railPathFor } from '@/lib/routes';
 import AppMenuBar from './AppMenuBar';
 import StatusBar from './StatusBar';
+import NewHandsIndicator from './NewHandsIndicator';
 import { useStatAppearanceSync } from './useStatAppearanceSync';
 import { LastRouteTracker } from './Redirects';
 
@@ -49,11 +50,14 @@ export default function AppShell({ children }: { children: ReactNode }) {
       <SidebarInset className="min-w-0">
         <header className="flex h-(--shell-header-h) shrink-0 items-center gap-1 border-b border-border px-2">
           <AppMenuBar />
-          {rail && (
-            <span className="ml-auto truncate pl-3 text-xs text-subtle-foreground">
-              {RAIL_LABELS[rail]}
-            </span>
-          )}
+          <div className="ml-auto flex min-w-0 items-center gap-3 pl-3">
+            <NewHandsIndicator />
+            {rail && (
+              <span className="truncate text-xs text-subtle-foreground">
+                {RAIL_LABELS[rail]}
+              </span>
+            )}
+          </div>
         </header>
         <DbRecoveryBanner />
         <RebuildBanner />

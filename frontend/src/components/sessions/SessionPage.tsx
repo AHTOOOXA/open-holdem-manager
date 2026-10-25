@@ -2,18 +2,21 @@
  * Body of one Sessions page: Stats block (recipe by page kind), the winnings graph (always
  * visible) and the fixed lower tabs (Hands / Tables / Players by page kind).
  */
-import { useMemo } from 'react';
+import { lazy, Suspense, useMemo } from 'react';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { usePageLevel } from '@/components/page-chain/PageChain';
 import HandExplorer from '@/components/hands/HandExplorer';
 import SplitReport from '@/components/reports/SplitReport';
-import GraphTab from '@/components/reports/tabs/GraphTab';
+import { Skeleton } from '@/components/ui/skeleton';
 import SessionStats from './SessionStats';
 import type { ReportQuery, SplitRow } from '@/lib/reports/types';
 import {
   isSessionTab, recipeFor, TAB_CAPTION, tabsFor, type PageScope, type SessionPageState, type SessionTab,
 } from '@/lib/sessions/pages';
 import { cn } from '@/lib/utils';
+
+// The charting stack is the largest vendor chunk: the stats and hands render without waiting for it
+const GraphTab = lazy(() => import('@/components/reports/tabs/GraphTab'));
 
 const HANDS_GRID_MAX_HEIGHT = 'max(18rem, calc(100dvh - 22rem))';
 
@@ -41,7 +44,9 @@ export default function SessionPage({ workspaceId, defaultPlayerId, scope, state
         <SessionStats query={query} recipe={recipeFor(scope.kind)} />
       </div>
       <div className="px-4">
-        <GraphTab query={query} />
+        <Suspense fallback={<Skeleton className="m-2 h-80 w-auto rounded" aria-busy />}>
+          <GraphTab query={query} />
+        </Suspense>
       </div>
       <div className={cn('flex min-h-100 flex-1 flex-col gap-2 pt-2 pb-4', lower)}>
         <Tabs value={tab} onValueChange={(v) => { if (isSessionTab(v, scope.kind)) onTab(v); }} className="gap-0">

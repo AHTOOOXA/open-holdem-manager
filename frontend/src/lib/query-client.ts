@@ -1,4 +1,5 @@
 import { QueryClient } from '@tanstack/react-query';
+import { HEAVY_GC_MS, HEAVY_KEY_PREFIXES } from './query-policy';
 
 export const queryClient = new QueryClient({
   defaultOptions: {
@@ -10,3 +11,10 @@ export const queryClient = new QueryClient({
     },
   },
 });
+
+// Heavy payloads (a Graph or Split response is megabytes of parsed objects at 200k hands) leave
+// the renderer heap a minute after their screen is gone, and a failed seconds-long request is not
+// repeated automatically. Policy and the meta flag for new heavy queries: ./query-policy.ts
+for (const prefix of HEAVY_KEY_PREFIXES) {
+  queryClient.setQueryDefaults([...prefix], { gcTime: HEAVY_GC_MS, retry: 0 });
+}

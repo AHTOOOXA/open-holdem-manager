@@ -3,7 +3,7 @@
  * [session list][page 0][page 1…]. The route param is the id of the session to preselect (an id
  * that matches nothing, e.g. an old numeric index, selects the newest session).
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -17,13 +17,13 @@ import SessionPages, { Page0Header } from '@/components/sessions/SessionPages';
 import { getHeroes } from '@/lib/api';
 import { PLAYER_GONE_MESSAGE, isPlayerNotFound } from '@/lib/api-error';
 import { APP_SETTINGS_DEFAULTS, appSettingsQueryKey, getAppSettings, patchAppSettings, type AppSettings } from '@/lib/app-settings';
-import { reportKeys } from '@/lib/reports/query-keys';
+import { isSessionChainQuery, sessionQueriesToRefetch } from '@/lib/query-policy';
 import { getSessions, sessionsQueryKey } from '@/lib/sessions/api';
 import {
   dateStorageKey, parseDateFilter, resolveDateFilter, serializeDateFilter, type StoredDateFilter,
 } from '@/lib/sessions/date-filter';
 import { parseSessionParam, pickSession } from '@/lib/sessions/pages';
-import type { SessionsQuery } from '@/lib/sessions/types';
+import type { SessionRow, SessionsQuery } from '@/lib/sessions/types';
 
 const COLLAPSED_KEY = 'ohm.sessions.collapsed';
 const playerStorageKey = (workspaceId: number) => `ohm.sessions.player.${workspaceId}`;
@@ -106,6 +106,33 @@ function SessionsDashboard({ workspaceId, paramId }: { workspaceId: number; para
   const rows = list.data?.sessions;
   const session = useMemo(() => pickSession(rows ?? [], selectedId), [rows, selectedId]);
 
+  // Pages wait for a list that is not being refetched after a data change: rendered from the old
+  // rows they would fetch the old session window first and the new one right after.
+  const [pagesReady, setPagesReady] = useState(false);
+  if (!pagesReady && !list.isPending && !(list.isFetching && list.isStale)) setPagesReady(true);
+
+  // Sessions-page queries are only marked stale by imports (lib/query-policy.ts). When new rows
+  // arrive, refetch the visible ones whose session changed (a moved window refetches on its own
+  // through its new key) and drop hidden ones of windows that moved on. Runs after the pages took
+  // their new keys (child effects run first).
+  const listKey = JSON.stringify(sessionsQueryKey(query));
+  const seen = useRef<{ key: string; rows: SessionRow[] } | null>(null);
+  const forceRefetch = useRef(false);
+  useEffect(() => {
+    if (!rows) return;
+    const prev = seen.current?.key === listKey ? seen.current.rows : null;
+    seen.current = { key: listKey, rows };
+    const force = forceRefetch.current;
+    forceRefetch.current = false;
+    const cache = queryClient.getQueryCache();
+    const plan = sessionQueriesToRefetch(cache.findAll({ predicate: isSessionChainQuery }), prev, rows, force);
+    for (const q of plan.remove) cache.remove(q);
+    if (plan.refetch.length > 0) {
+      const due = new Set(plan.refetch);
+      void queryClient.refetchQueries({ predicate: (q) => due.has(q), type: 'active' });
+    }
+  }, [list.dataUpdatedAt, rows, listKey, queryClient]);
+
   const numeric = useMutation({
     mutationFn: (v: boolean) => patchAppSettings({ numeric_date_format: v }),
     onSuccess: (next) => queryClient.setQueryData(appSettingsQueryKey, next),
@@ -113,10 +140,10 @@ function SessionsDashboard({ workspaceId, paramId }: { workspaceId: number; para
 
   const refresh = useCallback(() => {
     setSelectedId(null); // the newest session is re-selected
+    // The pages refetch once the list is back (with the new window if the session grew), not before
+    forceRefetch.current = true;
+    void queryClient.invalidateQueries({ predicate: isSessionChainQuery, refetchType: 'none' });
     void queryClient.invalidateQueries({ queryKey: ['sessions'] });
-    void queryClient.invalidateQueries({ queryKey: reportKeys.all });
-    void queryClient.invalidateQueries({ queryKey: ['hands', 'list'] });
-    void queryClient.invalidateQueries({ queryKey: ['graph'] });
   }, [queryClient]);
   const refreshing = list.isFetching && !list.isPending;
 
@@ -169,7 +196,7 @@ function SessionsDashboard({ workspaceId, paramId }: { workspaceId: number; para
           />
         )}
         <div className="flex min-w-0 flex-1 flex-col">
-          {list.isPending ? (
+          {list.isPending || !pagesReady ? (
             <div role="status" aria-label="Loading sessions" className="flex flex-1 items-center justify-center">
               <Loader2 className="size-6 animate-spin text-muted-foreground" aria-hidden />
             </div>

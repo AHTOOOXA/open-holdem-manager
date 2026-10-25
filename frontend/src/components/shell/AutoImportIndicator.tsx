@@ -7,7 +7,6 @@ import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { useWorkspace } from '@/contexts/WorkspaceContext';
 import { configQueryKey, getConfig, putConfig } from '@/lib/config/api';
 import type { ConfigEnvelope } from '@/lib/config/types';
 import { count, formatDateTime } from '@/lib/format';
@@ -15,11 +14,15 @@ import {
   AUTO_IMPORT_POLL_MS, AUTO_IMPORT_STATUS_KEY, getAutoImportStatus, refreshDelay, statusText,
 } from '@/lib/import/auto-import';
 import type { AutoImportConfig } from '@/lib/import/types';
+import { refreshAfterDataChange } from '@/lib/query-policy';
 
-/** Polls the auto-import status while it is on; screens refresh (at most every 5 s) when it adds hands. */
+/**
+ * Polls the auto-import status while it is on. When it adds hands (at most every 5 s) the cheap
+ * queries refresh and the heavy ones are only marked stale (lib/query-policy.ts): a visible report
+ * keeps its numbers and shows the "New hands" chip instead of recomputing on every tick.
+ */
 function useAutoImportStatus(enabled: boolean) {
   const qc = useQueryClient();
-  const { refetchWorkspaces } = useWorkspace();
   const query = useQuery({
     queryKey: AUTO_IMPORT_STATUS_KEY,
     queryFn: getAutoImportStatus,
@@ -30,10 +33,6 @@ function useAutoImportStatus(enabled: boolean) {
   const prev = useRef<number | null>(null);
   const lastRefresh = useRef(0);
   const timer = useRef<number | undefined>(undefined);
-  const refetchRef = useRef(refetchWorkspaces);
-  useEffect(() => {
-    refetchRef.current = refetchWorkspaces;
-  });
 
   useEffect(() => {
     if (!enabled) {
@@ -47,9 +46,7 @@ function useAutoImportStatus(enabled: boolean) {
     window.clearTimeout(timer.current);
     timer.current = window.setTimeout(() => {
       lastRefresh.current = Date.now();
-      // Everything except the status poll itself
-      void qc.invalidateQueries({ predicate: (q) => q.queryKey[0] !== 'auto-import' });
-      void refetchRef.current().catch(() => {});
+      void refreshAfterDataChange(qc, 'auto-import').catch(() => {});
     }, delay);
   }, [enabled, hands, qc]);
   useEffect(() => () => window.clearTimeout(timer.current), []);

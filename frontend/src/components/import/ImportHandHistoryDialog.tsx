@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { lazy, Suspense, useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { DatePicker } from '@/components/ui/date-picker';
+import { Skeleton } from '@/components/ui/skeleton';
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
@@ -12,6 +12,10 @@ import {
 } from '@/lib/import/date-filter';
 import type { ImportDateFilter } from '@/lib/import/types';
 import { formatMediumDate } from '@/lib/format';
+
+// The calendar stack (react-day-picker, date-fns) loads only when "Custom range" is picked, not
+// with the app shell this dialog is mounted in
+const DatePicker = lazy(() => import('@/components/ui/date-picker').then((m) => ({ default: m.DatePicker })));
 
 const storage = () => (typeof localStorage === 'undefined' ? null : localStorage);
 
@@ -82,8 +86,10 @@ function FilterStep() {
       </label>
       {mode === 'custom' && (
         <div className="flex items-center gap-2">
-          <DatePicker value={filter.from} onChange={(v) => setFilter((f) => ({ ...f, from: v || undefined }))} placeholder="From" className="flex-1" />
-          <DatePicker value={filter.to} onChange={(v) => setFilter((f) => ({ ...f, to: v || undefined }))} placeholder="To" className="flex-1" />
+          <Suspense fallback={<><Skeleton className="h-control flex-1" /><Skeleton className="h-control flex-1" /></>}>
+            <DatePicker value={filter.from} onChange={(v) => setFilter((f) => ({ ...f, from: v || undefined }))} placeholder="From" className="flex-1" />
+            <DatePicker value={filter.to} onChange={(v) => setFilter((f) => ({ ...f, to: v || undefined }))} placeholder="To" className="flex-1" />
+          </Suspense>
         </div>
       )}
       {!valid && <p role="alert" className="text-xs text-money-neg">The start date is after the end date.</p>}
