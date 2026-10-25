@@ -13,8 +13,10 @@ Uses eval7 library (C-backed) for fast hand evaluation.
 import base64
 import itertools
 import random
+import threading
 import zlib
 from array import array
+from collections import OrderedDict
 from bisect import bisect_left
 from functools import lru_cache
 from itertools import combinations
@@ -30,6 +32,20 @@ _SUITS = "shdc"
 _PERMS = list(itertools.permutations(range(4)))
 PREFLOP_BOARDS = 1_712_304  # C(48, 5)
 MULTIWAY_PREFLOP_SAMPLES = 100_000
+
+# Memo of computed equities (Monte Carlo and exact runouts). The result is a pure function
+# of (hands in order, board, samples): the Monte Carlo RNG is seeded from the cards, so a
+# memo hit returns the very floats a fresh computation would. A 3+-way preflop all-in costs
+# ~360 ms (100k samples); rebuilds and re-imports hit the memo. Bounded LRU: entries are a
+# few floats, and only all-in hands that reach the evaluator get here.
+_MEMO_MAX = 20_000
+_memo: "OrderedDict[tuple, tuple[float, ...]]" = OrderedDict()
+_memo_lock = threading.Lock()
+
+
+def clear_memo() -> None:
+    with _memo_lock:
+        _memo.clear()
 
 
 def card_id(card: str) -> int:
@@ -125,6 +141,25 @@ def equities(
         eq = _headsup_preflop(hands[0], hands[1])
         if eq is not None:
             return [eq, 1.0 - eq]
+    if k <= 0:  # river: one evaluation, cheaper than the memo key
+        return _compute(hands, board, samples)
+    key = (tuple(tuple(h) for h in hands), tuple(board), samples)
+    with _memo_lock:
+        hit = _memo.get(key)
+        if hit is not None:
+            _memo.move_to_end(key)
+            return list(hit)
+    result = _compute(hands, board, samples)
+    with _memo_lock:
+        _memo[key] = tuple(result)
+        while len(_memo) > _MEMO_MAX:
+            _memo.popitem(last=False)
+    return result
+
+
+def _compute(hands, board, samples) -> list[float]:
+    """equities() without the heads-up preflop table and the memo."""
+    k = 5 - len(board)
     hs = [[eval7.Card(c) for c in h] for h in hands]
     bc = [eval7.Card(c) for c in board]
     dead = {c for h in hs for c in h} | set(bc)

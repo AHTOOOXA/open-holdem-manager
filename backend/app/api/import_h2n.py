@@ -5,7 +5,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from app.api.import_hands import _stream_import, import_date_filter
+from app.api.import_hands import _stream_sources, import_date_filter
 from app.parsers import detect_parser
 from app.parsers import h2n_db
 
@@ -48,26 +48,26 @@ def import_h2n_database(
     """Import every hand of a Hand2Note database folder. Streams NDJSON like file import."""
     db_dir = Path(req.path).expanduser()
     import_date_filter(date_from, date_to)  # 400 on a bad range before reading the DB
+    # Read (and validate: 400 on a bad database) before streaming; each text is stripped and
+    # filed under its parser as it is read, without a second flat copy of the list.
+    by_parser: dict = {}
+    unsupported: list[str] = []
     try:
-        texts = [t.strip() for t in h2n_db.iter_hand_texts(db_dir)]
+        for text in h2n_db.iter_hand_texts(db_dir):
+            text = text.strip()
+            if not text:
+                continue
+            parser = detect_parser(text[:500])
+            if parser is None:
+                unsupported.append(f"Unsupported site: {text.splitlines()[0][:80]}")
+            else:
+                by_parser.setdefault(parser, []).append(text)
     except (h2n_db.H2NFormatError, OSError) as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    # Group hands by site so parsing runs in as few chunks as possible
-    by_parser: dict = {}
-    unsupported: list[str] = []
-    for text in texts:
-        if not text:
-            continue
-        parser = detect_parser(text[:500])
-        if parser is None:
-            unsupported.append(f"Unsupported site: {text.splitlines()[0][:80]}")
-        else:
-            by_parser.setdefault(parser, []).append(text)
-
-    all_hands = [t for hands in by_parser.values() for t in hands]
-    hand_parsers = [p for p, hands in by_parser.items() for _ in hands]
-    return _stream_import(
-        all_hands, hand_parsers, 1, workspace_id, pre_errors=unsupported,
+    # Grouped by site so parsing runs in as few chunks as possible; the import empties the
+    # lists as it goes
+    return _stream_sources(
+        [[p, hands] for p, hands in by_parser.items()], 1, workspace_id, pre_errors=unsupported,
         date_from=date_from, date_to=date_to,
     )

@@ -47,45 +47,6 @@ _next_hp_id: int | None = None
 
 BATCH_SIZE = 2000
 
-# ── Index definitions (dropped during bulk import, recreated after) ──
-_BULK_INDEXES = [
-    "CREATE INDEX IF NOT EXISTS idx_hands_played_at ON hands(played_at)",
-    "CREATE INDEX IF NOT EXISTS idx_hands_stakes ON hands(stakes)",
-    "CREATE INDEX IF NOT EXISTS idx_hands_game_mode ON hands(game_mode)",
-    "CREATE INDEX IF NOT EXISTS idx_hp_hand_id ON hand_players(hand_id)",
-    "CREATE INDEX IF NOT EXISTS idx_hp_player_id ON hand_players(player_id)",
-    "CREATE INDEX IF NOT EXISTS idx_hp_position ON hand_players(position)",
-    "CREATE INDEX IF NOT EXISTS idx_actions_hand_id ON actions(hand_id)",
-    "CREATE INDEX IF NOT EXISTS idx_hand_tags_hand_id ON hand_tags(hand_id)",
-    "CREATE INDEX IF NOT EXISTS idx_hand_tags_tag ON hand_tags(tag)",
-    "CREATE INDEX IF NOT EXISTS idx_board_cards_hand_id ON board_cards(hand_id)",
-    "CREATE INDEX IF NOT EXISTS idx_hp_player_hand ON hand_players(player_id, hand_id)",
-    "CREATE INDEX IF NOT EXISTS idx_hp_hand_player ON hand_players(hand_id, player_id)",
-    "CREATE INDEX IF NOT EXISTS idx_hp_player_position ON hand_players(player_id, position)",
-    "CREATE INDEX IF NOT EXISTS idx_h_played_stakes ON hands(played_at, stakes)",
-]
-
-_INDEX_NAMES = [
-    "idx_hands_played_at", "idx_hands_stakes", "idx_hands_game_mode",
-    "idx_hp_hand_id", "idx_hp_player_id", "idx_hp_position",
-    "idx_actions_hand_id", "idx_hand_tags_hand_id", "idx_hand_tags_tag",
-    "idx_board_cards_hand_id",
-    "idx_hp_player_hand", "idx_hp_hand_player", "idx_hp_player_position",
-    "idx_h_played_stakes",
-]
-
-
-def _drop_indexes(db: duckdb.DuckDBPyConnection) -> None:
-    """Drop all non-PK indexes for fast bulk loading."""
-    for name in _INDEX_NAMES:
-        db.execute(f"DROP INDEX IF EXISTS {name}")
-
-
-def _create_indexes(db: duckdb.DuckDBPyConnection) -> None:
-    """Recreate all indexes after bulk loading."""
-    for stmt in _BULK_INDEXES:
-        db.execute(stmt)
-
 # ── Column keys for column-oriented PyArrow inserts ──
 _HANDS_COLS = (
     "id", "site_id", "played_at", "game_type", "game_mode", "stakes",
@@ -126,7 +87,9 @@ _BOARD_COLS = ("hand_id", "street", "card", "card_order", "workspace_id", "board
 
 
 def reset_import_cache() -> None:
-    """Reset caches. Call before rebuild or when tables are wiped."""
+    """Reset caches. Call before rebuild, when tables are wiped, and when an import is done
+    (the player cache grows by one entry per player seen, ~65 MB at 260k players; the next
+    import re-resolves its players with one join per batch)."""
     global _player_cache, _next_player_id, _next_hp_id
     _player_cache.clear()
     _next_player_id = None
@@ -144,13 +107,13 @@ def _check_shutdown() -> None:
 
 @contextmanager
 def _bulk_write(db: duckdb.DuckDBPyConnection):
-    """One transaction for a bulk load, with indexes dropped for speed.
+    """One transaction for a bulk load.
 
     Any error (or an app shutdown) rolls the whole load back, so the DB is
     never left half-written, and the connection is never left inside an
-    aborted transaction. On success the caller recreates the indexes.
+    aborted transaction. (The big tables have no non-unique indexes to drop
+    and rebuild around the load any more: see init_schema.)
     """
-    _drop_indexes(db)
     db.execute("BEGIN TRANSACTION")
     db.execute("SET checkpoint_threshold = '10GB'")
     try:
@@ -163,7 +126,6 @@ def _bulk_write(db: duckdb.DuckDBPyConnection):
             logging.getLogger(__name__).exception("ROLLBACK failed")
         # The cache may hold IDs that were just rolled back
         reset_import_cache()
-        _create_indexes(db)
         raise
     finally:
         # The setting is per connection: left at 10GB, nothing would be
@@ -211,21 +173,18 @@ def _batch_resolve_players(
     if not uncached:
         return
 
-    # Batch lookup existing players, grouped by site_id
-    by_site: dict[int, list[str]] = {}
-    for sid, u in uncached:
-        by_site.setdefault(sid, []).append(u)
-
-    for sid, usernames in by_site.items():
-        for i in range(0, len(usernames), 500):
-            batch = usernames[i:i + 500]
-            placeholders = ",".join(["?"] * len(batch))
-            rows = db.execute(
-                f"SELECT username, id FROM players WHERE site_id = ? AND username IN ({placeholders})",
-                [sid] + batch,
-            ).fetchall()
-            for username, pid in rows:
-                _player_cache[(sid, username)] = pid
+    # Existing players: one Arrow join for the whole batch (a 500-name IN list per chunk
+    # was a fresh prepared statement each time, and a GIL round trip per chunk while the
+    # parse worker runs). players is UNIQUE(site_id, username): at most one row per pair.
+    pa_lookup = pa.table({  # noqa: F841 (read by DuckDB's replacement scan)
+        "site_id": pa.array([sid for sid, _ in uncached], pa.int32()),
+        "username": pa.array([u for _, u in uncached], pa.string()),
+    })
+    for sid, username, pid in db.execute(
+        "SELECT p.site_id, p.username, p.id FROM players p "
+        "JOIN pa_lookup n ON p.site_id = n.site_id AND p.username = n.username"
+    ).fetchall():
+        _player_cache[(sid, username)] = pid
 
     # Create missing players in bulk
     new_ids = []
@@ -266,11 +225,13 @@ def _build_batch_arrays(
     prepared: list[tuple[ParsedHand, dict, tuple]],
     rebuild: bool = False,
     workspace_id: int = 1,
+    touched: set[int] | None = None,
 ) -> tuple[pa.Table | None, pa.Table | None, pa.Table | None]:
     """Build PyArrow tables from a batch of (parsed, player_stats, financials) tuples.
 
     Pure CPU work — no DB writes. Safe to call from a thread.
     Returns (pa_hands, pa_hp, pa_board).  pa_hands is None when rebuild=True.
+    touched: when given, receives the player ids of the batch's rows.
     """
     global _next_hp_id
 
@@ -374,6 +335,8 @@ def _build_batch_arrays(
                     board_cols["workspace_id"].append(workspace_id)
                     board_cols["board_number"].append(bn)
 
+    if touched is not None:
+        touched.update(hp_cols["player_id"])
     pa_hands = pa.table(hands_cols) if hands_cols and hands_cols["id"] else None
     pa_hp = pa.table(hp_cols) if hp_cols["id"] else None
     pa_board = pa.table(board_cols) if board_cols["hand_id"] else None
@@ -414,6 +377,7 @@ def _flush_batch(
     rebuild: bool = False,
     in_transaction: bool = False,
     workspace_id: int = 1,
+    touched: set[int] | None = None,
 ) -> tuple[int, int, list[str]]:
     """Bulk-insert a batch of (parsed, player_stats, financials) tuples using PyArrow column-oriented inserts.
 
@@ -421,14 +385,19 @@ def _flush_batch(
     When in_transaction=True, caller manages the transaction — no BEGIN/COMMIT per batch,
     and a failure is re-raised: DuckDB aborts the whole transaction on any error, and a
     later COMMIT then silently rolls everything back instead of failing.
+    touched: when given, receives the player ids written (see finalize_import).
     Returns (imported_count, error_count, error_details).
     """
     if not prepared:
         return 0, 0, []
 
     try:
-        pa_hands, pa_hp, pa_board = _build_batch_arrays(db, prepared, rebuild=rebuild, workspace_id=workspace_id)
+        batch_touched: set[int] = set()
+        pa_hands, pa_hp, pa_board = _build_batch_arrays(
+            db, prepared, rebuild=rebuild, workspace_id=workspace_id, touched=batch_touched)
         _insert_arrays(db, pa_hands, pa_hp, pa_board, in_transaction=in_transaction)
+        if touched is not None:
+            touched |= batch_touched
         return len(prepared), 0, []
     except Exception as e:
         if in_transaction:
@@ -437,11 +406,21 @@ def _flush_batch(
         return 0, len(prepared), [f"Batch insert failed: {e}"]
 
 
-def finalize_import(db: duckdb.DuckDBPyConnection, workspace_id: int | None = None) -> None:
+def finalize_import(
+    db: duckdb.DuckDBPyConnection,
+    workspace_id: int | None = None,
+    player_ids: "set[int] | None" = None,
+) -> None:
     """Batch-update player first_seen/last_seen and player types. Call once after import.
 
     When workspace_id is provided, only recomputes player classifications for
     that workspace. When None (full rebuild), recomputes for all workspaces.
+
+    player_ids (with a workspace_id): the players the import wrote rows for. Only they
+    (plus players never finalised, first_seen NULL, e.g. after a crash between commit and
+    finalise) are recomputed: first/last seen is MIN/MAX over each player's own hands and
+    the classification reads only the player's rows in the workspace, so nobody else's
+    values can change. None = every player (deferred auto-import finalize, rebuild).
     """
     from app import data_generation
     data_generation.bump()  # invalidates cached report resolutions
@@ -449,20 +428,66 @@ def finalize_import(db: duckdb.DuckDBPyConnection, workspace_id: int | None = No
     db.execute("UPDATE hands SET imported_at = CURRENT_TIMESTAMP WHERE imported_at IS NULL"
                + (" AND workspace_id = ?" if workspace_id is not None else ""),
                [workspace_id] if workspace_id is not None else [])
-    db.execute("""
+    if player_ids is not None and workspace_id is not None:
+        pa_touched = pa.table({"player_id": pa.array(sorted(player_ids), pa.int32())})  # noqa: F841
+        db.execute("CREATE OR REPLACE TEMP TABLE _finalize_players AS "
+                   "SELECT player_id FROM pa_touched UNION SELECT id FROM players WHERE first_seen IS NULL")
+        try:
+            _update_first_last_seen(db, "WHERE hp.player_id IN (SELECT player_id FROM _finalize_players)")
+            from app import config_sections
+            if config_sections.rebuild_required(db):
+                # A game-types / reg-rule change is pending: the unscoped finalize this
+                # replaced re-classified the whole workspace with the current rule, so do
+                # the same rather than mix old-rule and new-rule is_reg in one workspace.
+                batch_update_player_types(db, workspace_id=workspace_id)
+            else:
+                _update_player_types_scoped(db, workspace_id)
+        finally:
+            db.execute("DROP TABLE IF EXISTS _finalize_players")
+    else:
+        _update_first_last_seen(db, "")
+        batch_update_player_types(db, workspace_id=workspace_id)
+    from app.heroes import detect_heroes
+    detect_heroes(db, workspace_id)
+
+
+def _update_first_last_seen(db: duckdb.DuckDBPyConnection, where: str) -> None:
+    db.execute(f"""
         UPDATE players SET
             first_seen = sub.min_t,
             last_seen = sub.max_t
         FROM (
             SELECT hp.player_id, MIN(h.played_at) AS min_t, MAX(h.played_at) AS max_t
             FROM hand_players hp JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
+            {where}
             GROUP BY hp.player_id
         ) sub
         WHERE players.id = sub.player_id
     """)
-    batch_update_player_types(db, workspace_id=workspace_id)
-    from app.heroes import detect_heroes
-    detect_heroes(db, workspace_id)
+
+
+def _update_player_types_scoped(db: duckdb.DuckDBPyConnection, workspace_id: int) -> None:
+    """batch_update_player_types(db, workspace_id) restricted to the players in the temp
+    table _finalize_players. Same SQL (app/player_classification.py) with one more filter:
+    a player's type and reg flag only read that player's rows in the workspace."""
+    from app import player_classification as pc
+    rule = pc.get_reg_rule(db)  # the same lookup batch_update_player_types uses
+    where = "AND hp.workspace_id = ? AND hp.player_id IN (SELECT player_id FROM _finalize_players)"
+    params = [workspace_id]
+    db.execute("DELETE FROM player_classifications WHERE workspace_id = ? "
+               "AND player_id IN (SELECT player_id FROM _finalize_players)", params)
+    db.execute(f"""
+        INSERT INTO player_classifications (player_id, workspace_id, player_type, is_reg)
+        SELECT t.player_id, t.workspace_id, t.player_type, r.is_reg
+        FROM (
+            SELECT hp.player_id, hp.workspace_id, {pc._TYPE_SQL} AS player_type
+            FROM hand_players hp
+            WHERE TRUE {where}
+            GROUP BY hp.player_id, hp.workspace_id
+        ) t
+        LEFT JOIN ({pc._reg_sql(rule).format(where=where)}) r
+          ON r.player_id = t.player_id AND r.workspace_id = t.workspace_id
+    """, params + params)
 
 
 def light_finalize(db: duckdb.DuckDBPyConnection, workspace_id: int) -> None:
@@ -502,36 +527,55 @@ def _read_uploads(files_data: list[tuple[str, bytes]]) -> list[str]:
 
     Raises HTTPException 413 when the total uncompressed size exceeds MAX_UPLOAD_BYTES or a
     zip entry's compression ratio is implausible (zip bomb)."""
+    seen = [0]
+    return [box.pop() for fname, raw in files_data for box in _upload_texts(fname, raw, seen)]
+
+
+def _upload_texts(fname: str, raw: bytes, seen: list[int]) -> "Iterator[list[str]]":
+    """The decoded text contents of one uploaded file (.txt, or each .txt entry of a .zip),
+    one at a time, each in a one-item list the caller pops: the suspended generator then
+    holds no reference, so the caller can free the text while splitting it. seen[0]:
+    uncompressed bytes so far in this request (413 past the limit). A .txt file's bytes are
+    released as soon as they are decoded."""
     from fastapi import HTTPException
-    text_contents: list[str] = []
-    total = 0
 
     def too_large():
         return HTTPException(status_code=413, detail="Upload too large (limit 500 MB uncompressed)")
 
-    for fname, raw in files_data:
-        lname = fname.lower()
-        if lname.endswith(".zip"):
-            try:
-                with zipfile.ZipFile(io.BytesIO(raw)) as zf:
-                    for info in zf.infolist():
-                        name = info.filename
-                        if name.lower().endswith(".txt") and not name.startswith("__MACOSX"):
-                            total += info.file_size
-                            if total > MAX_UPLOAD_BYTES:
-                                raise too_large()
-                            if info.file_size > 1024 * 1024 and \
-                                    info.file_size > MAX_ZIP_RATIO * max(info.compress_size, 1):
-                                raise too_large()
-                            text_contents.append(zf.read(info).decode("utf-8", errors="replace"))
-            except zipfile.BadZipFile:
-                pass
-        elif lname.endswith(".txt"):
-            total += len(raw)
-            if total > MAX_UPLOAD_BYTES:
-                raise too_large()
-            text_contents.append(raw.decode("utf-8", errors="replace"))
-    return text_contents
+    lname = fname.lower()
+    if lname.endswith(".zip"):
+        try:
+            with zipfile.ZipFile(io.BytesIO(raw)) as zf:
+                for info in zf.infolist():
+                    name = info.filename
+                    if name.lower().endswith(".txt") and not name.startswith("__MACOSX"):
+                        seen[0] += info.file_size
+                        if seen[0] > MAX_UPLOAD_BYTES:
+                            raise too_large()
+                        if info.file_size > 1024 * 1024 and \
+                                info.file_size > MAX_ZIP_RATIO * max(info.compress_size, 1):
+                            raise too_large()
+                        yield [zf.read(info).decode("utf-8", errors="replace")]
+        except zipfile.BadZipFile:
+            pass
+    elif lname.endswith(".txt"):
+        seen[0] += len(raw)
+        if seen[0] > MAX_UPLOAD_BYTES:
+            raise too_large()
+        box, raw = [raw.decode("utf-8", errors="replace")], None
+        yield box
+
+
+def _split_upload_text(parser, box: list[str]) -> list[str]:
+    """parser.split_hands(text), stripped, empty pieces dropped; text = box.pop() (the only
+    reference, released once split). Strips in place so the unstripped pieces are released
+    one by one instead of living next to the copies."""
+    text = box.pop()
+    hands = parser.split_hands(text)
+    del text
+    for i, h in enumerate(hands):
+        hands[i] = h.strip()
+    return [h for h in hands if h]
 
 
 def _parse_batch(
@@ -720,10 +764,16 @@ def _job_stream(work: "Callable[[str, threading.Event, Callable[[dict], None]], 
     return StreamingResponse(generate(), media_type="application/x-ndjson")
 
 
-def _list_batches(all_hands: list[str], hand_parsers: list) -> "Iterator[list[tuple[str, object]]]":
-    """Already-split hands as one source batch."""
-    if all_hands:
-        yield list(zip(all_hands, hand_parsers))
+def _drain(sources: list) -> "Iterator[tuple[str, object]]":
+    """(hand text, parser) items of `sources` ([parser, hands] pairs, in import order), each
+    reference dropped as it is handed out: the source lists shrink while the import runs
+    instead of holding every hand text until the job ends."""
+    for i in range(len(sources)):
+        parser, hands = sources[i]
+        sources[i] = None
+        hands.reverse()
+        while hands:
+            yield hands.pop(), parser
 
 
 def _chunks(batches, unsupported: list[str]):
@@ -768,8 +818,31 @@ def _stream_import(
 
     hand_parsers[i] is the parser module for all_hands[i]. See _stream_source.
     """
+    sources: list = []
+    for h, p in zip(all_hands, hand_parsers):
+        if sources and sources[-1][0] is p:
+            sources[-1][1].append(h)
+        else:
+            sources.append([p, [h]])
+    return _stream_sources(sources, file_count, workspace_id, pre_errors,
+                           date_from=date_from, date_to=date_to)
+
+
+def _stream_sources(
+    sources: list,
+    file_count: int,
+    workspace_id: int,
+    pre_errors: list[str] | None = None,
+    *,
+    date_from: str | None = None,
+    date_to: str | None = None,
+) -> StreamingResponse:
+    """_stream_import for hands grouped as [parser, hands] pairs (in import order). The
+    import takes ownership of the lists and empties them as it goes (_drain); the hands
+    reach _chunks as one source batch, exactly as one flat list would."""
+    total = sum(len(hands) for _, hands in sources)
     return _stream_source(
-        lambda: _list_batches(all_hands, hand_parsers), len(all_hands), file_count, workspace_id,
+        lambda: iter([_drain(sources)]) if total else iter(()), total, file_count, workspace_id,
         pre_errors, date_from=date_from, date_to=date_to,
     )
 
@@ -795,8 +868,8 @@ def _stream_source(
     hour applied); hands outside are skipped and counted in `out_of_range`. Validated here,
     before streaming (400). The job is registered when the stream starts (first line:
     job_id) and removed when it ends; POST /api/import/jobs/{job_id}/cancel (or a client
-    disconnect) stops it after the batch in progress (written hands stay, indexes +
-    finalisation still run, done line has cancelled=true).
+    disconnect) stops it after the batch in progress (written hands stay, finalisation
+    still runs, done line has cancelled=true).
     """
     pre_errors = list(pre_errors or [])
     in_range = import_date_filter(date_from, date_to)
@@ -864,6 +937,7 @@ def _stream_source(
                 )
 
             processed = 0
+            touched: set[int] = set()  # player ids written: finalize recomputes only them
             with _bulk_write(db), ThreadPoolExecutor(max_workers=1) as executor:
                 chunk = next(chunks, None)
                 parse_future: Future | None = submit(executor, chunk) if chunk else None
@@ -896,7 +970,8 @@ def _stream_source(
                     # Flush current batch to DB
                     if batch_prepared:
                         t0 = time.perf_counter()
-                        imp, errs, details = _flush_batch(db, batch_prepared, in_transaction=True, workspace_id=workspace_id)
+                        imp, errs, details = _flush_batch(db, batch_prepared, in_transaction=True,
+                                                          workspace_id=workspace_id, touched=touched)
                         t_db += time.perf_counter() - t0
                         imported += imp
                         errors += errs
@@ -922,18 +997,14 @@ def _stream_source(
                     })
                     chunk = nxt
 
-            # Recreate indexes (bulk build is faster than incremental)
-            t0_idx = time.perf_counter()
-            _create_indexes(db)
-            t_idx = time.perf_counter() - t0_idx
-
-            finalize_import(db, workspace_id=workspace_id)
+            finalize_import(db, workspace_id=workspace_id, player_ids=touched)
             _checkpoint_after_bulk(db)
         finally:
             try:
                 if batches is not None and hasattr(batches, "close"):
                     batches.close()  # e.g. the tracker DB connection, closed in this thread
             finally:
+                reset_import_cache()  # still under the write lock
                 db_lock().release()
 
         emit(_done(t_start, imported, duplicates, errors, out_of_range[0], cancelled, error_details, {
@@ -941,25 +1012,22 @@ def _stream_source(
             "stats_ms": round(t_stats * 1000),
             "equity_ms": round(t_equity * 1000),
             "db_ms": round(t_db * 1000),
-            "index_ms": round(t_idx * 1000),
         }))
 
     return _job_stream(work)
 
 
 def _existing_hand_ids(db, ids: list[str | None], workspace_id: int) -> set[str]:
-    """Which of these hand ids the workspace already has."""
-    existing: set[str] = set()
+    """Which of these hand ids the workspace already has (one Arrow join)."""
     valid = [hid for hid in ids if hid is not None]
-    for j in range(0, len(valid), 500):
-        batch = valid[j:j + 500]
-        placeholders = ",".join(["?"] * len(batch))
-        rows = db.execute(
-            f"SELECT id FROM hands WHERE workspace_id = ? AND id IN ({placeholders})",
-            [workspace_id] + batch,
-        ).fetchall()
-        existing.update(r[0] for r in rows)
-    return existing
+    if not valid:
+        return set()
+    pa_ids = pa.table({"id": pa.array(valid, pa.string())})  # noqa: F841 (replacement scan)
+    rows = db.execute(
+        "SELECT DISTINCT h.id FROM hands h JOIN pa_ids n ON h.id = n.id WHERE h.workspace_id = ?",
+        [workspace_id],
+    ).fetchall()
+    return {r[0] for r in rows}
 
 
 @router.post("/import/files/stream")
@@ -969,34 +1037,36 @@ async def import_files_stream(
     date_from: str | None = None,
     date_to: str | None = None,
 ):
-    files_data = [(f.filename or "", await f.read()) for f in files]
-    text_contents = _read_uploads(files_data)
+    # One upload at a time: read, decode, split, then drop the bytes and the text, so only
+    # the split hands of every file are held (not the bytes + text + split + stripped copies
+    # of all files at once). Same order, same 413 checks as _read_uploads.
+    sources: list = []  # [parser, hands] per text with a known site, in upload order
+    file_count = 0
+    seen = [0]
+    for f in files:
+        raw = await f.read()
+        texts = _upload_texts(f.filename or "", raw, seen)
+        del raw  # the generator drops it once decoded
+        for box in texts:
+            file_count += 1
+            parser = detect_parser(box[0][:500])
+            if parser is not None:
+                hands = _split_upload_text(parser, box)
+                if hands:
+                    sources.append([parser, hands])
+            del box
+        del texts
 
-    # Per-file parser detection + hand splitting
-    all_hands: list[str] = []
-    hand_parsers: list = []  # parallel list: parser module for each hand
-    skipped_files = 0
-    for content in text_contents:
-        parser = detect_parser(content[:500])
-        if parser is None:
-            skipped_files += 1
-            continue
-        for h in parser.split_hands(content):
-            h = h.strip()
-            if h:
-                all_hands.append(h)
-                hand_parsers.append(parser)
-
-    return _stream_import(
-        all_hands, hand_parsers, len(text_contents), workspace_id,
+    return _stream_sources(
+        sources, file_count, workspace_id,
         date_from=date_from, date_to=date_to,
     )
 
 
 def import_hand_texts(db, hands: list[tuple[str, object]], workspace_id: int, *,
                       full_finalize: bool = True) -> dict:
-    """Import a small set of (hand_text, parser) without streaming and without dropping
-    indexes (auto-import: a few hands per tick). Caller holds the write lock.
+    """Import a small set of (hand_text, parser) without streaming (auto-import: a few
+    hands per tick). Caller holds the write lock.
 
     Same pipeline as file import: dedup by id within the workspace, parse, stats, money,
     one transaction, then finalize_import (bumps the data generation). Raises on a failed
@@ -1021,10 +1091,12 @@ def import_hand_texts(db, hands: list[tuple[str, object]], workspace_id: int, *,
             error_details.extend(details)
             start = i
     imported = 0
+    touched: set[int] = set()
     if prepared:
         db.execute("BEGIN TRANSACTION")
         try:
-            imported, _, _ = _flush_batch(db, prepared, in_transaction=True, workspace_id=workspace_id)
+            imported, _, _ = _flush_batch(db, prepared, in_transaction=True, workspace_id=workspace_id,
+                                          touched=touched)
             db.execute("COMMIT")
         except BaseException:
             try:
@@ -1034,9 +1106,10 @@ def import_hand_texts(db, hands: list[tuple[str, object]], workspace_id: int, *,
             reset_import_cache()
             raise
         if full_finalize:
-            finalize_import(db, workspace_id=workspace_id)
+            finalize_import(db, workspace_id=workspace_id, player_ids=touched)
         else:
             light_finalize(db, workspace_id)
+        reset_import_cache()
     return {"imported": imported, "duplicates": duplicates, "errors": errors,
             "error_details": error_details[:20]}
 
@@ -1063,17 +1136,7 @@ def _process_hands(db, text_contents: list[str], workspace_id: int = 1) -> Impor
                 all_ids.append(parser.extract_hand_id(hand_text))
                 hand_parsers_list.append(parser)
 
-    existing_ids: set[str] = set()
-    valid_ids = [hid for hid in all_ids if hid is not None]
-    if valid_ids:
-        for j in range(0, len(valid_ids), 500):
-            batch = valid_ids[j:j + 500]
-            placeholders = ",".join(["?"] * len(batch))
-            rows = db.execute(
-                f"SELECT id FROM hands WHERE workspace_id = ? AND id IN ({placeholders})",
-                [workspace_id] + batch,
-            ).fetchall()
-            existing_ids.update(r[0] for r in rows)
+    existing_ids = _existing_hand_ids(db, all_ids, workspace_id)
 
     with _bulk_write(db):
         total_imported, total_duplicates, total_errors = _process_hands_in_txn(
@@ -1081,9 +1144,9 @@ def _process_hands(db, text_contents: list[str], workspace_id: int = 1) -> Impor
             error_details, total_duplicates, total_errors, workspace_id,
         )
 
-    _create_indexes(db)
     finalize_import(db, workspace_id=workspace_id)
     _checkpoint_after_bulk(db)
+    reset_import_cache()
 
     return ImportResult(
         imported=total_imported,
@@ -1197,9 +1260,12 @@ def _run_rebuild_sync(db, on_progress: 'Callable[[int, int], None] | None' = Non
     if total == 0:
         return
 
-    all_rows = db.execute(
-        "SELECT id, workspace_id, site_id, raw_text FROM hands ORDER BY played_at ASC, id ASC"
-    ).fetchall()
+    # Only the order (as Arrow, no Python objects) up front; raw_text is read chunk by chunk
+    # (_rebuild_chunks) instead of holding every hand text for the whole rebuild.
+    order = db.execute(
+        "SELECT id, workspace_id FROM hands ORDER BY played_at ASC, id ASC"
+    ).fetch_arrow_table()
+    order = order.append_column("pos", pa.array(range(order.num_rows), pa.int64()))
 
     reset_import_cache()
     with _bulk_write(db):
@@ -1211,12 +1277,12 @@ def _run_rebuild_sync(db, on_progress: 'Callable[[int, int], None] | None' = Non
         db.execute("DELETE FROM hand_players")
         # Keep players table intact — player_aliases has FK references, and
         # _batch_resolve_players will look up existing players from the DB.
-        imported, errors, t_start = _rebuild_rows(db, all_rows, total, on_progress)
+        imported, errors, t_start = _rebuild_rows(db, _rebuild_chunks(db, order), total, on_progress)
 
-    _create_indexes(db)
     # Full rebuild: recompute classifications for all workspaces
     finalize_import(db, workspace_id=None)
     _checkpoint_after_bulk(db)
+    reset_import_cache()
 
     elapsed = time.perf_counter() - t_start
     hps = imported / elapsed if elapsed > 0 else 0
@@ -1226,13 +1292,23 @@ def _run_rebuild_sync(db, on_progress: 'Callable[[int, int], None] | None' = Non
     )
 
 
-def _rebuild_rows(db, all_rows, total, on_progress) -> tuple[int, int, float]:
+def _rebuild_chunks(db, order: pa.Table) -> "Iterator[list[tuple]]":
+    """(id, workspace_id, site_id, raw_text) rows in `order`, BATCH_SIZE at a time. Each
+    chunk is one join on (id, workspace_id) (unique), read on the rebuild's own connection
+    and transaction between its writes (raw_text, id and played_at are never written)."""
+    for start in range(0, order.num_rows, BATCH_SIZE):
+        pa_chunk = order.slice(start, BATCH_SIZE)  # noqa: F841 (replacement scan)
+        yield db.execute(
+            "SELECT h.id, h.workspace_id, h.site_id, h.raw_text FROM pa_chunk k "
+            "JOIN hands h ON h.id = k.id AND h.workspace_id = k.workspace_id ORDER BY k.pos"
+        ).fetchall()
+
+
+def _rebuild_rows(db, chunks: "Iterator[list[tuple]]", total, on_progress) -> tuple[int, int, float]:
     imported = 0
     errors = 0
     processed = 0
     t_start = time.perf_counter()
-
-    chunks = [all_rows[ci:ci + BATCH_SIZE] for ci in range(0, total, BATCH_SIZE)]
 
     for ci, chunk in enumerate(chunks):
         _check_shutdown()
@@ -1293,7 +1369,7 @@ def _rebuild_rows(db, all_rows, total, on_progress) -> tuple[int, int, float]:
         if on_progress:
             on_progress(processed, total)
 
-        if (ci + 1) % 5 == 0 or ci == len(chunks) - 1:
+        if (ci + 1) % 5 == 0 or processed >= total:
             elapsed = time.perf_counter() - t_start
             hps = imported / elapsed if elapsed > 0 else 0
             logging.getLogger(__name__).info(
@@ -1329,6 +1405,9 @@ async def clear_hands(workspace_id: int = 1):
             [workspace_id, workspace_id],
         )
         db.execute("DELETE FROM hands WHERE workspace_id = ?", [workspace_id])
+        # Players also seen in other workspaces: first/last seen over the hands left. Imports
+        # only recompute the players they touch, so this can't wait for the next import.
+        _update_first_last_seen(db, "")
         from app.marked_hands import delete_workspace_marks
         delete_workspace_marks(db, workspace_id)
         db.execute("DELETE FROM player_classifications WHERE workspace_id = ?", [workspace_id])
