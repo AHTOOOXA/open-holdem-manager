@@ -589,7 +589,8 @@ export function currentHandsExportUrl(params: HandListParams | undefined): strin
   return handsExportUrl(params, _getWorkspaceId());
 }
 
-export async function getHands(params?: HandListParams): Promise<HandListResponse> {
+/** `signal`: react-query's AbortSignal, so a superseded page / sort / filter request is cancelled. */
+export async function getHands(params?: HandListParams, signal?: AbortSignal): Promise<HandListResponse> {
   const sp = new URLSearchParams();
   if (params?.page) sp.set('page', String(params.page));
   if (params?.per_page) sp.set('per_page', String(params.per_page));
@@ -597,16 +598,16 @@ export async function getHands(params?: HandListParams): Promise<HandListRespons
   if (params?.order) sp.set('order', params.order);
   for (const [k, v] of handListFilterQuery(params)) sp.append(k, v);
   _addWorkspaceParam(sp);
-  const res = await fetch(`${BASE}/hands?${sp}`);
+  const res = await fetch(`${BASE}/hands?${sp}`, { signal });
   if (!res.ok) throw new Error(`Hands failed: ${res.statusText}`);
   return res.json();
 }
 
-export async function getHandDetail(handId: string, playerId?: number): Promise<HandDetail> {
+export async function getHandDetail(handId: string, playerId?: number, signal?: AbortSignal): Promise<HandDetail> {
   const sp = new URLSearchParams();
   _addWorkspaceParam(sp);
   if (playerId !== undefined) sp.set('player_id', String(playerId));
-  const res = await fetch(`${BASE}/hands/${encodeURIComponent(handId)}?${sp}`);
+  const res = await fetch(`${BASE}/hands/${encodeURIComponent(handId)}?${sp}`, { signal });
   if (!res.ok) throw new Error(`Hand detail failed: ${res.statusText}`);
   return res.json();
 }

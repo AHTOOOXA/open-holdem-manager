@@ -1,7 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { Copy, Play, X } from 'lucide-react';
-import { getHandDetail } from '@/lib/api';
-import { queryKeys } from '@/lib/query-keys';
+import { handDetailQuery } from '@/components/hands/handDetailQuery';
 import { formatStakes } from '@/lib/utils';
 import { formatDateTime } from '@/lib/format';
 import { plotPlayers, rowPlayer } from '@/lib/hands/hand-plot';
@@ -30,11 +29,7 @@ export default function HandPanel({
   onClose: () => void;
   onReplay: () => void;
 }) {
-  const { data: hand, isError } = useQuery({
-    queryKey: [...queryKeys.hands.detail(handId), playerId ?? null],
-    queryFn: () => getHandDetail(handId, playerId),
-    staleTime: 30_000,
-  });
+  const { data: hand, isError } = useQuery({ ...handDetailQuery(handId, playerId), staleTime: 30_000 });
   const owner = hand ? rowPlayer(hand.players, playerId) : undefined;
 
   return (
