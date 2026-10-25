@@ -71,3 +71,92 @@ def test_existing_hand_ids_join(db):
     assert ih._existing_hand_ids(db, [None, None], 1) == set()
     assert ih._existing_hand_ids(db, ["A1", None, "A2", "A3", "A1", "Z"], 1) == {"A1", "A2"}
     assert ih._existing_hand_ids(db, ["A1", "A2", "A3"], 2) == {"A1", "A3"}
+
+
+# ── 06/F2: equity memo returns bit-identical results ──
+
+from collections import OrderedDict  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+import pytest  # noqa: E402
+
+from app import equity  # noqa: E402
+
+FIXTURE_20K = Path(__file__).parent / "fixtures" / "bench_sample_20k.txt"
+
+
+class _NoMemo(OrderedDict):
+    """Stands in for equity._memo: never stores, so every call computes."""
+
+    def __setitem__(self, key, value):
+        pass
+
+
+def _bits(values) -> list[str]:
+    return [float(v).hex() for v in values]
+
+
+def _money_snapshot(parsed_hands):
+    from app.money import compute_hand_money
+    out = []
+    for p in parsed_hands:
+        hm = compute_hand_money(p, with_ev=True)
+        out.append((p.hand_id, hm.ev_state, sorted(
+            (u, pm.ev_results, float(pm.ev_sum).hex(), float(pm.won_ev).hex())
+            for u, pm in hm.players.items()
+        )))
+    return out
+
+
+@pytest.mark.skipif(not FIXTURE_20K.exists(), reason="20k fixture missing")
+def test_equity_memo_bit_identical_on_20k_allins(monkeypatch):
+    from app.parsers import ggpoker
+    text = FIXTURE_20K.read_text(encoding="utf-8")
+    allins = [ggpoker.parse_hand_history(h.strip())
+              for h in ggpoker.split_hands(text) if "all-in" in h]
+
+    # Which calls are 3+-way preflop Monte Carlo (the expensive, seeded ones)?
+    multiway = []
+    real_compute = equity._compute
+
+    def spy(hands, board, samples):
+        if len(hands) >= 3 and not board:
+            multiway.append(([tuple(h) for h in hands], list(board), samples))
+        return real_compute(hands, board, samples)
+
+    # Reference: no memo at all
+    monkeypatch.setattr(equity, "_memo", _NoMemo())
+    monkeypatch.setattr(equity, "_compute", spy)
+    reference = _money_snapshot(allins)
+    monkeypatch.setattr(equity, "_compute", real_compute)
+    assert len(multiway) >= 4, "the 20k fixture has 4 hands with a 3+-way preflop all-in"
+
+    monkeypatch.setattr(equity, "_memo", OrderedDict())
+    cold = _money_snapshot(allins)   # fills the memo
+    assert len(equity._memo) > 0
+    warm = _money_snapshot(allins)   # every evaluation is a memo hit
+    assert cold == reference
+    assert warm == reference
+
+    for hands, board, samples in multiway:
+        direct = real_compute(hands, board, samples)
+        assert _bits(equity.equities(hands, board, samples)) == _bits(direct)
+        # A hit hands out a copy: mutating it can't poison the memo
+        equity.equities(hands, board, samples)[0] = -1.0
+        assert _bits(equity.equities(hands, board, samples)) == _bits(direct)
+
+
+def test_equity_memo_is_keyed_on_order_board_and_samples(monkeypatch):
+    monkeypatch.setattr(equity, "_memo", OrderedDict())
+    a, b, c = ("Ah", "Kd"), ("Qs", "Qc"), ("7h", "6h")
+    e1 = equity.equities([a, b, c], [], samples=2000)
+    e2 = equity.equities([c, a, b], [], samples=2000)
+    assert _bits(e1) == _bits(equity._compute([a, b, c], [], 2000))
+    assert _bits(e2) == _bits(equity._compute([c, a, b], [], 2000))
+    assert _bits(equity.equities([a, b, c], [], samples=1000)) == _bits(equity._compute([a, b, c], [], 1000))
+    flop = ["2c", "9d", "Ts"]
+    assert _bits(equity.equities([a, b], flop)) == _bits(equity._compute([a, b], flop, equity.MULTIWAY_PREFLOP_SAMPLES))
+    assert len(equity._memo) == 4
+    monkeypatch.setattr(equity, "_MEMO_MAX", 2)
+    equity.equities([a, c], flop)
+    assert len(equity._memo) == 2
