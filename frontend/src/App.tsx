@@ -1,3 +1,4 @@
+import { lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { queryClient } from '@/lib/query-client';
@@ -10,22 +11,26 @@ import WelcomeGate from '@/components/WelcomeGate';
 import AppShell from '@/components/shell/AppShell';
 import { HomeRedirect, LegacyRedirect } from '@/components/shell/Redirects';
 import { Toaster } from '@/components/ui/sonner';
-import ReportsPage from './pages/ReportsPage';
-import StatisticsPage from './pages/StatisticsPage';
-import SessionsPage from './pages/SessionsPage';
-import MarkedHandsPage from './pages/MarkedHandsPage';
-import DatabasesPage from './pages/DatabasesPage';
-import ConfigurationPage from './pages/ConfigurationPage';
-import StatsPage from './pages/StatsPage';
-import ComparePage from './pages/ComparePage';
-import CashDropPage from './pages/CashDropPage';
-import PopulationPage from './pages/PopulationPage';
-import PlayersPage from './pages/PlayersPage';
-import PlayerProfilePage from './pages/PlayerProfilePage';
-import IdentityDetailPage from './pages/IdentityDetailPage';
-import DesignPage from './pages/DesignPage';
-import PageChainDemo from './pages/design/PageChainDemo';
-import DataGridDemo from './pages/design/DataGridDemo';
+import { RouteFallback } from '@/components/shell/RouteFallback';
+
+// Every screen is its own chunk (08/F11): the first paint parses the shell and one screen, not the
+// whole app. Chunks load from the local backend, so the fallback only flashes on first visit.
+const ReportsPage = lazy(() => import('./pages/ReportsPage'));
+const StatisticsPage = lazy(() => import('./pages/StatisticsPage'));
+const SessionsPage = lazy(() => import('./pages/SessionsPage'));
+const MarkedHandsPage = lazy(() => import('./pages/MarkedHandsPage'));
+const DatabasesPage = lazy(() => import('./pages/DatabasesPage'));
+const ConfigurationPage = lazy(() => import('./pages/ConfigurationPage'));
+const StatsPage = lazy(() => import('./pages/StatsPage'));
+const ComparePage = lazy(() => import('./pages/ComparePage'));
+const CashDropPage = lazy(() => import('./pages/CashDropPage'));
+const PopulationPage = lazy(() => import('./pages/PopulationPage'));
+const PlayersPage = lazy(() => import('./pages/PlayersPage'));
+const PlayerProfilePage = lazy(() => import('./pages/PlayerProfilePage'));
+const IdentityDetailPage = lazy(() => import('./pages/IdentityDetailPage'));
+const DesignPage = lazy(() => import('./pages/DesignPage'));
+const PageChainDemo = lazy(() => import('./pages/design/PageChainDemo'));
+const DataGridDemo = lazy(() => import('./pages/design/DataGridDemo'));
 
 export default function App() {
   return (
@@ -34,6 +39,7 @@ export default function App() {
     <BrowserRouter>
       <ImportProvider>
         <AppShell>
+          <Suspense fallback={<RouteFallback />}>
           <Routes>
             <Route path="/" element={<HomeRedirect />} />
 
@@ -69,6 +75,7 @@ export default function App() {
 
             <Route path="*" element={<Navigate to={DEFAULT_ROUTE} replace />} />
           </Routes>
+          </Suspense>
         </AppShell>
         <ImportOverlay />
         <DragDropOverlay />
