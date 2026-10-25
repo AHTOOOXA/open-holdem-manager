@@ -521,13 +521,15 @@ def _read_uploads(files_data: list[tuple[str, bytes]]) -> list[str]:
     Raises HTTPException 413 when the total uncompressed size exceeds MAX_UPLOAD_BYTES or a
     zip entry's compression ratio is implausible (zip bomb)."""
     seen = [0]
-    return [text for fname, raw in files_data for text in _upload_texts(fname, raw, seen)]
+    return [box.pop() for fname, raw in files_data for box in _upload_texts(fname, raw, seen)]
 
 
-def _upload_texts(fname: str, raw: bytes, seen: list[int]) -> "Iterator[str]":
+def _upload_texts(fname: str, raw: bytes, seen: list[int]) -> "Iterator[list[str]]":
     """The decoded text contents of one uploaded file (.txt, or each .txt entry of a .zip),
-    one at a time. seen[0]: uncompressed bytes so far in this request (413 past the limit).
-    A .txt file's bytes are released as soon as they are decoded."""
+    one at a time, each in a one-item list the caller pops: the suspended generator then
+    holds no reference, so the caller can free the text while splitting it. seen[0]:
+    uncompressed bytes so far in this request (413 past the limit). A .txt file's bytes are
+    released as soon as they are decoded."""
     from fastapi import HTTPException
 
     def too_large():
@@ -546,21 +548,24 @@ def _upload_texts(fname: str, raw: bytes, seen: list[int]) -> "Iterator[str]":
                         if info.file_size > 1024 * 1024 and \
                                 info.file_size > MAX_ZIP_RATIO * max(info.compress_size, 1):
                             raise too_large()
-                        yield zf.read(info).decode("utf-8", errors="replace")
+                        yield [zf.read(info).decode("utf-8", errors="replace")]
         except zipfile.BadZipFile:
             pass
     elif lname.endswith(".txt"):
         seen[0] += len(raw)
         if seen[0] > MAX_UPLOAD_BYTES:
             raise too_large()
-        text, raw = raw.decode("utf-8", errors="replace"), None
-        yield text
+        box, raw = [raw.decode("utf-8", errors="replace")], None
+        yield box
 
 
-def _split_upload_text(parser, text: str) -> list[str]:
-    """parser.split_hands(text), stripped, empty pieces dropped. Strips in place so the
-    unstripped pieces are released one by one instead of living next to the copies."""
+def _split_upload_text(parser, box: list[str]) -> list[str]:
+    """parser.split_hands(text), stripped, empty pieces dropped; text = box.pop() (the only
+    reference, released once split). Strips in place so the unstripped pieces are released
+    one by one instead of living next to the copies."""
+    text = box.pop()
     hands = parser.split_hands(text)
+    del text
     for i, h in enumerate(hands):
         hands[i] = h.strip()
     return [h for h in hands if h]
@@ -1035,14 +1040,14 @@ async def import_files_stream(
         raw = await f.read()
         texts = _upload_texts(f.filename or "", raw, seen)
         del raw  # the generator drops it once decoded
-        for text in texts:
+        for box in texts:
             file_count += 1
-            parser = detect_parser(text[:500])
+            parser = detect_parser(box[0][:500])
             if parser is not None:
-                hands = _split_upload_text(parser, text)
+                hands = _split_upload_text(parser, box)
                 if hands:
                     sources.append([parser, hands])
-            del text
+            del box
         del texts
 
     return _stream_sources(
