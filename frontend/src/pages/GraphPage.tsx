@@ -35,6 +35,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { fixed, usd, moneyClass, bbUnits } from '@/lib/format';
 import { chartColors } from '@/lib/chart-theme';
 import ResultsChart, { sessionDurationHours } from '@/components/results/ResultsChart';
+import { GRAPH_GC_TIME, graphHands } from '@/components/results/graph-hands';
 import type { LineToggle } from '@/components/results/ResultsChart';
 
 const LINE_COLORS = chartColors;
@@ -110,6 +111,7 @@ export default function GraphPage() {
   const { data: graphResp, isPending: graphLoading } = useQuery({
     queryKey: queryKeys.graph.data(filterParams),
     queryFn: () => getGraphData(filterParams),
+    gcTime: GRAPH_GC_TIME,
   });
 
   const data = useMemo(() => graphResp?.points ?? [], [graphResp]);
@@ -184,7 +186,7 @@ export default function GraphPage() {
 
   // Stat card data from last graph point
   const last = data.length > 0 ? data[data.length - 1] : null;
-  const n = data.length;
+  const n = graphHands(graphResp);
 
   const wonBB = last?.cumulative_bb ?? 0;
   const wonUSD = last?.cumulative_usd ?? 0;

@@ -15,6 +15,7 @@ import type { Checkpoint, GraphPoint, SessionMarker, VarianceStats } from '@/lib
 import { fixed, formatClockTime, formatDateTime } from '@/lib/format';
 import { chartColors, axisTick } from '@/lib/chart-theme';
 import { ChartTooltipBox } from '@/components/ChartTooltipBox';
+import { lastHandNumber } from './graph-hands';
 
 export type LineToggle = 'ev' | 'showdown' | 'rake' | 'ci' | 'sessions';
 
@@ -125,6 +126,7 @@ export default function ResultsChart({ points: data, sessions, variance, unit, l
 
   const handleChartMouseLeave = useCallback(() => setActiveSession(null), []);
 
+  // The backend already sends at most 1000 points (the same indices); this is a no-op guard.
   const chartData = useMemo(() => {
     const max = 1000;
     if (data.length <= max) return data;
@@ -260,7 +262,7 @@ export default function ResultsChart({ points: data, sessions, variance, unit, l
             dataKey="hand_number"
             type="number"
             domain={[0, 'dataMax']}
-            ticks={niceXTicks(data.length)}
+            ticks={niceXTicks(lastHandNumber(data))}
             stroke={chartColors.axis}
             tick={axisTick(11)}
             tickFormatter={formatXTick}
