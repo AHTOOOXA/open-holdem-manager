@@ -96,3 +96,11 @@ test('a mark in the General drawer refetches nothing beyond what useMarkHand alr
   assert.doesNotMatch(read('components/general/GeneralHandList.tsx'), /onTagsChanged|invalidateQueries/);
   assert.match(read('components/marked/useMarkHand.ts'), /invalidateQueries\(\{ queryKey: \['general', 'hands'\] \}\)/);
 });
+
+test('Reports loads the Graph tab (and the charting chunk) on demand only', () => {
+  const s = read('components/reports/ReportPageView.tsx');
+  assert.doesNotMatch(s, /^import .*GraphTab/m);
+  assert.doesNotMatch(s, /from 'recharts'|ResultsChart/);
+  assert.match(s, /lazy\(loadGraphTab\)/);
+  assert.match(s, /const loadGraphTab = \(\) => import\('\.\/tabs\/GraphTab'\);/);
+});
