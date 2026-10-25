@@ -520,36 +520,50 @@ def _read_uploads(files_data: list[tuple[str, bytes]]) -> list[str]:
 
     Raises HTTPException 413 when the total uncompressed size exceeds MAX_UPLOAD_BYTES or a
     zip entry's compression ratio is implausible (zip bomb)."""
+    seen = [0]
+    return [text for fname, raw in files_data for text in _upload_texts(fname, raw, seen)]
+
+
+def _upload_texts(fname: str, raw: bytes, seen: list[int]) -> "Iterator[str]":
+    """The decoded text contents of one uploaded file (.txt, or each .txt entry of a .zip),
+    one at a time. seen[0]: uncompressed bytes so far in this request (413 past the limit).
+    A .txt file's bytes are released as soon as they are decoded."""
     from fastapi import HTTPException
-    text_contents: list[str] = []
-    total = 0
 
     def too_large():
         return HTTPException(status_code=413, detail="Upload too large (limit 500 MB uncompressed)")
 
-    for fname, raw in files_data:
-        lname = fname.lower()
-        if lname.endswith(".zip"):
-            try:
-                with zipfile.ZipFile(io.BytesIO(raw)) as zf:
-                    for info in zf.infolist():
-                        name = info.filename
-                        if name.lower().endswith(".txt") and not name.startswith("__MACOSX"):
-                            total += info.file_size
-                            if total > MAX_UPLOAD_BYTES:
-                                raise too_large()
-                            if info.file_size > 1024 * 1024 and \
-                                    info.file_size > MAX_ZIP_RATIO * max(info.compress_size, 1):
-                                raise too_large()
-                            text_contents.append(zf.read(info).decode("utf-8", errors="replace"))
-            except zipfile.BadZipFile:
-                pass
-        elif lname.endswith(".txt"):
-            total += len(raw)
-            if total > MAX_UPLOAD_BYTES:
-                raise too_large()
-            text_contents.append(raw.decode("utf-8", errors="replace"))
-    return text_contents
+    lname = fname.lower()
+    if lname.endswith(".zip"):
+        try:
+            with zipfile.ZipFile(io.BytesIO(raw)) as zf:
+                for info in zf.infolist():
+                    name = info.filename
+                    if name.lower().endswith(".txt") and not name.startswith("__MACOSX"):
+                        seen[0] += info.file_size
+                        if seen[0] > MAX_UPLOAD_BYTES:
+                            raise too_large()
+                        if info.file_size > 1024 * 1024 and \
+                                info.file_size > MAX_ZIP_RATIO * max(info.compress_size, 1):
+                            raise too_large()
+                        yield zf.read(info).decode("utf-8", errors="replace")
+        except zipfile.BadZipFile:
+            pass
+    elif lname.endswith(".txt"):
+        seen[0] += len(raw)
+        if seen[0] > MAX_UPLOAD_BYTES:
+            raise too_large()
+        text, raw = raw.decode("utf-8", errors="replace"), None
+        yield text
+
+
+def _split_upload_text(parser, text: str) -> list[str]:
+    """parser.split_hands(text), stripped, empty pieces dropped. Strips in place so the
+    unstripped pieces are released one by one instead of living next to the copies."""
+    hands = parser.split_hands(text)
+    for i, h in enumerate(hands):
+        hands[i] = h.strip()
+    return [h for h in hands if h]
 
 
 def _parse_batch(
@@ -738,10 +752,16 @@ def _job_stream(work: "Callable[[str, threading.Event, Callable[[dict], None]], 
     return StreamingResponse(generate(), media_type="application/x-ndjson")
 
 
-def _list_batches(all_hands: list[str], hand_parsers: list) -> "Iterator[list[tuple[str, object]]]":
-    """Already-split hands as one source batch."""
-    if all_hands:
-        yield list(zip(all_hands, hand_parsers))
+def _drain(sources: list) -> "Iterator[tuple[str, object]]":
+    """(hand text, parser) items of `sources` ([parser, hands] pairs, in import order), each
+    reference dropped as it is handed out: the source lists shrink while the import runs
+    instead of holding every hand text until the job ends."""
+    for i in range(len(sources)):
+        parser, hands = sources[i]
+        sources[i] = None
+        hands.reverse()
+        while hands:
+            yield hands.pop(), parser
 
 
 def _chunks(batches, unsupported: list[str]):
@@ -786,8 +806,31 @@ def _stream_import(
 
     hand_parsers[i] is the parser module for all_hands[i]. See _stream_source.
     """
+    sources: list = []
+    for h, p in zip(all_hands, hand_parsers):
+        if sources and sources[-1][0] is p:
+            sources[-1][1].append(h)
+        else:
+            sources.append([p, [h]])
+    return _stream_sources(sources, file_count, workspace_id, pre_errors,
+                           date_from=date_from, date_to=date_to)
+
+
+def _stream_sources(
+    sources: list,
+    file_count: int,
+    workspace_id: int,
+    pre_errors: list[str] | None = None,
+    *,
+    date_from: str | None = None,
+    date_to: str | None = None,
+) -> StreamingResponse:
+    """_stream_import for hands grouped as [parser, hands] pairs (in import order). The
+    import takes ownership of the lists and empties them as it goes (_drain); the hands
+    reach _chunks as one source batch, exactly as one flat list would."""
+    total = sum(len(hands) for _, hands in sources)
     return _stream_source(
-        lambda: _list_batches(all_hands, hand_parsers), len(all_hands), file_count, workspace_id,
+        lambda: iter([_drain(sources)]) if total else iter(()), total, file_count, workspace_id,
         pre_errors, date_from=date_from, date_to=date_to,
     )
 
@@ -982,26 +1025,28 @@ async def import_files_stream(
     date_from: str | None = None,
     date_to: str | None = None,
 ):
-    files_data = [(f.filename or "", await f.read()) for f in files]
-    text_contents = _read_uploads(files_data)
+    # One upload at a time: read, decode, split, then drop the bytes and the text, so only
+    # the split hands of every file are held (not the bytes + text + split + stripped copies
+    # of all files at once). Same order, same 413 checks as _read_uploads.
+    sources: list = []  # [parser, hands] per text with a known site, in upload order
+    file_count = 0
+    seen = [0]
+    for f in files:
+        raw = await f.read()
+        texts = _upload_texts(f.filename or "", raw, seen)
+        del raw  # the generator drops it once decoded
+        for text in texts:
+            file_count += 1
+            parser = detect_parser(text[:500])
+            if parser is not None:
+                hands = _split_upload_text(parser, text)
+                if hands:
+                    sources.append([parser, hands])
+            del text
+        del texts
 
-    # Per-file parser detection + hand splitting
-    all_hands: list[str] = []
-    hand_parsers: list = []  # parallel list: parser module for each hand
-    skipped_files = 0
-    for content in text_contents:
-        parser = detect_parser(content[:500])
-        if parser is None:
-            skipped_files += 1
-            continue
-        for h in parser.split_hands(content):
-            h = h.strip()
-            if h:
-                all_hands.append(h)
-                hand_parsers.append(parser)
-
-    return _stream_import(
-        all_hands, hand_parsers, len(text_contents), workspace_id,
+    return _stream_sources(
+        sources, file_count, workspace_id,
         date_from=date_from, date_to=date_to,
     )
 

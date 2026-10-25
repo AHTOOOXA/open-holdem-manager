@@ -362,3 +362,97 @@ def test_streamed_rebuild_matches_up_front_read(monkeypatch):
     assert seen == [700, 700, 700, 500]
     assert _rebuild_snapshot(new_db) == reference
     assert len(reference[0]) > 2600 * 5
+
+
+# ── 06/F7: uploads are split file by file and the hands released as the import consumes them ──
+
+PS10 = Path(__file__).parent / "fixtures" / "pokerstars" / "10_multiple_hands.txt"
+
+
+def _flat_chunks(flat):
+    """What the pre-change code fed the import: one flat (text, parser) batch."""
+    return [(len(t), p, n) for t, p, n in ih._chunks(iter([flat]), [])]
+
+
+def test_drained_sources_chunk_like_one_flat_batch(monkeypatch):
+    from app.parsers import ggpoker, pokerstars
+    monkeypatch.setattr(ih, "BATCH_SIZE", 3)
+    gg = [f"gg{i}" for i in range(8)]
+    ps = [f"ps{i}" for i in range(5)]
+    layout = [(ggpoker, gg[:4]), (ggpoker, gg[4:7]), (pokerstars, ps), (ggpoker, gg[7:])]
+    flat = [(h, p) for p, hs in layout for h in hs]
+    sources = [[p, list(hs)] for p, hs in layout]
+    lists = [s[1] for s in sources]
+    got = []
+    for batch in iter([ih._drain(sources)]):
+        for texts, parser, consumed in ih._chunks(iter([batch]), []):
+            got.append((list(texts), parser, consumed))
+    assert [(len(t), p, n) for t, p, n in got] == _flat_chunks(flat)
+    assert [h for t, _, _ in got for h in t] == [h for h, _ in flat]
+    assert sources == [None] * 4 and all(lst == [] for lst in lists)  # every reference released
+
+
+def test_upload_progress_and_rows_match_flat_import(db, monkeypatch):
+    import json
+    import app.db as app_db
+    from fastapi.testclient import TestClient
+    from app.main import app
+    from app.parsers import ggpoker, pokerstars
+    monkeypatch.setattr(app_db, "_conn", db)
+    monkeypatch.setattr(ih, "BATCH_SIZE", 4)
+    client = TestClient(app)
+    gg = _first_hands(9) if FIXTURE_20K.exists() else []
+    ps_text = PS10.read_text()
+    files = [
+        ("files", ("a.txt", "\n\n".join(gg[:5]).encode(), "text/plain")),
+        ("files", ("b.TXT", ps_text.encode(), "text/plain")),
+        ("files", ("c.txt", b"not a hand history", "text/plain")),
+        ("files", ("d.txt", ("\n\n\n".join(gg[5:]) + "\n\n").encode(), "text/plain")),
+        ("files", ("e.csv", b"ignored", "text/plain")),
+    ]
+    r = client.post("/api/import/files/stream", files=files)
+    msgs = [json.loads(line) for line in r.text.splitlines() if line.strip()]
+    ps = [h.strip() for h in pokerstars.split_hands(ps_text) if h.strip()]
+    flat = [(h, ggpoker) for h in gg[:5]] + [(h, pokerstars) for h in ps] + [(h, ggpoker) for h in gg[5:]]
+    assert msgs[0]["total"] == len(flat) and msgs[0]["files"] == 4
+    processed = [m["processed"] for m in msgs if m["type"] == "progress"]
+    sizes = [n for _, _, n in _flat_chunks(flat)]
+    assert processed == [sum(sizes[:i + 1]) for i in range(len(sizes))]
+    assert msgs[-1]["imported"] == len(flat) and msgs[-1]["errors"] == 0
+    # Hands went in in upload order: hand_players ids follow the flat order
+    order = [r[0] for r in db.execute(
+        "SELECT hand_id FROM hand_players GROUP BY hand_id ORDER BY MIN(id)").fetchall()]
+    parsers = {ggpoker: ggpoker, pokerstars: pokerstars}
+    assert order == [parsers[p].extract_hand_id(h) for h, p in flat]
+
+
+def test_stream_upload_zip_entries_and_size_limit(db, monkeypatch):
+    import io
+    import json
+    import zipfile
+    import app.db as app_db
+    from fastapi.testclient import TestClient
+    from app.main import app
+    monkeypatch.setattr(app_db, "_conn", db)
+    client = TestClient(app)
+    gg = _first_hands(6)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("one.txt", "\n\n".join(gg[:3]))
+        zf.writestr("__MACOSX/._one.txt", "junk")
+        zf.writestr("notes.md", "junk")
+        zf.writestr("sub/two.TXT", "\n\n".join(gg[3:]))
+    r = client.post("/api/import/files/stream", files=[
+        ("files", ("hh.zip", buf.getvalue(), "application/zip")),
+        ("files", ("bad.zip", b"PK not a zip", "application/zip")),
+    ])
+    msgs = [json.loads(line) for line in r.text.splitlines() if line.strip()]
+    assert msgs[0]["files"] == 2 and msgs[0]["total"] == 6
+    assert msgs[-1]["imported"] == 6
+    # Same texts, same order as _read_uploads gives the non-streaming endpoint
+    assert ih._read_uploads([("hh.zip", buf.getvalue())]) == ["\n\n".join(gg[:3]), "\n\n".join(gg[3:])]
+
+    monkeypatch.setattr(ih, "MAX_UPLOAD_BYTES", 100)
+    r = client.post("/api/import/files/stream", files=[
+        ("files", ("a.txt", b"x" * 60, "text/plain")), ("files", ("b.txt", b"y" * 60, "text/plain"))])
+    assert r.status_code == 413
