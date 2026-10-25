@@ -267,7 +267,9 @@ def test_double_casts_equal_float_of_decimal(bench_db, hero_id):
 
 @pytest.mark.parametrize("chain", [[], [{"k": "pos", "v": ["BTN"]}], [{"k": "row", "key": "P01"}]])
 def test_players_split_equals_the_record_path(bench_db, hero_id, chain):
-    """05/S2: the SQL GROUP BY per opponent equals folding the opponents' records."""
+    """05/S2: the per-opponent aggregate (no HandRec per row) equals folding the opponents'
+    records: same players, order and counts; floats differ at most in the last bits (the old
+    fold's row order came from chunked id queries) and never at display precision."""
     db = bench_db.cursor()
     steps = chain_mod.CHAIN.validate_python(chain)
     res = chain_mod._compute(db, 1, hero_id, steps, 0)
@@ -282,18 +284,17 @@ def test_players_split_equals_the_record_path(bench_db, hero_id, chain):
                  key=lambda t: (-t[2].hands, t[1], t[0]))
     got = split_mod.players_table(db, res)
     assert [(p, n) for p, n, _ in got] == [(p, n) for p, n, _ in ref]
-    flips = 0
+    bits = shown = 0
     for (_p, _n, a), (_p2, _n2, b) in zip(got, ref):
         for s in split_mod.Acc.__slots__:
             x, y = getattr(a, s), getattr(b, s)
-            if isinstance(y, float) or isinstance(x, float):
-                assert x == pytest.approx(y, rel=1e-12, abs=1e-9), s
-                flips += _disp(x) != _disp(y)
-            else:
+            assert type(x) is type(y), s
+            if not isinstance(x, float):
                 assert x == y, s
-    # Exact DECIMAL sums vs sequential float sums differ only in the last bits; a displayed
-    # cent can only move when the exact sum ends in .xx5 (then the old value was arbitrary).
-    assert flips <= len(got) // 1000
+        d = _compare(split_mod.plain_values(a), split_mod.plain_values(b))
+        bits, shown = bits + d[0], shown + d[1]
+    assert shown == 0
+    assert bits <= len(got)   # a few last-bit differences, mostly none
     db.close()
 
 

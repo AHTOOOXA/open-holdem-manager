@@ -232,7 +232,7 @@ def _make_merge():
 _merge = _make_merge()
 
 
-# ── SQL aggregation (plain chains, Players) ─────────────────────────────
+# ── Arrow aggregation (plain chains, Players) ───────────────────────────
 #
 # The same sums as `Acc.add`, without one Python object per hand. Plain chains fetch one
 # narrow row per case hand as Arrow, in hand insertion order (chain.ORDER), and sum each group
@@ -292,14 +292,21 @@ def plain_groups(db, res: Resolution, keys: list[str]) -> list[tuple[tuple, Acc]
     (none = one group), in order of the groups' first hand (as `_group_plain` builds them)."""
     if not res.n_cases:
         return []
+    return arrow_groups(db, keys, f"{_FROM} WHERE {res.where}", res.params)
+
+
+def arrow_groups(db, keys: list[str], from_where: str, params: list, order: str = ORDER
+                 ) -> list[tuple[tuple, Acc]]:
+    """`plain_groups` over any rows (`from_where`: FROM ... WHERE ... with aliases hp, h),
+    summed in `order`."""
     names = [f"k{i}" for i in range(max(1, len(keys)))]
     kcols = [f"{k} AS k{i}" for i, k in enumerate(keys)] or ["1 AS k0"]
-    tbl = db.execute(f"SELECT {', '.join(kcols)}, {_ROW_SQL} {_FROM} WHERE {res.where}{ORDER}",
-                     res.params).fetch_arrow_table()
+    tbl = db.execute(f"SELECT {', '.join(kcols)}, {_ROW_SQL} {from_where}{order}",
+                     params).fetch_arrow_table()
     agg = tbl.group_by(names, use_threads=False).aggregate(_ROW_AGGS)
     agg = agg.select(names + ["count_all"] + [c + "_sum" for c in (*_ROW_FLOATS, *_ROW_INTS)])
     n = len(names)
-    build = _build_sql_acc   # same slot order: hands, floats, ints
+    build = _build_acc   # slot order of _ACC_COLS
     # DuckDB converts the (small) aggregate to Python values faster than Arrow's to_pylist;
     # a NULL sum (no row added, e.g. won_nsd) stays int 0 like Acc.add.
     return [(r[:n], build(tuple(0 if v is None else v for v in r[n:])))
@@ -330,23 +337,7 @@ def plain_times(db, res: Resolution, key: str | None = None) -> dict:
     return out
 
 
-_SQL_FLOATS = {
-    "won": "SUM(COALESCE(hp.won, 0))",
-    "won_bb": "SUM(COALESCE(hp.won_bb, 0))",
-    "ev": "SUM(COALESCE(hp.all_in_ev_bb, hp.won_bb, 0) * h.bb_amount)",
-    "ev_bb": "SUM(COALESCE(hp.all_in_ev_bb, hp.won_bb, 0))",
-    "rake": "SUM(COALESCE(hp.rake, 0))",
-    "rake_bb": "SUM(COALESCE(hp.rake_bb, 0))",
-    "sq": "SUM(COALESCE(hp.won_bb, 0) * COALESCE(hp.won_bb, 0))",
-    "won_nsd": f"SUM(COALESCE(hp.won, 0)) FILTER (WHERE NOT {_SD})",
-}
-# Exact DECIMAL sums, cast once (the same float as float(Decimal) of the sum: an exact
-# integer divided by a power of ten); NULL (no row) stays int 0 like Acc.add.
-assert tuple(_SQL_FLOATS) == tuple(_ROW_FLOATS)
-_SQL_COLS = ("hands", *_SQL_FLOATS, *_ROW_INTS)
-_SQL_AGGS = ", ".join(["COUNT(*) AS hands"]
-                      + [f"CAST({e} AS DOUBLE) AS {c}" for c, e in _SQL_FLOATS.items()]
-                      + [f"CAST(SUM({e}) AS BIGINT) AS {c}" for c, e in _ROW_INTS.items()])
+_ACC_COLS = ("hands", *_ROW_FLOATS, *_ROW_INTS)   # order of the aggregate columns
 
 
 def _make_acc_builder(names: tuple[str, ...]):
@@ -360,14 +351,7 @@ def _make_acc_builder(names: tuple[str, ...]):
     return ns["build"]
 
 
-_build_sql_acc = _make_acc_builder(_SQL_COLS)
-
-
-def sql_accs(db, sql: str, params: list, n_keys: int) -> list[tuple]:
-    """Rows of `sql` = (`n_keys` key columns, then the `_SQL_COLS` columns) as (keys, Acc)."""
-    build = _build_sql_acc
-    return [(r[:n_keys], build(tuple(0 if v is None else v for v in r[n_keys:])))
-            for r in db.execute(sql, params).fetchall()]
+_build_acc = _make_acc_builder(_ACC_COLS)
 
 
 def _pct(a, b):
@@ -589,17 +573,19 @@ def tables_split(db, res: Resolution) -> tuple[list[dict], dict | None]:
 
 def players_table(db, res: Resolution) -> list[tuple[int, str, Acc]]:
     """(player id, username, Acc of the opponent's own rows) per opponent dealt in to the
-    chain's case hands, Hands descending: one SQL GROUP BY over the opponents' rows (exact
-    DECIMAL money sums)."""
+    chain's case hands, Hands descending: the opponents' rows summed per player in hand order
+    (Arrow, like the plain splits) instead of one HandRec per row. The same arithmetic as
+    folding the records hand by hand; the previous fold took the rows in the order of 5000-id
+    chunk queries, so sums can differ from it in the last bits (constant results such as a
+    dispersion of 0 are exact either way)."""
     if res.player_id is None or not res.n_cases:
         return []
     pred, pparams = case_filter(db, res, "hp.hand_id")
-    cols = ", ".join(_SQL_COLS)
-    rows = sql_accs(db, (
-        f"SELECT a.pid, p.username, {cols} FROM (SELECT hp.player_id AS pid, {_SQL_AGGS} "
-        f"{_FROM} WHERE h.workspace_id = ? AND hp.player_id <> ? "
-        f"AND COALESCE(hp.h2n_valid, TRUE) AND {pred} GROUP BY hp.player_id) a "
-        "JOIN players p ON p.id = a.pid"), [res.workspace_id, res.player_id, *pparams], 2)
+    rows = arrow_groups(
+        db, ["hp.player_id", "p.username"],
+        f"{_FROM} JOIN players p ON p.id = hp.player_id WHERE h.workspace_id = ? "
+        f"AND hp.player_id <> ? AND COALESCE(hp.h2n_valid, TRUE) AND {pred}",
+        [res.workspace_id, res.player_id, *pparams])
     out = [(int(pid), name, acc) for (pid, name), acc in rows]
     out.sort(key=lambda t: (-t[2].hands, t[1], t[0]))
     return out
