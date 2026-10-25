@@ -403,9 +403,10 @@ def test_debug_memory_counts_cached_resolutions(db, monkeypatch):
     from types import SimpleNamespace
     from app.api import debug
     from app.reports import chain as chain_mod
-    fake = SimpleNamespace(hands=[1, 2, 3], blobs={"a": b"xyz", "b": None})
-    chain_mod._CACHE.put(("probe",), fake)
+    fake = SimpleNamespace(hands=[1, 2, 3], blobs={"a": b"xyz", "b": None},
+                           approx_bytes=lambda: 0)  # the byte-bounded LRU sizes every entry
     try:
+        chain_mod._CACHE.put(("probe",), fake)
         info = debug._cache_info("app.reports.chain", "_CACHE")
     finally:
         chain_mod._CACHE.clear()
