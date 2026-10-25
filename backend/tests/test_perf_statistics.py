@@ -133,3 +133,44 @@ def test_cache_is_per_player_and_row(client, db):
     d = client.get("/api/general/cell/preflop.open_raise.Total/detail").json()
     d2 = client.get("/api/general/cell/preflop.open_raise.BTN/detail").json()
     assert d2["replayed"] == 0 and d["cases"] == d2["cases"]
+
+
+# ── slim detail query + joined blob fetch (04/F3, F5) ────────────────────
+
+
+_CELLS = ("summary.vpip.Total", "summary.pfr.Total", "preflop.open_raise.Total",
+          "preflop.three_bet.Total", "postflop.cbet.Flop", "postflop.fold_to_cbet.Flop",
+          "postflop.cbet.Turn")
+
+
+def _details(client, **params) -> dict:
+    out = {}
+    for cell in _CELLS:
+        r = client.get(f"/api/general/cell/{cell}/detail", params=params)
+        assert r.status_code == 200, r.text
+        out[cell] = r.json()
+    return out
+
+
+def test_joined_fetch_equals_id_list_fetch(client, db, monkeypatch):
+    _insert(db, *_cbet_hands())
+    by_ids = _details(client)
+    gp.clear_cache()
+    monkeypatch.setattr(gp, "_JOIN_FETCH_MIN", 0)
+    assert _details(client) == by_ids
+    gp.clear_cache()
+    filtered = _details(client, date_from="2026-01-01")
+    assert {k: v["cases"] for k, v in filtered.items()} == {k: v["cases"] for k, v in by_ids.items()}
+    # stored sequences missing: the joined history fetch re-parses
+    db.execute("UPDATE hand_players SET h2n_seq = NULL")
+    gp.clear_cache()
+    assert _details(client) == by_ids
+
+
+def test_detail_of_a_player_without_hands(client, db):
+    _insert(db, *_cbet_hands())
+    pid = db.execute("SELECT MAX(id) + 1 FROM players").fetchone()[0]
+    db.execute("INSERT INTO players (id, username, site_id) VALUES (?, 'nobody', 1)", [pid])
+    d = client.get("/api/general/cell/summary.vpip.Total/detail", params={"player_id": pid}).json()
+    assert (d["cases"], d["opps"], d["value"], d["replayed"]) == (0, 0, None, 0)
+    assert d["player"] == "nobody"

@@ -922,7 +922,8 @@ def _fetch_seqs(db, workspace_id: int, ids: list[str]) -> dict[str, bytes]:
 
 
 def _records(db, workspace_id: int, player_id: int, username: str, row: str, street: int,
-             hand_ids: Iterable[str]) -> tuple[dict[str, int], int, int]:
+             hand_ids: Iterable[str], scope: "_Scope | None" = None
+             ) -> tuple[dict[str, int], int, int]:
     """Packed replay records of the player's hands: (by hand id, replayed, failed).
 
     The result holds no entry for a hand whose replay failed or that is no opportunity.
@@ -930,6 +931,8 @@ def _records(db, workspace_id: int, player_id: int, username: str, row: str, str
     (`hand_players.h2n_seq`): decoding it is ~25x cheaper than re-parsing the
     hand history. Postflop rows also need the boards and hole cards, and
     hands without a usable stored sequence (older imports) are re-parsed.
+    `scope` (the query that selected `hand_ids`) lets a big batch fetch the stored
+    sequences / histories with one join instead of id lists.
     """
     key = (workspace_id, player_id, row)
     cached = _RECORDS.segment(key)
@@ -944,7 +947,7 @@ def _records(db, workspace_id: int, player_id: int, username: str, row: str, str
     failed = 0
     if missing:
         with _gc_paused():
-            done = _replay_missing(db, workspace_id, username, row, street, missing)
+            done = _replay_missing(db, workspace_id, username, row, street, missing, scope)
         for hid, v in done:
             if v:
                 out[hid] = v
@@ -979,44 +982,85 @@ def _safe_pack(hid: str, rec: _Rec | None) -> int:
         return _NONE
 
 
+# Above this many hands to fetch, the stored sequences / histories come from one join over
+# the selecting query instead of an id list (04/F5: 42 chunked queries at 214k).
+_JOIN_FETCH_MIN = 2000
+
+
+def _stream(db, sql: str, params: list, batch: int = 8192):
+    cur = db.execute(sql, params)
+    while True:
+        rows = cur.fetchmany(batch)
+        if not rows:
+            return
+        yield from rows
+
+
+def _seq_rows(db, workspace_id: int, ids: list[str], scope: "_Scope | None"):
+    """(hand id, stored sequence) for `ids` (hands without one are left out)."""
+    if scope is None or len(ids) < _JOIN_FETCH_MIN:
+        return list(_fetch_seqs(db, workspace_id, ids).items())
+    want = set(ids)
+    sql, params = scope.sql(
+        "hp.hand_id, s.h2n_seq",
+        join="JOIN hand_players s ON s.hand_id = hp.hand_id AND s.workspace_id = hp.workspace_id "
+             "AND s.h2n_seq IS NOT NULL")
+    return ((hid, blob) for hid, blob in _stream(db, sql, params) if hid in want)
+
+
+def _raw_rows(db, workspace_id: int, ids: list[str], scope: "_Scope | None"):
+    """(hand id, (raw_text, site_id)) for `ids`."""
+    if scope is None or len(ids) < _JOIN_FETCH_MIN:
+        return list(_fetch_raw(db, workspace_id, ids).items())
+    want = set(ids)
+    sql, params = scope.sql(
+        "hp.hand_id, hr.raw_text, hr.site_id",
+        join="JOIN hands hr ON hr.id = hp.hand_id AND hr.workspace_id = hp.workspace_id")
+    return ((hid, (raw, site)) for hid, raw, site in _stream(db, sql, params) if hid in want)
+
+
 def _replay_missing(db, workspace_id: int, username: str, row: str, street: int,
-                    missing: list[str]) -> list[tuple[str, int]]:
+                    missing: list[str], scope: "_Scope | None" = None) -> list[tuple[str, int]]:
     """(hand id, packed record) for every hand not in the cache."""
-    todo: list[str] = []
     done: list[tuple[str, int]] = []
+    todo: list[str]
     if street == 0:
-        blobs = _fetch_seqs(db, workspace_id, missing)
-        for hid in missing:
-            seq = None
-            blob = blobs.get(hid)
-            if blob is not None:
-                try:
-                    seq = decode_sequence(blob)
-                except Exception:
-                    log.warning("stored sequence of hand %s is unreadable", hid, exc_info=True)
-            if seq is None:
-                todo.append(hid)
+        decoded: set[str] = set()
+        for hid, blob in _seq_rows(db, workspace_id, missing, scope):
+            if hid in decoded:
                 continue
+            try:
+                seq = decode_sequence(blob)
+            except Exception:
+                log.warning("stored sequence of hand %s is unreadable", hid, exc_info=True)
+                continue
+            if seq is None:
+                continue
+            decoded.add(hid)
             rec = None
             try:
                 rec = _compute_record(None, seq, username, row, street)
             except Exception:
                 log.warning("popup replay failed for hand %s", hid, exc_info=True)
             done.append((hid, _safe_pack(hid, rec)))
+        todo = [hid for hid in missing if hid not in decoded]
     else:
         todo = missing
     if todo:
-        raw = _fetch_raw(db, workspace_id, todo)
-        for hid in todo:
+        found: set[str] = set()
+        for hid, src in _raw_rows(db, workspace_id, todo, scope):
+            if hid in found:
+                continue
+            found.add(hid)
             rec = None
-            src = raw.get(hid)
-            if src and src[0]:
+            if src[0]:
                 try:
                     parsed, seq = _parse(*src)
                     rec = _compute_record(parsed, seq, username, row, street)
                 except Exception:
                     log.warning("popup replay failed for hand %s", hid, exc_info=True)
             done.append((hid, _safe_pack(hid, rec)))
+        done.extend((hid, _NONE) for hid in todo if hid not in found)
     return done
 
 
@@ -1061,13 +1105,42 @@ class _Hand:
     ev_bb: float | None
 
 
-def _query_hands(db, stat: _Stat, player_id: int, workspace_id: int, filters: tuple[str, list],
-                 cases_only: bool) -> list[_Hand]:
+class _Scope:
+    """FROM / WHERE / params of a cell's rows: `hand_players hp` of one player in a workspace,
+    joined to `hands h` only when a filter reads it (hp.workspace_id already holds the
+    workspace; same rows, 04/F9). The request filter (`fsql`, leading " AND ") goes last,
+    verbatim, as in GET /api/general."""
+
+    __slots__ = ("where", "params", "fsql", "fparams")
+
+    def __init__(self, where: list[str], params: list, fsql: str, fparams: list):
+        self.where = where
+        self.params = params
+        self.fsql = fsql
+        self.fparams = fparams
+
+    def narrow(self, cond: str, params: Iterable = ()) -> "_Scope":
+        return _Scope([*self.where, cond], [*self.params, *params], self.fsql, self.fparams)
+
+    def sql(self, select: str, *, join: str = "", hands: bool = False, tail: str = "",
+            tail_params: Iterable = ()) -> tuple[str, list]:
+        frm = "hand_players hp"
+        if self.fsql.strip() or hands:
+            frm += " JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id"
+        if join:
+            frm += " " + join
+        return (f"SELECT {select} FROM {frm} WHERE {' AND '.join(self.where)}{self.fsql} {tail}",
+                [*self.params, *self.fparams, *tail_params])
+
+
+def _cell_scope(stat: _Stat, player_id: int, workspace_id: int, filters: tuple[str, list],
+                bit_sql: str) -> _Scope:
+    """The player's rows of the cell (position group, H2N-valid hands, filters) whose
+    `bit_sql` (opportunity or case bit) is set."""
     ref = stat.cell.ref
-    where = ["hp.player_id = ?", "h.workspace_id = ?", "COALESCE(hp.h2n_valid, TRUE)"]
+    where = ["hp.player_id = ?", "hp.workspace_id = ?", "COALESCE(hp.h2n_valid, TRUE)",
+             f"{bit_sql} = 1"]
     params: list = [player_id, workspace_id]
-    bit = sql_case(stat.row) if cases_only else sql_opp(stat.row)
-    where.append(f"{bit} = 1")
     if ref.positions is not None:
         marks = ", ".join("?" for _ in ref.positions)
         if ref.exclude:
@@ -1075,18 +1148,22 @@ def _query_hands(db, stat: _Stat, player_id: int, workspace_id: int, filters: tu
         else:
             where.append(f"hp.h2n_pos IN ({marks})")
         params.extend(ref.positions)
-    hv = f"hp.hv_{STREET_NAMES[stat.street]}" if stat.street > 0 else "NULL"
     fsql, fparams = filters
-    rows = db.execute(f"""
-        SELECT h.id, h.played_at, h.stakes, h.site_id, p.username, hp.h2n_pos,
+    return _Scope(where, params, fsql, list(fparams))
+
+
+def _query_hands(db, stat: _Stat, player_id: int, workspace_id: int, filters: tuple[str, list],
+                 cases_only: bool) -> list[_Hand]:
+    bit = sql_case(stat.row) if cases_only else sql_opp(stat.row)
+    scope = _cell_scope(stat, player_id, workspace_id, filters, bit)
+    hv = f"hp.hv_{STREET_NAMES[stat.street]}" if stat.street > 0 else "NULL"
+    sql, params = scope.sql(f"""
+        h.id, h.played_at, h.stakes, h.site_id, p.username, hp.h2n_pos,
                {sql_case(stat.row)}, COALESCE(hp.went_to_showdown, FALSE),
                COALESCE(hp.is_winner, FALSE), {hv}, hp.won, hp.won_bb,
-               COALESCE(hp.all_in_ev_bb, hp.won_bb)
-        FROM hand_players hp
-        JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
-        JOIN players p ON p.id = hp.player_id
-        WHERE {" AND ".join(where)}{fsql}
-    """, params + fparams).fetchall()
+               COALESCE(hp.all_in_ev_bb, hp.won_bb)""",
+                            hands=True, join="JOIN players p ON p.id = hp.player_id")
+    rows = db.execute(sql, params).fetchall()
     return [
         _Hand(r[0], r[1], r[2], r[3], r[4], r[5], bool(r[6]), bool(r[7]), bool(r[8]),
               None if r[9] is None else int(r[9]),
@@ -1095,6 +1172,37 @@ def _query_hands(db, stat: _Stat, player_id: int, workspace_id: int, filters: tu
               None if r[12] is None else float(r[12]))
         for r in rows
     ]
+
+
+def _summary_counts(db, stat: _Stat, scope: _Scope):
+    """(opps, cases, showdowns, won, won at showdown, stat-street hand values of the cases)
+    over the cell's opportunity rows, counted in SQL (04/F3)."""
+    hv = f"hp.hv_{STREET_NAMES[stat.street]}" if stat.street > 0 else "NULL"
+    sql, params = scope.sql(
+        f"{sql_case(stat.row)}, COALESCE(hp.went_to_showdown, FALSE), "
+        f"COALESCE(hp.is_winner, FALSE), {hv}, COUNT(*)",
+        tail="GROUP BY ALL")
+    opps = cases = sd = won = won_sd = 0
+    hv_counts: dict[int, int] = {}
+    for case, is_sd, win, val, n in db.execute(sql, params).fetchall():
+        opps += n
+        if not case:
+            continue
+        cases += n
+        if is_sd:
+            sd += n
+        if win:
+            won += n
+            if is_sd:
+                won_sd += n
+        if val is not None:
+            hv_counts[int(val)] = hv_counts.get(int(val), 0) + n
+    return opps, cases, sd, won, won_sd, hv_counts
+
+
+def _username(db, player_id: int) -> str | None:
+    r = db.execute("SELECT username FROM players WHERE id = ?", [player_id]).fetchone()
+    return r[0] if r else None
 
 
 def _target_player(db, workspace_id: int, player_id: int | None) -> int | None:
@@ -1209,44 +1317,37 @@ def _aggregate(stat: _Stat, groups: Counter, buckets: tuple[_Bucket, ...]
 
 def compute_detail(db, stat: _Stat, player_id: int, workspace_id: int,
                    filters: tuple[str, list], filter_steps: list[dict] | None = None) -> CellDetail:
-    hands = _query_hands(db, stat, player_id, workspace_id, filters, cases_only=False)
-    cases = [h for h in hands if h.case]
-    n_cases = len(cases)
-    sd = sum(1 for h in cases if h.sd)
-    won = sum(1 for h in cases if h.win)
-    won_sd = sum(1 for h in cases if h.win and h.sd)
-
-    strength = None
-    if stat.street > 0:
-        counts: dict[int, int] = {}
-        for h in cases:
-            if h.hv is not None:
-                counts[h.hv] = counts.get(h.hv, 0) + 1
-        strength = _strength(stat.street, counts)
+    player = _username(db, player_id)
+    scope = _cell_scope(stat, player_id, workspace_id, filters, sql_opp(stat.row))
+    opps = n_cases = sd = won = won_sd = 0
+    hv_counts: dict[int, int] = {}
+    groups: Counter = Counter()
+    replayed = failed = 0
+    if player is not None:
+        opps, n_cases, sd, won, won_sd, hv_counts = _summary_counts(db, stat, scope)
 
     buckets = _stat_buckets(stat)
-    # Boards and Bet Sizes count opportunities too; otherwise only cases are replayed.
-    replay_set = hands if (stat.street > 0 or buckets) else cases
-    username = hands[0].username if hands else ""
-    recs, replayed, failed = _records(db, workspace_id, player_id, username, stat.row, stat.street,
-                                      (h.hand_id for h in replay_set))
-    groups: Counter = Counter()
-    for h in replay_set:
-        v = recs.get(h.hand_id)
-        if v:
-            groups[v << 1 | h.case] += 1
+    if player is not None and opps:
+        # Boards and Bet Sizes count opportunities too; otherwise only cases are replayed.
+        case_sql = sql_case(stat.row)
+        replay_scope = scope if (stat.street > 0 or buckets) else scope.narrow(f"{case_sql} = 1")
+        sql, params = replay_scope.sql(f"hp.hand_id, {case_sql}")
+        rows = db.execute(sql, params).fetchall()
+        recs, replayed, failed = _records(db, workspace_id, player_id, player, stat.row,
+                                          stat.street, (r[0] for r in rows), replay_scope)
+        get = recs.get
+        for hid, case in rows:
+            v = get(hid)
+            if v:
+                groups[v << 1 | case] += 1
     summary_next, boards, sizes = _aggregate(stat, groups, buckets)
 
-    player = None
-    r = db.execute("SELECT username FROM players WHERE id = ?", [player_id]).fetchone()
-    if r:
-        player = r[0]
     return CellDetail(
         cell_id=stat.cell_id, row=stat.row,
         notation=ROWS[stat.row].notation, street=STREET_NAMES[stat.street],
         player=player, player_id=player_id,
-        value=n_cases / len(hands) * 100.0 if hands else None, cases=n_cases, opps=len(hands),
-        strength=strength,
+        value=n_cases / opps * 100.0 if opps else None, cases=n_cases, opps=opps,
+        strength=_strength(stat.street, hv_counts) if stat.street > 0 else None,
         summary=Summary(won_hand=_ratio(won, n_cases), wtsd=_ratio(sd, n_cases),
                         wsd=_ratio(won_sd, sd), next=summary_next.model()),
         boards=boards, bet_sizes=sizes, replayed=replayed, replay_failed=failed,
