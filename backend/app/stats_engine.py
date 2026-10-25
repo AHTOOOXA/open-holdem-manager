@@ -23,7 +23,14 @@ NON_H2N_FIELDS. The drill-down registry (stat_registry.py) uses the same
 definitions; tests/test_stat_parity.py keeps them in sync.
 """
 
+import re
+import threading
+from collections import OrderedDict
+from typing import Any, Callable
+
 import duckdb
+from app import data_generation
+from app.concurrency import heavy_slot
 from app.date_filters import DATE_TO_SQL
 from app.h2n.rows import ROWS, sql_case, sql_opp
 from app.models import HeroStats, PositionalStats, StatValue
@@ -51,8 +58,9 @@ _SD = "COALESCE(hp.went_to_showdown, FALSE)::INTEGER"
 _WIN = "COALESCE(hp.is_winner, FALSE)::INTEGER"
 
 # SQL aggregation query: all counts in one pass, grouped by H2N position.
-# `{where}` is filled by the callers (also api/identities.py, api/population.py).
-_AGG_SQL = f"""
+# `{where}` is filled by the callers (also api/identities.py, api/population.py);
+# `{hands_join}` by agg_sql() (empty when no hands column is needed).
+_AGG_SQL_T = f"""
 SELECT
     {POS_SQL} AS position,
     COUNT(*) as hands,
@@ -79,10 +87,116 @@ SELECT
     SUM(CASE WHEN hp.cbet_turn_opp AND hp.missed_cbet_turn THEN 1 ELSE 0 END) as missed_cbet_turn
 
 FROM hand_players hp
-JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
+{{hands_join}}
 WHERE ({{where}}) AND {VALID_SQL}
 GROUP BY 1
 """
+
+_HANDS_JOIN = "JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id"
+# Kept for callers that format the template themselves (api/identities.py): always joins.
+_AGG_SQL = _AGG_SQL_T.replace("{hands_join}", _HANDS_JOIN)
+
+_H_REF = re.compile(r"\bh\.")
+_H_WS = re.compile(r"\bh\.workspace_id\b")
+
+
+def agg_sql(where: str) -> str:
+    """_AGG_SQL for `where`, joining `hands` only when `where` reads a hands column.
+
+    The join only matches every hand_players row to its hand (the import invariant: no
+    hand_players row without its hand), so when the only hands column used is the workspace,
+    `hp.workspace_id` (equal by the join condition) gives the same rows without the join.
+    """
+    lean = _H_WS.sub("hp.workspace_id", where)
+    if _H_REF.search(lean):
+        return _AGG_SQL_T.format(hands_join=_HANDS_JOIN, where=where)
+    return _AGG_SQL_T.format(hands_join="", where=lean)
+
+
+# ── in-process result cache ──────────────────────────────────────────
+
+
+class ResultCache:
+    """Small LRU of computed results that only change when hand data changes.
+
+    Entries are keyed on (data generation, caller key) and the whole cache is dropped on every
+    `data_generation.bump()`. A result is only stored when nothing could have changed under
+    it: no rebuild running, no writer holding the DB lock at the start or the end of the
+    computation, the same generation before and after, and the same hand-data fingerprint
+    (row counts, top id) on the same connection. The finalize step of an import bumps first and
+    rewrites player classifications afterwards under the lock, hence the lock check.
+
+    Cached values are shared: callers must treat them as read-only.
+    """
+
+    def __init__(self, name: str, capacity: int = 64):
+        self.name = name
+        self.capacity = capacity
+        self._d: OrderedDict = OrderedDict()
+        self._lock = threading.Lock()
+        self.hits = 0
+        self.misses = 0
+        data_generation.on_bump(self.clear)
+
+    def clear(self) -> None:
+        with self._lock:
+            self._d.clear()
+
+    def __len__(self) -> int:
+        return len(self._d)
+
+    def get_or_compute(self, db, key: Any, compute: Callable[[], Any], *, heavy: bool = False):
+        from app import db as app_db
+        if app_db.get_rebuild_status().get("active"):
+            return self._run(compute, heavy)
+        conn = app_db._conn
+        gen = data_generation.current()
+        idle = _writer_idle()
+        full = (gen, id(conn), _fingerprint(db), key)
+        with self._lock:
+            hit = self._d.get(full)
+            if hit is not None and hit[0] is conn:
+                self._d.move_to_end(full)
+                self.hits += 1
+                return hit[1]
+        self.misses += 1
+        value = self._run(compute, heavy)
+        if idle and _writer_idle() and data_generation.current() == gen:
+            with self._lock:
+                self._d[full] = (conn, value)
+                self._d.move_to_end(full)
+                while len(self._d) > self.capacity:
+                    self._d.popitem(last=False)
+        return value
+
+    @staticmethod
+    def _run(compute, heavy: bool):
+        if heavy:
+            with heavy_slot():
+                return compute()
+        return compute()
+
+
+def _writer_idle() -> bool:
+    """True when no other thread holds the DB write lock right now."""
+    from app.db import db_lock
+    lock = db_lock()
+    if lock.acquire(blocking=False):
+        lock.release()
+        return True
+    return False
+
+
+def _fingerprint(db) -> tuple:
+    """Cheap hand-data fingerprint (~0.5 ms at 1.3M rows): catches inserts and deletes that
+    happen between two generation bumps (e.g. between the batches of a running import)."""
+    return tuple(db.execute(
+        "SELECT (SELECT COUNT(*) FROM hand_players), (SELECT MAX(id) FROM hand_players), "
+        "(SELECT COUNT(*) FROM hands)"
+    ).fetchone())
+
+
+_STATS_CACHE = ResultCache("stats")
 
 
 def _pct(cases: float, opps: int) -> StatValue:
@@ -95,13 +209,23 @@ def _compute_stats_from_query(
     params: list,
     *,
     sql_override: str | None = None,
+    heavy: bool = False,
 ) -> HeroStats:
     """Compute HeroStats from a pre-built WHERE clause (shared core logic).
 
     If sql_override is provided, it is used as the full SQL instead of
     formatting _AGG_SQL with the where clause (used for CTE queries).
+
+    The result is memoised per (SQL, params) until the hand data changes (ResultCache); the
+    returned object is shared, don't mutate it. `heavy` runs a cache miss in a heavy_slot().
     """
-    sql = sql_override or _AGG_SQL.format(where=where)
+    sql = sql_override or agg_sql(where)
+    params = list(params)
+    return _STATS_CACHE.get_or_compute(
+        db, (sql, tuple(params)), lambda: _stats_from_sql(db, sql, params), heavy=heavy)
+
+
+def _stats_from_sql(db: duckdb.DuckDBPyConnection, sql: str, params: list) -> HeroStats:
     rows = db.execute(sql, params).fetchall()
     if not rows:
         return HeroStats()
@@ -366,33 +490,30 @@ def compute_population_stats(
 ) -> HeroStats:
     """Compute aggregated population stats (all players except hero).
 
-    Uses a CTE to filter eligible players by min_hands, then runs
-    the standard aggregation query over their hands.
+    With min_hands > 1 a CTE first keeps the players with at least min_hands
+    hands under the same filters, then the standard aggregation runs over
+    their hands. With min_hands <= 1 every player with a matching row passes,
+    so the CTE is left out.
     """
-    # Build the eligible players CTE
-    cte_where = "h2.workspace_id = ?"
-    cte_params: list = [workspace_id]
-    if exclude_player_id:
-        cte_where += " AND hp2.player_id != ?"
-        cte_params.append(exclude_player_id)
-
-    # Main WHERE for the aggregation
     where = "h.workspace_id = ?"
     main_params: list = [workspace_id]
     if exclude_player_id:
         where += " AND hp.player_id != ?"
         main_params.append(exclude_player_id)
     if stakes:
-        cte_where += " AND h2.stakes = ?"
-        cte_params.append(stakes)
         where += " AND h.stakes = ?"
         main_params.append(stakes)
     if game_mode is not None:
-        cte_where += " AND h2.game_mode = ?"
-        cte_params.append(game_mode)
         where += " AND h.game_mode = ?"
         main_params.append(game_mode)
 
+    if min_hands <= 1:
+        # every player with a row passes the CTE; only its IN drops rows without a player
+        return _compute_stats_from_query(
+            db, where + " AND hp.player_id IS NOT NULL", main_params, heavy=True)
+
+    # The eligible-players CTE: same filters as the aggregation
+    cte_where = where.replace("h.", "h2.").replace("hp.", "hp2.")
     cte = f"""WITH eligible AS (
         SELECT hp2.player_id FROM hand_players hp2
         JOIN hands h2 ON hp2.hand_id = h2.id AND hp2.workspace_id = h2.workspace_id
@@ -400,10 +521,10 @@ def compute_population_stats(
         GROUP BY hp2.player_id HAVING COUNT(*) >= ?
     )
     """
-    cte_params.append(min_hands)
+    cte_params = main_params + [min_hands]
 
     where += " AND hp.player_id IN (SELECT player_id FROM eligible)"
-    full_sql = cte + _AGG_SQL.format(where=where)
+    full_sql = cte + agg_sql(where)
     all_params = cte_params + main_params
 
-    return _compute_stats_from_query(db, where, all_params, sql_override=full_sql)
+    return _compute_stats_from_query(db, where, all_params, sql_override=full_sql, heavy=True)

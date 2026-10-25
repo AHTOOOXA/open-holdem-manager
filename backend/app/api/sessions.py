@@ -21,8 +21,13 @@ from app.app_settings import get_app_settings
 from app.db import get_read_cursor
 from app.heroes import resolve_hero
 from app import sessions_h2n as sh
+from app.stats_engine import ResultCache
 
 router = APIRouter()
+
+# build_sessions() rows by (workspace, player, max break, date range, day start), until the
+# hand data changes. Liveness and captions depend on the clock and are computed per request.
+_SESSIONS_CACHE = ResultCache("sessions.list", capacity=32)
 
 
 def _player(db, workspace_id: int, player_id: int | None) -> dict | None:
@@ -68,8 +73,12 @@ def list_sessions(db, workspace_id: int, player_id: int | None = None,
     player = _player(db, workspace_id, player_id)
     if player is None:
         return out
-    rows = sh.build_sessions(db, workspace_id, player["id"], max_break_s, date_from, date_to,
-                             int(settings["day_start_hour"]))
+    day_start = int(settings["day_start_hour"])
+    rows = _SESSIONS_CACHE.get_or_compute(
+        db, (workspace_id, player["id"], max_break_s, date_from, date_to, day_start),
+        lambda: sh.build_sessions(db, workspace_id, player["id"], max_break_s, date_from,
+                                  date_to, day_start),
+    )
     if not rows:
         return out  # no hands: player null (contract)
     out["player"] = player

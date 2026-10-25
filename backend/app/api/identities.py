@@ -79,13 +79,62 @@ def _build_identity(db, identity_id: int) -> IdentityResponse | None:
 
 @router.get("/identities", response_model=list[IdentityResponse])
 def list_identities():
+    """Every identity, as _build_identity builds one, in three queries in total."""
     db = get_read_cursor()
-    ids = [
-        r[0] for r in db.execute(
-            "SELECT id FROM player_identities ORDER BY created_at ASC"
-        ).fetchall()
-    ]
-    return [_build_identity(db, i) for i in ids]
+    rows = db.execute(
+        "SELECT id, display_name, notes, color, tags, created_at, "
+        "COALESCE(is_single_person, FALSE), COALESCE(pinned, FALSE) "
+        "FROM player_identities ORDER BY created_at ASC"
+    ).fetchall()
+    if not rows:
+        return []
+
+    aliases: dict[int, list[AliasResponse]] = {}
+    for a in db.execute(
+        "SELECT pa.id, pa.identity_id, pa.workspace_id, pa.player_id, "
+        "p.username, w.name "
+        "FROM player_aliases pa "
+        "JOIN players p ON p.id = pa.player_id "
+        "JOIN workspaces w ON w.id = pa.workspace_id "
+        "ORDER BY pa.identity_id, w.name, p.username"
+    ).fetchall():
+        aliases.setdefault(a[1], []).append(AliasResponse(
+            id=a[0], identity_id=a[1], workspace_id=a[2],
+            player_id=a[3], username=a[4], workspace_name=a[5],
+        ))
+
+    # Hands across each identity's aliases, a hand counted once (same rule as _build_identity:
+    # the aliases that join a player and a workspace)
+    totals = dict(db.execute(
+        "SELECT m.identity_id, COUNT(DISTINCT hp.hand_id) "
+        "FROM (SELECT DISTINCT pa.identity_id, pa.player_id FROM player_aliases pa "
+        "      JOIN players p ON p.id = pa.player_id "
+        "      JOIN workspaces w ON w.id = pa.workspace_id) m "
+        "JOIN hand_players hp ON hp.player_id = m.player_id "
+        "GROUP BY m.identity_id"
+    ).fetchall())
+
+    out = []
+    for row in rows:
+        try:
+            tags = json.loads(row[4]) if row[4] else []
+        except (json.JSONDecodeError, TypeError):
+            tags = []
+        als = aliases.get(row[0], [])
+        out.append(IdentityResponse(
+            id=row[0],
+            display_name=row[1],
+            notes=row[2],
+            color=row[3],
+            tags=tags,
+            aliases=als,
+            total_hands=int(totals.get(row[0], 0)) if als else 0,
+            is_single_person=bool(row[6]),
+            pinned=bool(row[7]),
+            player_count=len(als),
+            created_at=row[5],
+        ))
+    return out
 
 
 def _csv_field(v: str) -> str:
