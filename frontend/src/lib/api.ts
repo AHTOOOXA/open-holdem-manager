@@ -928,54 +928,6 @@ export interface StatAnalysisResponse {
   response_distribution: ResponseDistributionData | null;
 }
 
-export async function getStatTrend(
-  statKey: string,
-  params?: {
-    position?: string;
-    stakes?: string;
-    game_mode?: string;
-    date_from?: string;
-    date_to?: string;
-    bucket_size?: number;
-  },
-  signal?: AbortSignal,
-): Promise<StatTrendResponse> {
-  const sp = new URLSearchParams();
-  setPositionParam(sp, params?.position);
-  if (params?.stakes) sp.set('stakes', params.stakes);
-  if (params?.game_mode !== undefined) sp.set('game_mode', params.game_mode === '__reg__' ? '' : params.game_mode);
-  if (params?.date_from) sp.set('date_from', params.date_from);
-  if (params?.date_to) sp.set('date_to', params.date_to);
-  if (params?.bucket_size) sp.set('bucket_size', String(params.bucket_size));
-  _addWorkspaceParam(sp);
-  const res = await fetch(`${BASE}/stats/detail/${encodeURIComponent(statKey)}/trend?${sp}`, { signal });
-  if (!res.ok) throw new Error(`Trend failed: ${res.statusText}`);
-  return res.json();
-}
-
-export async function getStatAnalysis(
-  statKey: string,
-  params?: {
-    position?: string;
-    stakes?: string;
-    game_mode?: string;
-    date_from?: string;
-    date_to?: string;
-  },
-  signal?: AbortSignal,
-): Promise<StatAnalysisResponse> {
-  const sp = new URLSearchParams();
-  setPositionParam(sp, params?.position);
-  if (params?.stakes) sp.set('stakes', params.stakes);
-  if (params?.game_mode !== undefined) sp.set('game_mode', params.game_mode === '__reg__' ? '' : params.game_mode);
-  if (params?.date_from) sp.set('date_from', params.date_from);
-  if (params?.date_to) sp.set('date_to', params.date_to);
-  _addWorkspaceParam(sp);
-  const res = await fetch(`${BASE}/stats/detail/${encodeURIComponent(statKey)}/analysis?${sp}`, { signal });
-  if (!res.ok) throw new Error(`Analysis failed: ${res.statusText}`);
-  return res.json();
-}
-
 // ── Drift Detection Types ────────────────────────────────────────────
 
 export interface DriftStat {
@@ -1283,55 +1235,6 @@ export async function getPopulationFullStats(params?: PopulationFilterParams): P
   return res.json();
 }
 
-export async function getPopulationPreflop(params?: PopulationFilterParams): Promise<PreflopResponse> {
-  const sp = _buildPopParams(params);
-  const res = await fetch(`${BASE}/population/preflop?${sp}`);
-  if (!res.ok) throw new Error(`Population preflop failed: ${res.statusText}`);
-  return res.json();
-}
-
-export async function getPopulationSegments(params?: PopulationFilterParams): Promise<SegmentsResponse> {
-  const sp = _buildPopParams(params);
-  const res = await fetch(`${BASE}/population/segments?${sp}`);
-  if (!res.ok) throw new Error(`Population segments failed: ${res.statusText}`);
-  return res.json();
-}
-
-export async function getPopulationPostflop(params?: PopulationFilterParams): Promise<PostflopResponse> {
-  const sp = _buildPopParams(params);
-  const res = await fetch(`${BASE}/population/postflop?${sp}`);
-  if (!res.ok) throw new Error(`Population postflop failed: ${res.statusText}`);
-  return res.json();
-}
-
-export async function getPopulationPotTypes(params?: PopulationFilterParams): Promise<PotTypesResponse> {
-  const sp = _buildPopParams(params);
-  const res = await fetch(`${BASE}/population/pot-types?${sp}`);
-  if (!res.ok) throw new Error(`Population pot types failed: ${res.statusText}`);
-  return res.json();
-}
-
-export async function getPopulationShowdown(params?: PopulationFilterParams): Promise<ShowdownResponse> {
-  const sp = _buildPopParams(params);
-  const res = await fetch(`${BASE}/population/showdown?${sp}`);
-  if (!res.ok) throw new Error(`Population showdown failed: ${res.statusText}`);
-  return res.json();
-}
-
-export async function getPopulationHuVsMw(params?: PopulationFilterParams): Promise<HuMwResponse> {
-  const sp = _buildPopParams(params);
-  const res = await fetch(`${BASE}/population/hu-vs-mw?${sp}`);
-  if (!res.ok) throw new Error(`Population HU vs MW failed: ${res.statusText}`);
-  return res.json();
-}
-
-export async function getPopulationComparison(params?: PopulationFilterParams): Promise<ComparisonResponse> {
-  const sp = _buildPopParams(params);
-  const res = await fetch(`${BASE}/population/comparison?${sp}`);
-  if (!res.ok) throw new Error(`Population comparison failed: ${res.statusText}`);
-  return res.json();
-}
-
 export async function clearDatabase(): Promise<void> {
   const sp = new URLSearchParams();
   _addWorkspaceParam(sp);
@@ -1480,90 +1383,6 @@ export interface StatRangeResponse {
   combos: StatRangeCombo[];
   total_hands: number;
   total_actions: number;
-}
-
-// ── Widget API Fetch Functions ────────────────────────────────────────
-
-type StatFilterParams = {
-  position?: string;
-  stakes?: string;
-  game_mode?: string;
-  date_from?: string;
-  date_to?: string;
-};
-
-function _buildStatParams(params?: StatFilterParams): URLSearchParams {
-  const sp = new URLSearchParams();
-  setPositionParam(sp, params?.position);
-  if (params?.stakes) sp.set('stakes', params.stakes);
-  if (params?.game_mode !== undefined) sp.set('game_mode', params.game_mode === '__reg__' ? '' : params.game_mode);
-  if (params?.date_from) sp.set('date_from', params.date_from);
-  if (params?.date_to) sp.set('date_to', params.date_to);
-  _addWorkspaceParam(sp);
-  return sp;
-}
-
-export async function getEvBreakdown(statKey: string, params?: StatFilterParams, signal?: AbortSignal): Promise<EvBreakdownResponse> {
-  const sp = _buildStatParams(params);
-  const res = await fetch(`${BASE}/stats/detail/${encodeURIComponent(statKey)}/ev-breakdown?${sp}`, { signal });
-  if (!res.ok) throw new Error(`EV breakdown failed: ${res.statusText}`);
-  return res.json();
-}
-
-export async function getSizing(statKey: string, params?: StatFilterParams, signal?: AbortSignal): Promise<SizingResponse> {
-  const sp = _buildStatParams(params);
-  const res = await fetch(`${BASE}/stats/detail/${encodeURIComponent(statKey)}/sizing?${sp}`, { signal });
-  if (!res.ok) throw new Error(`Sizing failed: ${res.statusText}`);
-  return res.json();
-}
-
-export async function getFoldEquity(statKey: string, params?: StatFilterParams, signal?: AbortSignal): Promise<FoldEquityResponse> {
-  const sp = _buildStatParams(params);
-  const res = await fetch(`${BASE}/stats/detail/${encodeURIComponent(statKey)}/fold-equity?${sp}`, { signal });
-  if (!res.ok) throw new Error(`Fold equity failed: ${res.statusText}`);
-  return res.json();
-}
-
-export async function getByContext(statKey: string, params?: StatFilterParams, signal?: AbortSignal): Promise<ByContextResponse> {
-  const sp = _buildStatParams(params);
-  const res = await fetch(`${BASE}/stats/detail/${encodeURIComponent(statKey)}/by-context?${sp}`, { signal });
-  if (!res.ok) throw new Error(`By context failed: ${res.statusText}`);
-  return res.json();
-}
-
-export async function getComposition(statKey: string, params?: StatFilterParams, signal?: AbortSignal): Promise<CompositionResponse> {
-  const sp = _buildStatParams(params);
-  const res = await fetch(`${BASE}/stats/detail/${encodeURIComponent(statKey)}/composition?${sp}`, { signal });
-  if (!res.ok) throw new Error(`Composition failed: ${res.statusText}`);
-  return res.json();
-}
-
-export async function getMoney(statKey: string, params?: StatFilterParams, signal?: AbortSignal): Promise<MoneyResponse> {
-  const sp = _buildStatParams(params);
-  const res = await fetch(`${BASE}/stats/detail/${encodeURIComponent(statKey)}/money?${sp}`, { signal });
-  if (!res.ok) throw new Error(`Money failed: ${res.statusText}`);
-  return res.json();
-}
-
-export async function getPostflopBridge(statKey: string, params?: StatFilterParams, signal?: AbortSignal): Promise<PostflopBridgeResponse> {
-  const sp = _buildStatParams(params);
-  const res = await fetch(`${BASE}/stats/detail/${encodeURIComponent(statKey)}/postflop-bridge?${sp}`, { signal });
-  if (!res.ok) throw new Error(`Postflop bridge failed: ${res.statusText}`);
-  return res.json();
-}
-
-export async function getContinuingRange(statKey: string, params?: StatFilterParams, signal?: AbortSignal): Promise<ContinuingRangeResponse> {
-  const sp = _buildStatParams(params);
-  const res = await fetch(`${BASE}/stats/detail/${encodeURIComponent(statKey)}/continuing-range?${sp}`, { signal });
-  if (!res.ok) throw new Error(`Continuing range failed: ${res.statusText}`);
-  return res.json();
-}
-
-export async function getStatRange(statKey: string, params?: StatFilterParams, signal?: AbortSignal): Promise<StatRangeResponse> {
-  const sp = _buildStatParams(params);
-  const res = await fetch(`${BASE}/stats/detail/${encodeURIComponent(statKey)}/range?${sp}`, { signal });
-  if (!res.ok) throw new Error(`Stat range failed: ${res.statusText}`);
-  return res.json();
 }
 
 // ── Workspace & Checkpoint Types ─────────────────────────────────────
