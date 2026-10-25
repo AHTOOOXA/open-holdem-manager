@@ -423,3 +423,20 @@ def test_inflight_extension_is_shared_and_throttled(live, hands, monkeypatch):
     assert len(out[0].hands) >= len(base.hands) and slots
     assert out[0].gen == dg.current()
     db.close()
+
+
+def test_sql_backed_caches_clear_on_every_change_extending_ones_on_reset_only():
+    """Graph, extras / stats / sessions ResultCaches, General vs-user counters and the hero
+    cache recompute cheaply: dropped on every change. Reports resolutions and popup records
+    extend: dropped on resets only."""
+    from app import heroes, stats_engine
+    from app.api import compare, general, players, population, reports, sessions
+
+    every = [reports._GRAPH_CACHE.clear, general.clear_vs_cache, heroes.invalidate_hero_cache]
+    every += [c.clear for c in (stats_engine._STATS_CACHE, sessions._SESSIONS_CACHE,
+                                players._LIST_CACHE, population._OVERVIEW_CACHE,
+                                compare._SUMMARY_CACHE)]
+    for fn in every:
+        assert fn in dg._hooks, fn
+    for fn in (chain_mod.clear_cache, gp.clear_cache):
+        assert fn in dg._reset_hooks and fn not in dg._hooks, fn
