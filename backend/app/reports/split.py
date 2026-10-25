@@ -51,7 +51,7 @@ from app.h2n.sequence import BET, CHECK, FOLD, RAISE
 from app.reports import spots
 from app.reports.chain import (
     _FROM, ORDER, POS_NAMES, TABLE_MAX_BYTES, HandRec, Resolution, SeqSource, case_filter,
-    fetch_seqs, iter_records, stack_caption, stakes_caption,
+    iter_case_seqs, iter_records, stack_caption, stakes_caption,
 )
 from app.sessions_h2n import TimeStats, time_stats
 
@@ -67,11 +67,11 @@ ENTRY_HEADERS = {
 }
 
 
-def _bit(mask: int, key: str) -> int:
-    return (mask >> ROWS[key].bit) & 1
-
-
 _E = {s: {k: f"E_{s}_{k}" for k in ("B", "R", "C", "ANY")} for s in ("FLOP", "TURN", "RIVER")}
+# Bit positions (ROWS[key].bit) Acc.add reads, looked up once.
+_B_V01, _B_V02, _B_V03, _B_P07, _B_FLOP_ANY = (
+    ROWS[k].bit for k in ("V01", "V02", "V03", "P07", "E_FLOP_ANY"))
+_E_BITS = tuple(tuple(ROWS[k[x]].bit for x in ("B", "R", "C", "ANY")) for k in _E.values())
 
 
 def _col(id_, caption, fmt, abbrev=None, winnings=False, sample=None) -> dict:
@@ -195,21 +195,21 @@ class Acc:
             self.ap += ap
             self.ap_n += 1
         pre_o, pre_c, post_c = h.pre_opp, h.pre_case, h.post_case
-        self.vpip_c += _bit(pre_c, "V01")
-        self.vpip_o += _bit(pre_o, "V01")
-        self.pfr_c += _bit(pre_c, "V02")
-        self.pfr_o += _bit(pre_o, "V02")
-        self.tb_c += _bit(pre_c, "P07")
-        self.tb_o += _bit(pre_o, "P07")
-        for keys in _E.values():
-            self.ag_br += _bit(post_c, keys["B"]) + _bit(post_c, keys["R"])
-            self.ag_c += _bit(post_c, keys["C"])
-            self.ag_o += _bit(post_c, keys["ANY"])
-        if _bit(post_c, "E_FLOP_ANY"):
+        self.vpip_c += (pre_c >> _B_V01) & 1
+        self.vpip_o += (pre_o >> _B_V01) & 1
+        self.pfr_c += (pre_c >> _B_V02) & 1
+        self.pfr_o += (pre_o >> _B_V02) & 1
+        self.tb_c += (pre_c >> _B_P07) & 1
+        self.tb_o += (pre_o >> _B_P07) & 1
+        for b, r, c, any_ in _E_BITS:
+            self.ag_br += ((post_c >> b) & 1) + ((post_c >> r) & 1)
+            self.ag_c += (post_c >> c) & 1
+            self.ag_o += (post_c >> any_) & 1
+        if (post_c >> _B_FLOP_ANY) & 1:
             self.flop += 1
             self.flop_sd += h.sd
             self.flop_win += h.win
-        if _bit(pre_c, "V03"):
+        if (pre_c >> _B_V03) & 1:
             self.v03 += 1
             if h.sd:
                 self.v03_sd += 1
@@ -295,22 +295,37 @@ def plain_groups(db, res: Resolution, keys: list[str]) -> list[tuple[tuple, Acc]
     return arrow_groups(db, keys, f"{_FROM} WHERE {res.where}", res.params)
 
 
-def arrow_groups(db, keys: list[str], from_where: str, params: list, order: str = ORDER
-                 ) -> list[tuple[tuple, Acc]]:
+def arrow_groups(db, keys: list[str], from_where: str, params: list, order: str = ORDER,
+                 sort: list[tuple[str, str]] | None = None) -> list[tuple[tuple, Acc]]:
     """`plain_groups` over any rows (`from_where`: FROM ... WHERE ... with aliases hp, h),
-    summed in `order`."""
+    summed in `order`. `sort`: Arrow sort keys of the groups (key columns k0, k1, ..., the
+    hand count `count_all`); default: order of the groups' first row."""
     names = [f"k{i}" for i in range(max(1, len(keys)))]
     kcols = [f"{k} AS k{i}" for i, k in enumerate(keys)] or ["1 AS k0"]
     tbl = db.execute(f"SELECT {', '.join(kcols)}, {_ROW_SQL} {from_where}{order}",
                      params).fetch_arrow_table()
     agg = tbl.group_by(names, use_threads=False).aggregate(_ROW_AGGS)
-    agg = agg.select(names + ["count_all"] + [c + "_sum" for c in (*_ROW_FLOATS, *_ROW_INTS)])
+    del tbl
+    vals = ["count_all"] + [c + "_sum" for c in (*_ROW_FLOATS, *_ROW_INTS)]
+    agg = agg.select(names + vals)
+    if sort:
+        agg = agg.sort_by(sort)
     n = len(names)
     build = _build_acc   # slot order of _ACC_COLS
-    # DuckDB converts the (small) aggregate to Python values faster than Arrow's to_pylist;
-    # a NULL sum (no row added, e.g. won_nsd) stays int 0 like Acc.add.
-    return [(r[:n], build(tuple(0 if v is None else v for v in r[n:])))
-            for r in db.from_arrow(agg).fetchall()]
+    # A NULL sum (no row added, e.g. won_nsd) stays int 0 like Acc.add; only columns that have
+    # one are checked per group.
+    nulls = [i for i, c in enumerate(vals) if agg.column(c).null_count]
+    # DuckDB converts the aggregate to Python values faster than Arrow's to_pylist.
+    rows = db.from_arrow(agg).fetchall()
+    if not nulls:
+        return [(r[:n], build(r[n:])) for r in rows]
+    out = []
+    for r in rows:
+        v = r[n:]
+        if any(v[i] is None for i in nulls):
+            v = tuple(0 if x is None else x for x in v)
+        out.append((r[:n], build(v)))
+    return out
 
 
 def plain_acc(db, res: Resolution) -> Acc:
@@ -595,14 +610,15 @@ def _players_table(db, res: Resolution) -> list[tuple[int, str, Acc]]:
     if res.player_id is None or not res.n_cases:
         return []
     pred, pparams = case_filter(db, res, "hp.hand_id")
+    # Hands descending, then username, then id (Arrow compares the UTF-8 bytes: the same
+    # order as Python's str comparison).
     rows = arrow_groups(
         db, ["hp.player_id", "p.username"],
         f"{_FROM} JOIN players p ON p.id = hp.player_id WHERE h.workspace_id = ? "
         f"AND hp.player_id <> ? AND COALESCE(hp.h2n_valid, TRUE) AND {pred}",
-        [res.workspace_id, res.player_id, *pparams])
-    out = [(int(pid), name, acc) for (pid, name), acc in rows]
-    out.sort(key=lambda t: (-t[2].hands, t[1], t[0]))
-    return out
+        [res.workspace_id, res.player_id, *pparams],
+        sort=[("count_all", "descending"), ("k1", "ascending"), ("k0", "ascending")])
+    return [(int(pid), name, acc) for (pid, name), acc in rows]
 
 
 def players_split(db, res: Resolution) -> tuple[list[dict], dict | None]:
@@ -673,10 +689,11 @@ def _compute_action_table(db, res: Resolution, which: str) -> dict:
     table: dict = {}
     if not cands or not res.username:
         return table
-    for recs in iter_records(db, res):
+    # Plain chains keep no blobs: each chunk's come with its records and are dropped after it.
+    chunks = (iter_case_seqs(db, res) if res.plain
+              else ((recs, res.blobs) for recs in iter_records(db, res)))
+    for recs, blobs in chunks:
         ids = [h.hid for h in recs]
-        # Plain chains keep no blobs: this chunk's are fetched and dropped after it.
-        blobs = fetch_seqs(db, res.workspace_id, ids) if res.plain else res.blobs
         src = SeqSource(db, res.workspace_id, blobs)
         src.prefetch_missing([h for h in ids if blobs.get(h) is None])
         for h in recs:

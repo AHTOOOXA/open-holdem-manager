@@ -624,7 +624,7 @@ class Resolution:
     params: list = field(default_factory=list)
     blob_bytes: int = 0
     table_bytes: int = 0
-    _key_locks: dict = field(default_factory=dict, repr=False)
+    _flights: dict = field(default_factory=dict, repr=False)   # memo key -> _Flight
 
     @property
     def plain(self) -> bool:
@@ -647,35 +647,57 @@ class Resolution:
         `tables` unless its estimated size (`size(value)`, default 1 KB) is over `max_bytes`
         (MEMO_MAX_BYTES by default).
 
+        Requests that arrive while a key is being computed take that computation's value (a
+        per-key `_Flight`, as in `resolve`), also when it is too big to keep: an over-cap value
+        is computed once per burst of racing requests, not once per waiter. When the
+        computation fails, its waiters try again.
+
         `heavy`: the computation runs in a `heavy_slot()`; all CPU work of the Reports
         endpoints happens in memoized computations, so this is where they are throttled. A
         cached value is returned without a slot, and a request waiting for another request's
         computation of the same key holds no slot (the endpoints call this outside any slot).
-        Nested keys (Next / Faced / Sizing / Players tables) are only computed inside a heavy
-        computation, whose slot is re-entrant, so no owner waits for a slot while slot holders
-        wait for it. `case_ids_arrow` is also built outside any slot (hand list, graph) and is
-        cheap: it takes none."""
-        with self.lock:
-            if key in self.tables:
-                return self.tables[key]
-            klock = self._key_locks.setdefault(key, threading.Lock())
-        with klock:
+        As in `resolve`, the computing request takes its slot *before* it registers the
+        flight, so a flight always belongs to a request that is already running. Nested keys
+        (Next / Faced / Sizing / Players tables) are only computed inside a heavy computation,
+        whose slot is re-entrant. `case_ids_arrow` is also built outside any slot (hand list,
+        graph) and is cheap: it takes none."""
+        slot = heavy_slot if heavy else nullcontext
+        while True:
             with self.lock:
                 if key in self.tables:
                     return self.tables[key]
-            if heavy:
-                with heavy_slot():
-                    value = fn()
-            else:
-                value = fn()
-            nbytes = size(value) if size is not None else 1024
-            if nbytes <= max_bytes:
+                flight = self._flights.get(key)
+            if flight is not None:          # someone is computing it: wait without a slot
+                flight.done.wait()
+                if flight.ok:
+                    return flight.result
+                continue                    # that computation failed: try again
+            with slot():
                 with self.lock:
-                    self.tables[key] = value
-                    self.table_bytes += nbytes
-                if nbytes > (1 << 20):
-                    _CACHE.trim()
-            return value
+                    if key in self.tables:
+                        return self.tables[key]
+                    flight = self._flights.get(key)
+                    owner = flight is None
+                    if owner:
+                        flight = self._flights[key] = _Flight()
+                if not owner:
+                    continue                # lost the race while taking the slot: wait
+                try:
+                    value = fn()
+                    nbytes = size(value) if size is not None else 1024
+                    if nbytes <= max_bytes:
+                        with self.lock:
+                            self.tables[key] = value
+                            self.table_bytes += nbytes
+                        if nbytes > (1 << 20):
+                            _CACHE.trim()
+                    flight.result, flight.ok = value, True
+                    return value
+                finally:
+                    with self.lock:
+                        if self._flights.get(key) is flight:
+                            del self._flights[key]
+                    flight.done.set()
 
     def approx_bytes(self) -> int:
         recs = 0 if self.plain else len(self.hands)
@@ -781,6 +803,63 @@ def iter_records(db, res: Resolution, chunk: int = 20_000):
             if not rows:
                 break
             yield [_rec(r) for r in rows]
+    finally:
+        cur.close()
+
+
+class CaseRec:
+    """The facts of one case hand that `split.Acc.add` and the Next / Faced tables read (plain
+    chains: built per chunk, never kept). Same values as the matching HandRec fields."""
+
+    __slots__ = ("hid", "won", "won_bb", "ev_bb", "ev", "rake", "sd", "win", "pre_opp",
+                 "pre_case", "post_case", "rake_bb")
+    hit = None   # plain chains have no hit point
+
+    def __init__(self, hid, won, won_bb, ev_bb, ev, rake, sd, win, pre_opp, pre_case,
+                 post_case, rake_bb):
+        self.hid = hid
+        self.won = won
+        self.won_bb = won_bb
+        self.ev_bb = ev_bb
+        self.ev = ev
+        self.rake = rake
+        self.sd = sd
+        self.win = win
+        self.pre_opp = pre_opp
+        self.pre_case = pre_case
+        self.post_case = post_case
+        self.rake_bb = rake_bb
+
+
+# CaseRec fields, then the hand's stored sequence blob (the one hand_players row carrying it,
+# app/h2n/CONTRACT.md), in one query.
+_SEQ_SELECT = f"""SELECT h.id, {_D.format("COALESCE(hp.won, 0)")},
+           {_D.format("COALESCE(hp.won_bb, 0)")},
+           {_D.format("COALESCE(hp.all_in_ev_bb, hp.won_bb, 0)")},
+           {_D.format("COALESCE(hp.all_in_ev_bb, hp.won_bb, 0) * h.bb_amount")},
+           {_D.format("COALESCE(hp.rake, 0)")}, COALESCE(hp.went_to_showdown, FALSE),
+           COALESCE(hp.is_winner, FALSE), COALESCE(hp.h2n_pre_opp, 0),
+           COALESCE(hp.h2n_pre_case, 0), COALESCE(hp.h2n_post_case, 0),
+           {_D.format("COALESCE(hp.rake_bb, 0)")}, sq.h2n_seq {_FROM}
+    LEFT JOIN hand_players sq ON sq.hand_id = hp.hand_id AND sq.workspace_id = hp.workspace_id
+        AND sq.h2n_seq IS NOT NULL"""
+
+
+def iter_case_seqs(db, res: Resolution, chunk: int = 8192):
+    """Plain chains: the case hands as (CaseRec list, {hand id: stored blob or None}) chunks in
+    hand order, from one query (nothing is kept on the resolution)."""
+    if not res.plain:
+        raise PlainResolutionError("iter_case_seqs is for plain resolutions")
+    if not res.n_cases:
+        return
+    cur = db.cursor()   # own cursor: callers run other queries on `db` between chunks
+    try:
+        cur.execute(f"{_SEQ_SELECT} WHERE {res.where}{ORDER}", res.params)
+        while True:
+            rows = cur.fetchmany(chunk)
+            if not rows:
+                break
+            yield [CaseRec(*r[:12]) for r in rows], {r[0]: r[12] for r in rows}
     finally:
         cur.close()
 
@@ -1017,14 +1096,15 @@ def data_version(db, workspace_id: int) -> tuple:
 
 
 class _Flight:
-    """One in-progress computation of a cache key; waiters take its result (None when the
-    computation failed: they try again)."""
+    """One in-progress computation of a cache key; waiters take its result (`resolve`: None
+    when the computation failed; `Resolution.memo`: `ok` False). On failure they try again."""
 
-    __slots__ = ("done", "result")
+    __slots__ = ("done", "result", "ok")
 
     def __init__(self):
         self.done = threading.Event()
         self.result = None
+        self.ok = False
 
 
 def resolve(db, workspace_id: int, player_id: int | None, chain: list[_Step]) -> Resolution:
@@ -1090,5 +1170,6 @@ __all__ = [
     "Step", "ReportQuery", "CHAIN", "parse_chain", "resolve", "resolved_ids", "Resolution",
     "HandRec", "SeqSource", "plain_sql", "opponent_recs", "card_class", "card_class_sql", "CLASSES",
     "chain_ctx", "canonical", "clear_cache", "POS_NAMES", "case_ids", "case_filter",
-    "iter_records", "register_ids", "stakes_caption", "stack_caption", "target_player", "ROWS",
+    "iter_records", "iter_case_seqs", "CaseRec", "register_ids", "stakes_caption",
+    "stack_caption", "target_player", "ROWS",
 ]
