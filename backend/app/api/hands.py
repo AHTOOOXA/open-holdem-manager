@@ -14,6 +14,7 @@ from app.models import (
     HandAction, BoardCards, ActionItem, TagRef,
 )
 from app import marked_hands
+from app.concurrency import heavy_slot
 from app.action_parser import parse_actions_from_raw
 from app.stat_registry import STAT_REGISTRY
 
@@ -374,7 +375,40 @@ def list_hands(
 # ── Hand detail ──────────────────────────────────────────────────────
 
 EXPORT_CAP = 100_000
-_EXPORT_BATCH = 500
+_EXPORT_FETCH = 1000  # rows per chunk of the export stream
+
+
+def _export_query(db, *, sort, order, workspace_id, **filters) -> tuple[list, bool]:
+    """Run the export query on `db`: (first chunk of `(raw_text,)` rows, truncated). The rest
+    of the rows are read with `db.fetchmany`.
+
+    A marked list without a subject has one row per marked (hand, player): one per hand (the
+    row first in the sort). Hands are numbered in list order, capped, and only then joined to
+    their texts, so the sort never carries the raw texts."""
+    f = _list_filters(db, workspace_id=workspace_id, **filters)
+    if f.status != "ok":
+        return [], False
+    sort_col = _SORTS.get(sort, "h.played_at")
+    sort_dir = "DESC" if order.lower() == "desc" else "ASC"
+    db.execute(f"""
+        WITH s AS (
+            SELECT h.id, {sort_col} AS sk, h.played_at AS pa,
+                   ROW_NUMBER() OVER (PARTITION BY h.id ORDER BY {sort_col} {sort_dir}, hp.player_id) AS rn
+            FROM {f.from_sql}
+            WHERE h.raw_text IS NOT NULL AND h.raw_text <> '' {f.where_sql}
+        ), o AS (
+            SELECT id, ROW_NUMBER() OVER (ORDER BY sk {sort_dir}, pa DESC, id) AS ord
+            FROM s WHERE rn = 1
+        ), c AS (
+            SELECT id, ord, COUNT(*) OVER () AS n FROM o WHERE ord <= ?
+        )
+        SELECT h.raw_text, c.n
+        FROM c JOIN hands h ON h.id = c.id AND h.workspace_id = ?
+        WHERE c.ord <= ?
+        ORDER BY c.ord
+    """, [*f.params, EXPORT_CAP + 1, workspace_id, EXPORT_CAP])
+    rows = db.fetchmany(_EXPORT_FETCH)
+    return rows, bool(rows) and int(rows[0][1]) > EXPORT_CAP
 
 
 @router.get("/hands/export")
@@ -398,56 +432,37 @@ def export_hands(
 ):
     """The original hand histories of the whole filtered list (same filters and order as
     GET /api/hands, not just a page): text/plain attachment, hands separated by two blank
-    lines, each hand once, at most EXPORT_CAP hands (`X-OHM-Truncated: 1` when capped)."""
-    db = get_read_cursor()
-    f = _list_filters(
-        db, position=position, stakes=stakes, result=result, marked=marked, tag_ids=tag_ids,
-        date_from=date_from, date_to=date_to, search=search, stat_flag=stat_flag,
-        stat_key=stat_key, player_id=player_id, workspace_id=workspace_id, chain=chain)
-    ids: list[str] = []
-    if f.status == "ok":
-        sort_col = _SORTS.get(sort, "h.played_at")
-        sort_dir = "DESC" if order.lower() == "desc" else "ASC"
-        # A marked list without a subject has one row per marked (hand, player): one per hand.
-        ids = [r[0] for r in db.execute(f"""
-            SELECT id FROM (
-                SELECT h.id, {sort_col} AS sk, h.played_at AS pa,
-                       ROW_NUMBER() OVER (PARTITION BY h.id ORDER BY {sort_col} {sort_dir}, hp.player_id) AS rn
-                FROM {f.from_sql}
-                WHERE h.raw_text IS NOT NULL AND h.raw_text <> '' {f.where_sql}
-            ) WHERE rn = 1
-            ORDER BY sk {sort_dir}, pa DESC, id
-            LIMIT ?
-        """, [*f.params, EXPORT_CAP + 1]).fetchall()]
-    truncated = len(ids) > EXPORT_CAP
-    ids = ids[:EXPORT_CAP]
+    lines, each hand once, at most EXPORT_CAP hands (`X-OHM-Truncated: 1` when capped).
+
+    One ordered query, read in chunks by the stream (03/F2). It runs on the stream's own
+    cursor: the request's cursors are closed when the endpoint returns, and the chain scope is
+    registered on the cursor that runs the query."""
+    cur = get_db().cursor()
+    try:
+        with heavy_slot():
+            rows, truncated = _export_query(
+                cur, sort=sort, order=order, position=position, stakes=stakes, result=result,
+                marked=marked, tag_ids=tag_ids, date_from=date_from, date_to=date_to,
+                search=search, stat_flag=stat_flag, stat_key=stat_key, player_id=player_id,
+                workspace_id=workspace_id, chain=chain)
+    except BaseException:
+        cur.close()
+        raise
 
     def stream():
-        # The request's cursors are closed when the endpoint returns; the stream has its own.
-        cur = get_db().cursor()
+        nonlocal rows
         try:
-            yield from _stream_texts(cur)
+            first = True
+            while rows:
+                chunk = [t for t in ((r[0] or "").strip() for r in rows) if t]
+                if chunk:
+                    yield (("" if first else "\n\n\n") + "\n\n\n".join(chunk)).encode("utf-8")
+                    first = False
+                rows = cur.fetchmany(_EXPORT_FETCH)
+            if not first:
+                yield b"\n"
         finally:
             cur.close()
-
-    def _stream_texts(db):
-        first = True
-        for i in range(0, len(ids), _EXPORT_BATCH):
-            batch = ids[i:i + _EXPORT_BATCH]
-            ph = ",".join("?" for _ in batch)
-            texts = dict(db.execute(
-                f"SELECT id, raw_text FROM hands WHERE workspace_id = ? AND id IN ({ph})",
-                [workspace_id, *batch]).fetchall())
-            chunk = []
-            for hid in batch:
-                t = (texts.get(hid) or "").strip()
-                if t:
-                    chunk.append(t)
-            if chunk:
-                yield (("" if first else "\n\n\n") + "\n\n\n".join(chunk)).encode("utf-8")
-                first = False
-        if not first:
-            yield b"\n"
 
     headers = {"Content-Disposition": 'attachment; filename="OHM hands.txt"'}
     if truncated:

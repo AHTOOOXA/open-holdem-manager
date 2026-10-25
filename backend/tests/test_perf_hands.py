@@ -282,3 +282,7 @@ def test_list_actions_from_raw_text(bench_db, client, marks):
                 assert got == want
                 if st != "preflop":
                     assert h[f"{st}_pot"] == ss[st]["pot"]
+
+
+def test_export_invalid_chain(client):
+    assert client.get("/api/hands/export", params={"chain": "not json"}).status_code == 422
