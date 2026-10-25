@@ -730,3 +730,37 @@ def test_recipe_shapes(client):
     assert [x["id"] for x in t["stats"]] == [i for i in ids if i != "avg_tables"]
     r = client.post("/api/reports/spot", json={"workspace_id": 1, "chain": [], "recipe": "x"})
     assert r.status_code == 422
+
+
+# ── perf contract: chain_scope = chain_hand_ids as a SQL predicate ──────────
+
+
+@pytest.mark.parametrize("chain", [[], [{"k": "stakes", "v": ["NL2"]}], P01, C01])
+def test_chain_scope_matches_chain_hand_ids(bench_db, chain):
+    from app.api.reports_lite import chain_hand_ids, chain_scope
+    chain_mod.clear_cache()
+    cur = bench_db.cursor()
+    text = json.dumps(chain)
+    ids = chain_hand_ids(cur, 1, None, text)
+    scope = chain_scope(cur, 1, None, text)
+    assert scope is not None and scope.count == len(ids)
+    pred, params = scope.where("h.id")
+    got = [r[0] for r in cur.execute(
+        f"SELECT h.id FROM hands h WHERE h.workspace_id = 1 AND {pred}", params).fetchall()]
+    assert sorted(got) == sorted(ids)
+    assert chain_scope(cur, 1, None, None) is None
+    cur.close()
+
+
+def test_data_generation_hooks_and_heavy_slot():
+    from app import data_generation
+    from app.concurrency import heavy_slot
+    calls = []
+    hook = data_generation.on_bump(lambda: calls.append(1))
+    data_generation.on_bump(hook)  # registering twice runs it once
+    before = data_generation.current()
+    assert data_generation.bump() == before + 1
+    assert calls == [1]
+    with heavy_slot():
+        with heavy_slot():  # re-entrant on the same thread
+            pass
