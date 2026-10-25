@@ -6,7 +6,6 @@ import HandDrawer, { type HandViewMode } from '@/components/hands/HandDrawer';
 import HandHistoryDialog from '@/components/hands/HandHistoryDialog';
 import HandRowMenuItems from '@/components/hands/HandRowMenuItems';
 import TagPickerPopover from '@/components/marked/TagPickerPopover';
-import { queryClient } from '@/lib/query-client';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
@@ -202,7 +201,6 @@ export default function GeneralHandList({ cellId, params, filter, title, onClose
           onClose={() => setOpenHandId(null)}
           onPrev={() => openIndex > 0 && setOpenHandId(rows[openIndex - 1].hand_id)}
           onNext={() => openIndex >= 0 && openIndex < rows.length - 1 && setOpenHandId(rows[openIndex + 1].hand_id)}
-          onTagsChanged={() => { void queryClient.invalidateQueries({ queryKey: ['general', 'hands'] }); }}
         />
       )}
       {historyId && (

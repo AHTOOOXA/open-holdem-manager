@@ -89,3 +89,10 @@ test('hand lists are heavy only over a Reports chain', () => {
   assert.match(s, /\.\.\.\(handsQueryParams\.chain !== undefined \? HEAVY_QUERY : \{\}\),/);
   assert.match(s, /queryFn: \(\{ signal \}\) => getHands\(handsQueryParams, signal\)/);
 });
+
+test('a mark in the General drawer refetches nothing beyond what useMarkHand already does', () => {
+  // useMarkHand invalidates ['general', 'hands'] itself; a second invalidation (or one of every
+  // ['general'] query) from the drawer callback would refetch the grid / popup for nothing.
+  assert.doesNotMatch(read('components/general/GeneralHandList.tsx'), /onTagsChanged|invalidateQueries/);
+  assert.match(read('components/marked/useMarkHand.ts'), /invalidateQueries\(\{ queryKey: \['general', 'hands'\] \}\)/);
+});
