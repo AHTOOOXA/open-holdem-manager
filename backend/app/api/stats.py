@@ -179,7 +179,7 @@ def get_stat_detail_hands(
     date_from: str | None = Query(None),
     date_to: str | None = Query(None),
     page: int = Query(1, ge=1),
-    per_page: int = Query(25, ge=1, le=100),
+    per_page: int = Query(25, ge=0, le=100),  # 0 = counts only (the detail header)
     workspace_id: int = Query(1),
 ):
     entry = STAT_REGISTRY.get(stat_key)
@@ -257,14 +257,20 @@ def get_stat_detail_hands(
     # Hand list filters by action (only show hands where stat was triggered).
     # Pagination is based on action_count, not total opportunity count.
     list_where_sql = f"{where_sql} AND ({action_expr})"
+    # Compute key street for this stat
+    key_street = get_key_street(stat_key)
+    if per_page == 0:
+        return StatDetailHandsResponse(
+            stat_key=stat_key, stat_name=entry["name"],
+            action_count=action_count, opportunity_count=total,
+            key_street=key_street,
+            hands=[], total=action_count, page=page, per_page=0, total_pages=0,
+        )
     total_pages = max(1, math.ceil(action_count / per_page))
     offset = (page - 1) * per_page
 
     # Get hero username for action parsing
     hero_username = get_hero_username(db, workspace_id)
-
-    # Compute key street for this stat
-    key_street = get_key_street(stat_key)
 
     # Fetch the hands page without raw_text (the sort would otherwise carry every
     # candidate's hand text), then raw_text for the page's hands only.

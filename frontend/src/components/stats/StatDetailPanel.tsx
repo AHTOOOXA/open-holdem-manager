@@ -24,7 +24,7 @@ export default function StatDetailPanel({
   const displayName = getStatDisplayName(statKey);
   const posLabel = position ? ` ${position.toUpperCase()}` : '';
 
-  // Lightweight query just for action_count / opportunity_count in the header
+  // Counts-only query (per_page 0: no hand rows) for action_count / opportunity_count in the header
   const { data: statData } = useQuery({
     queryKey: queryKeys.stats.detail(statKey, {
       position,
@@ -33,7 +33,7 @@ export default function StatDetailPanel({
       date_from: filterParams.date_from,
       date_to: filterParams.date_to,
       page: 1,
-      per_page: 1,
+      per_page: 0,
     }),
     queryFn: () => getStatDetailHands(statKey, {
       position,
@@ -42,7 +42,7 @@ export default function StatDetailPanel({
       date_from: filterParams.date_from,
       date_to: filterParams.date_to,
       page: 1,
-      per_page: 1,
+      per_page: 0,
     }),
   });
 

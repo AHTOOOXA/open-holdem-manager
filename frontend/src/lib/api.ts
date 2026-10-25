@@ -892,7 +892,7 @@ export async function getStatDetailHands(
   if (params?.date_from) sp.set('date_from', params.date_from);
   if (params?.date_to) sp.set('date_to', params.date_to);
   if (params?.page) sp.set('page', String(params.page));
-  if (params?.per_page) sp.set('per_page', String(params.per_page));
+  if (params?.per_page !== undefined) sp.set('per_page', String(params.per_page)); // 0 = counts only
   _addWorkspaceParam(sp);
   const res = await fetch(`${BASE}/stats/detail/${encodeURIComponent(statKey)}/hands?${sp}`, { signal });
   if (!res.ok) throw new Error(`Stat detail failed: ${res.statusText}`);

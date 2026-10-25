@@ -427,3 +427,12 @@ def test_heavy_miss_runs_in_a_heavy_slot(sdb):
     c.get_or_compute(sdb, "k", lambda: seen.append(getattr(concurrency._local, "depth", 0)), heavy=True)
     c.get_or_compute(sdb, "j", lambda: seen.append(getattr(concurrency._local, "depth", 0)))
     assert seen == [1, 0]
+
+
+def test_stat_detail_counts_only_mode(client):
+    for key in ("vpip", "cbet_flop", "three_bet"):
+        full = client.get(f"/api/stats/detail/{key}/hands", params={"per_page": 1}).json()
+        counts = client.get(f"/api/stats/detail/{key}/hands", params={"per_page": 0}).json()
+        assert counts["hands"] == [] and counts["per_page"] == 0
+        for f in ("action_count", "opportunity_count", "total", "key_street", "stat_name"):
+            assert counts[f] == full[f]
