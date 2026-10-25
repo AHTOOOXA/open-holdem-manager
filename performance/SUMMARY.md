@@ -136,4 +136,4 @@ structural fix that makes Reports fast at 1M hands.
 - Browser render time and renderer heap in the real app (no app was started).
 - PT4 / HM3 import and zip uploads; PyInstaller cold start.
 - 1M-hand figures (all linear extrapolations).
-- Benchmark scripts and raw outputs are in `/tmp/ohm-perf/<NN>/` and will be lost on reboot.
+- Benchmark scripts and raw outputs were kept locally (not committed).

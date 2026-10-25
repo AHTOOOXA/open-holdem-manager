@@ -5,7 +5,7 @@ Arrow insert), Hand2Note 4 DB import (`/api/import/h2n`), PT4/HM3 import (`/api/
 auto-import, stat rebuild (STAT_VERSION + user-triggered), `finalize_import`, index drop/recreate,
 checkpointing, frontend progress. All numbers are from this machine (16 GB Mac, swapping, other
 agents' benchmarks queued behind one lock), Python 3.12.12, DuckDB 1.4.4, pyarrow 23 (mimalloc).
-Scripts are in `/tmp/ohm-perf/06/`.
+Benchmark scripts were kept locally (not committed).
 
 ## 1. Summary
 
@@ -242,7 +242,7 @@ Together, est. 20k import 14 s → ~8 s; 2k into 214k → < 1.5 s; plus the memo
 ## 5. Open questions / not measured
 
 - **I could not reproduce the 9.2 GB.** Measured import/rebuild heaps are flat at 20k–60k. The read-side ratchet (F1) is measured at 20k only, and its 214k size is extrapolated. To confirm, run the lead's 214k process with `sys._debugmallocstats()` exposed (e.g. a debug endpoint), or use `tracemalloc` started at launch with a snapshot when idle. `_debugmallocstats` gives arenas vs live bytes: live ≈ arenas means a cache or leak, live ≪ arenas means fragmentation. Reports 01 / 08 have per-resolution and popup-record sizes at 214k.
-- How the user's 214k got in: the lead's copy (`/tmp/ohm-mem/poker.duckdb`, read-only count) has 216,754 hands with 6 distinct `imported_at` values. The biggest are 171,826 (Feb 13) and 37,383 (Oct 24 21:38). So the recent event was probably a ~37k import, or a rebuild, into an ~180k DB, followed by browsing. Under that scenario the fixed costs of F6 and the cache ratchet of F1 matter more than raw import throughput.
+- How the user's 214k got in: the lead's copy (a copy of the 214k DB, read-only count) has 216,754 hands with 6 distinct `imported_at` values. The biggest are 171,826 (Feb 13) and 37,383 (Oct 24 21:38). So the recent event was probably a ~37k import, or a rebuild, into an ~180k DB, followed by browsing. Under that scenario the fixed costs of F6 and the cache ratchet of F1 matter more than raw import throughput.
 - Not measured:
   - zip uploads (`_read_uploads` adds one decompressed copy per entry);
   - PT4/HM3 import (needs PostgreSQL; it already streams in batches, `importers/tracker_db.py:402`);

@@ -70,7 +70,7 @@ screens that would still be slow (e.g. an uncached cold chain).
 - **Incremental equivalence.** Import the 20k fixture in chunks (e.g. 10k + 5k + 3k + 2k)
   through the real import endpoint. Between chunks, hit a broad set of endpoints so the caches
   are warm and must extend. Then capture every endpoint. The result must equal the golden
-  capture of a one-shot 20k import (`/tmp/ohm-perf/golden/base`), with no new allow rules.
+  capture of a one-shot 20k import (the golden base capture), with no new allow rules.
 - **Reset still resets.** Delete, rebuild and clear after warm caches give the same output as a
   fresh process.
 - **Parity tests and the full suite stay green.** No stored flag changes, no STAT_VERSION bump.

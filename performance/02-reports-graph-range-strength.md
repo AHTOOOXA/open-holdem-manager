@@ -5,7 +5,7 @@ Scope: `GET /api/reports/graph` (Graph upper tab, legacy `GraphPage`), `POST /ap
 `PreflopRangeTab`, `HandStrengthTab`). How these endpoints use `chain.resolve` is covered here; the
 resolver itself is report 01's area (cross-referenced as 01-F1 etc.).
 
-All numbers below were measured on the 20k fixture DB (`/tmp/ohm-perf/02`, hero "Hero", 19,994
+All numbers below were measured on the 20k fixture DB (a local copy, hero "Hero", 19,994
 H2N-valid hands) or on the 214k DB opened read-only, unless marked **estimate**. "Wall" and "CPU"
 are best of 3 unless the row says cold.
 
@@ -70,7 +70,7 @@ the live run took 43 s because of swap. With G1 + G2: ≈ 0.1 s.
 
 ### 2.3 Prototype exactness (20k, against the current `get_graph(chain="[]")`)
 
-`/tmp/ohm-perf/02/proto_graph2.py --compare`:
+Prototype comparison against the current handler:
 
 - 1000 sampled points × 12 cumulative fields: **0 mismatches**; `played_at` equal; the sampled
   `hand_number`s are exactly the ones `ResultsChart` keeps today (`round(i * step)`, plus the last).
@@ -288,5 +288,4 @@ Larger (with report 01):
   SQL side was run. A divergence would need the 4th decimal of the SD to sit on a rounding
   boundary; computing the SD from the Arrow column in Python (two-pass, as today) removes even that.
 
-Scripts: `/tmp/ohm-perf/02/bench_graph.py`, `proto_graph.py`, `proto_graph2.py`, `big_handler.py`,
-`big_resolve.py`, `bench_range.py`, `big_range.py`, `fe_parse.mjs`.
+Benchmark and prototype scripts were kept locally (not committed).

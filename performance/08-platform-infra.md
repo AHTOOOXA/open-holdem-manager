@@ -6,9 +6,9 @@ Query defaults, polling, bundle), Electron startup, and the Databases and Config
 Page-specific hot paths (Graph, chain resolve, popup replays, import) belong to reports 01–07. This
 report only covers the systemic causes behind them.
 
-Setup: 20k-hand benchmark DB (`/tmp/ohm-perf/08/poker.duckdb`, hero "Hero", workspace 1), DuckDB
+Setup: 20k-hand benchmark DB (a copy of the 20k DB, hero "Hero", workspace 1), DuckDB
 1.4.4, FastAPI 0.162, Pydantic 2.14, Python 3.12.12, 10-core / 16 GB Mac that was swapping. SQL
-checks at 214k ran against `/tmp/ohm-mem/poker.duckdb` opened `read_only=True`. All runs were taken
+checks at 214k ran against a copy of the 214k DB opened `read_only=True`. All runs were taken
 under `bench-lock`. Each timing is the best of 3–20 runs and shows wall and CPU time.
 
 ## 1. Summary — do these first
@@ -369,7 +369,7 @@ action).
   on ~1,000 records.
 - **The P01 spot-chain resolve timing (3.4 s at 20k)** was taken under tracemalloc, so it is
   inflated. Use report 01's numbers for resolve time.
-- **The chain `_COLS` Decimal vs DOUBLE comparison** (`/tmp/ohm-perf/08/chaincols.py`) was pruned
+- **The chain `_COLS` Decimal vs DOUBLE comparison** (local scratch scripts) was pruned
   before it ran. The F2 gain is inferred from the graph-like query with the same column types.
 - **Not measured:** PyInstaller cold-start time (no packaged build here), Electron window
   time-to-first-paint, and renderer heap for the 89 MB Graph payload.

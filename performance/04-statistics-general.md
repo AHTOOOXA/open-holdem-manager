@@ -5,8 +5,8 @@ the opponent view, and the stat page opened from a cell: `GET /api/general/cell/
 `GET /api/general/cell/{id}/hands`, plus the two Reports calls it makes (preflop 13x13 Range and
 Next Actions).
 
-All numbers were measured on the 20k fixture (hero "Hero", ws 1, copy in `/tmp/ohm-perf/04`). Where
-noted, they were also measured read-only on the 214k-hand DB (`/tmp/ohm-mem/poker.duckdb`, hero id 3796).
+All numbers were measured on the 20k fixture (hero "Hero", ws 1, a local copy). Where
+noted, they were also measured read-only on the 214k-hand DB (a copy of the 214k DB, hero id 3796).
 Each run held the bench lock. Times are wall / CPU in ms. The machine was swapping, so RSS figures are
 noisy. Memory per record was measured with `tracemalloc`. Timings under `tracemalloc` were 10–20x
 inflated and are not used.

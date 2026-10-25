@@ -34,10 +34,10 @@ The first Hands-tab load after a chain change is dominated by the **cold chain r
 ## 2. Baseline
 
 Machine: 16 GB Mac. Each run was serialised with `bench-lock`. Numbers are best of 3–5 runs unless marked
-"cold". 20k = the shared benchmark copy (`/tmp/ohm-perf/03`, through TestClient end to end). 214k = the
-user-sized copy (`/tmp/ohm-mem/poker.duckdb`, read-only, direct calls into `app.api.hands` with the
+"cold". 20k = the shared benchmark copy (a local copy, through TestClient end to end). 214k = the
+user-sized copy (a copy of the 214k DB, read-only, direct calls into `app.api.hands` with the
 request cursor patched to a read-only connection, so there is no HTTP layer; that layer adds about 2–5 ms).
-Scripts: `/tmp/ohm-perf/03/bench_list.py`, `bench_stages.py`, `bench_alt.py`, `bench_export.py`.
+Benchmark scripts were kept locally (not committed).
 
 ### Endpoints the screens call
 

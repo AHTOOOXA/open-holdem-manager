@@ -20,10 +20,10 @@ F6 (header resolution) is also a one-hour fix worth doing with F2/F3.
 
 ## 2. Baseline
 
-Measured on the shared 20k fixture (`/tmp/ohm-perf/01`, hero "Hero", 19,994 H2N-valid hero
+Measured on the shared 20k fixture (a local copy, hero "Hero", 19,994 H2N-valid hero
 hands) through `TestClient`, and on a read-only copy of the user's DB (214,246 hands, 214,188
 hero rows, 1,286,048 `hand_players` rows) by calling the backend functions directly. The
-machine was swapping; CPU time is the more reliable number. Scripts: `/tmp/ohm-perf/01/*.py`.
+machine was swapping; CPU time is the more reliable number. Benchmark scripts were kept locally (not committed).
 
 ### Endpoints, 20k hands (TestClient, wall ≈ CPU)
 

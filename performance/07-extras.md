@@ -43,7 +43,7 @@ Changes worth doing first:
 Method: `TestClient(app)` in-process. Each call is timed with `perf_counter` (wall) and
 `getrusage` user+sys (CPU, which includes DuckDB worker threads). Runs were held under
 `bench-lock`. Tables show the median of 3 runs at 20k and 2 runs at 214k. 20k = the shared
-`bench_sample_20k` DB (118,842 `hand_players`, 62,524 players). 214k = `/tmp/ohm-mem/poker.duckdb`,
+`bench_sample_20k` DB (118,842 `hand_players`, 62,524 players). 214k = a copy of the 214k DB,
 opened read-only (216,754 hands, 1,286,048 `hand_players`, 262,328 players). Responses are JSON
 bytes. The machine was swapping. The numbers below come from quiet locked runs, so they are the
 real cost without swap.
@@ -288,5 +288,4 @@ Larger refactors:
   list can therefore show a different sample than the clicked cell.
 - The frontend bundle and the Electron/IPC overhead are not covered (report 08).
 
-Benchmark scripts: `/tmp/ohm-perf/07/bench.py` (endpoints; `ONLY=stats,compare,cash,pop,players,ident`),
-`/tmp/ohm-perf/07/sql214*.py` (SQL variants at 214k, read-only).
+Benchmark scripts (endpoints, and SQL variants at 214k read-only) were kept locally (not committed).
