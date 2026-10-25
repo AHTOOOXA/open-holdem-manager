@@ -420,9 +420,10 @@ def test_strings_interned_in_records(bench_db, hero_id):
     db.close()
 
 
-def test_reports_endpoints_take_a_heavy_slot(client, monkeypatch):
+def test_reports_endpoints_compute_in_a_heavy_slot(client, monkeypatch):
+    """Every response is computed in a slot (Resolution.memo); a cached one takes none, and a
+    plain resolve (two COUNT queries) takes none either."""
     from contextlib import contextmanager
-    from app.api import reports_lite
     entered = []
 
     @contextmanager
@@ -430,12 +431,15 @@ def test_reports_endpoints_take_a_heavy_slot(client, monkeypatch):
         entered.append(1)
         yield
 
-    monkeypatch.setattr(reports_lite, "heavy_slot", slot)
+    monkeypatch.setattr(chain_mod, "heavy_slot", slot)
     q = {"workspace_id": 1, "chain": []}
-    assert client.post("/api/reports/spot", json=q).status_code == 200
-    assert client.post("/api/reports/split", json={**q, "type": "positions"}).status_code == 200
-    assert client.post("/api/reports/preflop-range", json=q).status_code == 200
-    assert client.post("/api/reports/hand-strength", json={**q, "street": "flop"}).status_code == 200
+    calls = [("spot", q), ("split", {**q, "type": "positions"}), ("preflop-range", q),
+             ("hand-strength", {**q, "street": "flop"})]
+    for path, body in calls:
+        assert client.post(f"/api/reports/{path}", json=body).status_code == 200
+    assert len(entered) == 4
+    for path, body in calls:
+        assert client.post(f"/api/reports/{path}", json=body).status_code == 200
     assert len(entered) == 4
 
 

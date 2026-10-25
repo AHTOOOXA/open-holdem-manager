@@ -20,7 +20,6 @@ from typing import Literal, Optional
 
 from fastapi import APIRouter, HTTPException
 
-from app.concurrency import heavy_slot
 from app.db import get_read_cursor
 from app.reports import split as split_mod
 from app.reports import views
@@ -52,37 +51,36 @@ def _resolve(q: ReportQuery):
         raise HTTPException(status_code=422, detail=str(e))
 
 
-# CPU-heavy (a cold resolve or table): at most MAX_HEAVY of these run at once (app.concurrency).
+# CPU throttle (app.concurrency.heavy_slot, at most MAX_HEAVY at once) without holding a slot
+# while waiting: a cold spot-chain resolve takes one inside `resolve`, and every response /
+# table computation inside `Resolution.memo`. A cached response is served without a slot, and
+# requests waiting for another request's resolve or computation of the same thing hold none.
 
 
 @router.post("/reports/split")
 def post_split(q: SplitQuery) -> dict:
-    with heavy_slot():
-        db, res = _resolve(q)
-        return split_mod.split(db, res, q.type)
+    db, res = _resolve(q)
+    return split_mod.split(db, res, q.type)
 
 
 @router.post("/reports/spot")
 def post_spot(q: SpotQuery) -> dict:
-    with heavy_slot():
-        db, res = _resolve(q)
-        if q.recipe:
-            return views.recipe(db, res, q.recipe)
-        return views.spot(db, res)
+    db, res = _resolve(q)
+    if q.recipe:
+        return views.recipe(db, res, q.recipe)
+    return views.spot(db, res)
 
 
 @router.post("/reports/preflop-range")
 def post_preflop_range(q: ReportQuery) -> dict:
-    with heavy_slot():
-        db, res = _resolve(q)
-        return views.preflop_range(db, res)
+    db, res = _resolve(q)
+    return views.preflop_range(db, res)
 
 
 @router.post("/reports/hand-strength")
 def post_hand_strength(q: HandStrengthQuery) -> dict:
-    with heavy_slot():
-        db, res = _resolve(q)
-        return views.hand_strength(db, res, q.street)
+    db, res = _resolve(q)
+    return views.hand_strength(db, res, q.street)
 
 
 @router.get("/reports/quick-filters")

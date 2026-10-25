@@ -26,7 +26,9 @@ Resolutions are cached (LRU bounded by estimated bytes) by workspace, player, th
 without labels and a data version (hand count, last import time, the highest
 `hand_players.id`, which a rebuild moves, and `data_generation`, whose bump also clears the
 cache), so the several requests a Reports page fires share one resolution; split tables and
-finished responses computed from a resolution are cached on it (`Resolution.memo`).
+finished responses computed from a resolution are cached on it (`Resolution.memo`). Cold
+spot-chain resolves and memoized computations run in `app.concurrency.heavy_slot()`; requests
+waiting for one of them hold no slot.
 """
 
 from __future__ import annotations
@@ -38,12 +40,14 @@ import logging
 import sys
 import threading
 from collections import OrderedDict
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from typing import Annotated, Any, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator, model_validator
 
 from app import data_generation
+from app.concurrency import heavy_slot
 from app.api.general_popup import _BUCKET_BY_ID, _fetch_raw, _size_hits
 from app.date_filters import day_from_sql, day_to_sql
 from app.db import get_hero_player_id, get_rebuild_status
@@ -566,6 +570,9 @@ class HandRec:
 REC_BYTES = 760
 # A derived table / response bigger than this (estimate) is not kept on the resolution.
 MEMO_MAX_BYTES = 16 << 20
+# Compact per-row tables (one Acc per row, no response dicts) may be kept up to this size:
+# rebuilding the response from them is ~5x cheaper than recomputing (e.g. the Players split).
+TABLE_MAX_BYTES = 96 << 20
 
 
 class PlainResolutionError(RuntimeError):
@@ -635,9 +642,19 @@ class Resolution:
             raise PlainResolutionError("plain resolution: use chain.case_ids(db, res)")
         return [h.hid for h in self.hands if h.case]
 
-    def memo(self, key, fn, size=None):
+    def memo(self, key, fn, size=None, max_bytes: int = MEMO_MAX_BYTES, heavy: bool = True):
         """`fn()` computed once per key (racing requests wait for the first one) and kept in
-        `tables` unless its estimated size (`size(value)`, default 1 KB) is over MEMO_MAX_BYTES."""
+        `tables` unless its estimated size (`size(value)`, default 1 KB) is over `max_bytes`
+        (MEMO_MAX_BYTES by default).
+
+        `heavy`: the computation runs in a `heavy_slot()`; all CPU work of the Reports
+        endpoints happens in memoized computations, so this is where they are throttled. A
+        cached value is returned without a slot, and a request waiting for another request's
+        computation of the same key holds no slot (the endpoints call this outside any slot).
+        Nested keys (Next / Faced / Sizing / Players tables) are only computed inside a heavy
+        computation, whose slot is re-entrant, so no owner waits for a slot while slot holders
+        wait for it. `case_ids_arrow` is also built outside any slot (hand list, graph) and is
+        cheap: it takes none."""
         with self.lock:
             if key in self.tables:
                 return self.tables[key]
@@ -646,9 +663,13 @@ class Resolution:
             with self.lock:
                 if key in self.tables:
                     return self.tables[key]
-            value = fn()
+            if heavy:
+                with heavy_slot():
+                    value = fn()
+            else:
+                value = fn()
             nbytes = size(value) if size is not None else 1024
-            if nbytes <= MEMO_MAX_BYTES:
+            if nbytes <= max_bytes:
                 with self.lock:
                     self.tables[key] = value
                     self.table_bytes += nbytes
@@ -739,7 +760,7 @@ def case_filter(db, res: Resolution, col: str) -> tuple[str, list]:
     import pyarrow as pa
     arr = res.memo(("case_ids_arrow",),
                    lambda: pa.array([h.hid for h in res.hands if h.case], pa.string()),
-                   size=lambda a: a.nbytes + 1024)
+                   size=lambda a: a.nbytes + 1024, heavy=False)
     if not len(arr):
         return "FALSE", []
     return f"{col} IN (SELECT id FROM {register_ids(db, arr)})", []
@@ -996,12 +1017,13 @@ def data_version(db, workspace_id: int) -> tuple:
 
 
 class _Flight:
-    """One in-progress computation of a cache key; waiters take its result."""
+    """One in-progress computation of a cache key; waiters take its result (None when the
+    computation failed: they try again)."""
 
-    __slots__ = ("lock", "result")
+    __slots__ = ("done", "result")
 
     def __init__(self):
-        self.lock = threading.Lock()
+        self.done = threading.Event()
         self.result = None
 
 
@@ -1009,7 +1031,15 @@ def resolve(db, workspace_id: int, player_id: int | None, chain: list[_Step]) ->
     """Resolution of `chain` for the player (None = the workspace's active hero), cached.
 
     Parallel requests for one key share one computation, also during a background rebuild
-    (when nothing is cached because the data is changing)."""
+    (when nothing is cached because the data is changing).
+
+    A cold spot-chain resolve (per-hand sequence decoding and evaluation) runs in a
+    `heavy_slot()`: every caller (Reports endpoints, hand list, graph, export) is throttled
+    here. The computing request takes the slot *before* it registers the in-flight entry, so
+    an entry always belongs to a request that is already running; requests waiting for it
+    hold no slot of their own (unless their caller already had one, which then can't
+    deadlock: the entry's owner never waits for a slot). Plain chains resolve with two
+    COUNT queries and take no slot."""
     target = target_player(db, workspace_id, player_id)
     from app.app_settings import get_app_settings
     day_start = int(get_app_settings(db)["day_start_hour"])
@@ -1019,24 +1049,36 @@ def resolve(db, workspace_id: int, player_id: int | None, chain: list[_Step]) ->
         hit = _CACHE.get(key)
         if hit is not None:
             return hit
-    with _inflight_lock:
-        flight = _inflight.get(key)
-        if flight is None:
-            flight = _inflight[key] = _Flight()
-    try:
-        with flight.lock:
-            if flight.result is None:
+    slot = heavy_slot if spot_steps(chain) else nullcontext
+    while True:
+        with _inflight_lock:
+            flight = _inflight.get(key)
+        if flight is not None:            # someone is computing it: wait without a slot
+            flight.done.wait()
+            if flight.result is not None:
+                return flight.result
+            continue                      # that computation failed: try again
+        with slot():
+            with _inflight_lock:
+                flight = _inflight.get(key)
+                owner = flight is None
+                if owner:
+                    flight = _inflight[key] = _Flight()
+            if not owner:
+                continue                  # lost the race while taking the slot: leave it, wait
+            try:
                 hit = _CACHE.get(key) if cacheable else None
                 if hit is None:
                     hit = _compute(db, workspace_id, target, chain, day_start)
                     if cacheable:
                         _CACHE.put(key, hit)
                 flight.result = hit
-            return flight.result
-    finally:
-        with _inflight_lock:
-            if _inflight.get(key) is flight:
-                del _inflight[key]
+                return hit
+            finally:
+                with _inflight_lock:
+                    if _inflight.get(key) is flight:
+                        del _inflight[key]
+                flight.done.set()
 
 
 def resolved_ids(db, workspace_id: int, player_id: int | None, chain: list[_Step]) -> list[str]:

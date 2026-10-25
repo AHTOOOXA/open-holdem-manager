@@ -50,8 +50,8 @@ from app.h2n.rows import ROWS
 from app.h2n.sequence import BET, CHECK, FOLD, RAISE
 from app.reports import spots
 from app.reports.chain import (
-    _FROM, ORDER, POS_NAMES, HandRec, Resolution, SeqSource, case_filter, fetch_seqs,
-    iter_records, stack_caption, stakes_caption,
+    _FROM, ORDER, POS_NAMES, TABLE_MAX_BYTES, HandRec, Resolution, SeqSource, case_filter,
+    fetch_seqs, iter_records, stack_caption, stakes_caption,
 )
 from app.sessions_h2n import TimeStats, time_stats
 
@@ -571,7 +571,21 @@ def tables_split(db, res: Resolution) -> tuple[list[dict], dict | None]:
     return rows, summary
 
 
+# Resident bytes of one players_table entry (tuple, Acc with its boxed floats, name string),
+# measured with tracemalloc on the 20k fixture.
+PLAYER_ENTRY_BYTES = 640
+
+
 def players_table(db, res: Resolution) -> list[tuple[int, str, Acc]]:
+    """`_players_table`, kept on the resolution while it fits TABLE_MAX_BYTES: the Players
+    response itself is too big to cache (a dict per opponent), rebuilding it from this
+    compact table is several times cheaper than recomputing the sums."""
+    return res.memo(("players_table",), lambda: _players_table(db, res),
+                    size=lambda t: PLAYER_ENTRY_BYTES * len(t) + 1024,
+                    max_bytes=TABLE_MAX_BYTES)
+
+
+def _players_table(db, res: Resolution) -> list[tuple[int, str, Acc]]:
     """(player id, username, Acc of the opponent's own rows) per opponent dealt in to the
     chain's case hands, Hands descending: the opponents' rows summed per player in hand order
     (Arrow, like the plain splits) instead of one HandRec per row. The same arithmetic as
