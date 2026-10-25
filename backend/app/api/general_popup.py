@@ -868,7 +868,11 @@ def _parse(raw_text: str, site_id: int):
     return parsed, replay_parsed(parsed)
 
 
-def _compute_record(parsed, seq: HandSeq, username: str, row: str, street: int) -> _Rec | None:
+def _compute_record(parsed, seq: HandSeq, username: str, row: str, street: int,
+                    stored: tuple[list[str], int | None] | None = None) -> _Rec | None:
+    """The record of `username` in one hand. Postflop rows need the boards and the
+    stat-street hand value: from `parsed`, or for a single-board hand from `stored` =
+    (board cards in deal order, `hand_players.hv_<street>`), see _stored_postflop."""
     res = match_row(seq, row, username)
     if res is None or not res.opp or res.hit is None:
         return None
@@ -878,11 +882,15 @@ def _compute_record(parsed, seq: HandSeq, username: str, row: str, street: int) 
     if street > 0:
         sname = STREET_NAMES[street]
         n = _BOARD_LEN[street]
-        boards = player_boards(parsed)
+        boards = player_boards(parsed) if stored is None else [stored[0]]
         textures = tuple(tuple(board_categories(b[:n], sname)) if len(b) >= n else ()
                          for b in boards)
         if res.case:
-            cats = tuple(c.get(f"hv_{sname}") for c in classify_boards_for_player(parsed, username))
+            if stored is None:
+                cats = tuple(c.get(f"hv_{sname}")
+                             for c in classify_boards_for_player(parsed, username))
+            else:
+                cats = (stored[1],)
     nxt = direct = None
     if res.case:
         flat = _Flat(seq)
@@ -1020,6 +1028,60 @@ def _raw_rows(db, workspace_id: int, ids: list[str], scope: "_Scope | None"):
     return ((hid, (raw, site)) for hid, raw, site in _stream(db, sql, params) if hid in want)
 
 
+_STREET_ORDER = {"flop": 0, "turn": 1, "river": 2}
+
+
+def _stored_postflop(db, workspace_id: int, missing: list[str], scope: "_Scope", street: int
+                     ) -> dict[str, tuple[bytes, list[str], int | None]]:
+    """Postflop inputs from stored columns (04/F4), for the hands that can use them:
+    hand id -> (stored sequence, board, hp.hv_<street>).
+
+    Only single-board hands (`hands.rit_boards` = 1 and no board_cards row of a later
+    board) with a stored sequence and board cards qualify. For them player_boards(parsed)
+    is the one board as board_cards holds it (written from parsed.board_cards), and
+    classify_boards_for_player gives exactly the hand value the import stored
+    (classify_for_player, same board). Every other hand is re-parsed.
+    """
+    if len(missing) < _JOIN_FETCH_MIN:
+        scope = scope.narrow("hp.hand_id IN (SELECT UNNEST(?::VARCHAR[]))", [missing])
+    want = set(missing)
+    hv = f"hp.hv_{STREET_NAMES[street]}"
+    sql, params = scope.sql(
+        f"hp.hand_id, s.h2n_seq, {hv}",
+        join="JOIN hands hr ON hr.id = hp.hand_id AND hr.workspace_id = hp.workspace_id "
+             "AND hr.rit_boards = 1 "
+             "JOIN hand_players s ON s.hand_id = hp.hand_id AND s.workspace_id = hp.workspace_id "
+             "AND s.h2n_seq IS NOT NULL")
+    seqs: dict[str, tuple[bytes, int | None]] = {}
+    for hid, blob, val in _stream(db, sql, params):
+        if hid in want:
+            seqs[hid] = (blob, None if val is None else int(val))
+    if not seqs:
+        return {}
+    sql, params = scope.sql(
+        "bc.hand_id, bc.board_number, bc.street, bc.card_order, bc.card",
+        join="JOIN board_cards bc ON bc.hand_id = hp.hand_id AND bc.workspace_id = hp.workspace_id")
+    cards: dict[str, list[tuple[int, int, str]]] = {}
+    multi: set[str] = set()
+    for hid, number, st, order, card in _stream(db, sql, params):
+        if hid not in seqs:
+            continue
+        if number != 1:
+            multi.add(hid)
+            continue
+        k = _STREET_ORDER.get(st)
+        if k is not None:
+            cards.setdefault(hid, []).append((k, order, card))
+    out: dict[str, tuple[bytes, list[str], int | None]] = {}
+    for hid, (blob, val) in seqs.items():
+        cs = cards.get(hid)
+        if cs is None or hid in multi:
+            continue
+        cs.sort()
+        out[hid] = (blob, [c for _, _, c in cs], val)
+    return out
+
+
 def _replay_missing(db, workspace_id: int, username: str, row: str, street: int,
                     missing: list[str], scope: "_Scope | None" = None) -> list[tuple[str, int]]:
     """(hand id, packed record) for every hand not in the cache."""
@@ -1041,6 +1103,25 @@ def _replay_missing(db, workspace_id: int, username: str, row: str, street: int,
             rec = None
             try:
                 rec = _compute_record(None, seq, username, row, street)
+            except Exception:
+                log.warning("popup replay failed for hand %s", hid, exc_info=True)
+            done.append((hid, _safe_pack(hid, rec)))
+        todo = [hid for hid in missing if hid not in decoded]
+    elif scope is not None:
+        decoded = set()
+        for hid, (blob, board, val) in _stored_postflop(db, workspace_id, missing, scope,
+                                                         street).items():
+            try:
+                seq = decode_sequence(blob)
+            except Exception:
+                log.warning("stored sequence of hand %s is unreadable", hid, exc_info=True)
+                continue
+            if seq is None:
+                continue
+            decoded.add(hid)
+            rec = None
+            try:
+                rec = _compute_record(None, seq, username, row, street, (board, val))
             except Exception:
                 log.warning("popup replay failed for hand %s", hid, exc_info=True)
             done.append((hid, _safe_pack(hid, rec)))

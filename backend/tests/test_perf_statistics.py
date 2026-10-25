@@ -240,3 +240,66 @@ def test_heavy_endpoints_take_a_slot(client, db, monkeypatch):
     assert client.get("/api/general/cell/summary.vpip.Total/detail").status_code == 200
     assert client.get("/api/general/cell/summary.vpip.Total/hands").status_code == 200
     assert len(taken) == 3
+
+
+# ── postflop records from stored columns (04/F4) ─────────────────────────
+
+
+def _postflop_rows() -> dict[str, int]:
+    return {row: street for row, street in _action_rows().items() if street > 0}
+
+
+def test_stored_postflop_records_equal_reparsed_ones_on_every_site(db):
+    """Every fixture hand of every site: for each postflop row and each player with the
+    opportunity, the record from the stored sequence + board_cards + hv_<street> is the
+    record from re-parsing raw_text; run-it-twice hands are left to the re-parse."""
+    from pathlib import Path
+
+    from app.api.import_hands import _process_hands
+    from app.h2n.rows import sql_opp
+    from app.h2n.seqcodec import decode_sequence
+
+    root = Path(__file__).parent / "fixtures"
+    texts = [p.read_text(encoding="utf-8", errors="replace")
+             for site in sorted(root.iterdir()) if site.is_dir() and site.name != "money"
+             for p in sorted(site.glob("*.txt"))]
+    _process_hands(db, texts, 1)
+    assert db.execute("SELECT COUNT(DISTINCT site_id) FROM hands").fetchone()[0] >= 5
+    rit = {r[0] for r in db.execute("SELECT id FROM hands WHERE rit_boards > 1").fetchall()}
+    assert rit
+    raw = {h: (t, s) for h, t, s in db.execute("SELECT id, raw_text, site_id FROM hands").fetchall()}
+    names = dict(db.execute("SELECT id, username FROM players").fetchall())
+    stored_n = 0
+    for row, street in _postflop_rows().items():
+        for (pid,) in db.execute(
+                f"SELECT DISTINCT player_id FROM hand_players hp WHERE {sql_opp(row)} = 1").fetchall():
+            scope = gp._Scope(["hp.player_id = ?", "hp.workspace_id = ?",
+                               "COALESCE(hp.h2n_valid, TRUE)", f"{sql_opp(row)} = 1"],
+                              [pid, 1], "", [])
+            sql, params = scope.sql("hp.hand_id")
+            ids = [r[0] for r in db.execute(sql, params).fetchall()]
+            stored = gp._stored_postflop(db, 1, ids, scope, street)
+            assert not set(stored) & rit
+            for hid in ids:
+                parsed, seq = gp._parse(*raw[hid])
+                want = gp._compute_record(parsed, seq, names[pid], row, street)
+                if hid in stored:
+                    blob, board, val = stored[hid]
+                    got = gp._compute_record(None, decode_sequence(blob), names[pid], row, street,
+                                             (board, val))
+                    assert got == want, (row, hid, names[pid])
+                    stored_n += 1
+    assert stored_n > 100
+
+
+def test_postflop_detail_same_with_and_without_stored_columns(client, db, monkeypatch):
+    _insert(db, *_cbet_hands())
+    calls = []
+    real_parse = gp._parse
+    monkeypatch.setattr(gp, "_parse", lambda *a: calls.append(a) or real_parse(*a))
+    stored = _details(client)
+    assert not any(c for c in calls)        # no detail re-parsed a history
+    db.execute("UPDATE hands SET rit_boards = 2")   # every hand takes the re-parse path
+    gp.clear_cache()
+    assert _details(client) == stored
+    assert calls
