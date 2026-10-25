@@ -102,6 +102,13 @@ export default function ReportsDashboard({ workspaceId, legacy }: { workspaceId:
   const spot = useQuery({
     queryKey: reportKeys.spot(totalQuery),
     queryFn: ({ signal }) => getSpot(totalQuery, signal),
+    // total_hands does not depend on the chain: keep the count while an edited page 0
+    // refetches, unless the workspace or player changed.
+    placeholderData: (prev, prevQuery) => {
+      if (!prev || !prevQuery) return undefined;
+      const [ws, pid] = JSON.parse(prevQuery.queryKey[2]) as [number, number | null];
+      return ws === dashboard.workspaceId && pid === (dashboard.playerId ?? null) ? prev : undefined;
+    },
   });
 
   const pickPlayer = useCallback((p: StoredPlayer) => {
