@@ -22,7 +22,7 @@ import { count } from '@/lib/format';
 import {
   addLowerTab, applyLegacyTab, chainStorageKey, closeAllPages, closePagesFrom, freshChain,
   openFrom, parseStoredChain, parseTabMemory, removeLowerTab, removeOwnStep, reportQuery, resetPage0,
-  serializeChain, setCellsSelection, setHvSelection, setLowerTab, setOwnSteps, setUpperTab, tabMemoryKey,
+  serializeChain, setCellsSelection, setHvSelection, setLowerTab, setOwnSteps, setUpperTab, tabMemoryKey, upperChain,
   type Dashboard, type LowerTab, type ReportChain, type ReportPage, type StoredPlayer,
 } from '@/lib/reports/pages';
 import { setWidth } from '@/lib/page-chain';
@@ -95,7 +95,10 @@ export default function ReportsDashboard({ workspaceId, legacy }: { workspaceId:
   // ── Page 0 header data
   const heroes = useQuery({ queryKey: ['heroes', workspaceId], queryFn: () => getHeroes(workspaceId) });
   const hero = heroes.data?.active ?? null;
-  const totalQuery = useMemo(() => reportQuery(dashboard, []), [dashboard]);
+  // The hand count comes from page 0's own Stats request (`total_hands`, every hand of the
+  // player): a filtered page 0 must not resolve the empty chain just for this number.
+  const page0 = chain.pages[0];
+  const totalQuery = useMemo(() => reportQuery(dashboard, page0 ? upperChain(page0) : []), [dashboard, page0]);
   const spot = useQuery({
     queryKey: reportKeys.spot(totalQuery),
     queryFn: ({ signal }) => getSpot(totalQuery, signal),
@@ -193,8 +196,8 @@ export default function ReportsDashboard({ workspaceId, legacy }: { workspaceId:
       </Tooltip>
       <div className="flex shrink-0 items-center gap-1">
         {spot.data && (
-          <span className="px-2 text-sm text-muted-foreground" title={`${spot.data.hands} hands`}>
-            {count(spot.data.hands)} hands
+          <span className="px-2 text-sm text-muted-foreground" title={`${spot.data.total_hands ?? spot.data.hands} hands`}>
+            {count(spot.data.total_hands ?? spot.data.hands)} hands
           </span>
         )}
         <DropdownMenu>

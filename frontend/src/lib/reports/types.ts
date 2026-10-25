@@ -157,6 +157,7 @@ export interface SpotResponse {
   kind: SpotKind;
   hit_label: string | null; // e.g. "Continuation Bet"
   stats: SpotStat[];
+  total_hands?: number; // every hand of the player (page 0's header count)
 }
 
 // ── POST /api/reports/preflop-range ─────────────────────────────────────────────────────────
