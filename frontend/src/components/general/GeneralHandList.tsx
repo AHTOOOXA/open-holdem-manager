@@ -200,7 +200,7 @@ export default function GeneralHandList({ cellId, params, filter, title, onClose
           onClose={() => setOpenHandId(null)}
           onPrev={() => openIndex > 0 && setOpenHandId(rows[openIndex - 1].hand_id)}
           onNext={() => openIndex >= 0 && openIndex < rows.length - 1 && setOpenHandId(rows[openIndex + 1].hand_id)}
-          onTagsChanged={() => { void queryClient.invalidateQueries({ queryKey: ['general'] }); }}
+          onTagsChanged={() => { void queryClient.invalidateQueries({ queryKey: ['general', 'hands'] }); }}
         />
       )}
       {historyId && (
