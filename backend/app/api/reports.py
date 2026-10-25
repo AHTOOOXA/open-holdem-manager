@@ -269,40 +269,24 @@ def get_filter_options(
     if not player_id:
         return FilterOptions()
 
-    stakes_rows = db.execute(
+    # One scan: distinct stakes, distinct game modes and the date range as three grouping sets,
+    # each set's rows in the order the separate DISTINCT ... ORDER BY queries returned.
+    rows = db.execute(
         """
-        SELECT DISTINCT h.stakes
+        SELECT GROUPING(h.stakes) AS g_s, GROUPING(h.game_mode) AS g_m, h.stakes, h.game_mode,
+               MIN(h.played_at), MAX(h.played_at)
         FROM hand_players hp
         JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
         WHERE hp.player_id = ? AND h.workspace_id = ?
-        ORDER BY h.stakes
+        GROUP BY GROUPING SETS ((h.stakes), (h.game_mode), ())
+        ORDER BY g_s, g_m, h.stakes, h.game_mode
         """,
         [player_id, workspace_id],
     ).fetchall()
 
-    game_mode_rows = db.execute(
-        """
-        SELECT DISTINCT h.game_mode
-        FROM hand_players hp
-        JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
-        WHERE hp.player_id = ? AND h.workspace_id = ?
-        ORDER BY h.game_mode
-        """,
-        [player_id, workspace_id],
-    ).fetchall()
-
-    date_row = db.execute(
-        """
-        SELECT MIN(h.played_at), MAX(h.played_at)
-        FROM hand_players hp
-        JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
-        WHERE hp.player_id = ? AND h.workspace_id = ?
-        """,
-        [player_id, workspace_id],
-    ).fetchone()
-
-    stakes = [r[0] for r in stakes_rows]
-    game_modes = [r[0] for r in game_mode_rows]
+    stakes = [r[2] for r in rows if (r[0], r[1]) == (0, 1)]
+    game_modes = [r[3] for r in rows if (r[0], r[1]) == (1, 0)]
+    date_row = next((r[4:] for r in rows if (r[0], r[1]) == (1, 1)), None)
     date_range = {}
     if date_row and date_row[0]:
         date_range["min"] = str(date_row[0])[:10]
@@ -528,6 +512,86 @@ def _check_drift(
     return (drift_pct, ci_lower, ci_upper)
 
 
+DRIFT_MIN_HANDS = 20000
+
+# Opportunity groups of the recent window: the window of a stat is the last `window_size` hands
+# (played_at DESC, id DESC) among the hands where its group predicate holds.
+_DRIFT_GROUPS: list[str] = [
+    "TRUE",
+    "hp.three_bet_opp = true",
+    _F3B_OPP,
+    "hp.cbet_flop_opp = true",
+    "hp.fold_to_cbet_flop IS NOT NULL",
+    "hp.saw_flop = true",
+    "hp.went_to_showdown = true",
+    "hp.steal_opp = true",
+    "hp.faced_steal = true",
+]
+
+# (group index, stats in it as (key, value expression))
+_WINDOW_GROUPS: list[tuple[int, list[tuple[str, str]]]] = [
+    (0, [("vpip", "CAST(hp.vpip AS DOUBLE)"), ("pfr", "CAST(hp.pfr AS DOUBLE)")]),
+    (1, [("three_bet", "CAST(hp.three_bet AS DOUBLE)")]),
+    (2, [("fold_to_3bet", f"CAST({_F3B_CASE} AS DOUBLE)")]),
+    (3, [("cbet_flop", "CAST(hp.cbet_flop AS DOUBLE)")]),
+    (4, [("fold_to_cbet_flop", "CAST(hp.fold_to_cbet_flop AS DOUBLE)")]),
+    (5, [("went_to_showdown", "CAST(hp.went_to_showdown AS DOUBLE)"),
+         ("wwsf", "CASE WHEN hp.won_bb > 0 THEN 1.0 ELSE 0.0 END")]),
+    (6, [("won_at_showdown", "CAST(hp.won_at_showdown AS DOUBLE)")]),
+    (7, [("steal", "CAST(hp.steal_attempted AS DOUBLE)")]),
+    (8, [("fold_to_steal", "CAST(hp.fold_to_steal AS DOUBLE)")]),
+]
+_AFQ_GROUP = 5  # saw_flop
+
+
+def _drift_windows(db, where: str, params: list, window_size: int
+                   ) -> tuple[dict[str, tuple[float, int]], tuple[int, int, int]]:
+    """Recent-window figures of every drift stat from one ordered columnar fetch.
+
+    Same numbers as one `ORDER BY played_at DESC, id DESC LIMIT window_size` query per group:
+    a row is in group g's window when the group predicate holds and fewer than window_size
+    newer rows of the group precede it. The averaged values are 0/1, so their sums are exact
+    in any order and float(sum) / count equals SQL AVG."""
+    import pyarrow as pa
+    import pyarrow.compute as pc
+
+    flags = ", ".join(f"COALESCE({pred}, FALSE) AS g{g}" for g, pred in enumerate(_DRIFT_GROUPS))
+    values = ", ".join(f"{expr} AS {sk}" for _, stats in _WINDOW_GROUPS for sk, expr in stats)
+    t = db.execute(
+        f"""
+        SELECT {flags}, {values},
+               hp.flop_bets + hp.flop_raises AS afq_num,
+               hp.flop_bets + hp.flop_raises + hp.flop_calls + hp.flop_checks + hp.flop_folds AS afq_den
+        FROM hand_players hp
+        JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
+        WHERE {where}
+        ORDER BY h.played_at DESC, h.id DESC
+        """,
+        params,
+    ).fetch_arrow_table()
+
+    def window(g: int):
+        flag = t.column(f"g{g}")
+        rank = pc.cumulative_sum(pc.cast(flag, pa.int64()))
+        mask = pc.and_(flag, pc.less_equal(rank, window_size))
+        return mask, int(pc.sum(pc.cast(mask, pa.int64())).as_py() or 0)
+
+    def total(col: str, mask) -> tuple[float | int | None, int]:
+        v = pc.filter(t.column(col), mask)
+        return pc.sum(v).as_py(), int(pc.count(v).as_py())
+
+    data: dict[str, tuple[float, int]] = {}
+    for g, stats in _WINDOW_GROUPS:
+        mask, cnt = window(g)
+        for sk, _ in stats:
+            s, c = total(sk, mask)
+            # AVG (NULL when no values -> 0.0); wwsf's 1.0/0.0 literals are DECIMAL: float() them
+            data[sk] = (float(s) / c if c else 0.0, cnt)
+    mask, cnt = window(_AFQ_GROUP)
+    num, den = total("afq_num", mask)[0], total("afq_den", mask)[0]
+    return data, (int(num or 0), int(den or 0), cnt)
+
+
 @router.get("/reports/drift", response_model=DriftResponse)
 def get_drift(
     stakes: str | None = Query(None),
@@ -557,21 +621,7 @@ def get_drift(
         where += " AND " + DATE_TO_SQL
         params.append(date_to)
 
-    # Get total hand count
-    total_count = db.execute(
-        f"SELECT COUNT(*) FROM hand_players hp JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id WHERE {where}",
-        params,
-    ).fetchone()[0]
-
-    if total_count < 20000:
-        return DriftResponse(total_hands=total_count)
-
-    # Window = last 20% of hands
-    window_size = max(1, int(total_count * 0.20))
-
-    results: list[DriftStat] = []
-
-    # ── One query for ALL lifetime stats ──
+    # ── Lifetime stats; COUNT(*) (column 1) is the hand count ──
     lt = db.execute(
         f"""
         SELECT
@@ -603,6 +653,16 @@ def get_drift(
         params,
     ).fetchone()
 
+
+    total_count = int(lt[1])
+    if total_count < DRIFT_MIN_HANDS:
+        return DriftResponse(total_hands=total_count)
+
+    # Window = last 20% of hands
+    window_size = max(1, int(total_count * 0.20))
+
+    results: list[DriftStat] = []
+
     # Map: (stat_key, lt_avg_idx, lt_n_idx)
     # vpip/pfr share count at idx 1
     _LT_MAP = [
@@ -630,68 +690,8 @@ def get_drift(
     afq_lt_num = int(lt[19]) if lt[19] is not None else 0
     afq_lt_den = int(lt[20]) if lt[20] is not None else 0
 
-    # ── Window queries grouped by opp_filter ──
-    _WINDOW_GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
-        ("", [
-            ("vpip", "CAST(hp.vpip AS DOUBLE)"),
-            ("pfr", "CAST(hp.pfr AS DOUBLE)"),
-        ]),
-        ("AND hp.three_bet_opp = true", [
-            ("three_bet", "CAST(hp.three_bet AS DOUBLE)"),
-        ]),
-        (f"AND {_F3B_OPP}", [
-            ("fold_to_3bet", f"CAST({_F3B_CASE} AS DOUBLE)"),
-        ]),
-        ("AND hp.cbet_flop_opp = true", [
-            ("cbet_flop", "CAST(hp.cbet_flop AS DOUBLE)"),
-        ]),
-        ("AND hp.fold_to_cbet_flop IS NOT NULL", [
-            ("fold_to_cbet_flop", "CAST(hp.fold_to_cbet_flop AS DOUBLE)"),
-        ]),
-        ("AND hp.saw_flop = true", [
-            ("went_to_showdown", "CAST(hp.went_to_showdown AS DOUBLE)"),
-            ("wwsf", "CASE WHEN hp.won_bb > 0 THEN 1.0 ELSE 0.0 END"),
-        ]),
-        ("AND hp.went_to_showdown = true", [
-            ("won_at_showdown", "CAST(hp.won_at_showdown AS DOUBLE)"),
-        ]),
-        ("AND hp.steal_opp = true", [
-            ("steal", "CAST(hp.steal_attempted AS DOUBLE)"),
-        ]),
-        ("AND hp.faced_steal = true", [
-            ("fold_to_steal", "CAST(hp.fold_to_steal AS DOUBLE)"),
-        ]),
-    ]
-
-    window_data: dict[str, tuple[float, int]] = {}
-
-    for opp_filter, stats_in_group in _WINDOW_GROUPS:
-        # Skip if none of these stats have lifetime data
-        if not any(sk in lifetime_data for sk, _ in stats_in_group):
-            continue
-
-        select_parts = [f"AVG({expr}) AS v{i}" for i, (_, expr) in enumerate(stats_in_group)]
-        select_sql = ", ".join(select_parts) + ", COUNT(*)"
-
-        row = db.execute(
-            f"""
-            WITH recent AS (
-                SELECT {', '.join(expr + f' AS c{i}' for i, (_, expr) in enumerate(stats_in_group))}
-                FROM hand_players hp
-                JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
-                WHERE {where} {opp_filter}
-                ORDER BY h.played_at DESC, h.id DESC
-                LIMIT ?
-            )
-            SELECT {', '.join(f'AVG(c{i})' for i in range(len(stats_in_group)))}, COUNT(*) FROM recent
-            """,
-            params + [window_size],
-        ).fetchone()
-
-        cnt = int(row[len(stats_in_group)])
-        for i, (sk, _) in enumerate(stats_in_group):
-            avg = float(row[i]) if row[i] is not None else 0.0
-            window_data[sk] = (avg, cnt)
+    # ── Recent windows ──
+    window_data, afq_w = _drift_windows(db, where, params, window_size)
 
     # ── Build results for boolean stats ──
     for stat_key in [sk for sk, _, _ in _LT_MAP]:
@@ -721,20 +721,6 @@ def get_drift(
     # ── AFq Flop (ratio stat) ──
     if afq_lt_den > 0:
         afq_lt_avg = afq_lt_num / afq_lt_den
-        afq_w = db.execute(
-            f"""
-            WITH recent AS (
-                SELECT hp.flop_bets + hp.flop_raises AS num,
-                       hp.flop_bets + hp.flop_raises + hp.flop_calls + hp.flop_checks + hp.flop_folds AS den
-                FROM hand_players hp JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
-                WHERE {where} AND hp.saw_flop = true
-                ORDER BY h.played_at DESC, h.id DESC
-                LIMIT ?
-            )
-            SELECT SUM(num), SUM(den), COUNT(*) FROM recent
-            """,
-            params + [window_size],
-        ).fetchone()
         w_num = int(afq_w[0] or 0)
         w_den = int(afq_w[1] or 0)
         if w_den > 0 and int(afq_w[2]) >= 30:
