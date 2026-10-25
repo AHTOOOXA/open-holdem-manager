@@ -198,3 +198,45 @@ def test_hand_pages_concatenate_to_the_full_list(client, db, sort, order):
     assert full["rows"] == sorted(full["rows"], key=key, reverse=order == "desc")
     past = client.get(url, params={"offset": 5, "limit": 2}).json()
     assert past["total"] == 5 and past["rows"] == []
+
+
+# ── opponent view cache (04/F7) and the heavy-handler limit ──────────────
+
+
+def test_opponent_vs_user_counts_are_cached_until_the_data_changes(client, db, monkeypatch):
+    from app.api import general as general_api
+    _insert(db, *_cbet_hands())
+    general_api.clear_vs_cache()
+    pid = db.execute("SELECT id FROM players WHERE username = 'B'").fetchone()[0]
+    calls = []
+    real = general_api._replay_vs_user
+    monkeypatch.setattr(general_api, "_replay_vs_user",
+                        lambda *a: calls.append(a) or real(*a))
+    first = client.get("/api/general", params={"player_id": pid}).json()
+    assert not first["is_hero"] and len(calls) == 1
+    assert client.get("/api/general", params={"player_id": pid}).json() == first
+    assert len(calls) == 1
+    client.get("/api/general", params={"player_id": pid, "date_from": "2026-01-01"})
+    assert len(calls) == 2                     # another filter is another entry
+    data_generation.bump()
+    assert client.get("/api/general", params={"player_id": pid}).json() == first
+    assert len(calls) == 3
+
+
+def test_heavy_endpoints_take_a_slot(client, db, monkeypatch):
+    import contextlib
+    from app.api import general as general_api
+    _insert(db, *_cbet_hands())
+    taken = []
+
+    @contextlib.contextmanager
+    def fake_slot():
+        taken.append(1)
+        yield
+
+    monkeypatch.setattr(general_api, "heavy_slot", fake_slot)
+    monkeypatch.setattr(gp, "heavy_slot", fake_slot)
+    assert client.get("/api/general").status_code == 200
+    assert client.get("/api/general/cell/summary.vpip.Total/detail").status_code == 200
+    assert client.get("/api/general/cell/summary.vpip.Total/hands").status_code == 200
+    assert len(taken) == 3

@@ -45,6 +45,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.app_settings import get_app_settings
 from app.date_filters import bound_sql
 from app import data_generation, marked_hands
+from app.concurrency import heavy_slot
 from app.models import TagRef
 from app.db import get_hero_player_id, get_read_cursor
 from app.general_cells import GENERAL_CELLS, ActionCell
@@ -1579,16 +1580,18 @@ def get_cell_detail(
     player_id: int | None = Query(None, description="Defaults to the workspace hero"),
 ):
     stat = _resolve(cell_id)
-    db = get_read_cursor()
-    fsql, fparams, fsteps = resolve_filters(chain, stakes, game_mode, date_from, date_to,
-                                            int(get_app_settings(db)["day_start_hour"]))
-    target = _target_player(db, workspace_id, player_id)
-    if target is None:
-        return CellDetail(cell_id=cell_id, row=stat.row,
-                          notation=ROWS[stat.row].notation, street=STREET_NAMES[stat.street],
-                          chain=[*fsteps, *cell_steps(stat.cell.ref.positions, stat.cell.ref.exclude,
-                                                      stat.row, ROWS[stat.row].notation)])
-    return compute_detail(db, stat, target, workspace_id, (fsql, fparams), fsteps)
+    with heavy_slot():
+        db = get_read_cursor()
+        fsql, fparams, fsteps = resolve_filters(chain, stakes, game_mode, date_from, date_to,
+                                                int(get_app_settings(db)["day_start_hour"]))
+        target = _target_player(db, workspace_id, player_id)
+        if target is None:
+            return CellDetail(cell_id=cell_id, row=stat.row,
+                              notation=ROWS[stat.row].notation, street=STREET_NAMES[stat.street],
+                              chain=[*fsteps, *cell_steps(stat.cell.ref.positions,
+                                                          stat.cell.ref.exclude,
+                                                          stat.row, ROWS[stat.row].notation)])
+        return compute_detail(db, stat, target, workspace_id, (fsql, fparams), fsteps)
 
 
 @router.get("/general/cell/{cell_id}/hands", response_model=CellHands)
@@ -1610,17 +1613,18 @@ def get_cell_hands(
     player_id: int | None = Query(None, description="Defaults to the workspace hero"),
 ):
     stat = _resolve(cell_id)
-    db = get_read_cursor()
-    fsql, fparams, fsteps = resolve_filters(chain, stakes, game_mode, date_from, date_to,
-                                            int(get_app_settings(db)["day_start_hour"]))
-    target = _target_player(db, workspace_id, player_id)
-    if target is None:
-        return CellHands(cell_id=cell_id, offset=offset, limit=limit)
-    return compute_hands(db, stat, target, workspace_id,
-                         (fsql, fparams),
-                         bucket=bucket, board=board, size=size, offset=offset, limit=limit,
-                         sort=sort, order=order)
+    with heavy_slot():
+        db = get_read_cursor()
+        fsql, fparams, _ = resolve_filters(chain, stakes, game_mode, date_from, date_to,
+                                           int(get_app_settings(db)["day_start_hour"]))
+        target = _target_player(db, workspace_id, player_id)
+        if target is None:
+            return CellHands(cell_id=cell_id, offset=offset, limit=limit)
+        return compute_hands(db, stat, target, workspace_id,
+                             (fsql, fparams),
+                             bucket=bucket, board=board, size=size, offset=offset, limit=limit,
+                             sort=sort, order=order)
 
 
 __all__ = ["router", "compute_detail", "compute_hands", "build_row", "sort_hole_cards",
-           "clear_cache"]
+           "clear_cache", "cache_stats"]
