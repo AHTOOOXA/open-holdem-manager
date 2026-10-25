@@ -202,14 +202,16 @@ Marketing: "Build a parser" CTA, stat pack sharing on 2+2, poker Discords.
 
 ## Phase 6: Money + Scale
 
-Follow [docs/vision/MONETIZATION.md](docs/vision/MONETIZATION.md): the realistic path is **B2B for
-stables and coaches** (combined database = population sample, per-player leak views, coach exports),
-validated by 5 conversations before building. Consumer freemium only with proven demand.
+Follow [docs/vision/MONETIZATION.md](docs/vision/MONETIZATION.md) (rewritten 2026-10-22): the
+realistic path is **B2B for funds and coaches** (each player's own data only: per-player deviations
+from the fund's range and stat packs, coach summaries), validated by a hand-made pilot with one fund
+before building. No combined databases or pool analysis: room rules ban tools that work off a
+central database of hands. Consumer freemium only with proven demand.
 
 | Item | Effort |
 |---|---|
-| 5 conversations with stables / coaches (go / no-go) | S |
-| Stable workspace: several players' databases, per-player leaks, pool analysis, coach exports | XL |
+| Hand-made pilot with one fund: one player's database review (go / no-go) | S |
+| Fund / coach workspace: players' own databases, deviations from the fund's packs, coach summaries | XL |
 | More languages (Russian moved to Phase 2) | M |
 | Plugin registry / marketplace, if the plugin ecosystem took off | L |
 | GitHub Sponsors / Open Collective | S |
