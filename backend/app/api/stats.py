@@ -278,11 +278,12 @@ def get_stat_detail_hands(
     # Compute key street for this stat
     key_street = get_key_street(stat_key)
 
-    # Fetch hands page (include raw_text, bb_amount, all_in_ev_bb)
+    # Fetch the hands page without raw_text (the sort would otherwise carry every
+    # candidate's hand text), then raw_text for the page's hands only.
     hands_query = f"""
         SELECT h.id, h.played_at, {POS_SQL} AS position, hp.card1, hp.card2,
                ({action_expr}) AS action_taken, hp.won_bb, h.stakes,
-               hp.all_in_ev_bb, h.bb_amount, h.raw_text
+               hp.all_in_ev_bb, h.bb_amount
         FROM hand_players hp
         JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
         WHERE {list_where_sql}
@@ -290,6 +291,13 @@ def get_stat_detail_hands(
         LIMIT ? OFFSET ?
     """
     rows = db.execute(hands_query, params + [per_page, offset]).fetchall()
+    if rows:
+        ph = ",".join("?" for _ in rows)
+        texts = dict(db.execute(
+            f"SELECT id, raw_text FROM hands WHERE id IN ({ph}) AND workspace_id = ?",
+            [r[0] for r in rows] + [workspace_id],
+        ).fetchall())
+        rows = [(*r, texts.get(r[0])) for r in rows]
 
     if not rows:
         return StatDetailHandsResponse(
