@@ -15,10 +15,12 @@ Data sources:
 - Everything that needs individual actions (hero's next decision, Boards,
   Bet Sizes, hand rows) re-parses the hand's `raw_text` with its site parser
   and reruns the matcher (`app.h2n.replay`), because the `actions` table is
-  not populated. The per-hand results are kept in an in-memory LRU cache
-  keyed by (workspace, hand, player, row), so only the first popup over a set
-  of hands pays for the replay; later requests (other filters, the hands
-  list) reuse them.
+  not populated. The per-hand results are packed into one int each and kept
+  in an in-memory cache with one segment per (workspace, player, row), bounded
+  by bytes (OHM_POPUP_CACHE_MB, default 128) and cleared on every data change
+  (`data_generation.on_bump`), so only the first popup over a set of hands
+  pays for the replay; later requests (other filters, the hands list) reuse
+  them.
 
 Only action cells (one matcher row) have a popup. Expression cells (4-Bet
 Range, Aggression, WTSD, ...) are answered with 400.
@@ -29,8 +31,10 @@ from __future__ import annotations
 import gc
 import logging
 import math
+import os
+import sys
 import threading
-from collections import OrderedDict
+from collections import Counter, OrderedDict
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Iterable, Literal, Optional
@@ -40,7 +44,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.app_settings import get_app_settings
 from app.date_filters import bound_sql
-from app import marked_hands
+from app import data_generation, marked_hands
 from app.models import TagRef
 from app.db import get_hero_player_id, get_read_cursor
 from app.general_cells import GENERAL_CELLS, ActionCell
@@ -644,14 +648,14 @@ class _NextCounter:
         self.cases = [0] * 5
         self.opps = [0] * 5
 
-    def add(self, nxt: tuple[int, int] | None) -> None:
+    def add(self, nxt: tuple[int, int] | None, n: int = 1) -> None:
         if nxt is None:
             return
         eff, mask = nxt
-        self.cases[eff] += 1
+        self.cases[eff] += n
         for t in range(5):
             if mask >> t & 1:
-                self.opps[t] += 1
+                self.opps[t] += n
 
     def model(self) -> NextActions:
         r = {_TYPE_KEYS[t]: _ratio(self.cases[t], self.opps[t]) for t in range(5)}
@@ -664,10 +668,10 @@ def _ratio(cases: int, opps: int) -> Ratio:
     return Ratio(value=cases / opps * 100.0 if opps else None, cases=cases, opps=opps)
 
 
-# ── per-hand replay records + LRU cache ───────────────────────────────────
+# ── per-hand replay records + byte-bounded cache ──────────────────────────
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class _Rec:
     """What the popup needs from one replayed hand (for one player and row)."""
 
@@ -679,43 +683,183 @@ class _Rec:
     sizes: tuple[tuple[str, bool], ...]         # (bucket key, case) over every bucket
 
 
-_NONE_REC = object()   # replay failed or the hand is not an opportunity after all
+# Records are cached packed into one int (bit layout below, low bits first); 0 means "replay
+# failed or the hand is not an opportunity after all". Ints are ~30-40 bytes, a _Rec with its
+# tuples 0.6-1.3 KB; equal ints also let the aggregation count each distinct record once.
+#   valid 1 | case 1 | nxt 8 | direct 8 | size cases NB | size opps NB | n textures 4 | n cats 4
+#   | textures TEX_W each | cats CAT_W each (hand value index + 2, 0 = None)
+_NONE = 0
+_NB = len(_BUCKETS)
+_BUCKET_INDEX = {b.id: i for i, b in enumerate(_BUCKETS)}
+_TEX_W = max(len(v) for v in BOARD_CATEGORIES.values())
+_CAT_W = max(len(v) for v in STREET_CATEGORIES.values()).bit_length() + 1
+_SH_NXT, _SH_DIRECT, _SH_SC = 2, 10, 18
+_SH_SO = _SH_SC + _NB
+_SH_NT = _SH_SO + _NB
+_SH_NC = _SH_NT + 4
+_SH_BOARDS = _SH_NC + 4
 
 
-class _LRU:
-    def __init__(self, capacity: int):
-        self.capacity = capacity
-        self._d: OrderedDict = OrderedDict()
+def _code_next(n: tuple[int, int] | None) -> int:
+    return 0 if n is None else 1 + (n[0] << 5 | n[1])     # type 0..4, mask < 32: 1..160
+
+
+def _decode_next(c: int) -> tuple[int, int] | None:
+    return None if c == 0 else ((c - 1) >> 5, (c - 1) & 31)
+
+
+def _pack(rec: _Rec | None) -> int:
+    if rec is None:
+        return _NONE
+    if len(rec.textures) > 15 or len(rec.cats) > 15:
+        raise ValueError("too many boards")
+    v = 1 | rec.case << 1 | _code_next(rec.nxt) << _SH_NXT | _code_next(rec.direct) << _SH_DIRECT
+    for bid, is_case in rec.sizes:
+        v |= 1 << (_BUCKET_INDEX[bid] + (_SH_SC if is_case else _SH_SO))
+    v |= len(rec.textures) << _SH_NT | len(rec.cats) << _SH_NC
+    sh = _SH_BOARDS
+    for tex in rec.textures:
+        for c in tex:
+            v |= 1 << (sh + c)
+        sh += _TEX_W
+    for cat in rec.cats:
+        v |= (0 if cat is None else cat + 2) << sh
+        sh += _CAT_W
+    return v
+
+
+def _unpack(v: int) -> _Rec | None:
+    if not v:
+        return None
+    sizes = []
+    for i, b in enumerate(_BUCKETS):
+        if v >> (_SH_SC + i) & 1:
+            sizes.append((b.id, True))
+        elif v >> (_SH_SO + i) & 1:
+            sizes.append((b.id, False))
+    n_tex = v >> _SH_NT & 15
+    n_cats = v >> _SH_NC & 15
+    sh = _SH_BOARDS
+    textures = []
+    for _ in range(n_tex):
+        m = v >> sh
+        textures.append(tuple(c for c in range(_TEX_W) if m >> c & 1))
+        sh += _TEX_W
+    cats = []
+    for _ in range(n_cats):
+        c = v >> sh & ((1 << _CAT_W) - 1)
+        cats.append(None if c == 0 else c - 2)
+        sh += _CAT_W
+    return _Rec(bool(v >> 1 & 1), tuple(textures), tuple(cats),
+                _decode_next(v >> _SH_NXT & 255), _decode_next(v >> _SH_DIRECT & 255), tuple(sizes))
+
+
+def _pack_case(v: int) -> bool:
+    return bool(v >> 1 & 1)
+
+
+_DEFAULT_BUDGET_MB = 128
+
+
+class _Segment:
+    __slots__ = ("recs", "kv", "bytes")
+
+    def __init__(self):
+        self.recs: dict[str, int] = {}
+        self.kv = 0          # bytes of the keys and values
+        self.bytes = 0       # kv + the dict itself
+
+
+class _RecordCache:
+    """Packed replay records, one segment (hand id -> packed int) per (workspace, player, row).
+
+    Bounded by an estimate of the bytes held (sys.getsizeof of the dicts, keys and values),
+    evicting whole segments least recently used. A segment larger than `max_segment` (half
+    the budget by default) is dropped and not cached again until the next clear: one
+    oversized cell must not flush every other cell just to be evicted by the next one.
+    """
+
+    def __init__(self, budget: int, max_segment: int | None = None):
+        self.budget = budget
+        self.max_segment = budget // 2 if max_segment is None else max_segment
+        self._segs: OrderedDict[tuple, _Segment] = OrderedDict()
+        self._too_big: set[tuple] = set()
+        self._bytes = 0
         self._lock = threading.Lock()
 
-    def get(self, key):
+    def segment(self, key: tuple) -> dict[str, int]:
+        """The segment's records (read-only for the caller; may be empty)."""
         with self._lock:
-            v = self._d.get(key)
-            if v is not None:
-                self._d.move_to_end(key)
-            return v
+            seg = self._segs.get(key)
+            if seg is None:
+                return {}
+            self._segs.move_to_end(key)
+            return seg.recs
 
-    def put(self, key, value) -> None:
+    def add(self, key: tuple, items: list[tuple[str, int]]) -> None:
+        if not items:
+            return
+        size = sys.getsizeof
         with self._lock:
-            self._d[key] = value
-            self._d.move_to_end(key)
-            while len(self._d) > self.capacity:
-                self._d.popitem(last=False)
+            if key in self._too_big:
+                return
+            seg = self._segs.get(key)
+            if seg is None:
+                seg = self._segs[key] = _Segment()
+            else:
+                self._segs.move_to_end(key)
+            recs = seg.recs
+            kv = 0
+            for hid, v in items:
+                if hid not in recs:
+                    recs[hid] = v
+                    kv += size(hid) + size(v)
+            seg.kv += kv
+            new = size(recs) + seg.kv
+            self._bytes += new - seg.bytes
+            seg.bytes = new
+            if new > self.max_segment:
+                del self._segs[key]
+                self._bytes -= new
+                self._too_big.add(key)
+                return
+            while self._bytes > self.budget and len(self._segs) > 1:
+                _, old = self._segs.popitem(last=False)
+                self._bytes -= old.bytes
 
     def clear(self) -> None:
         with self._lock:
-            self._d.clear()
+            self._segs.clear()
+            self._too_big.clear()
+            self._bytes = 0
 
-    def __len__(self) -> int:
-        return len(self._d)
+    def stats(self) -> dict:
+        with self._lock:
+            return {"records": sum(len(s.recs) for s in self._segs.values()),
+                    "bytes": self._bytes, "segments": len(self._segs),
+                    "skipped": len(self._too_big)}
 
 
-_RECORDS = _LRU(300_000)
+def _budget_from_env() -> int:
+    try:
+        mb = float(os.environ.get("OHM_POPUP_CACHE_MB", _DEFAULT_BUDGET_MB))
+    except ValueError:
+        mb = _DEFAULT_BUDGET_MB
+    return int(mb * 1024 * 1024)
 
 
+_RECORDS = _RecordCache(_budget_from_env())
+
+
+@data_generation.on_bump
 def clear_cache() -> None:
-    """Drop every cached replay record (tests; after a rebuild is harmless)."""
+    """Drop every cached replay record (on every data change: import, clear, rebuild,
+    workspace delete; and in tests)."""
     _RECORDS.clear()
+
+
+def cache_stats() -> dict:
+    return _RECORDS.stats()
 
 
 def _parse(raw_text: str, site_id: int):
@@ -777,34 +921,36 @@ def _fetch_seqs(db, workspace_id: int, ids: list[str]) -> dict[str, bytes]:
     return out
 
 
-def _records(db, workspace_id: int, row: str, street: int,
-             hands: Iterable[tuple[str, str]]) -> tuple[dict[str, _Rec], int, int]:
-    """Replay records for (hand id, username) pairs: (by hand id, replayed, failed).
+def _records(db, workspace_id: int, player_id: int, username: str, row: str, street: int,
+             hand_ids: Iterable[str]) -> tuple[dict[str, int], int, int]:
+    """Packed replay records of the player's hands: (by hand id, replayed, failed).
 
+    The result holds no entry for a hand whose replay failed or that is no opportunity.
     Preflop rows only need the action sequence, which the import stored
     (`hand_players.h2n_seq`): decoding it is ~25x cheaper than re-parsing the
     hand history. Postflop rows also need the boards and hole cards, and
     hands without a usable stored sequence (older imports) are re-parsed.
     """
-    out: dict[str, _Rec] = {}
-    missing: list[tuple[str, str]] = []
-    for hid, name in hands:
-        v = _RECORDS.get((workspace_id, hid, name, row))
+    key = (workspace_id, player_id, row)
+    cached = _RECORDS.segment(key)
+    out: dict[str, int] = {}
+    missing: list[str] = []
+    for hid in hand_ids:
+        v = cached.get(hid)
         if v is None:
-            missing.append((hid, name))
-        elif v is not _NONE_REC:
+            missing.append(hid)
+        elif v:
             out[hid] = v
     failed = 0
     if missing:
         with _gc_paused():
-            done = _replay_missing(db, workspace_id, row, street, missing)
-        for hid, name, rec in done:
-            if rec is None:
-                failed += 1
-                _RECORDS.put((workspace_id, hid, name, row), _NONE_REC)
+            done = _replay_missing(db, workspace_id, username, row, street, missing)
+        for hid, v in done:
+            if v:
+                out[hid] = v
             else:
-                _RECORDS.put((workspace_id, hid, name, row), rec)
-                out[hid] = rec
+                failed += 1
+        _RECORDS.add(key, done)
     return out, len(missing), failed
 
 
@@ -825,14 +971,22 @@ def _gc_paused():
             gc.enable()
 
 
-def _replay_missing(db, workspace_id: int, row: str, street: int,
-                    missing: list[tuple[str, str]]) -> list[tuple[str, str, _Rec | None]]:
-    """(hand id, username, record or None) for every pair not in the cache."""
-    todo: list[tuple[str, str]] = []
-    done: list[tuple[str, str, _Rec | None]] = []
+def _safe_pack(hid: str, rec: _Rec | None) -> int:
+    try:
+        return _pack(rec)
+    except ValueError:
+        log.warning("popup record of hand %s cannot be stored", hid)
+        return _NONE
+
+
+def _replay_missing(db, workspace_id: int, username: str, row: str, street: int,
+                    missing: list[str]) -> list[tuple[str, int]]:
+    """(hand id, packed record) for every hand not in the cache."""
+    todo: list[str] = []
+    done: list[tuple[str, int]] = []
     if street == 0:
-        blobs = _fetch_seqs(db, workspace_id, [h for h, _ in missing])
-        for hid, name in missing:
+        blobs = _fetch_seqs(db, workspace_id, missing)
+        for hid in missing:
             seq = None
             blob = blobs.get(hid)
             if blob is not None:
@@ -841,28 +995,28 @@ def _replay_missing(db, workspace_id: int, row: str, street: int,
                 except Exception:
                     log.warning("stored sequence of hand %s is unreadable", hid, exc_info=True)
             if seq is None:
-                todo.append((hid, name))
+                todo.append(hid)
                 continue
             rec = None
             try:
-                rec = _compute_record(None, seq, name, row, street)
+                rec = _compute_record(None, seq, username, row, street)
             except Exception:
                 log.warning("popup replay failed for hand %s", hid, exc_info=True)
-            done.append((hid, name, rec))
+            done.append((hid, _safe_pack(hid, rec)))
     else:
         todo = missing
     if todo:
-        raw = _fetch_raw(db, workspace_id, [h for h, _ in todo])
-        for hid, name in todo:
+        raw = _fetch_raw(db, workspace_id, todo)
+        for hid in todo:
             rec = None
             src = raw.get(hid)
             if src and src[0]:
                 try:
                     parsed, seq = _parse(*src)
-                    rec = _compute_record(parsed, seq, name, row, street)
+                    rec = _compute_record(parsed, seq, username, row, street)
                 except Exception:
                     log.warning("popup replay failed for hand %s", hid, exc_info=True)
-            done.append((hid, name, rec))
+            done.append((hid, _safe_pack(hid, rec)))
     return done
 
 
@@ -973,6 +1127,86 @@ def _strength(street: int, counts: dict[int, int]) -> Strength:
                     weak_pct=weak / total * 100.0 if total else None, buckets=buckets)
 
 
+def _aggregate(stat: _Stat, groups: Counter, buckets: tuple[_Bucket, ...]
+               ) -> tuple[_NextCounter, list[SplitRow], list[SplitRow]]:
+    """Summary next decision, Boards and Bet Sizes rows from the replayed hands.
+
+    `groups` counts the replayed hands by (packed record << 1 | case bit of the cell): equal
+    records add up in one step.
+    """
+    street = stat.street
+    post = street > 0
+    summary_next = _NextCounter()
+    if post:
+        cats = BOARD_CATEGORIES[STREET_NAMES[street]]
+        b_opps = [0] * len(cats)
+        b_cases = [0] * len(cats)
+        b_bars: list[dict[int, int]] = [{} for _ in cats]
+        b_next = [_NextCounter() for _ in cats]
+    ids = {b.id for b in buckets}
+    s_opps = {b.id: 0 for b in buckets}
+    s_cases = {b.id: 0 for b in buckets}
+    s_bars: dict[str, dict[int, int]] = {b.id: {} for b in buckets}
+    s_next = {b.id: _NextCounter() for b in buckets}
+    for key, n in groups.items():
+        case = key & 1
+        rec = _unpack(key >> 1)
+        if case:
+            summary_next.add(rec.nxt, n)
+        if post:
+            seen: set[int] = set()
+            for tex in rec.textures:
+                seen.update(tex)
+            for c in seen:
+                b_opps[c] += n
+                if case:
+                    b_cases[c] += n
+                    b_next[c].add(rec.direct, n)
+            if case:
+                for tex, cat in zip(rec.textures, rec.cats):
+                    if cat is None:
+                        continue
+                    for c in tex:
+                        b_bars[c][cat] = b_bars[c].get(cat, 0) + n
+        if buckets:
+            for bid, is_case in rec.sizes:
+                if bid not in ids:
+                    continue
+                s_opps[bid] += n
+                if is_case and case:
+                    s_cases[bid] += n
+                    s_next[bid].add(rec.direct, n)
+                    for cat in rec.cats:
+                        if cat is not None:
+                            s_bars[bid][cat] = s_bars[bid].get(cat, 0) + n
+
+    boards: list[SplitRow] = []
+    if post:
+        for c, bc in enumerate(cats):
+            if not b_opps[c]:
+                continue
+            boards.append(SplitRow(
+                key=bc.key, label=bc.label, cases=b_cases[c], opps=b_opps[c],
+                value=b_cases[c] / b_opps[c] * 100.0, strength=_strength(street, b_bars[c]),
+                next=b_next[c].model(),
+            ))
+
+    sizes: list[SplitRow] = []
+    for b in buckets:
+        opps = s_opps[b.id]
+        # bet / raise buckets need a case; call / fold buckets any sample
+        visible = s_cases[b.id] > 0 if b.typ in (BET, RAISE, CHECK) else opps > 0
+        if not visible:
+            continue
+        sizes.append(SplitRow(
+            key=b.id, label=b.label, action=_TYPE_KEYS[b.typ], cases=s_cases[b.id],
+            opps=opps, value=s_cases[b.id] / opps * 100.0 if opps else None,
+            strength=_strength(street, s_bars[b.id]) if post else None,
+            next=s_next[b.id].model(),
+        ))
+    return summary_next, boards, sizes
+
+
 def compute_detail(db, stat: _Stat, player_id: int, workspace_id: int,
                    filters: tuple[str, list], filter_steps: list[dict] | None = None) -> CellDetail:
     hands = _query_hands(db, stat, player_id, workspace_id, filters, cases_only=False)
@@ -993,83 +1227,15 @@ def compute_detail(db, stat: _Stat, player_id: int, workspace_id: int,
     buckets = _stat_buckets(stat)
     # Boards and Bet Sizes count opportunities too; otherwise only cases are replayed.
     replay_set = hands if (stat.street > 0 or buckets) else cases
-    recs, replayed, failed = _records(db, workspace_id, stat.row, stat.street,
-                                      ((h.hand_id, h.username) for h in replay_set))
-
-    summary_next = _NextCounter()
-    for h in cases:
-        rec = recs.get(h.hand_id)
-        if rec is not None:
-            summary_next.add(rec.nxt)
-
-    boards: list[SplitRow] = []
-    if stat.street > 0:
-        sname = STREET_NAMES[stat.street]
-        cats = BOARD_CATEGORIES[sname]
-        b_opps = [0] * len(cats)
-        b_cases = [0] * len(cats)
-        b_bars: list[dict[int, int]] = [{} for _ in cats]
-        b_next = [_NextCounter() for _ in cats]
-        for h in replay_set:
-            rec = recs.get(h.hand_id)
-            if rec is None:
-                continue
-            seen = set()
-            for tex in rec.textures:
-                seen.update(tex)
-            for c in seen:
-                b_opps[c] += 1
-                if h.case:
-                    b_cases[c] += 1
-                    b_next[c].add(rec.direct)
-            if h.case:
-                for tex, cat in zip(rec.textures, rec.cats):
-                    if cat is None:
-                        continue
-                    for c in tex:
-                        b_bars[c][cat] = b_bars[c].get(cat, 0) + 1
-        for c, bc in enumerate(cats):
-            if not b_opps[c]:
-                continue
-            boards.append(SplitRow(
-                key=bc.key, label=bc.label, cases=b_cases[c], opps=b_opps[c],
-                value=b_cases[c] / b_opps[c] * 100.0, strength=_strength(stat.street, b_bars[c]),
-                next=b_next[c].model(),
-            ))
-
-    sizes: list[SplitRow] = []
-    if buckets:
-        ids = {b.id for b in buckets}
-        s_opps = {b.id: 0 for b in buckets}
-        s_cases = {b.id: 0 for b in buckets}
-        s_bars: dict[str, dict[int, int]] = {b.id: {} for b in buckets}
-        s_next = {b.id: _NextCounter() for b in buckets}
-        for h in replay_set:
-            rec = recs.get(h.hand_id)
-            if rec is None:
-                continue
-            for bid, is_case in rec.sizes:
-                if bid not in ids:
-                    continue
-                s_opps[bid] += 1
-                if is_case and h.case:
-                    s_cases[bid] += 1
-                    s_next[bid].add(rec.direct)
-                    for cat in rec.cats:
-                        if cat is not None:
-                            s_bars[bid][cat] = s_bars[bid].get(cat, 0) + 1
-        for b in buckets:
-            opps = s_opps[b.id]
-            # bet / raise buckets need a case; call / fold buckets any sample
-            visible = s_cases[b.id] > 0 if b.typ in (BET, RAISE, CHECK) else opps > 0
-            if not visible:
-                continue
-            sizes.append(SplitRow(
-                key=b.id, label=b.label, action=_TYPE_KEYS[b.typ], cases=s_cases[b.id],
-                opps=opps, value=s_cases[b.id] / opps * 100.0 if opps else None,
-                strength=_strength(stat.street, s_bars[b.id]) if stat.street > 0 else None,
-                next=s_next[b.id].model(),
-            ))
+    username = hands[0].username if hands else ""
+    recs, replayed, failed = _records(db, workspace_id, player_id, username, stat.row, stat.street,
+                                      (h.hand_id for h in replay_set))
+    groups: Counter = Counter()
+    for h in replay_set:
+        v = recs.get(h.hand_id)
+        if v:
+            groups[v << 1 | h.case] += 1
+    summary_next, boards, sizes = _aggregate(stat, groups, buckets)
 
     player = None
     r = db.execute("SELECT username FROM players WHERE id = ?", [player_id]).fetchone()
@@ -1225,11 +1391,17 @@ def compute_hands(db, stat: _Stat, player_id: int, workspace_id: int, filters: t
             raise HTTPException(status_code=400, detail=f"Bet size {size} does not apply")
 
     if tex is not None or size is not None:
-        recs, _, _ = _records(db, workspace_id, stat.row, stat.street,
-                              ((h.hand_id, h.username) for h in hands))
+        recs, _, _ = _records(db, workspace_id, player_id, hands[0].username if hands else "",
+                              stat.row, stat.street, (h.hand_id for h in hands))
+        unpacked: dict[int, _Rec | None] = {}
         kept = []
         for h in hands:
-            rec = recs.get(h.hand_id)
+            v = recs.get(h.hand_id)
+            rec = None
+            if v:
+                rec = unpacked.get(v)
+                if rec is None:
+                    rec = unpacked[v] = _unpack(v)
             if rec is None or not rec.case:
                 continue
             if size is not None and (size, True) not in rec.sizes:
