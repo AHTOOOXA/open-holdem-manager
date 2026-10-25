@@ -1,7 +1,8 @@
 import { createContext, useContext, useState, useCallback, useEffect, useRef, type ReactNode } from 'react';
 import { uploadFilesStream, importH2NStream, importTrackerStream, cancelImportJob, rebuildHands, getSettings, getHealth, clearDatabase, exportDb, importDb } from '@/lib/api';
 import type { ImportResult, ImportProgress, Settings, HealthResponse } from '@/lib/api';
-import { queryClient } from '@/lib/query-client';
+import { useQueryClient } from '@tanstack/react-query';
+import { refreshAfterDataChange } from '@/lib/query-policy';
 import type { ImportRange } from '@/lib/import/date-filter';
 import { softwareLabel, trackerBody, type ImportSource } from '@/lib/import/tracker';
 import { toast } from 'sonner';
@@ -104,6 +105,7 @@ function ImportProvider({ children }: { children: ReactNode }) {
 
   phaseRef.current = phase;
 
+  const queryClient = useQueryClient();
   const { workspaces, activeWorkspace, activeWorkspaceId, setActiveWorkspaceId, refetchWorkspaces } = useWorkspace();
   // Latest workspace state for callbacks that must not re-create on every change
   const workspacesRef = useRef<Workspace[]>(workspaces);
@@ -140,7 +142,7 @@ function ImportProvider({ children }: { children: ReactNode }) {
           rebuildPollRef.current = null;
           setPhase('idle');
           setAutoRebuildProgress(null);
-          queryClient.invalidateQueries();
+          void refreshAfterDataChange(queryClient, 'all').catch(() => {});
           const m = rebuildCompletedMessage(rebuildTotalRef.current || totalHands(workspacesRef.current) || h.hands);
           toast.success(m.title, { description: m.description });
         }
@@ -150,7 +152,7 @@ function ImportProvider({ children }: { children: ReactNode }) {
       if (again && !stoppedRef.current) rebuildPollRef.current = setTimeout(tick, 1000);
     };
     rebuildPollRef.current = setTimeout(tick, 1000);
-  }, []);
+  }, [queryClient]);
 
   useEffect(() => {
     getSettings().then(setSettings).catch(() => {});
@@ -178,9 +180,9 @@ function ImportProvider({ children }: { children: ReactNode }) {
     if (res) setResult(res);
     else setError(err instanceof Error ? err.message : 'Import failed');
     await refreshHandCount().catch(() => {});
-    queryClient.invalidateQueries();
-    // Wait for fresh per-workspace hand counts so the welcome view doesn't flash back.
-    await refetchWorkspacesRef.current().catch(() => {});
+    // The visible screen refetches; Sessions pages follow their refreshed list (lib/query-policy.ts).
+    // Waits for fresh per-workspace hand counts so the welcome view doesn't flash back.
+    await refreshAfterDataChange(queryClient, 'import').catch(() => {});
     setPhase('idle');
     setProgress(null);
     setFileInfo(null);
@@ -191,7 +193,7 @@ function ImportProvider({ children }: { children: ReactNode }) {
     if (msg.kind === 'error') toast.error(msg.title, { description: msg.description });
     else if (msg.kind === 'success') toast.success(msg.title, { description: msg.description });
     else toast(msg.title, { description: msg.description });
-  }, [refreshHandCount]);
+  }, [refreshHandCount, queryClient]);
 
   const beginImport = useCallback((kind: ImportKind, ws: { id: number; handCount: number }, started: string | null) => {
     setImportKind(kind);
@@ -391,8 +393,8 @@ function ImportProvider({ children }: { children: ReactNode }) {
     await clearDatabase();
     await refreshHandCount();
     setResult(null);
-    queryClient.invalidateQueries();
-  }, [refreshHandCount]);
+    void refreshAfterDataChange(queryClient, 'all').catch(() => {});
+  }, [refreshHandCount, queryClient]);
 
   const dismiss = useCallback(() => {
     setPhase('idle');
@@ -409,8 +411,8 @@ function ImportProvider({ children }: { children: ReactNode }) {
   const importDatabase = useCallback(async (file: File) => {
     const res = await importDb(file);
     setHandCount(res.hands);
-    queryClient.invalidateQueries();
-  }, []);
+    void refreshAfterDataChange(queryClient, 'all').catch(() => {});
+  }, [queryClient]);
 
   return (
     <ImportContext.Provider
