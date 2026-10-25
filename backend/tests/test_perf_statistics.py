@@ -174,3 +174,27 @@ def test_detail_of_a_player_without_hands(client, db):
     d = client.get("/api/general/cell/summary.vpip.Total/detail", params={"player_id": pid}).json()
     assert (d["cases"], d["opps"], d["value"], d["replayed"]) == (0, 0, None, 0)
     assert d["player"] == "nobody"
+
+
+# ── hands list paging in SQL (04/F10) ────────────────────────────────────
+
+
+@pytest.mark.parametrize("sort", ["date", "won", "ev"])
+@pytest.mark.parametrize("order", ["desc", "asc"])
+def test_hand_pages_concatenate_to_the_full_list(client, db, sort, order):
+    _insert(db, *_cbet_hands())
+    url = "/api/general/cell/summary.vpip.Total/hands"
+    full = client.get(url, params={"sort": sort, "order": order, "limit": 512}).json()
+    assert full["total"] == 5 and len(full["rows"]) == 5
+    paged = []
+    for off in range(0, 6, 2):
+        page = client.get(url, params={"sort": sort, "order": order, "offset": off, "limit": 2}).json()
+        assert page["total"] == 5
+        paged += page["rows"]
+    assert paged == full["rows"]
+    key = {"date": lambda r: (r["played_at"], r["hand_id"]),
+           "won": lambda r: (r["won_bb"], r["played_at"], r["hand_id"]),
+           "ev": lambda r: (r["ev_diff_bb"], r["played_at"], r["hand_id"])}[sort]
+    assert full["rows"] == sorted(full["rows"], key=key, reverse=order == "desc")
+    past = client.get(url, params={"offset": 5, "limit": 2}).json()
+    assert past["total"] == 5 and past["rows"] == []
