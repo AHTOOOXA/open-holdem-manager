@@ -13,6 +13,8 @@ from __future__ import annotations
 import threading
 from dataclasses import dataclass
 
+from app import data_generation
+
 MAX_AUTO_ACCOUNTS = 127
 
 
@@ -40,6 +42,11 @@ def invalidate_hero_cache(workspace_id: int | None = None) -> None:
             _cache.clear()
         else:
             _cache.pop(workspace_id, None)
+
+
+# The active hero is the account with the most hands, so any change to hand data
+# (import, clear, restore, rebuild, workspace delete) can change it.
+data_generation.on_bump(invalidate_hero_cache)
 
 
 def detect_heroes(db, workspace_id: int | None = None) -> int:

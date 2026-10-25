@@ -1,0 +1,463 @@
+"""Platform perf track: startup catalog probes, workspace delete, request plumbing, limits."""
+
+import duckdb
+import pytest
+
+from app import db as app_db
+from app.db import init_schema
+
+
+def _columns(conn) -> dict[str, list[tuple[str, str]]]:
+    rows = conn.execute(
+        "SELECT table_name, column_name, data_type FROM duckdb_columns() "
+        "WHERE database_name = current_database() AND schema_name = current_schema() "
+        "ORDER BY table_name, column_index"
+    ).fetchall()
+    out: dict[str, list[tuple[str, str]]] = {}
+    for t, c, ty in rows:
+        out.setdefault(t, []).append((c, ty))
+    return out
+
+
+class _Counting:
+    """Connection proxy counting catalog reads (the object identity is what init_schema sees)."""
+
+    def __init__(self, conn):
+        self._c = conn
+        self.catalog_reads = 0
+        self.statements = 0
+
+    def execute(self, sql, *args):
+        self.statements += 1
+        if "duckdb_columns" in sql or "information_schema" in sql:
+            self.catalog_reads += 1
+        return self._c.execute(sql, *args)
+
+    def __getattr__(self, name):
+        return getattr(self._c, name)
+
+
+def test_init_schema_reads_the_catalog_once_per_run():
+    conn = duckdb.connect(":memory:")
+    init_schema(conn)
+    proxy = _Counting(conn)
+    init_schema(proxy)  # a current DB: every column check is answered by one snapshot
+    # 1 snapshot + the two config-section migrations that read their own table's columns
+    assert proxy.catalog_reads <= 3, proxy.catalog_reads
+    conn.close()
+
+
+# Columns that migrations add to old databases.
+_LEGACY = {
+    "hand_players": ["all_in_ev_bb", "pot_type", "is_multiway"],
+    "hands": ["rit_boards", "is_cashout", "game_mode"],
+    "board_cards": ["board_number"],
+}
+
+
+def _strip_columns(conn, table: str, cols: list[str]) -> None:
+    """Recreate `table` without `cols`, as an older database would have it."""
+    for (name,) in conn.execute(
+            "SELECT index_name FROM duckdb_indexes() WHERE table_name = ?", [table]).fetchall():
+        conn.execute(f"DROP INDEX {name}")
+    conn.execute(f"CREATE TABLE _old AS SELECT * EXCLUDE ({', '.join(cols)}) FROM {table}")
+    conn.execute(f"DROP TABLE {table}")
+    conn.execute(f"ALTER TABLE _old RENAME TO {table}")
+
+
+def test_old_database_gets_the_same_columns_as_a_fresh_one():
+    from app.h2n.columns import H2N_COLUMNS
+    fresh = duckdb.connect(":memory:")
+    init_schema(fresh)
+    want = _columns(fresh)
+
+    old = duckdb.connect(":memory:")
+    init_schema(old)
+    legacy = {t: list(c) for t, c in _LEGACY.items()}
+    legacy["hand_players"] += [H2N_COLUMNS[0][0], H2N_COLUMNS[-1][0]]
+    for table, cols in legacy.items():
+        _strip_columns(old, table, cols)
+    proxy = _Counting(old)
+    init_schema(proxy)
+    got = _columns(old)
+    # Same column set and types per table (re-added columns go to the end)
+    assert {t: sorted(v) for t, v in got.items()} == {t: sorted(v) for t, v in want.items()}
+    assert proxy.catalog_reads <= 3
+    fresh.close()
+    old.close()
+
+
+def test_fresh_schema_matches_per_column_probing(monkeypatch):
+    """The snapshot gives exactly the schema the old one-probe-per-column code gave."""
+    snap = duckdb.connect(":memory:")
+    init_schema(snap)
+
+    def probe(self, table, column):
+        return self.conn.execute(
+            "SELECT 1 FROM duckdb_columns() WHERE database_name = current_database() "
+            "AND schema_name = current_schema() AND table_name = ? AND column_name = ?",
+            [table, column]).fetchone() is not None
+
+    monkeypatch.setattr(app_db._ColumnCatalog, "has", probe)
+    probed = duckdb.connect(":memory:")
+    init_schema(probed)
+    assert _columns(snap) == _columns(probed)
+    snap.close()
+    probed.close()
+
+
+def test_add_column_outside_init_schema_still_works():
+    conn = duckdb.connect(":memory:")
+    conn.execute("CREATE TABLE t (a INTEGER)")
+    app_db._add_column_if_missing(conn, "t", "b", "INTEGER DEFAULT 7")
+    app_db._add_column_if_missing(conn, "t", "b", "INTEGER DEFAULT 7")  # idempotent
+    conn.execute("INSERT INTO t (a) VALUES (1)")
+    assert conn.execute("SELECT a, b FROM t").fetchall() == [(1, 7)]
+    conn.close()
+
+
+def test_catalog_snapshot_sees_tables_created_after_it():
+    conn = duckdb.connect(":memory:")
+    catalog = app_db._ColumnCatalog(conn)
+    assert not catalog.has("later", "x")
+    conn.execute("CREATE TABLE later (x INTEGER)")
+    assert catalog.has("later", "x")
+    conn.close()
+
+
+# ── Workspace delete (08/F9) ─────────────────────────────────────────────
+
+from pathlib import Path
+
+from fastapi.testclient import TestClient
+
+_GG = Path(__file__).parent / "fixtures" / "ggpoker" / "sample.txt"
+_WS_TABLES = ("hands", "hand_players", "board_cards", "actions", "hand_tags", "hand_notes",
+              "player_aliases", "checkpoints", "hero_accounts", "player_classifications",
+              "marked_hands", "auto_import_files")
+
+
+def _load(db, workspace_id):
+    from app.api.import_hands import insert_parsed_hand
+    from app.parsers.ggpoker import parse_hand_history
+    text = _GG.read_text()
+    for hand in [h.strip() for h in text.split("\n\n\n") if h.strip()]:
+        insert_parsed_hand(db, parse_hand_history(hand), workspace_id=workspace_id)
+
+
+def _ws_counts(db, workspace_id):
+    return {t: db.execute(f"SELECT COUNT(*) FROM {t} WHERE workspace_id = ?",
+                          [workspace_id]).fetchone()[0] for t in _WS_TABLES}
+
+
+@pytest.fixture
+def ws_client(db, monkeypatch):
+    monkeypatch.setattr(app_db, "_conn", db)
+    client = TestClient(app_main.app)
+    ws = client.post("/api/workspaces", json={"name": "W2", "hero_username": "Hero", "hero_site": "GG"}).json()["id"]
+    _load(db, 1)
+    _load(db, ws)
+    hid = db.execute("SELECT id FROM hands WHERE workspace_id = ? LIMIT 1", [ws]).fetchone()[0]
+    pid = db.execute("SELECT player_id FROM hand_players WHERE workspace_id = ? LIMIT 1", [ws]).fetchone()[0]
+    db.execute("INSERT INTO hand_tags (hand_id, tag, workspace_id) VALUES (?, 'x', ?)", [hid, ws])
+    db.execute("INSERT INTO hand_notes (hand_id, note, workspace_id) VALUES (?, 'n', ?)", [hid, ws])
+    db.execute("INSERT INTO checkpoints (id, workspace_id, name, checkpoint_at) VALUES (99, ?, 'c', now())", [ws])
+    db.execute("INSERT OR IGNORE INTO player_classifications (player_id, workspace_id, player_type) VALUES (?, ?, 'UNK')", [pid, ws])
+    db.execute("INSERT INTO marked_hands (workspace_id, player_id, hand_id) VALUES (?, ?, ?)", [ws, pid, hid])
+    db.execute("INSERT INTO auto_import_files (workspace_id, path, size, mtime, \"offset\") VALUES (?, '/x', 1, 1, 1)", [ws])
+    return client, db, ws
+
+
+import app.main as app_main  # noqa: E402
+
+
+def test_delete_workspace_removes_every_row_and_keeps_others(ws_client):
+    from app import data_generation
+    client, db, ws = ws_client
+    before_other = _ws_counts(db, 1)
+    assert _ws_counts(db, ws)["hands"] > 0 and _ws_counts(db, ws)["marked_hands"] == 1
+    gen = data_generation.current()
+    assert client.delete(f"/api/workspaces/{ws}").status_code == 200
+    assert all(v == 0 for v in _ws_counts(db, ws).values()), _ws_counts(db, ws)
+    assert _ws_counts(db, 1) == before_other
+    assert db.execute("SELECT COUNT(*) FROM workspaces WHERE id = ?", [ws]).fetchone()[0] == 0
+    assert data_generation.current() > gen
+
+
+def test_delete_workspace_is_atomic(ws_client, monkeypatch):
+    client, db, ws = ws_client
+    before = _ws_counts(db, ws)
+
+    def boom(conn, workspace_id):
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr("app.marked_hands.delete_workspace_marks", boom)
+    with pytest.raises(RuntimeError):
+        client.delete(f"/api/workspaces/{ws}")
+    assert _ws_counts(db, ws) == before
+    assert db.execute("SELECT COUNT(*) FROM workspaces WHERE id = ?", [ws]).fetchone()[0] == 1
+    # The connection is usable again (no transaction left open)
+    monkeypatch.undo()
+    monkeypatch.setattr(app_db, "_conn", db)
+    assert client.delete(f"/api/workspaces/{ws}").status_code == 200
+
+
+def test_failed_delete_keeps_pending_finalize_in_memory(ws_client, monkeypatch):
+    """A delete that fails at COMMIT must not drop the in-memory pending player pass."""
+    from app import auto_import
+    client, db, ws = ws_client
+    monkeypatch.setitem(auto_import._pending_finalize, ws, object())
+
+    class FailingCommit:
+        def __init__(self, conn):
+            self._conn = conn
+
+        def execute(self, sql, *args, **kwargs):
+            if sql.strip().upper() == "COMMIT":
+                raise RuntimeError("commit failed")
+            return self._conn.execute(sql, *args, **kwargs)
+
+        def __getattr__(self, name):
+            return getattr(self._conn, name)
+
+    monkeypatch.setattr(app_db, "_conn", FailingCommit(db))
+    with pytest.raises(RuntimeError):
+        client.delete(f"/api/workspaces/{ws}")
+    assert ws in auto_import._pending_finalize
+    assert db.execute("SELECT COUNT(*) FROM auto_import_files WHERE workspace_id = ?", [ws]).fetchone()[0] == 1
+
+    monkeypatch.setattr(app_db, "_conn", db)
+    assert client.delete(f"/api/workspaces/{ws}").status_code == 200
+    assert ws not in auto_import._pending_finalize
+
+
+# ── Cursor cleanup middleware (08/F10) ───────────────────────────────────
+
+def _closed(cursor) -> bool:
+    try:
+        cursor.execute("SELECT 1")
+        return False
+    except duckdb.Error:
+        return True
+
+
+@pytest.fixture
+def cursor_app(db, monkeypatch):
+    from fastapi import FastAPI
+    from fastapi.responses import StreamingResponse
+
+    monkeypatch.setattr(app_db, "_conn", db)
+    seen: list = []
+    test_app = FastAPI()
+    test_app.add_middleware(app_main.CursorCleanupMiddleware)
+
+    @test_app.get("/plain")
+    def plain():
+        cur = app_db.get_read_cursor()
+        seen.append(cur)
+        return {"n": cur.execute("SELECT 1").fetchone()[0]}
+
+    @test_app.get("/stream")
+    def stream():
+        first = app_db.get_read_cursor()
+        seen.append(first)
+
+        def gen():
+            yield b'{"step": 1}\n'
+            later = app_db.get_read_cursor()  # opened after the headers went out
+            seen.append(later)
+            yield (f'{{"n": {later.execute("SELECT 2").fetchone()[0]}}}\n').encode()
+
+        return StreamingResponse(gen(), media_type="application/x-ndjson")
+
+    return TestClient(test_app), seen
+
+
+def test_plain_response_cursors_are_closed(cursor_app):
+    client, seen = cursor_app
+    assert client.get("/plain").json() == {"n": 1}
+    assert len(seen) == 1 and _closed(seen[0])
+    assert app_db._request_cursors.get(None) is None
+
+
+def test_streaming_response_cursors_are_closed(cursor_app):
+    client, seen = cursor_app
+    resp = client.get("/stream")
+    assert resp.text.splitlines() == ['{"step": 1}', '{"n": 2}']
+    assert len(seen) == 2
+    assert all(_closed(c) for c in seen), [(_closed(c)) for c in seen]
+
+
+def test_app_uses_the_pure_asgi_cursor_middleware():
+    from starlette.middleware.base import BaseHTTPMiddleware
+    classes = [m.cls for m in app_main.app.user_middleware]
+    assert app_main.CursorCleanupMiddleware in classes
+    assert not any(isinstance(c, type) and issubclass(c, BaseHTTPMiddleware) for c in classes)
+
+
+# ── DuckDB limits (08/F12) ───────────────────────────────────────────────
+
+def test_duckdb_limits_default_and_overrides(monkeypatch):
+    monkeypatch.delenv("OHM_DUCKDB_MEMORY_LIMIT", raising=False)
+    monkeypatch.delenv("OHM_DUCKDB_THREADS", raising=False)
+    assert app_db.duckdb_limits() == {"memory_limit": "2GB"}
+    monkeypatch.setenv("OHM_DUCKDB_MEMORY_LIMIT", "3.5 GiB")
+    monkeypatch.setenv("OHM_DUCKDB_THREADS", "4")
+    assert app_db.duckdb_limits() == {"memory_limit": "3.5GiB", "threads": "4"}
+    monkeypatch.setenv("OHM_DUCKDB_MEMORY_LIMIT", "2GB'; DROP TABLE hands; --")
+    monkeypatch.setenv("OHM_DUCKDB_THREADS", "lots")
+    assert app_db.duckdb_limits() == {"memory_limit": "2GB"}
+
+
+def test_duckdb_limits_are_applied(monkeypatch):
+    monkeypatch.setenv("OHM_DUCKDB_MEMORY_LIMIT", "768MB")
+    monkeypatch.setenv("OHM_DUCKDB_THREADS", "3")
+    conn = duckdb.connect(":memory:")
+    app_db._apply_duckdb_limits(conn)
+    mem, threads = conn.execute(
+        "SELECT current_setting('memory_limit'), current_setting('threads')").fetchone()
+    assert threads == 3
+    assert mem.replace(" ", "") in ("732.4MiB", "768.0MB", "732.4MB")  # DuckDB prints MiB
+    conn.close()
+
+
+# ── heavy_slot (08/F4) ───────────────────────────────────────────────────
+
+def test_heavy_slot_limits_and_reports_counts():
+    import threading as th
+    from app import concurrency
+
+    assert concurrency.heavy_stats() == {"max": concurrency.MAX_HEAVY, "running": 0, "waiting": 0}
+    inside = th.Event()
+    release = th.Event()
+    peak = []
+
+    def worker():
+        with concurrency.heavy_slot():
+            peak.append(concurrency.heavy_stats()["running"])
+            inside.set()
+            release.wait(5)
+
+    threads = [th.Thread(target=worker) for _ in range(concurrency.MAX_HEAVY + 1)]
+    for t in threads:
+        t.start()
+    inside.wait(5)
+    import time
+    deadline = time.time() + 5
+    while concurrency.heavy_stats()["waiting"] < 1 and time.time() < deadline:
+        time.sleep(0.01)
+    stats = concurrency.heavy_stats()
+    assert stats["running"] == concurrency.MAX_HEAVY and stats["waiting"] == 1
+    release.set()
+    for t in threads:
+        t.join(5)
+    assert max(peak) <= concurrency.MAX_HEAVY
+    assert concurrency.heavy_stats() == {"max": concurrency.MAX_HEAVY, "running": 0, "waiting": 0}
+    with concurrency.heavy_slot():
+        with concurrency.heavy_slot():  # re-entrant: one slot
+            assert concurrency.heavy_stats()["running"] == 1
+
+
+def test_max_heavy_override(monkeypatch):
+    from app import concurrency
+    monkeypatch.setenv("OHM_MAX_HEAVY", "1")
+    assert concurrency._max_heavy() == 1
+    monkeypatch.setenv("OHM_MAX_HEAVY", "zero")
+    assert concurrency._max_heavy() == 2
+    monkeypatch.delenv("OHM_MAX_HEAVY")
+    assert concurrency._max_heavy() == 2
+
+
+# ── GET /api/debug/memory ────────────────────────────────────────────────
+
+def test_debug_memory_endpoint(db, monkeypatch):
+    monkeypatch.setattr(app_db, "_conn", db)
+    from app import data_generation
+    from app.api import import_hands
+    import_hands._player_cache[(1, "probe")] = 1
+    try:
+        r = TestClient(app_main.app).get("/api/debug/memory")
+    finally:
+        import_hands._player_cache.pop((1, "probe"), None)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["data_generation"] == data_generation.current()
+    assert body["max_rss_bytes"] > 10 * 2**20
+    assert body["rss_bytes"] is None or body["rss_bytes"] > 10 * 2**20
+    assert set(body["caches"]) == {
+        "reports.chain._CACHE", "general_popup._RECORDS", "h2n._SHAPES",
+        "import_hands._player_cache", "heroes._cache"}
+    assert body["caches"]["import_hands._player_cache"]["entries"] >= 1
+    chain = body["caches"]["reports.chain._CACHE"]
+    assert chain["entries"] == 0 or "hand_records" in chain
+    pm = body["pymalloc"]
+    assert pm["arena_bytes"] > 0 and 0 < pm["bytes_in_allocated_blocks"] <= pm["arena_bytes"]
+    assert 0 < pm["live_fraction"] <= 1
+    assert "raw" not in pm
+    assert body["duckdb"]["total_bytes"] >= 0
+    assert body["heavy_slots"]["max"] >= 1
+    assert "tracked_objects" not in body["gc"]
+
+
+def test_debug_memory_counts_cached_resolutions(db, monkeypatch):
+    from types import SimpleNamespace
+    from app.api import debug
+    from app.reports import chain as chain_mod
+    fake = SimpleNamespace(hands=[1, 2, 3], blobs={"a": b"xyz", "b": None})
+    chain_mod._CACHE.put(("probe",), fake)
+    try:
+        info = debug._cache_info("app.reports.chain", "_CACHE")
+    finally:
+        chain_mod._CACHE.clear()
+    assert info["entries"] == 1 and info["hand_records"] == 3 and info["blob_bytes"] == 3
+    assert debug._cache_info("app.reports.chain", "_RENAMED") == {"error": "not found"}
+    assert "error" in debug._cache_info("app.no_such_module", "_CACHE")
+
+
+def test_debug_memory_optional_sections(db, monkeypatch):
+    monkeypatch.setattr(app_db, "_conn", db)
+    body = TestClient(app_main.app).get("/api/debug/memory",
+                                        params={"objects": "true", "raw": "true"}).json()
+    assert body["gc"]["tracked_objects"] > 1000
+    assert body["gc"]["top_types"][0][1] > 0
+    assert "arenas allocated" in body["pymalloc"]["raw"]
+
+
+def test_mallocstats_parser_keeps_the_arena_total():
+    from app.api.debug import _parse_mallocstats
+    text = """# arenas allocated total           =                    2
+# arenas highwater mark            =                    2
+2 arenas * 1048576 bytes/arena     =            2,097,152
+
+# bytes in allocated blocks        =              908,096
+Total                              =            2,097,152
+
+arena map counts
+Total                              =              655,360
+"""
+    s = _parse_mallocstats(text)
+    assert s["arenas"] == 2 and s["arena_bytes"] == 2_097_152
+    assert s["bytes_in_allocated_blocks"] == 908_096 and s["total"] == 2_097_152
+
+
+# ── Data generation on owned write paths ────────────────────────────────
+
+def test_bump_clears_the_hero_cache(db):
+    from app import data_generation, heroes
+    heroes._cache[12345] = None
+    data_generation.bump()
+    assert 12345 not in heroes._cache
+
+
+def test_app_settings_bump_only_on_derived_change(db):
+    from app import data_generation
+    from app.app_settings import AppSettingsPatch, update_app_settings
+    g = data_generation.current()
+    update_app_settings(db, AppSettingsPatch(numeric_date_format=True))
+    assert data_generation.current() == g
+    update_app_settings(db, AppSettingsPatch(day_start_hour=0))  # unchanged value
+    assert data_generation.current() == g
+    update_app_settings(db, AppSettingsPatch(day_start_hour=5))
+    assert data_generation.current() == g + 1
+    update_app_settings(db, AppSettingsPatch(session_max_break_minutes=30))
+    assert data_generation.current() == g + 2

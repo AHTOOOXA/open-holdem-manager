@@ -1,4 +1,7 @@
-fastapi>=0.115.0
+# >=0.130 serialises response models straight to JSON in pydantic-core (dump_json); older
+# versions go through jsonable_encoder, ~20x slower on large payloads (performance/08 F10).
+# (absent in 0.128/0.129; requirements-build.lock pins 0.142.2, the tests run on 0.162).
+fastapi>=0.130.0
 uvicorn>=0.34.0
 duckdb>=1.1.0
 pydantic>=2.0.0
