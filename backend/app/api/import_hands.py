@@ -211,21 +211,18 @@ def _batch_resolve_players(
     if not uncached:
         return
 
-    # Batch lookup existing players, grouped by site_id
-    by_site: dict[int, list[str]] = {}
-    for sid, u in uncached:
-        by_site.setdefault(sid, []).append(u)
-
-    for sid, usernames in by_site.items():
-        for i in range(0, len(usernames), 500):
-            batch = usernames[i:i + 500]
-            placeholders = ",".join(["?"] * len(batch))
-            rows = db.execute(
-                f"SELECT username, id FROM players WHERE site_id = ? AND username IN ({placeholders})",
-                [sid] + batch,
-            ).fetchall()
-            for username, pid in rows:
-                _player_cache[(sid, username)] = pid
+    # Existing players: one Arrow join for the whole batch (a 500-name IN list per chunk
+    # was a fresh prepared statement each time, and a GIL round trip per chunk while the
+    # parse worker runs). players is UNIQUE(site_id, username): at most one row per pair.
+    pa_lookup = pa.table({  # noqa: F841 (read by DuckDB's replacement scan)
+        "site_id": pa.array([sid for sid, _ in uncached], pa.int32()),
+        "username": pa.array([u for _, u in uncached], pa.string()),
+    })
+    for sid, username, pid in db.execute(
+        "SELECT p.site_id, p.username, p.id FROM players p "
+        "JOIN pa_lookup n ON p.site_id = n.site_id AND p.username = n.username"
+    ).fetchall():
+        _player_cache[(sid, username)] = pid
 
     # Create missing players in bulk
     new_ids = []
@@ -948,18 +945,16 @@ def _stream_source(
 
 
 def _existing_hand_ids(db, ids: list[str | None], workspace_id: int) -> set[str]:
-    """Which of these hand ids the workspace already has."""
-    existing: set[str] = set()
+    """Which of these hand ids the workspace already has (one Arrow join)."""
     valid = [hid for hid in ids if hid is not None]
-    for j in range(0, len(valid), 500):
-        batch = valid[j:j + 500]
-        placeholders = ",".join(["?"] * len(batch))
-        rows = db.execute(
-            f"SELECT id FROM hands WHERE workspace_id = ? AND id IN ({placeholders})",
-            [workspace_id] + batch,
-        ).fetchall()
-        existing.update(r[0] for r in rows)
-    return existing
+    if not valid:
+        return set()
+    pa_ids = pa.table({"id": pa.array(valid, pa.string())})  # noqa: F841 (replacement scan)
+    rows = db.execute(
+        "SELECT DISTINCT h.id FROM hands h JOIN pa_ids n ON h.id = n.id WHERE h.workspace_id = ?",
+        [workspace_id],
+    ).fetchall()
+    return {r[0] for r in rows}
 
 
 @router.post("/import/files/stream")
@@ -1063,17 +1058,7 @@ def _process_hands(db, text_contents: list[str], workspace_id: int = 1) -> Impor
                 all_ids.append(parser.extract_hand_id(hand_text))
                 hand_parsers_list.append(parser)
 
-    existing_ids: set[str] = set()
-    valid_ids = [hid for hid in all_ids if hid is not None]
-    if valid_ids:
-        for j in range(0, len(valid_ids), 500):
-            batch = valid_ids[j:j + 500]
-            placeholders = ",".join(["?"] * len(batch))
-            rows = db.execute(
-                f"SELECT id FROM hands WHERE workspace_id = ? AND id IN ({placeholders})",
-                [workspace_id] + batch,
-            ).fetchall()
-            existing_ids.update(r[0] for r in rows)
+    existing_ids = _existing_hand_ids(db, all_ids, workspace_id)
 
     with _bulk_write(db):
         total_imported, total_duplicates, total_errors = _process_hands_in_txn(
