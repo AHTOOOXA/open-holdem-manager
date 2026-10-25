@@ -76,20 +76,26 @@ def _reg_sql(rule: RegRule) -> str:
         )"""
 
 
-def batch_update_player_types(db, workspace_id: int | None = None) -> None:
+def batch_update_player_types(db, workspace_id: int | None = None, *,
+                              players_sql: str | None = None) -> None:
     """Recompute player_type and is_reg.
 
     With workspace_id only that workspace is recomputed; None recomputes every workspace
-    (full rebuild). Writes via DELETE + INSERT (DuckDB UPDATE is DELETE+INSERT and would hit
-    FK constraints on referenced tables).
+    (full rebuild). `players_sql` (a SELECT of player ids, e.g. "SELECT player_id FROM
+    _finalize_players") restricts it to those players: a player's type and reg flag read only
+    that player's rows, so the others' values could not change anyway. Writes via DELETE +
+    INSERT (DuckDB UPDATE is DELETE+INSERT and would hit FK constraints on referenced tables).
     """
     rule = get_reg_rule(db)
     where = "AND hp.workspace_id = ?" if workspace_id is not None else ""
     params = [workspace_id] if workspace_id is not None else []
+    delete = "DELETE FROM player_classifications WHERE TRUE"
     if workspace_id is not None:
-        db.execute("DELETE FROM player_classifications WHERE workspace_id = ?", params)
-    else:
-        db.execute("DELETE FROM player_classifications")
+        delete += " AND workspace_id = ?"
+    if players_sql is not None:
+        where += f" AND hp.player_id IN ({players_sql})"
+        delete += f" AND player_id IN ({players_sql})"
+    db.execute(delete, params)
     db.execute(f"""
         INSERT INTO player_classifications (player_id, workspace_id, player_type, is_reg)
         SELECT t.player_id, t.workspace_id, t.player_type, r.is_reg

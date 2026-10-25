@@ -133,3 +133,32 @@ def test_delete_workspace_refreshes_first_last_seen(db, monkeypatch):
 
     assert client.delete(f"/api/workspaces/{ws}").status_code == 200
     assert seen() == want
+
+
+# ── batch_update_player_types: optional player filter (import track hand-off) ────────────────
+
+
+def test_player_filter_recomputes_only_those_players(db):
+    from pathlib import Path
+
+    from app.api.import_hands import insert_parsed_hand
+    from app.parsers.ggpoker import parse_hand_history
+    from app.player_classification import batch_update_player_types
+
+    text = (Path(__file__).parent / "fixtures" / "ggpoker" / "sample.txt").read_text()
+    for h in [h.strip() for h in text.split("\n\n\n") if h.strip()]:
+        insert_parsed_hand(db, parse_hand_history(h), workspace_id=1)
+    state = lambda: db.execute(  # noqa: E731
+        "SELECT player_id, workspace_id, player_type, is_reg FROM player_classifications "
+        "ORDER BY ALL").fetchall()
+    batch_update_player_types(db, workspace_id=1)
+    full = state()
+    pids = sorted({r[0] for r in full})
+    assert len(pids) >= 4
+    some = pids[::2]
+    db.execute("UPDATE player_classifications SET player_type = 'X', is_reg = NULL")
+    db.execute("CREATE TEMP TABLE _some AS SELECT UNNEST(?::INTEGER[]) AS player_id", [some])
+    batch_update_player_types(db, workspace_id=1, players_sql="SELECT player_id FROM _some")
+    got = state()
+    assert [r for r in got if r[0] in some] == [r for r in full if r[0] in some]
+    assert all(r[2] == "X" and r[3] is None for r in got if r[0] not in some)
