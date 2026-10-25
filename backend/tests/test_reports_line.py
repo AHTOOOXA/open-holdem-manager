@@ -59,7 +59,7 @@ def test_gate_line_everywhere(client, hero_id):
     assert nxt["rows"] and all(r["values"]["hands"] <= n for r in nxt["rows"])
     assert len(_case_ids(client, GATE_CHAIN)) == n
     g = client.get("/api/reports/graph", params={"chain": json.dumps(GATE_CHAIN)}).json()
-    assert len(g["points"]) == n
+    assert g["hands"] == n
     assert client.get("/api/hands", params={"chain": json.dumps(GATE_CHAIN)}).json()["total"] == n
     # the other chain consumers accept it
     assert client.post("/api/reports/preflop-range",

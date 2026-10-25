@@ -3,7 +3,12 @@ from app.date_filters import DATE_TO_SQL
 from app.db import get_read_cursor, get_hero_player_id
 from app.models import GraphPoint, GraphResponse, VarianceStats, SessionMarker, FilterOptions, StakeBreakdown, MonthBreakdown, PositionBreakdown, ResultsBreakdown, DriftStat, DriftResponse
 import math
-from datetime import datetime, timedelta
+import threading
+from collections import OrderedDict
+from datetime import timedelta
+
+from app import data_generation
+from app.concurrency import heavy_slot
 
 from app.h2n.rows import sql_case, sql_opp
 from app.stat_registry import VALID_SQL
@@ -17,143 +22,103 @@ router = APIRouter()
 
 
 SESSION_GAP = timedelta(minutes=10)
+_SESSION_GAP_US = int(SESSION_GAP.total_seconds() * 1_000_000)
+
+# Points the Results chart draws (ResultsChart.tsx keeps at most this many, same indices).
+GRAPH_MAX_POINTS = 1000
+
+# Per-hand deltas of the 12 cumulative series, in GraphPoint field order. Each is cast to DOUBLE
+# in SQL: the value equals Python's float(Decimal) of the stored DECIMAL (01/F4); the EV in $ casts
+# the DECIMAL product, not the factors. Summed sequentially in pyarrow, in hand order, exactly as the
+# former per-hand Python loop did (a SQL window SUM adds in another order: last-cent differences).
+_SD = "COALESCE(hp.went_to_showdown, FALSE)"
+_GRAPH_SERIES: list[tuple[str, str]] = [
+    ("cumulative_bb", "CAST(COALESCE(hp.won_bb, 0) AS DOUBLE)"),
+    ("cumulative_ev_bb", "CAST(COALESCE(hp.all_in_ev_bb, hp.won_bb, 0) AS DOUBLE)"),
+    ("cumulative_rake_bb", "CAST(COALESCE(hp.rake_bb, 0) AS DOUBLE)"),
+    ("cumulative_jackpot_bb", "CAST(COALESCE(hp.jackpot_bb, 0) AS DOUBLE)"),
+    ("cumulative_showdown_bb",
+     f"CASE WHEN {_SD} THEN CAST(COALESCE(hp.won_bb, 0) AS DOUBLE) ELSE 0.0 END"),
+    ("cumulative_nonshowdown_bb",
+     f"CASE WHEN {_SD} THEN 0.0 ELSE CAST(COALESCE(hp.won_bb, 0) AS DOUBLE) END"),
+    ("cumulative_usd", "CAST(COALESCE(hp.won, 0) AS DOUBLE)"),
+    ("cumulative_ev_usd",
+     "CAST(COALESCE(COALESCE(hp.all_in_ev_bb, hp.won_bb) * h.bb_amount, 0) AS DOUBLE)"),
+    ("cumulative_rake_usd", "CAST(COALESCE(hp.rake, 0) AS DOUBLE)"),
+    ("cumulative_jackpot_usd", "CAST(COALESCE(hp.jackpot, 0) AS DOUBLE)"),
+    ("cumulative_showdown_usd",
+     f"CASE WHEN {_SD} THEN CAST(COALESCE(hp.won, 0) AS DOUBLE) ELSE 0.0 END"),
+    ("cumulative_nonshowdown_usd",
+     f"CASE WHEN {_SD} THEN 0.0 ELSE CAST(COALESCE(hp.won, 0) AS DOUBLE) END"),
+]
 
 
-@router.get("/reports/graph", response_model=GraphResponse)
-def get_graph(
-    stakes: str | None = Query(None),
-    game_mode: str | None = Query(None),
-    date_from: str | None = Query(None),
-    date_to: str | None = Query(None),
-    last_n: int | None = Query(None, gt=0),
-    workspace_id: int = Query(1),
-    player_id: int | None = Query(None, description="Defaults to the workspace hero"),
-    chain: str | None = Query(None, description="Reports filter chain: URL-encoded JSON Step[] "
-                              "(frontend/src/lib/reports/types.ts); combined with the other "
-                              "filters with AND. Any chain, even [], keeps only H2N-valid "
-                              "hands (as the Reports counts do)"),
-):
-    from app.api.reports_lite import chain_hand_ids
+def sample_indices(total: int, max_points: int = GRAPH_MAX_POINTS) -> list[int]:
+    """0-based indices of the points the chart keeps: every point up to `max_points`, else
+    `Math.round(i * step)` for i < max_points - 1 (ResultsChart.tsx) plus the last point."""
+    if total <= max_points:
+        return list(range(total))
+    step = (total - 1) / (max_points - 1)
+    out = []
+    for i in range(max_points - 1):
+        x = i * step
+        f = math.floor(x)
+        out.append(f + 1 if x - f >= 0.5 else f)   # JS Math.round: halves go up
+    out.append(total - 1)
+    return out
 
-    db = get_read_cursor()
-    chain_ids = chain_hand_ids(db, workspace_id, player_id, chain)
-    if player_id is None:
-        player_id = get_hero_player_id(db, workspace_id)
-    if not player_id or (chain_ids is not None and not chain_ids):
-        return GraphResponse(points=[], sessions=[], variance=None)
 
-    query = """
-        SELECT hp.won_bb, COALESCE(hp.all_in_ev_bb, hp.won_bb),
-               COALESCE(hp.rake_bb, 0), h.played_at,
-               COALESCE(hp.won, 0),
-               COALESCE(hp.rake, 0),
-               COALESCE(hp.all_in_ev_bb, hp.won_bb) * h.bb_amount,
-               COALESCE(hp.went_to_showdown, FALSE),
-               COALESCE(hp.jackpot_bb, 0),
-               COALESCE(hp.jackpot, 0)
-        FROM hand_players hp
-        JOIN hands h ON hp.hand_id = h.id AND hp.workspace_id = h.workspace_id
-        WHERE hp.player_id = ?
-          AND h.workspace_id = ?
-    """
-    params: list = [player_id, workspace_id]
+def graph_series(db, where: str, params: list, last_n: int | None = None,
+                 max_points: int = GRAPH_MAX_POINTS) -> GraphResponse:
+    """Cumulative results of the hero rows matching `where` (over hand_players hp ⋈ hands h).
 
-    if stakes:
-        query += " AND h.stakes = ?"
-        params.append(stakes)
-    if game_mode is not None:
-        query += " AND h.game_mode = ?"
-        params.append(game_mode)
-    if date_from:
-        query += " AND h.played_at >= ?"
-        params.append(date_from)
-    if date_to:
-        query += " AND " + DATE_TO_SQL
-        params.append(date_to)
-    if chain_ids is not None:
-        query += " AND h.id IN (SELECT UNNEST(?::VARCHAR[]))"
-        params.append(chain_ids)
+    Points are sampled to `max_points` (always including the last hand); session markers and
+    variance are computed over every hand."""
+    import pyarrow as pa
+    import pyarrow.compute as pc
 
-    query += " ORDER BY h.played_at ASC, h.id ASC"
+    deltas = ", ".join(f"{expr} AS d{i}" for i, (_, expr) in enumerate(_GRAPH_SERIES))
+    base = (f"SELECT {deltas}, h.played_at AS played_at, h.id AS hid "
+            "FROM hand_players hp JOIN hands h ON hp.hand_id = h.id "
+            f"AND hp.workspace_id = h.workspace_id WHERE {where}")
+    if last_n:
+        base = f"{base} ORDER BY h.played_at DESC, h.id DESC LIMIT {int(last_n)}"
+    cols = ", ".join(f"d{i}" for i in range(len(_GRAPH_SERIES)))
+    query = (f"SELECT {cols}, played_at, "
+             "COALESCE(epoch_us(played_at) - LAG(epoch_us(played_at)) OVER w "
+             f"> {_SESSION_GAP_US}, TRUE) AS sess_start "
+             f"FROM ({base}) WINDOW w AS (ORDER BY played_at, hid) ORDER BY played_at, hid")
+    t = db.execute(query, params).fetch_arrow_table()
+    n = t.num_rows
+    if n == 0:
+        return GraphResponse(points=[], sessions=[], variance=None, hands=0)
 
-    rows = db.execute(query, params).fetchall()
+    idx = sample_indices(n, max_points)
+    take = pa.array(idx, pa.int64())
+    # `+ 0.0`: the loop started from 0.0, so a leading -0.0 delta printed as 0.0 there.
+    series = [[v + 0.0 for v in pc.take(pc.cumulative_sum(t.column(i)), take).to_pylist()]
+              for i in range(len(_GRAPH_SERIES))]
+    played = t.column("played_at")
+    when = [p.isoformat() for p in pc.take(played, take).to_pylist()]
+    names = [name for name, _ in _GRAPH_SERIES]
+    points = [
+        GraphPoint(hand_number=i + 1, played_at=when[j],
+                   **{name: round(series[k][j], 2) for k, name in enumerate(names)})
+        for j, i in enumerate(idx)
+    ]
 
-    if last_n and len(rows) > last_n:
-        rows = rows[-last_n:]
+    starts = pc.indices_nonzero(t.column("sess_start")).to_pylist()
+    ends = [s - 1 for s in starts[1:]] + [n - 1]
+    s_at = pc.take(played, pa.array(starts, pa.int64())).to_pylist()
+    e_at = pc.take(played, pa.array(ends, pa.int64())).to_pylist()
+    sessions = [SessionMarker(start_hand=s + 1, end_hand=e + 1,
+                              start_time=a.isoformat(), end_time=b.isoformat())
+                for s, e, a, b in zip(starts, ends, s_at, e_at)]
 
-    points: list[GraphPoint] = []
-    won_bb_values: list[float] = []
-    session_starts: list[int] = []
-    timestamps: list[str] = []
-    prev_played_at: datetime | None = None
-
-    cum_bb = 0.0
-    cum_ev_bb = 0.0
-    cum_rake_bb = 0.0
-    cum_sd_bb = 0.0
-    cum_nsd_bb = 0.0
-    cum_usd = 0.0
-    cum_ev_usd = 0.0
-    cum_rake_usd = 0.0
-    cum_jackpot_bb = 0.0
-    cum_jackpot_usd = 0.0
-    cum_sd_usd = 0.0
-    cum_nsd_usd = 0.0
-
-    for i, (won_bb, ev_bb, rake_bb, played_at, won_usd, rake_usd, ev_usd, went_sd, jp_bb, jp_usd) in enumerate(rows):
-        won_bb_val = float(won_bb or 0)
-        won_usd_val = float(won_usd or 0)
-        won_bb_values.append(won_bb_val)
-
-        # Session detection
-        if isinstance(played_at, str):
-            played_at = datetime.fromisoformat(played_at)
-        if i == 0:
-            session_starts.append(1)
-        elif prev_played_at and (played_at - prev_played_at) > SESSION_GAP:
-            session_starts.append(i + 1)
-
-        played_at_iso = played_at.isoformat() if isinstance(played_at, datetime) else str(played_at)
-        timestamps.append(played_at_iso)
-        prev_played_at = played_at
-
-        cum_bb += won_bb_val
-        cum_ev_bb += float(ev_bb or 0)
-        cum_rake_bb += float(rake_bb or 0)
-        cum_usd += won_usd_val
-        cum_ev_usd += float(ev_usd or 0)
-        cum_rake_usd += float(rake_usd or 0)
-        cum_jackpot_bb += float(jp_bb or 0)
-        cum_jackpot_usd += float(jp_usd or 0)
-
-        if went_sd:
-            cum_sd_bb += won_bb_val
-            cum_sd_usd += won_usd_val
-        else:
-            cum_nsd_bb += won_bb_val
-            cum_nsd_usd += won_usd_val
-
-        points.append(GraphPoint(
-            hand_number=i + 1,
-            played_at=played_at_iso,
-            cumulative_bb=round(cum_bb, 2),
-            cumulative_ev_bb=round(cum_ev_bb, 2),
-            cumulative_rake_bb=round(cum_rake_bb, 2),
-            cumulative_jackpot_bb=round(cum_jackpot_bb, 2),
-            cumulative_showdown_bb=round(cum_sd_bb, 2),
-            cumulative_nonshowdown_bb=round(cum_nsd_bb, 2),
-            cumulative_usd=round(cum_usd, 2),
-            cumulative_ev_usd=round(cum_ev_usd, 2),
-            cumulative_rake_usd=round(cum_rake_usd, 2),
-            cumulative_jackpot_usd=round(cum_jackpot_usd, 2),
-            cumulative_showdown_usd=round(cum_sd_usd, 2),
-            cumulative_nonshowdown_usd=round(cum_nsd_usd, 2),
-        ))
-
-    # Compute variance stats
+    # Variance: the same two-pass Python sums over every hand as before (bit-identical).
     variance: VarianceStats | None = None
-    n = len(won_bb_values)
     if n >= 2:
+        won_bb_values = t.column(0).to_pylist()
         mean = sum(won_bb_values) / n
         sq_diffs = sum((x - mean) ** 2 for x in won_bb_values)
         sd_per_hand = math.sqrt(sq_diffs / (n - 1))
@@ -169,19 +134,130 @@ def get_graph(
             n=n,
         )
 
-    # Build session markers from session_starts
-    sessions: list[SessionMarker] = []
-    for j, start in enumerate(session_starts):
-        end = session_starts[j + 1] - 1 if j + 1 < len(session_starts) else len(points)
-        sessions.append(SessionMarker(
-            start_hand=start,
-            end_hand=end,
-            start_time=timestamps[start - 1] if start - 1 < len(timestamps) else "",
-            end_time=timestamps[end - 1] if end - 1 < len(timestamps) else "",
-        ))
+    return GraphResponse(points=points, sessions=sessions, variance=variance, hands=n)
 
-    return GraphResponse(points=points, sessions=sessions, variance=variance)
 
+class _GraphCache:
+    """LRU of finished chain graphs, bounded by entries and by the points + sessions they hold.
+    Keys carry the data version; every data_generation bump also empties it."""
+
+    def __init__(self, capacity: int = 16, max_items: int = 200_000):
+        self.capacity = capacity
+        self.max_items = max_items
+        self._d: OrderedDict = OrderedDict()
+        self._lock = threading.Lock()
+
+    @staticmethod
+    def _size(v: GraphResponse) -> int:
+        return len(v.points) + len(v.sessions)
+
+    def get(self, key):
+        with self._lock:
+            v = self._d.get(key)
+            if v is not None:
+                self._d.move_to_end(key)
+            return v
+
+    def put(self, key, value: GraphResponse) -> None:
+        if self._size(value) > self.max_items:
+            return
+        with self._lock:
+            self._d[key] = value
+            self._d.move_to_end(key)
+            while len(self._d) > self.capacity or (
+                    sum(self._size(v) for v in self._d.values()) > self.max_items):
+                self._d.popitem(last=False)
+
+    def clear(self) -> None:
+        with self._lock:
+            self._d.clear()
+
+    def __len__(self) -> int:
+        return len(self._d)
+
+
+_GRAPH_CACHE = _GraphCache()
+data_generation.on_bump(_GRAPH_CACHE.clear)
+
+
+def _graph_cache_key(db, workspace_id: int, player_id: int | None, chain: str, filters: tuple):
+    """Cache key of a chain graph (422 / 404 like the chain resolve), None when not cacheable."""
+    from fastapi import HTTPException
+    from app.app_settings import get_app_settings
+    from app.db import get_rebuild_status
+    from app.reports.chain import canonical, data_version, parse_chain, target_player
+
+    try:
+        steps = parse_chain(chain)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=f"Invalid chain: {e}")
+    target = target_player(db, workspace_id, player_id)
+    if not target or get_rebuild_status().get("active"):
+        return None
+    day_start = int(get_app_settings(db)["day_start_hour"])
+    return (workspace_id, target, canonical(steps), filters, day_start,
+            data_version(db, workspace_id))
+
+
+@router.get("/reports/graph", response_model=GraphResponse)
+def get_graph(
+    stakes: str | None = Query(None),
+    game_mode: str | None = Query(None),
+    date_from: str | None = Query(None),
+    date_to: str | None = Query(None),
+    last_n: int | None = Query(None, gt=0),
+    workspace_id: int = Query(1),
+    player_id: int | None = Query(None, description="Defaults to the workspace hero"),
+    chain: str | None = Query(None, description="Reports filter chain: URL-encoded JSON Step[] "
+                              "(frontend/src/lib/reports/types.ts); combined with the other "
+                              "filters with AND. Any chain, even [], keeps only H2N-valid "
+                              "hands (as the Reports counts do)"),
+    max_points: int = Query(GRAPH_MAX_POINTS, ge=2, description="Points to return: the chart's "
+                            "samples plus the last hand. `hands` is the full hand count; sessions "
+                            "and variance always cover every hand"),
+):
+    from app.api.reports_lite import chain_scope
+
+    db = get_read_cursor()
+    key = None
+    if chain is not None and chain.strip():
+        key = _graph_cache_key(db, workspace_id, player_id, chain,
+                               (stakes, game_mode, date_from, date_to, last_n, max_points))
+        if key is not None:
+            hit = _GRAPH_CACHE.get(key)
+            if hit is not None:
+                return hit
+
+    with heavy_slot():
+        scope = chain_scope(db, workspace_id, player_id, chain)
+        if player_id is None:
+            player_id = get_hero_player_id(db, workspace_id)
+        if not player_id or (scope is not None and scope.empty):
+            return GraphResponse(points=[], sessions=[], variance=None, hands=0)
+
+        where = "hp.player_id = ? AND h.workspace_id = ?"
+        params: list = [player_id, workspace_id]
+        if stakes:
+            where += " AND h.stakes = ?"
+            params.append(stakes)
+        if game_mode is not None:
+            where += " AND h.game_mode = ?"
+            params.append(game_mode)
+        if date_from:
+            where += " AND h.played_at >= ?"
+            params.append(date_from)
+        if date_to:
+            where += " AND " + DATE_TO_SQL
+            params.append(date_to)
+        if scope is not None:
+            pred, pparams = scope.where("h.id")
+            where += f" AND {pred}"
+            params.extend(pparams)
+
+        out = graph_series(db, where, params, last_n, max_points)
+    if key is not None:
+        _GRAPH_CACHE.put(key, out)
+    return out
 
 
 @router.get("/reports/filter-options", response_model=FilterOptions)
