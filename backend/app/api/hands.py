@@ -327,21 +327,25 @@ def list_hands(
 # ── Hand detail ──────────────────────────────────────────────────────
 
 EXPORT_CAP = 100_000
-_EXPORT_FETCH = 1000  # rows per chunk of the export stream
+# Hands per text fetch of the export stream (~2.4 MB of text). At 214k hands, 100k-hand export:
+# 1000 -> 0.75 s of fetches, 2000 -> 0.62 s, 5000 -> 0.45 s.
+_EXPORT_FETCH = 2000
+_EXPORT_IDS = "_ohm_export_ids"  # Arrow relation of one id chunk, registered on the cursor
 
 
-def _export_query(db, f, *, sort, order, workspace_id) -> tuple[list, bool]:
-    """Run the export query of the list filters `f` (`_list_filters` on `db`): (first chunk of
-    `(raw_text,)` rows, truncated). The rest of the rows are read with `db.fetchmany`.
+def _export_query(db, f, *, sort, order, workspace_id):
+    """The export's hands of the list filters `f` (`_list_filters` on `db`), in list order:
+    (Arrow table of `(id, ord)`, at most EXPORT_CAP rows, truncated).
 
     A marked list without a subject has one row per marked (hand, player): one per hand (the
-    row first in the sort). Hands are numbered in list order, capped, and only then joined to
-    their texts, so the sort never carries the raw texts."""
+    row first in the sort). Hands are numbered in list order and capped; the texts are fetched
+    afterwards by `_export_texts`, a chunk of ids at a time."""
+    import pyarrow as pa
     if f.status != "ok":
-        return [], False
+        return pa.table({"id": pa.array([], pa.string()), "ord": pa.array([], pa.int64())}), False
     sort_col = _SORTS.get(sort, "h.played_at")
     sort_dir = "DESC" if order.lower() == "desc" else "ASC"
-    db.execute(f"""
+    t = db.execute(f"""
         WITH s AS (
             SELECT h.id, {sort_col} AS sk, h.played_at AS pa,
                    ROW_NUMBER() OVER (PARTITION BY h.id ORDER BY {sort_col} {sort_dir}, hp.player_id) AS rn
@@ -350,16 +354,22 @@ def _export_query(db, f, *, sort, order, workspace_id) -> tuple[list, bool]:
         ), o AS (
             SELECT id, ROW_NUMBER() OVER (ORDER BY sk {sort_dir}, pa DESC, id) AS ord
             FROM s WHERE rn = 1
-        ), c AS (
-            SELECT id, ord, COUNT(*) OVER () AS n FROM o WHERE ord <= ?
         )
-        SELECT h.raw_text, c.n
-        FROM c JOIN hands h ON h.id = c.id AND h.workspace_id = ?
-        WHERE c.ord <= ?
-        ORDER BY c.ord
-    """, [*f.params, EXPORT_CAP + 1, workspace_id, EXPORT_CAP])
-    rows = db.fetchmany(_EXPORT_FETCH)
-    return rows, bool(rows) and int(rows[0][1]) > EXPORT_CAP
+        SELECT id, ord FROM o WHERE ord <= ? ORDER BY ord
+    """, [*f.params, EXPORT_CAP + 1]).fetch_arrow_table()
+    return t.slice(0, EXPORT_CAP), t.num_rows > EXPORT_CAP
+
+
+def _export_texts(db, ids, workspace_id: int) -> list[str]:
+    """Texts of one chunk of `_export_query` ids, in the chunk's order (a hand deleted since
+    the ids were read is left out)."""
+    db.register(_EXPORT_IDS, ids)
+    try:
+        return [r[0] for r in db.execute(
+            f"SELECT h.raw_text FROM {_EXPORT_IDS} c JOIN hands h "
+            "ON h.id = c.id AND h.workspace_id = ? ORDER BY c.ord", [workspace_id]).fetchall()]
+    finally:
+        db.unregister(_EXPORT_IDS)
 
 
 @router.get("/hands/export")
@@ -385,9 +395,12 @@ def export_hands(
     GET /api/hands, not just a page): text/plain attachment, hands separated by two blank
     lines, each hand once, at most EXPORT_CAP hands (`X-OHM-Truncated: 1` when capped).
 
-    One ordered query, read in chunks by the stream (03/F2). It runs on the stream's own
-    cursor: the request's cursors are closed when the endpoint returns, and the chain scope is
-    registered on the cursor that runs the query."""
+    The ordered, capped hand ids come from one query (03/F2); the stream then fetches the texts
+    `_EXPORT_FETCH` ids at a time. Only the ids (a few MB) stay in memory for the download, not
+    a materialised result of every text (~+200 MB per export at 214k hands, held until the
+    client read the last byte). Everything runs on the stream's own cursor: the request's
+    cursors are closed when the endpoint returns, and the chain scope is registered on the
+    cursor that runs the query."""
     cur = get_db().cursor()
     try:
         # The filters (and the chain scope in them) are built outside the slot: a cold spot
@@ -399,22 +412,25 @@ def export_hands(
             stat_flag=stat_flag, stat_key=stat_key, player_id=player_id,
             workspace_id=workspace_id, chain=chain)
         with heavy_slot():
-            rows, truncated = _export_query(cur, f, sort=sort, order=order,
-                                            workspace_id=workspace_id)
+            ids, truncated = _export_query(cur, f, sort=sort, order=order,
+                                           workspace_id=workspace_id)
+        texts = (_export_texts(cur, ids.slice(0, _EXPORT_FETCH), workspace_id)
+                 if ids.num_rows else [])
     except BaseException:
         cur.close()
         raise
 
     def stream():
-        nonlocal rows
+        nonlocal texts
         try:
             first = True
-            while rows:
-                chunk = [t for t in ((r[0] or "").strip() for r in rows) if t]
+            for start in range(0, ids.num_rows, _EXPORT_FETCH):
+                if start:
+                    texts = _export_texts(cur, ids.slice(start, _EXPORT_FETCH), workspace_id)
+                chunk = [t for t in ((x or "").strip() for x in texts) if t]
                 if chunk:
                     yield (("" if first else "\n\n\n") + "\n\n\n".join(chunk)).encode("utf-8")
                     first = False
-                rows = cur.fetchmany(_EXPORT_FETCH)
             if not first:
                 yield b"\n"
         finally:

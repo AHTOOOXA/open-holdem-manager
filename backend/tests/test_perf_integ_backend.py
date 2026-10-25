@@ -59,3 +59,33 @@ def test_export_builds_chain_scope_outside_the_slot(client, slot_probe, monkeypa
     assert r.content.count(b"Poker Hand #") > 0
     assert slot_probe == [0]
     assert in_slot == [1]
+
+
+# ── Export: ordered ids, texts fetched per chunk (hands review minor) ───────────────────────
+
+
+@pytest.mark.parametrize("params", [
+    {}, {"sort": "won_bb", "order": "asc"}, {"chain": json.dumps(P01), "sort": "tags"},
+])
+def test_export_text_chunks_keep_bytes_and_order(client, monkeypatch, params):
+    whole = client.get("/api/hands/export", params=params)
+    assert whole.status_code == 200 and whole.content
+    monkeypatch.setattr(H, "_EXPORT_FETCH", 7)   # many chunks, a short last one
+    chunked = client.get("/api/hands/export", params=params)
+    assert chunked.content == whole.content
+    assert chunked.headers.get("x-ohm-truncated") == whole.headers.get("x-ohm-truncated")
+
+
+def test_export_query_returns_ids_not_texts(client, bench_db, monkeypatch):
+    """The ordered query carries only (id, ord); texts come in chunks of _EXPORT_FETCH."""
+    monkeypatch.setattr(H, "EXPORT_CAP", 50)
+    f = H._list_filters(bench_db, position=None, stakes=None, result=None, marked=None,
+                        tag_ids=None, date_from=None, date_to=None, search=None, stat_flag=None,
+                        stat_key=None, player_id=None, workspace_id=1, chain=None)
+    ids, truncated = H._export_query(bench_db, f, sort="played_at", order="desc", workspace_id=1)
+    assert truncated and ids.column_names == ["id", "ord"] and ids.num_rows == 50
+    assert ids.column("ord").to_pylist() == list(range(1, 51))
+    texts = H._export_texts(bench_db, ids.slice(10, 5), 1)
+    want = [bench_db.execute("SELECT raw_text FROM hands WHERE id = ? AND workspace_id = 1",
+                             [i]).fetchone()[0] for i in ids.column("id").to_pylist()[10:15]]
+    assert texts == want
