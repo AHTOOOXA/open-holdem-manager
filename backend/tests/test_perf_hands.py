@@ -287,3 +287,11 @@ def test_list_actions_from_raw_text(bench_db, client, marks):
 
 def test_export_invalid_chain(client):
     assert client.get("/api/hands/export", params={"chain": "not json"}).status_code == 422
+
+
+def test_stat_detail_hands_keep_full_actions(client):
+    """The list-row action model (03/F8) is for hand lists only: stat detail rows keep `p` / `ai`."""
+    r = client.get("/api/stats/detail/vpip/hands")
+    assert r.status_code == 200, r.text
+    rows = r.json()["hands"]
+    assert rows and "p" in rows[0]["preflop_actions"][0]
