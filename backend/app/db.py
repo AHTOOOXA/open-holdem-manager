@@ -1250,6 +1250,9 @@ def _migrate_config_sections(conn: duckdb.DuckDBPyConnection) -> None:
             batch_update_player_types(conn)
     for col in ("is_single_person", "pinned"):
         conn.execute(f"ALTER TABLE player_identities ADD COLUMN IF NOT EXISTS {col} BOOLEAN DEFAULT FALSE")
+    # Databases whose player_identities predates the tags column (CREATE TABLE IF NOT EXISTS
+    # never adds it) failed every identity query that reads or writes tags.
+    conn.execute("ALTER TABLE player_identities ADD COLUMN IF NOT EXISTS tags VARCHAR DEFAULT '[]'")
     from app.config_sections import ensure_rebuild_fingerprint
     ensure_rebuild_fingerprint(conn)
 

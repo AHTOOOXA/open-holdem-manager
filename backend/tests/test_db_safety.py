@@ -263,3 +263,17 @@ def test_tag_note_key_migration_dedupes_existing_rows(db):
     assert db.execute("SELECT COUNT(*) FROM hand_tags").fetchone()[0] == 2
     assert db.execute("SELECT note FROM hand_notes").fetchall() == [("new",)]
     app_db._ensure_tag_note_keys(db)  # idempotent
+
+
+def test_old_identities_table_gets_tags_column():
+    """A player_identities table created before the tags column existed gets it on startup,
+    so the identity endpoints don't fail with 'Referenced column "tags" not found'."""
+    import duckdb
+    from app.db import init_schema
+    conn = duckdb.connect(":memory:")
+    conn.execute("CREATE TABLE player_identities (id INTEGER PRIMARY KEY, display_name VARCHAR NOT NULL, "
+                 "notes TEXT, color VARCHAR, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
+    conn.execute("INSERT INTO player_identities (id, display_name) VALUES (1, 'old')")
+    init_schema(conn)
+    assert conn.execute("SELECT tags FROM player_identities WHERE id = 1").fetchone()[0] == "[]"
+    conn.close()
